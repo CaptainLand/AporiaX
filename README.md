@@ -1,50 +1,74 @@
-# AporiaX
+<p align="center">
+  <img src="build/icon.svg" width="88" alt="AporiaX" />
+</p>
 
-> Every problem begins with an aporia.<br>
-> 每个答案，都始于一个尚未解开的疑问。
+<h1 align="center">AporiaX</h1>
 
-AporiaX 是一个面向本地工作区的桌面 Agent。它不只返回答案，还把模糊需求转化为
-可观察、可验证、可回退的行动路径。
+<p align="center">
+  <strong>从一个疑问开始。</strong><br>
+  写代码、制作文档、演示文稿与表格。告诉 AporiaX，你想抵达哪里。
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-59a9cf.svg)](LICENSE)
-[![Electron](https://img.shields.io/badge/Electron-39-202830.svg)](https://www.electronjs.org/)
-[![React](https://img.shields.io/badge/React-19-202830.svg)](https://react.dev/)
+<p align="center">
+  <em>Every problem begins with an aporia.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v0.2.1"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?include_prereleases&color=59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.2.1/AporiaX-Setup-0.2.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
+</p>
+
+AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的
+行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、
+验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX 仍处于早期预览阶段。`run_command` 会优先在 Docker OS 级容器沙箱中执行；
+> AporiaX `v0.2.1` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
+> `run_command` 会优先在 Docker OS 级容器沙箱中执行；
 > Docker 或镜像不可用时会回退到本机执行，并强制逐条审批。本机模式可联网且不具备 OS 隔离。
 
-## 产品理念
+## 为什么是 AporiaX
 
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
 - **Evidence**：保留工具调用、文件修改、验证结果和失败原因。
 - **Anchor**：为文件修改建立检查点，支持逐行审核和安全回退。
 
-## 当前能力
+## 现在可以做什么
 
-- Dialogue、Route、Workspace 三种任务视图。
-- 本地工作区文件树、搜索、代码预览和编辑，支持 `Ctrl+S` 保存。
-- 多 OpenAI-compatible Provider、多 API Key、多模型选择和 `/models` 自动发现。
-- 通用流式回复、空闲超时、自动重试、手动停止和长上下文压缩。
-- 可审计的 Agent 工具循环与 `allow` / `ask` / `deny` 权限策略。
-- 文件读取、搜索、写入、精确替换、Git 状态与 Diff、审批式沙箱命令执行。
-- Docker 命令沙箱：默认断网、只读根文件系统、无 Linux capabilities、禁止提权，
-  限制 CPU、内存和进程数，只映射当前工作区。
-- Docker 不可用时采用本机审批模式：每条命令都需确认，剥离 API Key、Token、Cookie
-  等敏感环境变量，并明确显示“可联网、无 OS 隔离”。
-- 强制自检：重新读取本轮修改文件、尝试测试或构建，并报告剩余风险。
-- 真实 Word、PowerPoint 和 Excel 文件生成及结构复核，无需 MCP 或本机 Office。
-- PDF 本地文本解析、Workspace 只读预览以及 PDF/Office/Markdown/代码附件。
-- 文件前后快照、逐行 Diff 审核、Office 二进制检查点和安全撤销。
-- Electron 加密凭据存储、任务持久化、原生窗口控制和日间/夜间主题。
-- `AGENTS.md`、`APORIAX.md` 和 `.aporiax.json` 项目级指令与权限配置。
+| 能力 | 当前实现 |
+| --- | --- |
+| 代码与工作区 | 文件树、搜索、预览、编辑、`Ctrl+S`、精确 Patch、Git 状态与 Diff |
+| 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
+| 可观察执行 | Dialogue、Route、Workspace 三种视图；逐步展示工具调用与修改 |
+| 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、单文件或整轮撤销 |
+| 强制自检 | 复读本轮修改，尝试测试或构建，发现问题后继续修复并报告剩余风险 |
+| 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
+| 附件与解析 | PDF、Office、Markdown、代码和图片附件；PDF 本地文本提取 |
+| 权限与执行 | `allow` / `ask` / `deny` 策略；Docker 沙箱优先，本机强制审批降级 |
 
 扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。图片是否发送由每个
 Provider 模型的视觉能力决定。
 
-## 快速开始
+## 下载
 
-需要 Node.js 20 或更高版本。若要使用 `run_command`，还需要启动 Docker Desktop；
+| Windows x64 | 适合场景 |
+| --- | --- |
+| [下载安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.2.1/AporiaX-Setup-0.2.1-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
+| [下载便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.2.1/AporiaX-Portable-0.2.1-x64.exe) | 不安装，直接运行和试用 |
+
+首次启动后：
+
+1. 新建任务并选择本地工作目录。
+2. 添加一个 OpenAI-compatible API Provider 与模型。
+3. 描述目标，查看 Route、文件修改、自检和最终产物。
+
+Docker Desktop 是可选项。启用后，命令会进入默认断网的容器沙箱；未启用时，每条本机
+命令都会单独请求批准，并明确显示“可联网、无 OS 隔离”。
+
+## 从源码运行
+
+需要 Node.js 20 或更高版本。若希望使用容器化 `run_command`，还需要启动 Docker Desktop；
 应用内点击“准备 Docker 沙箱”会构建 `aporiax-sandbox:0.1` 本地镜像。
 未启动 Docker 时仍可执行命令，但会逐条请求批准并直接使用当前用户权限在本机运行。
 
@@ -131,7 +155,8 @@ build/      应用图标等构建资源
 ```
 
 Harness 现状和后续计划见
-[docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md)。
+[docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md)。本版本说明见
+[docs/RELEASE_NOTES_v0.2.1.md](docs/RELEASE_NOTES_v0.2.1.md)。
 
 ## 参与贡献
 
