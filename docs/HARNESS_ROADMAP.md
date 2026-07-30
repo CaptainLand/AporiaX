@@ -9,7 +9,7 @@
 - OpenCode 风格的工具注册表、工具风险元数据和细粒度权限策略
 - `list_directory`、`read_file`、`search_text`、只读 `git_status` / `git_diff`、`write_file`、精确 `apply_patch`
 - 内置 `.docx`、`.pptx`、`.xlsx` 生成工具与 Office 文件结构检查
-- 每次单独审批、fail-closed 的 Docker OS 级沙箱 `run_command`
+- Docker 优先的 OS 级沙箱 `run_command`，以及强制逐条审批的本机降级模式
 - 标准化 Turn / Tool / File 事件流与通用 Provider 边界
 - 文件前后快照、逐行 Diff、冲突检测和安全撤销
 - Office 二进制检查点、工件摘要审核、结构自检与安全撤销
@@ -41,7 +41,7 @@ flowchart LR
   Harness --> Policy[Permission Policy]
   Harness --> Tools[Tool Registry]
   Tools --> FS[Workspace Files]
-  Tools --> Shell[Sandboxed Commands]
+  Tools --> Shell[Docker Sandbox or Approved Host Command]
   Tools --> Git[Git and Diff]
   Tools --> Office[Office Artifact Engine]
   Harness --> Store[SQLite Event Store]

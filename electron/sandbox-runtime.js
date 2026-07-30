@@ -51,6 +51,7 @@ function runProcess({
   program,
   args,
   cwd,
+  env,
   signal,
   timeoutMs,
   onOutput,
@@ -64,6 +65,7 @@ function runProcess({
     let timedOut = false;
     const child = spawn(program, args, {
       cwd,
+      env,
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -129,6 +131,8 @@ function sandboxState({
     backend: "docker",
     state,
     available: state === "ready",
+    fallbackAvailable: true,
+    executionMode: state === "ready" ? "container" : "host-approval",
     detail,
     engineVersion,
     image: SANDBOX_IMAGE,
@@ -155,12 +159,13 @@ export async function getSandboxStatus() {
     if (error?.code === "ENOENT") {
       return sandboxState({
         state: "cli-missing",
-        detail: "未找到 Docker CLI。请安装并启动 Docker Desktop。",
+        detail:
+          "未找到 Docker CLI。命令仍可在逐条批准后于本机运行，但不具备 OS 隔离。",
       });
     }
     return sandboxState({
       state: "engine-stopped",
-      detail: `无法连接 Docker：${error?.message || "未知错误"}`,
+      detail: `无法连接 Docker：${error?.message || "未知错误"}。命令将改为逐条批准后在本机运行。`,
     });
   }
 
@@ -168,8 +173,7 @@ export async function getSandboxStatus() {
     return sandboxState({
       state: "engine-stopped",
       detail:
-        versionResult.stderr.trim() ||
-        "Docker Desktop 尚未启动，命令执行已安全关闭。",
+        "Docker Desktop 尚未启动。命令将改为逐条批准后在本机运行，不具备 OS 隔离。",
     });
   }
   const engineVersion = versionResult.stdout.trim();
@@ -183,7 +187,8 @@ export async function getSandboxStatus() {
   if (imageResult.exitCode !== 0) {
     return sandboxState({
       state: "image-missing",
-      detail: "Docker 已连接，但 AporiaX 沙箱镜像尚未准备。",
+      detail:
+        "Docker 已连接，但 AporiaX 沙箱镜像尚未准备。命令将暂时逐条批准后在本机运行。",
       engineVersion,
     });
   }
@@ -335,8 +340,11 @@ export async function runSandboxedCommand({
   cwd,
   signal,
   onOutput,
+  sandboxStatus,
 }) {
-  const status = await getSandboxStatus();
+  const status = sandboxStatus?.available
+    ? sandboxStatus
+    : await getSandboxStatus();
   if (!status.available) {
     throw new Error(
       `Sandbox unavailable: ${status.detail} Host execution is disabled.`,
@@ -393,4 +401,98 @@ export async function runSandboxedCommand({
   } finally {
     signal?.removeEventListener("abort", cleanup);
   }
+}
+
+const SENSITIVE_ENVIRONMENT_NAME =
+  /(api[_-]?key|token|secret|password|passwd|credential|cookie|authorization|private[_-]?key|session)/i;
+const UNSAFE_RUNTIME_ENVIRONMENT_NAME =
+  /^(NODE_OPTIONS|ELECTRON_RUN_AS_NODE|NODE_REPL_HISTORY)$/i;
+
+export function createHostFallbackEnvironment(
+  sourceEnvironment = process.env,
+) {
+  const environment = {};
+  const normalizedNames = new Set();
+  for (const [name, value] of Object.entries(sourceEnvironment || {})) {
+    if (
+      typeof value !== "string" ||
+      SENSITIVE_ENVIRONMENT_NAME.test(name) ||
+      UNSAFE_RUNTIME_ENVIRONMENT_NAME.test(name)
+    ) {
+      continue;
+    }
+    const normalizedName = name.toUpperCase();
+    if (normalizedNames.has(normalizedName)) continue;
+    normalizedNames.add(normalizedName);
+    environment[name] = value;
+  }
+  environment.APORIAX_EXECUTION_MODE = "host-approval";
+  environment.CI = environment.CI || "1";
+  environment.NO_COLOR = environment.NO_COLOR || "1";
+  return environment;
+}
+
+function hostShell(command) {
+  if (process.platform === "win32") {
+    const systemRoot = process.env.SystemRoot || "C:\\Windows";
+    return {
+      program: join(systemRoot, "System32", "cmd.exe"),
+      args: ["/d", "/s", "/c", command],
+    };
+  }
+  return {
+    program: "/bin/sh",
+    args: ["-lc", command],
+  };
+}
+
+export async function runHostFallbackCommand({
+  command,
+  workspaceRoot,
+  cwd,
+  signal,
+  onOutput,
+  sandboxStatus,
+}) {
+  const shell = hostShell(command);
+  const result = await runProcess({
+    ...shell,
+    cwd,
+    env: createHostFallbackEnvironment(),
+    signal,
+    timeoutMs: SANDBOX_TIMEOUT_MS,
+    onOutput,
+  });
+  return {
+    ...result,
+    sandbox: {
+      backend: "host",
+      fallback: true,
+      isolation: "none",
+      network: "host",
+      rootFilesystem: "host",
+      workspace: "approved-working-directory",
+      workspaceRoot,
+      sensitiveEnvironment: "removed",
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      reason:
+        sandboxStatus?.detail ||
+        "Docker container sandbox is unavailable.",
+    },
+  };
+}
+
+export async function runCommandWithFallback(options) {
+  const status =
+    options.sandboxStatus || (await getSandboxStatus());
+  if (status.available) {
+    return runSandboxedCommand({
+      ...options,
+      sandboxStatus: status,
+    });
+  }
+  return runHostFallbackCommand({
+    ...options,
+    sandboxStatus: status,
+  });
 }

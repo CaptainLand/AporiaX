@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  AlertTriangle,
   ArrowUp,
   ArrowRight,
   Brain,
@@ -1931,16 +1932,20 @@ function SettingsPanel({
         <div className="sandbox-status-card">
           <span
             className={`sandbox-status-icon ${
-              sandboxStatus?.available ? "ready" : ""
+              sandboxStatus?.available ? "ready" : "fallback"
             }`}
           >
-            <LockKeyhole size={16} />
+            {sandboxStatus?.available ? (
+              <LockKeyhole size={16} />
+            ) : (
+              <AlertTriangle size={16} />
+            )}
           </span>
           <div>
             <strong>
               {sandboxStatus?.available
                 ? "容器沙箱已就绪"
-                : "命令执行已安全关闭"}
+                : "本机审批模式"}
             </strong>
             <span>
               {sandboxStatus?.detail ||
@@ -1967,6 +1972,14 @@ function SettingsPanel({
             <span>只读系统</span>
             <span>{sandboxStatus.memory || "1536m"}</span>
             <span>{sandboxStatus.pidsLimit || 256} 进程</span>
+          </div>
+        )}
+        {sandboxStatus && !sandboxStatus.available && (
+          <div className="sandbox-constraints fallback">
+            <span>逐条审批</span>
+            <span>本机执行</span>
+            <span>可联网</span>
+            <span>无 OS 隔离</span>
           </div>
         )}
       </section>
@@ -3195,7 +3208,7 @@ function App() {
           title: toolLabels[event.tool] || "Harness 正在运行",
           detail:
             event.tool === "run_command"
-              ? "命令将在断网的 OS 级容器沙箱中运行，执行前等待批准"
+              ? "命令执行前等待批准；Docker 不可用时将明确回退到本机审批模式"
               : event.phase === "self-check"
                 ? "强制复核本轮修改，发现问题会继续修复"
                 : "操作范围限制在当前工作区内",

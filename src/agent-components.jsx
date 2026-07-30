@@ -189,15 +189,26 @@ export function ApprovalCard({ approval, onRespond, responding }) {
         {approval.kind === "execute"
           ? approval.sandbox?.available
             ? "命令将在一次性 OS 容器中运行：默认断网、根文件系统只读，仅当前工作区可写。"
-            : "OS 级沙箱不可用，AporiaX 将拒绝执行命令。"
+            : "Docker 沙箱不可用：本次命令将在本机运行，可访问主机网络且不具备 OS 隔离。请逐字检查后再批准。"
           : "此工具将访问或修改当前工作区，请确认本次操作符合预期。"}
       </div>
-      {approval.kind === "execute" && approval.sandbox?.available && (
+      {approval.kind === "execute" && (
         <div className="approval-sandbox-facts">
-          <span>{approval.sandbox.backend}</span>
-          <span>网络：关闭</span>
-          <span>内存：{approval.sandbox.memory}</span>
-          <span>进程：{approval.sandbox.pidsLimit}</span>
+          {approval.sandbox?.available ? (
+            <>
+              <span>{approval.sandbox.backend}</span>
+              <span>网络：关闭</span>
+              <span>内存：{approval.sandbox.memory}</span>
+              <span>进程：{approval.sandbox.pidsLimit}</span>
+            </>
+          ) : (
+            <>
+              <span>本机回退</span>
+              <span>强制逐条审批</span>
+              <span>网络：可用</span>
+              <span>敏感环境变量：移除</span>
+            </>
+          )}
         </div>
       )}
       <div className="approval-actions">

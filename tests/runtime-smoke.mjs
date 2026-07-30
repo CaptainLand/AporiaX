@@ -37,6 +37,7 @@ import {
 import {
   SANDBOX_IMAGE,
   buildDockerSandboxArgs,
+  createHostFallbackEnvironment,
 } from "../electron/sandbox-runtime.js";
 
 const testRoot = await mkdtemp(join(resolve("."), ".runtime-smoke-"));
@@ -182,6 +183,25 @@ try {
   assert(sandboxArgs.includes("no-new-privileges=true"));
   assert(sandboxArgs.includes(SANDBOX_IMAGE));
   assert.equal(sandboxArgs.at(-1), "npm test");
+  const hostEnvironment = createHostFallbackEnvironment({
+    Path: "C:\\Windows",
+    PATH: "duplicate",
+    DEEPSEEK_API_KEY: "must-not-leak",
+    AUTHORIZATION: "must-not-leak",
+    NODE_OPTIONS: "--require malicious.js",
+    SAFE_VALUE: "kept",
+  });
+  assert.equal(hostEnvironment.DEEPSEEK_API_KEY, undefined);
+  assert.equal(hostEnvironment.AUTHORIZATION, undefined);
+  assert.equal(hostEnvironment.NODE_OPTIONS, undefined);
+  assert.equal(hostEnvironment.SAFE_VALUE, "kept");
+  assert.equal(
+    Object.keys(hostEnvironment).filter(
+      (name) => name.toUpperCase() === "PATH",
+    ).length,
+    1,
+  );
+  assert.equal(hostEnvironment.APORIAX_EXECUTION_MODE, "host-approval");
 
   const readOnlyPolicy = createPermissionPolicy("read-only", {
     read_file: "allow",
@@ -347,25 +367,26 @@ try {
     "parsed attachments must not send binary source data to the model",
   );
 
-  const blockedSandboxResponses = [
-    createToolDelta("blocked-command", "run_command", {
+  const hostFallbackResponses = [
+    createToolDelta("host-fallback-command", "run_command", {
       command: "node --version",
       cwd: ".",
       reason: "验证运行环境。",
     }),
-    { content: "Sandbox correctly blocked host execution." },
+    { content: "Host fallback completed after approval." },
   ];
-  let blockedSandboxIndex = 0;
-  let blockedSandboxExecutorCalled = false;
+  let hostFallbackIndex = 0;
+  let hostFallbackExecutorCalled = false;
+  let hostFallbackApprovalCount = 0;
   globalThis.fetch = async () => {
-    const delta = blockedSandboxResponses[blockedSandboxIndex];
-    blockedSandboxIndex += 1;
+    const delta = hostFallbackResponses[hostFallbackIndex];
+    hostFallbackIndex += 1;
     if (!delta) {
-      throw new Error("Unexpected extra blocked-sandbox request.");
+      throw new Error("Unexpected extra host-fallback request.");
     }
     return createSseResponse(delta);
   };
-  const blockedSandboxResult = await runHarness({
+  const hostFallbackResult = await runHarness({
     provider: testProvider,
     workspacePath: testRoot,
     modelId: "deepseek-v4-pro",
@@ -379,19 +400,34 @@ try {
       state: "engine-stopped",
       detail: "Docker stopped.",
     }),
-    sandboxExecutor: async () => {
-      blockedSandboxExecutorCalled = true;
-      throw new Error("Host execution must never be reached.");
+    sandboxExecutor: async ({ sandboxStatus }) => {
+      hostFallbackExecutorCalled = true;
+      assert.equal(sandboxStatus.state, "engine-stopped");
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "v20.20.2\n",
+        stderr: "",
+        sandbox: {
+          backend: "host",
+          fallback: true,
+          network: "host",
+          isolation: "none",
+        },
+      };
     },
-    requestApproval: async () => ({ approved: true }),
+    requestApproval: async ({ sandbox }) => {
+      hostFallbackApprovalCount += 1;
+      assert.equal(sandbox.available, false);
+      return { approved: true };
+    },
   });
-  assert.equal(blockedSandboxResult.status, "completed");
-  assert.equal(blockedSandboxExecutorCalled, false);
-  assert.equal(blockedSandboxResult.steps[0]?.success, false);
-  assert.match(
-    blockedSandboxResult.steps[0]?.detail || "",
-    /Sandbox unavailable/i,
-  );
+  assert.equal(hostFallbackResult.status, "completed");
+  assert.equal(hostFallbackExecutorCalled, true);
+  assert.equal(hostFallbackApprovalCount, 1);
+  assert.equal(hostFallbackResult.steps[0]?.success, true);
+  assert.equal(hostFallbackResult.steps[0]?.command, "node --version");
 
   const reviewedVersions = new Map();
   const selfCheckChanges = new Map([

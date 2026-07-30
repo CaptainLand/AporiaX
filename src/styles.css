@@ -2477,6 +2477,11 @@ body.panel-is-resizing * {
   margin-top: 11px;
 }
 
+.sandbox-constraints.fallback span {
+  color: #8d5b34;
+  background: #f6eee8;
+}
+
 .settings-section .workspace-settings-button > .spin {
   margin-right: 6px;
 }
@@ -3925,6 +3930,16 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .sandbox-status-icon.ready {
   color: #94cfe7;
   background: rgba(66, 146, 184, 0.16);
+}
+
+:root[data-theme="dark"] .sandbox-status-icon.fallback {
+  color: #d0a16f;
+  background: rgba(169, 112, 62, 0.16);
+}
+
+:root[data-theme="dark"] .sandbox-constraints.fallback span {
+  color: #dfb181;
+  background: rgba(169, 112, 62, 0.14);
 }
 
 :root[data-theme="dark"] .empty-provider-choice {

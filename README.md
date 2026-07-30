@@ -11,8 +11,8 @@ AporiaX 是一个面向本地工作区的桌面 Agent。它不只返回答案，
 [![React](https://img.shields.io/badge/React-19-202830.svg)](https://react.dev/)
 
 > [!IMPORTANT]
-> AporiaX 仍处于早期预览阶段。`run_command` 只在 Docker OS 级容器沙箱中执行；
-> Docker 或沙箱镜像不可用时会安全拒绝命令，不会回退到宿主机 Shell。
+> AporiaX 仍处于早期预览阶段。`run_command` 会优先在 Docker OS 级容器沙箱中执行；
+> Docker 或镜像不可用时会回退到本机执行，并强制逐条审批。本机模式可联网且不具备 OS 隔离。
 
 ## 产品理念
 
@@ -30,6 +30,8 @@ AporiaX 是一个面向本地工作区的桌面 Agent。它不只返回答案，
 - 文件读取、搜索、写入、精确替换、Git 状态与 Diff、审批式沙箱命令执行。
 - Docker 命令沙箱：默认断网、只读根文件系统、无 Linux capabilities、禁止提权，
   限制 CPU、内存和进程数，只映射当前工作区。
+- Docker 不可用时采用本机审批模式：每条命令都需确认，剥离 API Key、Token、Cookie
+  等敏感环境变量，并明确显示“可联网、无 OS 隔离”。
 - 强制自检：重新读取本轮修改文件、尝试测试或构建，并报告剩余风险。
 - 真实 Word、PowerPoint 和 Excel 文件生成及结构复核，无需 MCP 或本机 Office。
 - PDF 本地文本解析、Workspace 只读预览以及 PDF/Office/Markdown/代码附件。
@@ -44,6 +46,7 @@ Provider 模型的视觉能力决定。
 
 需要 Node.js 20 或更高版本。若要使用 `run_command`，还需要启动 Docker Desktop；
 应用内点击“准备 Docker 沙箱”会构建 `aporiax-sandbox:0.1` 本地镜像。
+未启动 Docker 时仍可执行命令，但会逐条请求批准并直接使用当前用户权限在本机运行。
 
 ```powershell
 git clone https://github.com/CaptainLand/AporiaX.git

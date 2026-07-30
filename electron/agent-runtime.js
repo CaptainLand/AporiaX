@@ -35,7 +35,7 @@ import {
 import { providerChatEndpoint } from "./provider-config.js";
 import {
   getSandboxStatus,
-  runSandboxedCommand,
+  runCommandWithFallback,
 } from "./sandbox-runtime.js";
 
 const MAX_HISTORY_MESSAGES = 30;
@@ -211,7 +211,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "run_command",
       description:
-        "Run one foreground shell command in a network-disabled OS-level container sandbox. Only the authorized workspace is mounted writable, and the user must approve every command.",
+        "Run one foreground workspace command. Prefer the network-disabled Docker sandbox; when Docker is unavailable, use the explicitly approved host fallback without OS isolation.",
       parameters: {
         type: "object",
         properties: {
@@ -721,7 +721,7 @@ async function executeTool({
   permissionPolicy,
   requestApproval,
   signal,
-  sandboxExecutor = runSandboxedCommand,
+  sandboxExecutor = runCommandWithFallback,
   sandboxStatus = null,
 }) {
   throwIfAborted(signal);
@@ -738,12 +738,10 @@ async function executeTool({
   if (permissionAction === "deny") {
     throw new Error(`Permission denied for tool: ${toolName}`);
   }
-  if (toolName === "run_command" && !sandboxStatus?.available) {
-    throw new Error(
-      `Sandbox unavailable: ${sandboxStatus?.detail || "OS-level isolation is not ready"}. Host execution is disabled.`,
-    );
-  }
-  if (permissionAction === "ask") {
+  const requiresApproval =
+    permissionAction === "ask" ||
+    (toolName === "run_command" && !sandboxStatus?.available);
+  if (requiresApproval) {
     const approval = await requestApproval({
       kind: descriptor.risk,
       title:
@@ -1063,6 +1061,7 @@ async function executeTool({
       workspaceRoot,
       cwd: commandDirectory,
       signal,
+      sandboxStatus,
     });
     return {
       modelResult: {
@@ -1804,7 +1803,7 @@ export async function runHarness({
   signal,
   onEvent,
   requestApproval = async () => ({ approved: false }),
-  sandboxExecutor = runSandboxedCommand,
+  sandboxExecutor = runCommandWithFallback,
   sandboxStatusResolver = getSandboxStatus,
 }) {
   if (
@@ -1855,16 +1854,19 @@ export async function runHarness({
     hasWorkspace && canRunCommands
       ? await sandboxStatusResolver()
       : null;
-  const commandToolAvailable =
-    canRunCommands && Boolean(sandboxStatus?.available);
+  const commandToolAvailable = canRunCommands;
+  const commandUsesContainer = Boolean(sandboxStatus?.available);
   const toolCatalog = hasWorkspace
     ? TOOL_REGISTRY.catalog(permissionPolicy).map((tool) =>
-        tool.name === "run_command" && !commandToolAvailable
+        tool.name === "run_command" &&
+        commandToolAvailable &&
+        !commandUsesContainer
           ? {
               ...tool,
-              permission: "deny",
-              unavailableReason:
-                sandboxStatus?.detail || "Sandbox unavailable.",
+              permission: "ask",
+              executionMode: "host-approval",
+              warning:
+                "Docker sandbox unavailable. Every host command requires explicit approval.",
             }
           : tool,
       )
@@ -1906,9 +1908,11 @@ export async function runHarness({
         "Use create_word_document, create_presentation, and create_spreadsheet for real Office files. Do not try to write Office binaries with write_file.",
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
         "After creating or replacing an Office file, use inspect_office_file during mandatory self-check. Treat structural inspection as distinct from final visual rendering.",
-        commandToolAvailable
+        commandUsesContainer
           ? "Use run_command only when a command materially verifies the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
-          : "Command execution is unavailable because the OS-level sandbox is not ready. Never claim that a build or test was run.",
+          : commandToolAvailable
+            ? "Use run_command only when it materially verifies the result. The Docker sandbox is unavailable, so every command requires explicit user approval and runs on the host without OS isolation or network restrictions. Keep commands scoped to the authorized workspace and never claim container isolation."
+            : "Command execution is disabled for this task. Never claim that a build or test was run.",
         "When the Harness starts the mandatory self-check phase, re-read every changed file, fix issues you find, re-read files after fixes, and call complete_self_check before answering.",
         "The desktop UI already presents changed files, verification, Route history, and deliverables. Do not repeat them as Markdown inventory tables or tool-call logs in the final answer.",
         !hasWorkspace
@@ -1917,10 +1921,10 @@ export async function runHarness({
               canWriteWorkspace
                 ? "Workspace file changes are available subject to the effective Harness permission policy."
                 : "File mutation tools are disabled for this task.",
-              commandToolAvailable
+              commandUsesContainer
                 ? "The sandboxed command tool is available subject to the effective Harness permission policy."
                 : canRunCommands
-                  ? `The command tool is fail-closed because the sandbox is unavailable: ${sandboxStatus?.detail || "unknown reason"}`
+                  ? `The command tool uses mandatory host approval because the Docker sandbox is unavailable: ${sandboxStatus?.detail || "unknown reason"}`
                   : "The command tool is disabled for this task.",
             ].join(" "),
         "Keep the final answer concise. State the outcome, important limitations, and any user action still required.",
