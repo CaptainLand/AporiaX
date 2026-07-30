@@ -25,6 +25,16 @@ import {
   saveWorkspaceTextFile,
 } from "./agent-runtime.js";
 import { parseAttachment } from "./attachment-parser.js";
+import {
+  DEFAULT_DEEPSEEK_PROVIDER,
+  discoverProviderModels,
+  normalizeProviderInput,
+  publicProviderSummary,
+} from "./provider-config.js";
+import {
+  getSandboxStatus,
+  prepareSandbox,
+} from "./sandbox-runtime.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -44,6 +54,10 @@ function getCredentialPath() {
   return join(app.getPath("userData"), "deepseek-credentials.json");
 }
 
+function getProviderStorePath() {
+  return join(app.getPath("userData"), "aporiax-providers.json");
+}
+
 function getTasksPath() {
   return join(app.getPath("userData"), "aporiax-tasks.json");
 }
@@ -52,50 +66,175 @@ function getLegacyTasksPath() {
   return join(app.getPath("userData"), "deepagent-tasks.json");
 }
 
-async function loadApiKey() {
-  if (process.env.DEEPSEEK_API_KEY?.startsWith("sk-")) {
-    return process.env.DEEPSEEK_API_KEY;
+async function readStoredProviders() {
+  try {
+    const store = JSON.parse(
+      await readFile(getProviderStorePath(), "utf8"),
+    );
+    return Array.isArray(store?.providers) ? store.providers : [];
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw new Error("Unable to read the saved model providers.", {
+        cause: error,
+      });
+    }
   }
 
   try {
-    const stored = JSON.parse(await readFile(getCredentialPath(), "utf8"));
-    if (!stored?.encryptedKey || !safeStorage.isEncryptionAvailable()) {
-      return null;
-    }
-    return safeStorage.decryptString(
-      Buffer.from(stored.encryptedKey, "base64"),
+    const legacy = JSON.parse(
+      await readFile(getCredentialPath(), "utf8"),
     );
+    if (!legacy?.encryptedKey) return [];
+    const migrated = [
+      {
+        ...DEFAULT_DEEPSEEK_PROVIDER,
+        models: DEFAULT_DEEPSEEK_PROVIDER.models.map((model) => ({
+          ...model,
+        })),
+        encryptedKey: legacy.encryptedKey,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    await writeStoredProviders(migrated);
+    return migrated;
   } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw new Error("Unable to read the saved DeepSeek credential.", {
+    if (error?.code === "ENOENT") return [];
+    throw new Error("Unable to migrate the saved DeepSeek credential.", {
       cause: error,
     });
   }
 }
 
-async function saveApiKey(apiKey) {
-  const normalizedKey =
-    typeof apiKey === "string" ? apiKey.trim() : "";
-  if (
-    !normalizedKey.startsWith("sk-") ||
-    normalizedKey.length < 20 ||
-    normalizedKey.length > 500
-  ) {
-    throw new Error("Please enter a valid DeepSeek API key.");
+async function writeStoredProviders(providers) {
+  const serialized = JSON.stringify({
+    version: 2,
+    providers,
+  });
+  if (Buffer.byteLength(serialized, "utf8") > 2_000_000) {
+    throw new Error("Provider configuration exceeds the storage limit.");
   }
+  await mkdir(dirname(getProviderStorePath()), { recursive: true });
+  await writeFile(getProviderStorePath(), serialized, "utf8");
+}
+
+async function loadProviderRecords() {
+  const providers = await readStoredProviders();
+  const environmentKey = String(
+    process.env.DEEPSEEK_API_KEY || "",
+  ).trim();
+  if (!environmentKey) return providers;
+  const index = providers.findIndex(
+    (provider) => provider.id === DEFAULT_DEEPSEEK_PROVIDER.id,
+  );
+  if (index >= 0) {
+    return providers.map((provider, providerIndex) =>
+      providerIndex === index
+        ? { ...provider, environmentKey: true }
+        : provider,
+    );
+  }
+  return [
+    {
+      ...DEFAULT_DEEPSEEK_PROVIDER,
+      models: DEFAULT_DEEPSEEK_PROVIDER.models.map((model) => ({
+        ...model,
+      })),
+      environmentKey: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    ...providers,
+  ];
+}
+
+function decryptProviderKey(record) {
+  if (record.environmentKey) {
+    return String(process.env.DEEPSEEK_API_KEY || "").trim();
+  }
+  if (!record.encryptedKey) return "";
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error("Secure credential storage is unavailable on this device.");
   }
-
-  const encryptedKey = safeStorage
-    .encryptString(normalizedKey)
-    .toString("base64");
-  await mkdir(dirname(getCredentialPath()), { recursive: true });
-  await writeFile(
-    getCredentialPath(),
-    JSON.stringify({ version: 1, encryptedKey }),
-    "utf8",
+  return safeStorage.decryptString(
+    Buffer.from(record.encryptedKey, "base64"),
   );
+}
+
+async function resolveProvider(providerId) {
+  const providers = await loadProviderRecords();
+  const selected =
+    providers.find((provider) => provider.id === providerId) ||
+    providers[0];
+  if (!selected) {
+    throw new Error("尚未配置模型 API，请先添加一个 Provider。");
+  }
+  return {
+    ...publicProviderSummary(selected),
+    apiKey: decryptProviderKey(selected),
+  };
+}
+
+async function saveProvider(input) {
+  const storedProviders = await readStoredProviders();
+  const existing = storedProviders.find(
+    (provider) => provider.id === input?.id,
+  );
+  if (existing?.environmentKey) {
+    throw new Error("环境变量 Provider 不能在应用内修改。");
+  }
+  const normalized = normalizeProviderInput(input, existing);
+  const apiKey = String(input?.apiKey || "").trim();
+  if (apiKey.length > 2_000) {
+    throw new Error("API Key 长度超过安全限制。");
+  }
+  let encryptedKey = existing?.encryptedKey || "";
+  if (apiKey) {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error(
+        "Secure credential storage is unavailable on this device.",
+      );
+    }
+    encryptedKey = safeStorage
+      .encryptString(apiKey)
+      .toString("base64");
+  }
+  const nextRecord = {
+    ...normalized,
+    encryptedKey,
+  };
+  const nextProviders = existing
+    ? storedProviders.map((provider) =>
+        provider.id === existing.id ? nextRecord : provider,
+      )
+    : [...storedProviders, nextRecord];
+  await writeStoredProviders(nextProviders);
+  return publicProviderSummary(nextRecord);
+}
+
+async function removeProvider(providerId) {
+  const providers = await readStoredProviders();
+  const nextProviders = providers.filter(
+    (provider) => provider.id !== providerId,
+  );
+  if (nextProviders.length === providers.length) return false;
+  await writeStoredProviders(nextProviders);
+  return true;
+}
+
+async function loadApiKey() {
+  try {
+    return (await resolveProvider("deepseek")).apiKey || null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveApiKey(apiKey) {
+  return saveProvider({
+    ...DEFAULT_DEEPSEEK_PROVIDER,
+    apiKey,
+  });
 }
 
 async function loadTasks() {
@@ -357,9 +496,51 @@ ipcMain.handle("attachments:parse", async (event, request) => {
   return parseAttachment(request);
 });
 
+ipcMain.handle("providers:list", async (event) => {
+  assertTrustedSender(event);
+  return (await loadProviderRecords()).map(publicProviderSummary);
+});
+
+ipcMain.handle("providers:discover", async (event, request) => {
+  assertTrustedSender(event);
+  let apiKey = String(request?.apiKey || "").trim();
+  if (!apiKey && request?.id) {
+    const existing = (await loadProviderRecords()).find(
+      (provider) => provider.id === request.id,
+    );
+    if (existing) apiKey = decryptProviderKey(existing);
+  }
+  return discoverProviderModels({
+    baseUrl: request?.baseUrl,
+    apiKey,
+  });
+});
+
+ipcMain.handle("providers:save", async (event, request) => {
+  assertTrustedSender(event);
+  return saveProvider(request);
+});
+
+ipcMain.handle("providers:remove", async (event, providerId) => {
+  assertTrustedSender(event);
+  return removeProvider(providerId);
+});
+
+ipcMain.handle("sandbox:status", async (event) => {
+  assertTrustedSender(event);
+  return getSandboxStatus();
+});
+
+ipcMain.handle("sandbox:prepare", async (event) => {
+  assertTrustedSender(event);
+  return prepareSandbox({
+    dataDirectory: app.getPath("userData"),
+  });
+});
+
 ipcMain.handle("harness:has-api-key", async (event) => {
   assertTrustedSender(event);
-  return Boolean(await loadApiKey());
+  return (await loadProviderRecords()).length > 0;
 });
 
 ipcMain.handle("harness:save-api-key", async (event, apiKey) => {
@@ -371,6 +552,7 @@ ipcMain.handle("harness:save-api-key", async (event, apiKey) => {
 ipcMain.handle("harness:clear-api-key", async (event) => {
   assertTrustedSender(event);
   await rm(getCredentialPath(), { force: true });
+  await removeProvider("deepseek");
   return true;
 });
 
@@ -384,10 +566,7 @@ ipcMain.handle("harness:run", async (event, request) => {
   if (activeRuns.has(runId)) {
     throw new Error("This Harness run is already active.");
   }
-  const apiKey = await loadApiKey();
-  if (!apiKey) {
-    throw new Error("DeepSeek API key is not configured.");
-  }
+  const provider = await resolveProvider(request?.providerId);
 
   const controller = new AbortController();
   activeRuns.set(runId, {
@@ -398,7 +577,7 @@ ipcMain.handle("harness:run", async (event, request) => {
   try {
     return await runHarness({
       ...request,
-      apiKey,
+      provider,
       signal: controller.signal,
       onEvent: (payload) => sendHarnessEvent(event, runId, payload),
       requestApproval: (details) =>

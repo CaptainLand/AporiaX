@@ -93,27 +93,22 @@ function readPanelWidth(storageKey, fallback, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, saved));
 }
 
-const MODELS = [
-  {
-    id: "deepseek-v4-pro",
-    name: "DeepSeek V4 Pro",
-    shortName: "V4 Pro",
-    description: "复杂规划、编码与长工具链 · 仅文本",
-    supportsImages: false,
-    icon: Brain,
-  },
-  {
-    id: "deepseek-v4-flash",
-    name: "DeepSeek V4 Flash",
-    shortName: "V4 Flash",
-    description: "快速问答、摘要与日常任务 · 仅文本",
-    supportsImages: false,
-    icon: Zap,
-  },
-];
+const LEGACY_DEEPSEEK_PROVIDER_ID = "deepseek";
+const LEGACY_DEEPSEEK_MODEL_ID = "deepseek-v4-pro";
+const EMPTY_MODEL = {
+  id: "",
+  providerId: "",
+  providerName: "未配置 Provider",
+  name: "未配置模型",
+  shortName: "未配置",
+  description: "请先添加模型 API",
+  supportsImages: false,
+  supportsThinking: false,
+  supportsTools: false,
+  icon: Brain,
+};
 
-const DEFAULT_CONFIG = {
-  modelId: "deepseek-v4-pro",
+const DEFAULT_TASK_OPTIONS = {
   thinking: true,
   effort: "high",
   permission: "workspace-write",
@@ -134,8 +129,43 @@ function getFolderName(folderPath) {
   return parts.at(-1) || folderPath;
 }
 
-function getModel(modelId) {
-  return MODELS.find((model) => model.id === modelId) || MODELS[0];
+function getAvailableModels(providers) {
+  return (providers || []).flatMap((provider) =>
+    (provider.models || []).map((model) => ({
+      ...model,
+      providerId: provider.id,
+      providerName: provider.name,
+      description: [
+        provider.name,
+        model.supportsImages ? "支持图片" : "仅文本",
+        model.supportsTools === false ? "不支持工具" : "支持工具",
+      ].join(" · "),
+      icon: model.supportsThinking ? Brain : Zap,
+    })),
+  );
+}
+
+function getModel(providers, providerId, modelId) {
+  const models = getAvailableModels(providers);
+  return (
+    models.find(
+      (model) =>
+        model.providerId === providerId && model.id === modelId,
+    ) ||
+    models.find((model) => model.id === modelId) ||
+    models[0] ||
+    EMPTY_MODEL
+  );
+}
+
+function getDefaultTaskConfig(providers) {
+  const model = getAvailableModels(providers)[0] || EMPTY_MODEL;
+  return {
+    ...DEFAULT_TASK_OPTIONS,
+    thinking: Boolean(model.supportsThinking),
+    providerId: model.providerId || LEGACY_DEEPSEEK_PROVIDER_ID,
+    modelId: model.id || LEGACY_DEEPSEEK_MODEL_ID,
+  };
 }
 
 function IconButton({ label, className = "", children, ...props }) {
@@ -288,7 +318,7 @@ function ModelChoice({ model, selected, onSelect, compact = false }) {
   return (
     <button
       className={`model-choice ${selected ? "selected" : ""} ${compact ? "compact" : ""}`}
-      onClick={() => onSelect(model.id)}
+      onClick={() => onSelect(model)}
       type="button"
     >
       <span className="model-choice-icon">
@@ -296,13 +326,14 @@ function ModelChoice({ model, selected, onSelect, compact = false }) {
       </span>
       <span className="model-choice-copy">
         <span className="model-choice-name">{model.name}</span>
+        <small>{model.description}</small>
       </span>
       {selected && <Check size={17} className="model-choice-check" />}
     </button>
   );
 }
 
-function Switch({ checked, onChange, label }) {
+function Switch({ checked, onChange, label, disabled = false }) {
   return (
     <button
       type="button"
@@ -310,6 +341,7 @@ function Switch({ checked, onChange, label }) {
       aria-checked={checked}
       aria-label={label}
       className={`switch ${checked ? "on" : ""}`}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
     >
       <span />
@@ -334,13 +366,27 @@ function SegmentedControl({ value, onChange, options, ariaLabel }) {
   );
 }
 
-function NewTaskModal({ onClose, onCreate, onNotice }) {
+function NewTaskModal({
+  providers,
+  onClose,
+  onCreate,
+  onNotice,
+  onManageProviders,
+}) {
   const [workspacePath, setWorkspacePath] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [title, setTitle] = useState("");
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [config, setConfig] = useState(() =>
+    getDefaultTaskConfig(providers),
+  );
   const [selectingFolder, setSelectingFolder] = useState(false);
   const titleRef = useRef(null);
+  const hasModels = getAvailableModels(providers).length > 0;
+  const selectedModel = getModel(
+    providers,
+    config.providerId,
+    config.modelId,
+  );
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -386,7 +432,7 @@ function NewTaskModal({ onClose, onCreate, onNotice }) {
   const submit = (event) => {
     event.preventDefault();
     const trimmedTitle = title.trim();
-    if (!workspacePath && !trimmedTitle) return;
+    if ((!workspacePath && !trimmedTitle) || !hasModels) return;
     onCreate({
       ...config,
       title:
@@ -457,18 +503,48 @@ function NewTaskModal({ onClose, onCreate, onNotice }) {
           </section>
 
           <section className="form-section">
-            <label className="field-label">模型</label>
+            <div className="field-label-row">
+              <label className="field-label">模型</label>
+              <button
+                className="inline-settings-link"
+                type="button"
+                onClick={onManageProviders}
+              >
+                管理 Provider
+              </button>
+            </div>
             <div className="model-grid">
-              {MODELS.map((model) => (
-                <ModelChoice
-                  key={model.id}
-                  model={model}
-                  selected={config.modelId === model.id}
-                  onSelect={(modelId) =>
-                    setConfig((current) => ({ ...current, modelId }))
-                  }
-                />
-              ))}
+              {getAvailableModels(providers).length ? (
+                getAvailableModels(providers).map((model) => (
+                  <ModelChoice
+                    key={`${model.providerId}:${model.id}`}
+                    model={model}
+                    selected={
+                      config.providerId === model.providerId &&
+                      config.modelId === model.id
+                    }
+                    onSelect={(selection) =>
+                      setConfig((current) => ({
+                        ...current,
+                        providerId: selection.providerId,
+                        modelId: selection.id,
+                        thinking: selection.supportsThinking
+                          ? current.thinking
+                          : false,
+                      }))
+                    }
+                  />
+                ))
+              ) : (
+                <button
+                  className="empty-provider-choice"
+                  type="button"
+                  onClick={onManageProviders}
+                >
+                  <Plus size={16} />
+                  添加第一个模型 API
+                </button>
+              )}
             </div>
           </section>
 
@@ -483,6 +559,7 @@ function NewTaskModal({ onClose, onCreate, onNotice }) {
               <Switch
                 checked={config.thinking}
                 label="深度思考"
+                disabled={!selectedModel.supportsThinking}
                 onChange={(thinking) =>
                   setConfig((current) => ({ ...current, thinking }))
                 }
@@ -532,7 +609,9 @@ function NewTaskModal({ onClose, onCreate, onNotice }) {
           <button
             className="primary-button"
             type="submit"
-            disabled={!workspacePath && !title.trim()}
+            disabled={
+              !hasModels || (!workspacePath && !title.trim())
+            }
           >
             创建任务
           </button>
@@ -567,8 +646,13 @@ function EmptyState({ onNewTask }) {
   );
 }
 
-function ModelMenu({ task, onUpdate, onClose }) {
+function ModelMenu({ task, providers, onUpdate, onClose }) {
   const menuRef = useRef(null);
+  const selectedModel = getModel(
+    providers,
+    task.providerId,
+    task.modelId,
+  );
 
   useEffect(() => {
     const handlePointerDown = (event) => {
@@ -589,13 +673,24 @@ function ModelMenu({ task, onUpdate, onClose }) {
     <div className="model-menu" ref={menuRef}>
       <div className="model-menu-heading">选择模型</div>
       <div className="model-menu-options">
-        {MODELS.map((model) => (
+        {getAvailableModels(providers).map((model) => (
           <ModelChoice
-            key={model.id}
+            key={`${model.providerId}:${model.id}`}
             compact
             model={model}
-            selected={task.modelId === model.id}
-            onSelect={(modelId) => onUpdate({ modelId })}
+            selected={
+              task.providerId === model.providerId &&
+              task.modelId === model.id
+            }
+            onSelect={(selection) =>
+              onUpdate({
+                providerId: selection.providerId,
+                modelId: selection.id,
+                thinking: selection.supportsThinking
+                  ? task.thinking
+                  : false,
+              })
+            }
           />
         ))}
       </div>
@@ -608,6 +703,7 @@ function ModelMenu({ task, onUpdate, onClose }) {
         <Switch
           checked={task.thinking}
           label="深度思考"
+          disabled={!selectedModel.supportsThinking}
           onChange={(thinking) => onUpdate({ thinking })}
         />
       </div>
@@ -704,6 +800,7 @@ function formatAttachmentSize(size) {
 
 function Composer({
   task,
+  providers,
   onSend,
   onStop,
   onUpdateTask,
@@ -717,7 +814,11 @@ function Composer({
   const textareaRef = useRef(null);
   const imageInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
-  const model = getModel(task.modelId);
+  const model = getModel(
+    providers,
+    task.providerId,
+    task.modelId,
+  );
 
   const send = () => {
     const content = message.trim();
@@ -997,6 +1098,7 @@ function Composer({
               {modelMenuOpen && (
                 <ModelMenu
                   task={task}
+                  providers={providers}
                   onClose={() => setModelMenuOpen(false)}
                   onUpdate={(patch) => onUpdateTask(patch)}
                 />
@@ -1778,11 +1880,17 @@ function RouteView({
 function SettingsPanel({
   task,
   onClose,
-  apiConfigured,
-  onManageApiKey,
+  providers,
+  onManageProviders,
+  sandboxStatus,
+  sandboxPreparing,
+  onPrepareSandbox,
   onSelectWorkspace,
   style,
 }) {
+  const provider =
+    providers.find((candidate) => candidate.id === task.providerId) ||
+    providers[0];
   return (
     <aside className="settings-panel" style={style}>
       <div className="settings-panel-header">
@@ -1799,18 +1907,68 @@ function SettingsPanel({
         <div className="settings-label">模型服务</div>
         <div className="api-status-row">
           <div className="api-status-copy">
-            <span className={`api-status-dot ${apiConfigured ? "ready" : ""}`} />
+            <span className={`api-status-dot ${provider ? "ready" : ""}`} />
             <div>
               <strong>
-                {apiConfigured ? "DeepSeek 已连接" : "需要配置 API Key"}
+                {provider
+                  ? `${provider.name} · ${provider.models?.length || 0} 个模型`
+                  : "需要添加模型 API"}
               </strong>
-              <span>密钥由系统安全存储加密保管</span>
+              <span>
+                {provider?.baseUrl ||
+                  "支持多个 OpenAI-compatible Provider"}
+              </span>
             </div>
           </div>
-          <button className="settings-link" onClick={onManageApiKey}>
-            {apiConfigured ? "管理" : "设置"}
+          <button className="settings-link" onClick={onManageProviders}>
+            {provider ? "管理" : "添加"}
           </button>
         </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-label">命令沙箱</div>
+        <div className="sandbox-status-card">
+          <span
+            className={`sandbox-status-icon ${
+              sandboxStatus?.available ? "ready" : ""
+            }`}
+          >
+            <LockKeyhole size={16} />
+          </span>
+          <div>
+            <strong>
+              {sandboxStatus?.available
+                ? "容器沙箱已就绪"
+                : "命令执行已安全关闭"}
+            </strong>
+            <span>
+              {sandboxStatus?.detail ||
+                "正在检测 Docker 与 AporiaX 沙箱镜像"}
+            </span>
+          </div>
+        </div>
+        {!sandboxStatus?.available && (
+          <button
+            className="workspace-settings-button"
+            type="button"
+            disabled={sandboxPreparing}
+            onClick={onPrepareSandbox}
+          >
+            {sandboxPreparing && (
+              <LoaderCircle className="spin" size={14} />
+            )}
+            {sandboxPreparing ? "正在准备沙箱" : "准备 Docker 沙箱"}
+          </button>
+        )}
+        {sandboxStatus?.available && (
+          <div className="sandbox-constraints">
+            <span>断网</span>
+            <span>只读系统</span>
+            <span>{sandboxStatus.memory || "1536m"}</span>
+            <span>{sandboxStatus.pidsLimit || 256} 进程</span>
+          </div>
+        )}
       </section>
 
       <section className="settings-section">
@@ -1958,6 +2116,7 @@ function PanelResizer({ panelName, width, minimum, maximum, onResize }) {
 
 function TaskWorkspace({
   task,
+  providers,
   sidebarCollapsed,
   onToggleSidebar,
   settingsOpen,
@@ -1973,8 +2132,10 @@ function TaskWorkspace({
   onRespondApproval,
   onUpdateTask,
   isRunning,
-  apiConfigured,
-  onManageApiKey,
+  onManageProviders,
+  sandboxStatus,
+  sandboxPreparing,
+  onPrepareSandbox,
   onSelectWorkspace,
   onNotice,
   theme,
@@ -1996,7 +2157,11 @@ function TaskWorkspace({
   const threadBodyRef = useRef(null);
   const viewScrollMemoryRef = useRef(new Map());
   const dialogueFollowRef = useRef(true);
-  const model = getModel(task.modelId);
+  const model = getModel(
+    providers,
+    task.providerId,
+    task.modelId,
+  );
   const latestMessage = task.messages.at(-1);
   const latestMessageContentLength =
     latestMessage?.role === "assistant"
@@ -2335,6 +2500,7 @@ function TaskWorkspace({
 
         <Composer
           task={task}
+          providers={providers}
           onSend={onSend}
           onStop={onStop}
           onUpdateTask={onUpdateTask}
@@ -2354,9 +2520,12 @@ function TaskWorkspace({
           />
           <SettingsPanel
             task={task}
+            providers={providers}
             onClose={onToggleSettings}
-            apiConfigured={apiConfigured}
-            onManageApiKey={onManageApiKey}
+            onManageProviders={onManageProviders}
+            sandboxStatus={sandboxStatus}
+            sandboxPreparing={sandboxPreparing}
+            onPrepareSandbox={onPrepareSandbox}
             onSelectWorkspace={onSelectWorkspace}
             style={{ flexBasis: `${settingsPanelWidth}px` }}
           />
@@ -2382,48 +2551,147 @@ function Toast({ message }) {
   return <div className="toast">{message}</div>;
 }
 
-function ApiKeyModal({
-  configured,
+function emptyProviderForm() {
+  return {
+    id: "",
+    name: "",
+    baseUrl: "",
+    apiKey: "",
+    modelsText: "",
+  };
+}
+
+function providerToForm(provider) {
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    apiKey: "",
+    modelsText: (provider.models || [])
+      .map((model) => model.id)
+      .join("\n"),
+  };
+}
+
+function cleanIpcError(error, fallback) {
+  return String(error?.message || fallback)
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^Error:\s*/i, "");
+}
+
+function ProviderManagerModal({
+  providers,
   onClose,
-  onSave,
-  onClear,
+  onChanged,
+  onNotice,
 }) {
-  const [apiKey, setApiKey] = useState("");
+  const [form, setForm] = useState(() =>
+    providers[0] ? providerToForm(providers[0]) : emptyProviderForm(),
+  );
   const [saving, setSaving] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
-  const inputRef = useRef(null);
+  const nameRef = useRef(null);
+  const editingProvider = providers.find(
+    (provider) => provider.id === form.id,
+  );
 
   useEffect(() => {
-    inputRef.current?.focus();
+    nameRef.current?.focus();
     const handleKeyDown = (event) => {
-      if (event.key === "Escape" && !saving) onClose();
+      if (event.key === "Escape" && !saving && !discovering) onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, saving]);
+  }, [onClose, saving, discovering]);
+
+  const modelIds = form.modelsText
+    .split(/[\r\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const discoverModels = async () => {
+    if (!form.baseUrl.trim() || discovering) return;
+    setDiscovering(true);
+    setError("");
+    try {
+      const result = await window.desktop.providers.discover({
+        id: form.id || undefined,
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey,
+      });
+      setForm((current) => ({
+        ...current,
+        name: current.name.trim()
+          ? current.name
+          : result.suggestedName,
+        baseUrl: result.baseUrl,
+        modelsText: result.models
+          .map((model) => model.id)
+          .join("\n"),
+      }));
+      onNotice(`已识别 ${result.models.length} 个模型`);
+    } catch (discoverError) {
+      setError(
+        cleanIpcError(
+          discoverError,
+          "无法自动发现模型，可以手动填写模型 ID。",
+        ),
+      );
+    } finally {
+      setDiscovering(false);
+    }
+  };
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!apiKey.trim() || saving) return;
+    if (
+      !form.name.trim() ||
+      !form.baseUrl.trim() ||
+      !modelIds.length ||
+      saving
+    ) {
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      await onSave(apiKey);
-      setApiKey("");
+      await window.desktop.providers.save({
+        id: form.id || undefined,
+        name: form.name,
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey,
+        models: modelIds,
+      });
+      await onChanged();
+      setForm(emptyProviderForm());
+      onNotice(form.id ? "Provider 已更新" : "Provider 已添加");
     } catch (saveError) {
-      setError(saveError?.message || "保存失败，请重试。");
+      setError(cleanIpcError(saveError, "保存 Provider 失败。"));
     } finally {
       setSaving(false);
     }
   };
 
-  const clearKey = async () => {
+  const removeCurrentProvider = async () => {
+    if (
+      !editingProvider ||
+      editingProvider.environmentKey ||
+      !window.confirm(
+        `移除 ${editingProvider.name}？已有任务记录不会被删除，但需要重新选择模型。`,
+      )
+    ) {
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      await onClear();
-    } catch (clearError) {
-      setError(clearError?.message || "移除失败，请重试。");
+      await window.desktop.providers.remove(editingProvider.id);
+      await onChanged();
+      setForm(emptyProviderForm());
+      onNotice("Provider 已移除");
+    } catch (removeError) {
+      setError(cleanIpcError(removeError, "移除 Provider 失败。"));
     } finally {
       setSaving(false);
     }
@@ -2431,53 +2699,171 @@ function ApiKeyModal({
 
   return (
     <div className="modal-backdrop">
-      <form className="api-key-modal" onSubmit={submit}>
+      <form className="provider-manager-modal" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <h2>DeepSeek API</h2>
-            <p>密钥只会发送到 Electron 主进程并进行系统级加密。</p>
+            <h2>模型 Provider</h2>
+            <p>添加多个 OpenAI-compatible API，并为任务自由选择模型。</p>
           </div>
           <IconButton label="关闭" type="button" onClick={onClose}>
             <X size={18} />
           </IconButton>
         </div>
-        <div className="api-key-body">
-          <div className="secure-key-note">
-            <KeyRound size={17} />
-            <div>
-              <strong>
-                {configured ? "当前已保存一个密钥" : "尚未配置密钥"}
-              </strong>
-              <span>前端不会读取、显示或保存密钥明文。</span>
+
+        <div className="provider-manager-body">
+          <aside className="provider-list">
+            <button
+              className={!form.id ? "active add-provider" : "add-provider"}
+              type="button"
+              onClick={() => {
+                setForm(emptyProviderForm());
+                setError("");
+              }}
+            >
+              <Plus size={15} />
+              新增 API
+            </button>
+            {providers.map((provider) => (
+              <button
+                className={form.id === provider.id ? "active" : ""}
+                type="button"
+                key={provider.id}
+                onClick={() => {
+                  setForm(providerToForm(provider));
+                  setError("");
+                }}
+              >
+                <span>
+                  <strong>{provider.name}</strong>
+                  <small>{provider.models?.length || 0} 个模型</small>
+                </span>
+                <ChevronDown size={13} />
+              </button>
+            ))}
+          </aside>
+
+          <div className="provider-editor">
+            <div className="secure-key-note">
+              <KeyRound size={17} />
+              <div>
+                <strong>密钥由系统安全存储加密保管</strong>
+                <span>
+                  编辑时留空会保留原密钥；本地无鉴权 API 可以不填。
+                </span>
+              </div>
             </div>
+
+            <div className="provider-form-grid">
+              <label>
+                <span>名称</span>
+                <input
+                  ref={nameRef}
+                  className="text-field"
+                  value={form.name}
+                  maxLength={80}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="例如 OpenAI、OpenRouter、本地 Ollama"
+                />
+              </label>
+              <label>
+                <span>API Base URL</span>
+                <input
+                  className="text-field"
+                  value={form.baseUrl}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      baseUrl: event.target.value,
+                    }))
+                  }
+                  placeholder="https://api.example.com/v1"
+                />
+              </label>
+              <label className="provider-key-field">
+                <span>
+                  {editingProvider?.hasApiKey
+                    ? "替换 API Key（可选）"
+                    : "API Key（可选）"}
+                </span>
+                <input
+                  className="text-field"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={form.apiKey}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      apiKey: event.target.value,
+                    }))
+                  }
+                  placeholder={
+                    editingProvider?.hasApiKey
+                      ? "已安全保存；留空保持不变"
+                      : "sk-… 或其他服务商密钥"
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="provider-model-heading">
+              <div>
+                <strong>模型 ID</strong>
+                <span>每行一个；自动识别视觉、思考和工具能力。</span>
+              </div>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!form.baseUrl.trim() || discovering}
+                onClick={() => void discoverModels()}
+              >
+                {discovering ? (
+                  <LoaderCircle className="spin" size={14} />
+                ) : (
+                  <Search size={14} />
+                )}
+                自动发现
+              </button>
+            </div>
+            <textarea
+              className="provider-models-input"
+              value={form.modelsText}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  modelsText: event.target.value,
+                }))
+              }
+              placeholder={"gpt-5.2\nqwen3-coder\nmy-local-model"}
+              spellCheck={false}
+            />
+            <div className="provider-detection-summary">
+              <span>{modelIds.length} 个模型</span>
+              <span>Chat Completions</span>
+              <span>Bearer / 无鉴权</span>
+            </div>
+            {error && <p className="api-key-error">{error}</p>}
           </div>
-          <label className="field-label" htmlFor="deepseek-api-key">
-            {configured ? "替换 API Key" : "API Key"}
-          </label>
-          <input
-            id="deepseek-api-key"
-            ref={inputRef}
-            className="text-field"
-            type="password"
-            autoComplete="off"
-            spellCheck="false"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="sk-••••••••••••••••"
-          />
-          {error && <p className="api-key-error">{error}</p>}
         </div>
+
         <div className="modal-footer api-key-footer">
-          {configured && (
+          {editingProvider && !editingProvider.environmentKey ? (
             <button
               className="danger-text-button"
               type="button"
               disabled={saving}
-              onClick={clearKey}
+              onClick={() => void removeCurrentProvider()}
             >
               <Trash2 size={14} />
-              移除密钥
+              移除 Provider
             </button>
+          ) : (
+            <span />
           )}
           <div className="modal-footer-actions">
             <button
@@ -2485,15 +2871,20 @@ function ApiKeyModal({
               type="button"
               onClick={onClose}
             >
-              取消
+              关闭
             </button>
             <button
               className="primary-button"
               type="submit"
-              disabled={!apiKey.trim() || saving}
+              disabled={
+                !form.name.trim() ||
+                !form.baseUrl.trim() ||
+                !modelIds.length ||
+                saving
+              }
             >
               {saving && <LoaderCircle className="spin" size={14} />}
-              安全保存
+              {form.id ? "保存修改" : "添加 Provider"}
             </button>
           </div>
         </div>
@@ -2514,8 +2905,12 @@ function App() {
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const [notice, setNotice] = useState("");
-  const [apiConfigured, setApiConfigured] = useState(false);
-  const [apiKeyOpen, setApiKeyOpen] = useState(false);
+  const [providers, setProviders] = useState([]);
+  const [providersReady, setProvidersReady] = useState(false);
+  const [providerManagerOpen, setProviderManagerOpen] =
+    useState(false);
+  const [sandboxStatus, setSandboxStatus] = useState(null);
+  const [sandboxPreparing, setSandboxPreparing] = useState(false);
   const [runningTaskId, setRunningTaskId] = useState(null);
   const [activeRunId, setActiveRunId] = useState(null);
   const [runStatus, setRunStatus] = useState(null);
@@ -2528,6 +2923,38 @@ function App() {
   const tasksRef = useRef(tasks);
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
+
+  const reloadProviders = async () => {
+    if (!window.desktop?.providers?.list) {
+      setProviders([]);
+      setProvidersReady(true);
+      return [];
+    }
+    try {
+      const nextProviders = await window.desktop.providers.list();
+      setProviders(nextProviders);
+      return nextProviders;
+    } finally {
+      setProvidersReady(true);
+    }
+  };
+
+  const refreshSandboxStatus = async () => {
+    if (!window.desktop?.sandbox?.status) return null;
+    try {
+      const status = await window.desktop.sandbox.status();
+      setSandboxStatus(status);
+      return status;
+    } catch (error) {
+      const status = {
+        available: false,
+        state: "error",
+        detail: cleanIpcError(error, "无法检测命令沙箱"),
+      };
+      setSandboxStatus(status);
+      return status;
+    }
+  };
 
   useEffect(() => {
     tasksRef.current = tasks;
@@ -2596,19 +3023,40 @@ function App() {
   }, [storageReady, tasks]);
 
   useEffect(() => {
-    let active = true;
-    window.desktop?.harness
-      ?.hasApiKey()
-      .then((configured) => {
-        if (active) setApiConfigured(Boolean(configured));
-      })
-      .catch(() => {
-        if (active) setApiConfigured(false);
-      });
-    return () => {
-      active = false;
-    };
+    void reloadProviders().catch(() => {
+      setProviders([]);
+      setProvidersReady(true);
+      setNotice("模型 Provider 加载失败");
+    });
+    void refreshSandboxStatus();
   }, []);
+
+  useEffect(() => {
+    if (!providersReady || !providers.length) return;
+    setTasks((current) =>
+      current.map((task) => {
+        const selection = getModel(
+          providers,
+          task.providerId,
+          task.modelId,
+        );
+        if (
+          task.providerId === selection.providerId &&
+          task.modelId === selection.id
+        ) {
+          return task;
+        }
+        return {
+          ...task,
+          providerId: selection.providerId,
+          modelId: selection.id,
+          thinking: selection.supportsThinking
+            ? task.thinking
+            : false,
+        };
+      }),
+    );
+  }, [providersReady, providers]);
 
   useEffect(() => {
     if (!window.desktop?.harness?.onEvent) return undefined;
@@ -2630,6 +3078,11 @@ function App() {
     return window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+
+      if (event.type === "turn.started") {
+        if (event.sandbox) setSandboxStatus(event.sandbox);
+        return;
+      }
 
       if (event.type === "response.reset") {
         setTasks((current) =>
@@ -2698,7 +3151,7 @@ function App() {
           ),
         );
         setRunStatus({
-          title: `DeepSeek 正在自动重试 ${event.attempt}/${event.maxAttempts}`,
+          title: `${event.provider || "模型服务"} 正在自动重试 ${event.attempt}/${event.maxAttempts}`,
           detail: "请求暂时无响应或服务繁忙，已保留本轮任务状态",
         });
         return;
@@ -2742,7 +3195,7 @@ function App() {
           title: toolLabels[event.tool] || "Harness 正在运行",
           detail:
             event.tool === "run_command"
-              ? "命令执行前会等待你的批准"
+              ? "命令将在断网的 OS 级容器沙箱中运行，执行前等待批准"
               : event.phase === "self-check"
                 ? "强制复核本轮修改，发现问题会继续修复"
                 : "操作范围限制在当前工作区内",
@@ -2999,9 +3452,9 @@ function App() {
       setNotice("请在 Electron 桌面端运行 Harness");
       return false;
     }
-    if (!apiConfigured) {
-      setApiKeyOpen(true);
-      setNotice("请先安全保存 DeepSeek API Key");
+    if (!providers.length) {
+      setProviderManagerOpen(true);
+      setNotice("请先添加一个模型 Provider");
       return false;
     }
     if (!activeTask || runningTaskId) return false;
@@ -3066,6 +3519,7 @@ function App() {
       .run({
         runId,
         workspacePath: activeTask.workspacePath,
+        providerId: activeTask.providerId,
         modelId: activeTask.modelId,
         thinking: activeTask.thinking,
         effort: activeTask.effort,
@@ -3100,7 +3554,12 @@ function App() {
                             result.instructionFiles || [],
                           permissionConfigFile:
                             result.permissionConfigFile || null,
-                          provider: result.provider || "deepseek",
+                          provider:
+                            result.provider || activeTask.providerId,
+                          providerName:
+                            result.providerName || "",
+                          model: result.model || activeTask.modelId,
+                          sandbox: result.sandbox || null,
                           tools: result.tools || [],
                           selfCheck: result.selfCheck || null,
                           completedAt: new Date().toISOString(),
@@ -3237,7 +3696,14 @@ function App() {
       assistantMessage.inputAttachments ||
       [];
     const retryImages = retryAttachments.filter(isImageAttachment);
-    if (retryImages.length && !getModel(task?.modelId).supportsImages) {
+    if (
+      retryImages.length &&
+      !getModel(
+        providers,
+        task?.providerId,
+        task?.modelId,
+      ).supportsImages
+    ) {
       setNotice("当前模型不支持识图，已移除图片并按文字内容重试");
       return sendMessage(
         assistantMessage.prompt || sourceMessage?.content || "",
@@ -3337,18 +3803,20 @@ function App() {
     setNotice("已确认保留上一轮修改");
   };
 
-  const saveApiKey = async (apiKey) => {
-    await window.desktop?.harness?.saveApiKey(apiKey);
-    setApiConfigured(true);
-    setApiKeyOpen(false);
-    setNotice("DeepSeek API Key 已安全保存");
-  };
-
-  const clearApiKey = async () => {
-    await window.desktop?.harness?.clearApiKey();
-    setApiConfigured(false);
-    setApiKeyOpen(false);
-    setNotice("DeepSeek API Key 已移除");
+  const prepareCommandSandbox = async () => {
+    if (!window.desktop?.sandbox?.prepare || sandboxPreparing) return;
+    setSandboxPreparing(true);
+    setNotice("正在构建 AporiaX 沙箱镜像，首次准备可能需要几分钟");
+    try {
+      const status = await window.desktop.sandbox.prepare();
+      setSandboxStatus(status);
+      setNotice("OS 级命令沙箱已就绪");
+    } catch (error) {
+      setNotice(cleanIpcError(error, "沙箱准备失败"));
+      await refreshSandboxStatus();
+    } finally {
+      setSandboxPreparing(false);
+    }
   };
 
   const selectWorkspaceForActiveTask = async () => {
@@ -3409,6 +3877,7 @@ function App() {
           {activeTask ? (
             <TaskWorkspace
               task={activeTask}
+              providers={providers}
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={() =>
                 setSidebarCollapsed((current) => !current)
@@ -3428,8 +3897,10 @@ function App() {
               onRespondApproval={respondToApproval}
               onUpdateTask={updateActiveTask}
               isRunning={runningTaskId === activeTask.id}
-              apiConfigured={apiConfigured}
-              onManageApiKey={() => setApiKeyOpen(true)}
+              onManageProviders={() => setProviderManagerOpen(true)}
+              sandboxStatus={sandboxStatus}
+              sandboxPreparing={sandboxPreparing}
+              onPrepareSandbox={() => void prepareCommandSandbox()}
               onSelectWorkspace={selectWorkspaceForActiveTask}
               onNotice={setNotice}
               theme={theme}
@@ -3447,17 +3918,22 @@ function App() {
 
       {newTaskOpen && (
         <NewTaskModal
+          providers={providers}
           onClose={() => setNewTaskOpen(false)}
           onCreate={createTask}
           onNotice={setNotice}
+          onManageProviders={() => {
+            setNewTaskOpen(false);
+            setProviderManagerOpen(true);
+          }}
         />
       )}
-      {apiKeyOpen && (
-        <ApiKeyModal
-          configured={apiConfigured}
-          onClose={() => setApiKeyOpen(false)}
-          onSave={saveApiKey}
-          onClear={clearApiKey}
+      {providerManagerOpen && (
+        <ProviderManagerModal
+          providers={providers}
+          onClose={() => setProviderManagerOpen(false)}
+          onChanged={reloadProviders}
+          onNotice={setNotice}
         />
       )}
       {welcomeOpen && <WelcomeOverlay onContinue={dismissWelcome} />}

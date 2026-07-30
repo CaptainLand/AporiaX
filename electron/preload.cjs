@@ -28,6 +28,18 @@ contextBridge.exposeInMainWorld("desktop", {
   attachments: {
     parse: (request) => ipcRenderer.invoke("attachments:parse", request),
   },
+  providers: {
+    list: () => ipcRenderer.invoke("providers:list"),
+    discover: (request) =>
+      ipcRenderer.invoke("providers:discover", request),
+    save: (request) => ipcRenderer.invoke("providers:save", request),
+    remove: (providerId) =>
+      ipcRenderer.invoke("providers:remove", providerId),
+  },
+  sandbox: {
+    status: () => ipcRenderer.invoke("sandbox:status"),
+    prepare: () => ipcRenderer.invoke("sandbox:prepare"),
+  },
   window: {
     minimize: () => ipcRenderer.invoke("desktop:minimize"),
     toggleMaximize: () => ipcRenderer.invoke("desktop:toggle-maximize"),

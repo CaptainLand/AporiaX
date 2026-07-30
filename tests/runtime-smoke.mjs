@@ -28,9 +28,71 @@ import {
   inspectOfficeArtifact,
 } from "../electron/office-tools.js";
 import { parseAttachment } from "../electron/attachment-parser.js";
+import {
+  DEFAULT_DEEPSEEK_PROVIDER,
+  inferModelCapabilities,
+  normalizeProviderBaseUrl,
+  normalizeProviderInput,
+} from "../electron/provider-config.js";
+import {
+  SANDBOX_IMAGE,
+  buildDockerSandboxArgs,
+} from "../electron/sandbox-runtime.js";
 
 const testRoot = await mkdtemp(join(resolve("."), ".runtime-smoke-"));
 const originalFetch = globalThis.fetch;
+const testProvider = {
+  ...DEFAULT_DEEPSEEK_PROVIDER,
+  models: DEFAULT_DEEPSEEK_PROVIDER.models.map((model) => ({
+    ...model,
+  })),
+  apiKey: "sk-runtime-smoke-test",
+};
+const testSandboxStatus = {
+  backend: "test",
+  state: "ready",
+  available: true,
+  detail: "Test sandbox ready.",
+  image: "test",
+  imageReady: true,
+  network: "none",
+  filesystem: "workspace-write",
+  rootFilesystem: "read-only",
+  memory: "256m",
+  cpus: 1,
+  pidsLimit: 32,
+};
+
+async function testSandboxExecutor({ command, cwd, signal }) {
+  if (signal?.aborted) {
+    const error = new Error("Test sandbox interrupted.");
+    error.name = "AbortError";
+    throw error;
+  }
+  const result = spawnSync(command, {
+    cwd,
+    shell: true,
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  return {
+    exitCode: typeof result.status === "number" ? result.status : null,
+    signal: result.signal || null,
+    timedOut: Boolean(result.error?.code === "ETIMEDOUT"),
+    stdout: result.stdout || "",
+    stderr: result.stderr || result.error?.message || "",
+    sandbox: testSandboxStatus,
+  };
+}
+
+function runTestHarness(request) {
+  return runHarness({
+    ...request,
+    provider: testProvider,
+    sandboxExecutor: testSandboxExecutor,
+    sandboxStatusResolver: async () => testSandboxStatus,
+  });
+}
 
 function createSseResponse(delta) {
   return new Response(
@@ -87,6 +149,40 @@ function createPdfFixture(text = "Hello from PDF") {
 }
 
 try {
+  assert.equal(
+    normalizeProviderBaseUrl(
+      "https://api.example.com/v1/chat/completions",
+    ),
+    "https://api.example.com/v1",
+  );
+  assert.equal(
+    inferModelCapabilities("gpt-5.2", "openai").supportsImages,
+    true,
+  );
+  const customProvider = normalizeProviderInput({
+    name: "Example",
+    baseUrl: "https://api.example.com/v1",
+    models: ["gpt-5.2", "qwen3-coder"],
+  });
+  assert.equal(customProvider.models.length, 2);
+  assert.equal(customProvider.models[0].supportsThinking, false);
+
+  const sandboxArgs = buildDockerSandboxArgs({
+    command: "npm test",
+    workspaceRoot: "D:\\workspace",
+    cwd: "packages/app",
+    containerName: "aporiax-test",
+    protectGit: true,
+  });
+  assert.equal(sandboxArgs[0], "run");
+  assert(sandboxArgs.includes("--network"));
+  assert(sandboxArgs.includes("none"));
+  assert(sandboxArgs.includes("--read-only"));
+  assert(sandboxArgs.includes("ALL"));
+  assert(sandboxArgs.includes("no-new-privileges=true"));
+  assert(sandboxArgs.includes(SANDBOX_IMAGE));
+  assert.equal(sandboxArgs.at(-1), "npm test");
+
   const readOnlyPolicy = createPermissionPolicy("read-only", {
     read_file: "allow",
     write_file: "allow",
@@ -251,6 +347,52 @@ try {
     "parsed attachments must not send binary source data to the model",
   );
 
+  const blockedSandboxResponses = [
+    createToolDelta("blocked-command", "run_command", {
+      command: "node --version",
+      cwd: ".",
+      reason: "验证运行环境。",
+    }),
+    { content: "Sandbox correctly blocked host execution." },
+  ];
+  let blockedSandboxIndex = 0;
+  let blockedSandboxExecutorCalled = false;
+  globalThis.fetch = async () => {
+    const delta = blockedSandboxResponses[blockedSandboxIndex];
+    blockedSandboxIndex += 1;
+    if (!delta) {
+      throw new Error("Unexpected extra blocked-sandbox request.");
+    }
+    return createSseResponse(delta);
+  };
+  const blockedSandboxResult = await runHarness({
+    provider: testProvider,
+    workspacePath: testRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: false,
+    effort: "high",
+    permission: "workspace-write",
+    messages: [{ role: "user", content: "运行版本检查。" }],
+    sandboxStatusResolver: async () => ({
+      ...testSandboxStatus,
+      available: false,
+      state: "engine-stopped",
+      detail: "Docker stopped.",
+    }),
+    sandboxExecutor: async () => {
+      blockedSandboxExecutorCalled = true;
+      throw new Error("Host execution must never be reached.");
+    },
+    requestApproval: async () => ({ approved: true }),
+  });
+  assert.equal(blockedSandboxResult.status, "completed");
+  assert.equal(blockedSandboxExecutorCalled, false);
+  assert.equal(blockedSandboxResult.steps[0]?.success, false);
+  assert.match(
+    blockedSandboxResult.steps[0]?.detail || "",
+    /Sandbox unavailable/i,
+  );
+
   const reviewedVersions = new Map();
   const selfCheckChanges = new Map([
     [
@@ -354,8 +496,7 @@ try {
     if (!delta) throw new Error("Unexpected extra model request.");
     return createSseResponse(delta);
   };
-  const harnessResult = await runHarness({
-    apiKey: "sk-runtime-smoke-test",
+  const harnessResult = await runTestHarness({
     workspacePath: testRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,
@@ -452,8 +593,7 @@ try {
     if (!delta) throw new Error("Unexpected extra auto self-check request.");
     return createSseResponse(delta);
   };
-  const autoSelfCheckResult = await runHarness({
-    apiKey: "sk-runtime-smoke-test",
+  const autoSelfCheckResult = await runTestHarness({
     workspacePath: autoSelfCheckRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,
@@ -603,8 +743,7 @@ try {
     if (!delta) throw new Error("Unexpected extra Office model request.");
     return createSseResponse(delta);
   };
-  const officeHarnessResult = await runHarness({
-    apiKey: "sk-runtime-smoke-test",
+  const officeHarnessResult = await runTestHarness({
     workspacePath: officeRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,
@@ -664,6 +803,11 @@ try {
 
   const plainRoot = join(testRoot, "plain-workspace");
   await mkdir(plainRoot, { recursive: true });
+  await writeFile(
+    join(plainRoot, ".git"),
+    "gitdir: Z:\\missing-aporiax-repository",
+    "utf8",
+  );
   const plainGitResponses = [
     createToolDelta("plain-git-status", "git_status", {}),
     {
@@ -678,8 +822,7 @@ try {
     if (!delta) throw new Error("Unexpected extra plain Git request.");
     return createSseResponse(delta);
   };
-  const plainGitResult = await runHarness({
-    apiKey: "sk-runtime-smoke-test",
+  const plainGitResult = await runTestHarness({
     workspacePath: plainRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,
@@ -733,8 +876,7 @@ try {
     if (!delta) throw new Error("Unexpected extra Git model request.");
     return createSseResponse(delta);
   };
-  const gitHarnessResult = await runHarness({
-    apiKey: "sk-runtime-smoke-test",
+  const gitHarnessResult = await runTestHarness({
     workspacePath: testRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,

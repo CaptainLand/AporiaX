@@ -32,12 +32,12 @@ import {
   MAX_ATTACHMENT_BYTES,
   extractPdfText,
 } from "./attachment-parser.js";
+import { providerChatEndpoint } from "./provider-config.js";
+import {
+  getSandboxStatus,
+  runSandboxedCommand,
+} from "./sandbox-runtime.js";
 
-const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
-const ALLOWED_MODELS = new Set([
-  "deepseek-v4-pro",
-  "deepseek-v4-flash",
-]);
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_FILE_READ_CHARS = 120_000;
 const MAX_FILE_WRITE_CHARS = 200_000;
@@ -50,8 +50,8 @@ const MAX_PATCH_TEXT_CHARS = 120_000;
 const MAX_TREE_ENTRIES = 700;
 const MAX_TREE_DEPTH = 6;
 const MAX_GIT_DIFF_CHARS = 120_000;
-const DEEPSEEK_IDLE_TIMEOUT_MS = 180_000;
-const DEEPSEEK_MAX_ATTEMPTS = 3;
+const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
+const PROVIDER_MAX_ATTEMPTS = 3;
 const CONTEXT_COMPACT_THRESHOLD_CHARS = 900_000;
 const COMPACTED_TOOL_CONTENT_CHARS = 2_000;
 const PROJECT_INSTRUCTION_FILES = [
@@ -211,7 +211,7 @@ const TOOL_DEFINITIONS = [
     function: {
       name: "run_command",
       description:
-        "Run one foreground shell command inside the authorized workspace. The user must approve every command before it runs.",
+        "Run one foreground shell command in a network-disabled OS-level container sandbox. Only the authorized workspace is mounted writable, and the user must approve every command.",
       parameters: {
         type: "object",
         properties: {
@@ -559,59 +559,6 @@ function trimCommandOutput(value) {
   return `${value.slice(0, half)}\n\n… output truncated …\n\n${value.slice(-half)}`;
 }
 
-async function runShellCommand({ command, cwd, signal }) {
-  throwIfAborted(signal);
-
-  return new Promise((resolvePromise, rejectPromise) => {
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", handleAbort);
-      callback(value);
-    };
-
-    const handleAbort = () => {
-      child.kill();
-      finish(rejectPromise, createAbortError());
-    };
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, 120_000);
-
-    signal?.addEventListener("abort", handleAbort, { once: true });
-    child.stdout.on("data", (chunk) => {
-      stdout = trimCommandOutput(stdout + chunk.toString("utf8"));
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = trimCommandOutput(stderr + chunk.toString("utf8"));
-    });
-    child.on("error", (error) => finish(rejectPromise, error));
-    child.on("close", (code, signalName) => {
-      finish(resolvePromise, {
-        exitCode: typeof code === "number" ? code : null,
-        signal: signalName || null,
-        timedOut,
-        stdout,
-        stderr,
-      });
-    });
-  });
-}
-
 async function runGitCommand({ args, cwd, signal }) {
   throwIfAborted(signal);
 
@@ -774,6 +721,8 @@ async function executeTool({
   permissionPolicy,
   requestApproval,
   signal,
+  sandboxExecutor = runSandboxedCommand,
+  sandboxStatus = null,
 }) {
   throwIfAborted(signal);
   const toolName = toolCall.function.name;
@@ -788,6 +737,11 @@ async function executeTool({
   );
   if (permissionAction === "deny") {
     throw new Error(`Permission denied for tool: ${toolName}`);
+  }
+  if (toolName === "run_command" && !sandboxStatus?.available) {
+    throw new Error(
+      `Sandbox unavailable: ${sandboxStatus?.detail || "OS-level isolation is not ready"}. Host execution is disabled.`,
+    );
   }
   if (permissionAction === "ask") {
     const approval = await requestApproval({
@@ -807,6 +761,11 @@ async function executeTool({
           : descriptor.risk === "read"
             ? "Agent 请求读取工作区信息。"
             : "Agent 请求执行可能改变工作区或运行进程的操作。",
+      ...(toolName === "run_command"
+        ? {
+            sandbox: sandboxStatus,
+          }
+        : {}),
     });
     throwIfAborted(signal);
     if (!approval?.approved) {
@@ -1099,8 +1058,9 @@ async function executeTool({
       throw new Error("The command working directory is not a directory.");
     }
 
-    const result = await runShellCommand({
+    const result = await sandboxExecutor({
       command: input.command.trim(),
+      workspaceRoot,
       cwd: commandDirectory,
       signal,
     });
@@ -1442,16 +1402,16 @@ function compactConversationForRequest(conversation, onEvent) {
   }
 }
 
-async function callDeepSeek({
-  apiKey,
+async function callModelProvider({
+  provider,
   body,
   signal,
   onEvent,
 }) {
-  for (let attempt = 1; attempt <= DEEPSEEK_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
     try {
-      return await callDeepSeekOnce({
-        apiKey,
+      return await callModelProviderOnce({
+        provider,
         body,
         signal,
         onEvent,
@@ -1460,7 +1420,7 @@ async function callDeepSeek({
       if (
         signal?.aborted ||
         !error?.retryable ||
-        attempt >= DEEPSEEK_MAX_ATTEMPTS
+        attempt >= PROVIDER_MAX_ATTEMPTS
       ) {
         throw error;
       }
@@ -1468,24 +1428,36 @@ async function callDeepSeek({
       onEvent?.({
         type: "response.retry",
         attempt: attempt + 1,
-        maxAttempts: DEEPSEEK_MAX_ATTEMPTS,
+        maxAttempts: PROVIDER_MAX_ATTEMPTS,
         delayMs,
         reason: error.message,
+        provider: provider.name,
       });
       await waitForAbortableDelay(delayMs, signal);
     }
   }
-  throw new Error("DeepSeek request failed after automatic retries.");
+  throw new Error(
+    `${provider.name} request failed after automatic retries.`,
+  );
 }
 
-function createDeepSeekProvider({ apiKey, onEvent }) {
+function createOpenAICompatibleProvider({
+  config,
+  model,
+  onEvent,
+}) {
   return Object.freeze({
-    id: "deepseek",
-    supportsImages: false,
-    supportsModel: (modelId) => ALLOWED_MODELS.has(modelId),
+    id: config.id,
+    name: config.name,
+    vendor: config.vendor,
+    supportsImages: Boolean(model.supportsImages),
+    supportsTools: model.supportsTools !== false,
+    supportsThinking: Boolean(model.supportsThinking),
+    thinkingMode: model.thinkingMode || "none",
+    supportsModel: (modelId) => model.id === modelId,
     complete: ({ body, signal }) =>
-      callDeepSeek({
-        apiKey,
+      callModelProvider({
+        provider: config,
         body,
         signal,
         onEvent,
@@ -1508,8 +1480,8 @@ function waitForAbortableDelay(delayMs, signal) {
   });
 }
 
-async function callDeepSeekOnce({
-  apiKey,
+async function callModelProviderOnce({
+  provider,
   body,
   signal,
   onEvent,
@@ -1525,21 +1497,25 @@ async function callDeepSeekOnce({
     idleTimeout = setTimeout(() => {
       idleTimedOut = true;
       controller.abort();
-    }, DEEPSEEK_IDLE_TIMEOUT_MS);
+    }, PROVIDER_IDLE_TIMEOUT_MS);
   };
   resetIdleTimeout();
 
   try {
-    const response = await fetch(DEEPSEEK_API_URL, {
+    const response = await fetch(providerChatEndpoint(provider.baseUrl), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        ...(provider.apiKey
+          ? { Authorization: `Bearer ${provider.apiKey}` }
+          : {}),
       },
       body: JSON.stringify({
         ...body,
         stream: true,
-        stream_options: { include_usage: true },
+        ...(["deepseek", "openai"].includes(provider.vendor)
+          ? { stream_options: { include_usage: true } }
+          : {}),
       }),
       signal: controller.signal,
     });
@@ -1549,7 +1525,7 @@ async function callDeepSeekOnce({
       const detail =
         payload?.error?.message ||
         payload?.message ||
-        `DeepSeek API returned HTTP ${response.status}.`;
+        `${provider.name} API returned HTTP ${response.status}.`;
       const error = new Error(detail);
       error.retryable =
         response.status === 408 ||
@@ -1561,7 +1537,9 @@ async function callDeepSeekOnce({
       throw error;
     }
     if (!response.body) {
-      throw new Error("DeepSeek API returned an empty response stream.");
+      throw new Error(
+        `${provider.name} API returned an empty response stream.`,
+      );
     }
 
     let content = "";
@@ -1619,13 +1597,15 @@ async function callDeepSeekOnce({
     if (signal?.aborted) throw createAbortError();
     if (idleTimedOut) {
       const timeoutError = new Error(
-        "DeepSeek connection was idle for 180 seconds.",
+        `${provider.name} connection was idle for 180 seconds.`,
       );
       timeoutError.retryable = true;
       throw timeoutError;
     }
     if (error?.name === "AbortError") {
-      const abortError = new Error("DeepSeek request was interrupted.");
+      const abortError = new Error(
+        `${provider.name} request was interrupted.`,
+      );
       abortError.retryable = true;
       throw abortError;
     }
@@ -1814,7 +1794,7 @@ function formatToolStepDetail(toolName, modelResult) {
 }
 
 export async function runHarness({
-  apiKey,
+  provider: providerConfig,
   workspacePath,
   modelId,
   thinking,
@@ -1824,15 +1804,32 @@ export async function runHarness({
   signal,
   onEvent,
   requestApproval = async () => ({ approved: false }),
+  sandboxExecutor = runSandboxedCommand,
+  sandboxStatusResolver = getSandboxStatus,
 }) {
-  if (typeof apiKey !== "string" || !apiKey.startsWith("sk-")) {
-    throw new Error("DeepSeek API key is not configured.");
+  if (
+    !providerConfig ||
+    typeof providerConfig.id !== "string" ||
+    typeof providerConfig.name !== "string" ||
+    typeof providerConfig.baseUrl !== "string" ||
+    !Array.isArray(providerConfig.models)
+  ) {
+    throw new Error("A valid model Provider is required.");
   }
   const emit = createEventEmitter(onEvent);
-  const provider = createDeepSeekProvider({ apiKey, onEvent: emit });
-  if (!provider.supportsModel(modelId)) {
-    throw new Error("Unsupported DeepSeek model.");
+  const modelConfig = providerConfig.models.find(
+    (candidate) => candidate.id === modelId,
+  );
+  if (!modelConfig) {
+    throw new Error(
+      `模型 ${modelId || "unknown"} 不属于 Provider ${providerConfig.name}。`,
+    );
   }
+  const provider = createOpenAICompatibleProvider({
+    config: providerConfig,
+    model: modelConfig,
+    onEvent: emit,
+  });
 
   const hasWorkspace =
     typeof workspacePath === "string" && Boolean(workspacePath.trim());
@@ -1845,12 +1842,6 @@ export async function runHarness({
     permission,
     projectConfig.permissions,
   );
-  const toolCatalog = hasWorkspace
-    ? TOOL_REGISTRY.catalog(permissionPolicy)
-    : [];
-  const enabledToolDefinitions = hasWorkspace
-    ? TOOL_REGISTRY.definitions(permissionPolicy)
-    : [];
   const canWriteWorkspace =
     getToolPermission(permissionPolicy, "write_file") !== "deny" ||
     getToolPermission(permissionPolicy, "apply_patch") !== "deny" ||
@@ -1860,14 +1851,42 @@ export async function runHarness({
     );
   const canRunCommands =
     getToolPermission(permissionPolicy, "run_command") !== "deny";
+  const sandboxStatus =
+    hasWorkspace && canRunCommands
+      ? await sandboxStatusResolver()
+      : null;
+  const commandToolAvailable =
+    canRunCommands && Boolean(sandboxStatus?.available);
+  const toolCatalog = hasWorkspace
+    ? TOOL_REGISTRY.catalog(permissionPolicy).map((tool) =>
+        tool.name === "run_command" && !commandToolAvailable
+          ? {
+              ...tool,
+              permission: "deny",
+              unavailableReason:
+                sandboxStatus?.detail || "Sandbox unavailable.",
+            }
+          : tool,
+      )
+    : [];
+  const enabledToolDefinitions = hasWorkspace
+    ? TOOL_REGISTRY.definitions(permissionPolicy).filter(
+        (definition) =>
+          provider.supportsTools &&
+          (definition.function.name !== "run_command" ||
+            commandToolAvailable),
+      )
+    : [];
   emit({
     type: "turn.started",
     provider: provider.id,
+    providerName: provider.name,
     model: modelId,
     workspace: hasWorkspace,
     permissionMode: permission,
     permissionConfigFile: projectConfig.file,
     tools: toolCatalog,
+    sandbox: sandboxStatus,
   });
   const conversation = [
     {
@@ -1887,7 +1906,9 @@ export async function runHarness({
         "Use create_word_document, create_presentation, and create_spreadsheet for real Office files. Do not try to write Office binaries with write_file.",
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
         "After creating or replacing an Office file, use inspect_office_file during mandatory self-check. Treat structural inspection as distinct from final visual rendering.",
-        "Use run_command only when a command materially verifies the result. Follow the Harness permission decision for every tool.",
+        commandToolAvailable
+          ? "Use run_command only when a command materially verifies the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
+          : "Command execution is unavailable because the OS-level sandbox is not ready. Never claim that a build or test was run.",
         "When the Harness starts the mandatory self-check phase, re-read every changed file, fix issues you find, re-read files after fixes, and call complete_self_check before answering.",
         "The desktop UI already presents changed files, verification, Route history, and deliverables. Do not repeat them as Markdown inventory tables or tool-call logs in the final answer.",
         !hasWorkspace
@@ -1896,9 +1917,11 @@ export async function runHarness({
               canWriteWorkspace
                 ? "Workspace file changes are available subject to the effective Harness permission policy."
                 : "File mutation tools are disabled for this task.",
-              canRunCommands
-                ? "The command tool is available subject to the effective Harness permission policy."
-                : "The command tool is disabled for this task.",
+              commandToolAvailable
+                ? "The sandboxed command tool is available subject to the effective Harness permission policy."
+                : canRunCommands
+                  ? `The command tool is fail-closed because the sandbox is unavailable: ${sandboxStatus?.detail || "unknown reason"}`
+                  : "The command tool is disabled for this task.",
             ].join(" "),
         "Keep the final answer concise. State the outcome, important limitations, and any user action still required.",
         projectInstructions.content
@@ -1945,16 +1968,28 @@ export async function runHarness({
         body: {
           model: modelId,
           messages: conversation,
-          ...(hasWorkspace
+          ...(hasWorkspace && provider.supportsTools
             ? {
                 tools: enabledToolDefinitions,
                 tool_choice: "auto",
               }
             : {}),
-          thinking: {
-            type: thinking ? "enabled" : "disabled",
-          },
-          reasoning_effort: effort === "max" ? "max" : "high",
+          ...(provider.supportsThinking &&
+          provider.thinkingMode === "deepseek"
+            ? {
+                thinking: {
+                  type: thinking ? "enabled" : "disabled",
+                },
+                reasoning_effort: effort === "max" ? "max" : "high",
+              }
+            : {}),
+          ...(provider.supportsThinking &&
+          provider.thinkingMode === "reasoning-effort" &&
+          thinking
+            ? {
+                reasoning_effort: effort === "max" ? "high" : "medium",
+              }
+            : {}),
         },
       });
       totalUsage = usage || totalUsage;
@@ -1969,7 +2004,7 @@ export async function runHarness({
           selfCheck.completed = false;
           selfCheck.report = null;
           selfCheck.verificationCandidates =
-            getToolPermission(permissionPolicy, "run_command") === "deny"
+            !commandToolAvailable
               ? []
               : await discoverVerificationCommands(
                   workspaceRoot,
@@ -2031,6 +2066,9 @@ export async function runHarness({
           instructionFiles: projectInstructions.files,
           permissionConfigFile: projectConfig.file,
           provider: provider.id,
+          providerName: provider.name,
+          model: modelId,
+          sandbox: sandboxStatus,
           tools: toolCatalog,
           selfCheck: buildSelfCheckResult(selfCheck, changeMap),
         };
@@ -2181,6 +2219,8 @@ export async function runHarness({
               permissionPolicy,
               requestApproval,
               signal,
+              sandboxExecutor,
+              sandboxStatus,
             });
             if (result.change) {
               mergeFileChange(changeMap, result.change);
@@ -2328,6 +2368,9 @@ export async function runHarness({
         instructionFiles: projectInstructions.files,
         permissionConfigFile: projectConfig.file,
         provider: provider.id,
+        providerName: provider.name,
+        model: modelId,
+        sandbox: sandboxStatus,
         tools: toolCatalog,
         selfCheck: buildSelfCheckResult(selfCheck, changeMap),
       };
@@ -2349,6 +2392,9 @@ export async function runHarness({
       instructionFiles: projectInstructions.files,
       permissionConfigFile: projectConfig.file,
       provider: provider.id,
+      providerName: provider.name,
+      model: modelId,
+      sandbox: sandboxStatus,
       tools: toolCatalog,
       selfCheck: buildSelfCheckResult(selfCheck, changeMap),
     };

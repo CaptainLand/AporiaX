@@ -4,13 +4,13 @@
 
 已完成：
 
-- DeepSeek SSE 流式回复、停止、空闲超时与最多三次自动重试
+- 多 OpenAI-compatible Provider、模型发现、SSE 流式回复、停止、空闲超时与自动重试
 - 受限工作区路径校验与可手动停止的无限工具循环
 - OpenCode 风格的工具注册表、工具风险元数据和细粒度权限策略
 - `list_directory`、`read_file`、`search_text`、只读 `git_status` / `git_diff`、`write_file`、精确 `apply_patch`
 - 内置 `.docx`、`.pptx`、`.xlsx` 生成工具与 Office 文件结构检查
-- 每次单独审批的 `run_command`
-- 标准化 Turn / Tool / File 事件流与 DeepSeek Provider 边界
+- 每次单独审批、fail-closed 的 Docker OS 级沙箱 `run_command`
+- 标准化 Turn / Tool / File 事件流与通用 Provider 边界
 - 文件前后快照、逐行 Diff、冲突检测和安全撤销
 - Office 二进制检查点、工件摘要审核、结构自检与安全撤销
 - Harness 强制自检状态机、改动文件复读、项目验证命令与自检报告
@@ -22,7 +22,7 @@
 
 仍需加强：
 
-- `run_command` 的 OS 级沙箱；当前版本只有工作目录约束、逐次审批、超时和输出限制
+- Windows 原生 AppContainer 后端与 Linux `bubblewrap` 后端；当前命令沙箱依赖 Docker
 - SQLite append-only 事件存储；当前使用 Electron 用户目录 JSON
 - Git 提交、分支/Worktree 管理和结构化补丁
 - 视觉模型 Provider 与 OCR 降级链路
@@ -37,7 +37,7 @@ flowchart LR
   Bridge --> Desktop[Electron Main]
   Desktop --> Harness[Harness Worker]
   Harness --> Provider[Model Provider Adapter]
-  Provider --> DS[DeepSeek V4 API]
+  Provider --> API[OpenAI-compatible APIs]
   Harness --> Policy[Permission Policy]
   Harness --> Tools[Tool Registry]
   Tools --> FS[Workspace Files]
@@ -66,7 +66,8 @@ type ModelEvent =
   | { type: "response.completed"; stopReason: string };
 ```
 
-第一版实现 `DeepSeekProvider`，以后可以增加 OpenAI、本地模型或其他 OpenAI-compatible provider。
+当前实现通用 `OpenAICompatibleProvider`，Provider 注册表可以保存多个加密 API Key、
+自动发现模型，并支持 OpenAI、DeepSeek、OpenRouter、本地 API 等兼容端点。
 
 DeepSeek V4 推荐分工：
 
@@ -178,7 +179,7 @@ SQLite 建议表：
 
 ## 实施顺序
 
-### Phase 1：DeepSeek 单轮流式聊天
+### Phase 1：Provider 单轮流式聊天
 
 - Provider 适配器
 - 密钥配置
@@ -200,7 +201,7 @@ SQLite 建议表：
 - `run_command`
 - Git Diff
 - 审批卡片
-- workspace-write 沙箱
+- Docker workspace-write 沙箱
 
 ### Phase 4：任务恢复
 

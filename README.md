@@ -11,8 +11,8 @@ AporiaX 是一个面向本地工作区的桌面 Agent。它不只返回答案，
 [![React](https://img.shields.io/badge/React-19-202830.svg)](https://react.dev/)
 
 > [!IMPORTANT]
-> AporiaX 仍处于早期预览阶段。当前 `run_command` 有审批、路径、超时和输出限制，
-> 但尚未运行在操作系统级沙箱中。请只在可信工作区中批准可信命令。
+> AporiaX 仍处于早期预览阶段。`run_command` 只在 Docker OS 级容器沙箱中执行；
+> Docker 或沙箱镜像不可用时会安全拒绝命令，不会回退到宿主机 Shell。
 
 ## 产品理念
 
@@ -24,9 +24,12 @@ AporiaX 是一个面向本地工作区的桌面 Agent。它不只返回答案，
 
 - Dialogue、Route、Workspace 三种任务视图。
 - 本地工作区文件树、搜索、代码预览和编辑，支持 `Ctrl+S` 保存。
-- DeepSeek 流式回复、空闲超时、自动重试、手动停止和长上下文压缩。
+- 多 OpenAI-compatible Provider、多 API Key、多模型选择和 `/models` 自动发现。
+- 通用流式回复、空闲超时、自动重试、手动停止和长上下文压缩。
 - 可审计的 Agent 工具循环与 `allow` / `ask` / `deny` 权限策略。
-- 文件读取、搜索、写入、精确替换、Git 状态与 Diff、审批式命令执行。
+- 文件读取、搜索、写入、精确替换、Git 状态与 Diff、审批式沙箱命令执行。
+- Docker 命令沙箱：默认断网、只读根文件系统、无 Linux capabilities、禁止提权，
+  限制 CPU、内存和进程数，只映射当前工作区。
 - 强制自检：重新读取本轮修改文件、尝试测试或构建，并报告剩余风险。
 - 真实 Word、PowerPoint 和 Excel 文件生成及结构复核，无需 MCP 或本机 Office。
 - PDF 本地文本解析、Workspace 只读预览以及 PDF/Office/Markdown/代码附件。
@@ -34,12 +37,13 @@ AporiaX 是一个面向本地工作区的桌面 Agent。它不只返回答案，
 - Electron 加密凭据存储、任务持久化、原生窗口控制和日间/夜间主题。
 - `AGENTS.md`、`APORIAX.md` 和 `.aporiax.json` 项目级指令与权限配置。
 
-扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。当前 DeepSeek
-模型配置按文本能力处理，不会发送 `image_url`。
+扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。图片是否发送由每个
+Provider 模型的视觉能力决定。
 
 ## 快速开始
 
-需要 Node.js 20 或更高版本。
+需要 Node.js 20 或更高版本。若要使用 `run_command`，还需要启动 Docker Desktop；
+应用内点击“准备 Docker 沙箱”会构建 `aporiax-sandbox:0.1` 本地镜像。
 
 ```powershell
 git clone https://github.com/CaptainLand/AporiaX.git
@@ -48,14 +52,19 @@ npm install
 npm run dev
 ```
 
-首次使用时在应用内安全保存 DeepSeek API Key。也可以通过环境变量提供：
+首次使用时在“模型 Provider”中添加 API Base URL 和 API Key。AporiaX 支持
+OpenAI-compatible Chat Completions 接口，会尝试通过 `/models` 识别模型，也允许
+手动输入模型 ID。可以同时保存多个 Provider，并让不同任务使用不同模型。
+
+为兼容旧版本，DeepSeek 也可以通过环境变量提供：
 
 ```powershell
 $env:DEEPSEEK_API_KEY="your-api-key"
 npm start
 ```
 
-不要把真实密钥写入源码、`.env`、Issue 或日志。
+API Key 使用 Electron `safeStorage` 加密，不返回渲染进程。不要把真实密钥写入源码、
+`.env`、Issue 或日志。
 
 ## 常用命令
 

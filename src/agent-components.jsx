@@ -9,6 +9,7 @@ import {
   Folder,
   GitCompare,
   LoaderCircle,
+  LockKeyhole,
   RefreshCw,
   Save,
   Search,
@@ -179,11 +180,26 @@ export function ApprovalCard({ approval, onRespond, responding }) {
         <span>工作目录：{approval.cwd || "."}</span>
       </div>
       <div className="approval-warning">
-        <AlertTriangle size={14} />
+        {approval.kind === "execute" &&
+        approval.sandbox?.available ? (
+          <LockKeyhole size={14} />
+        ) : (
+          <AlertTriangle size={14} />
+        )}
         {approval.kind === "execute"
-          ? "命令以工作区为默认目录运行，当前尚无 OS 沙箱，请确认内容可信。"
+          ? approval.sandbox?.available
+            ? "命令将在一次性 OS 容器中运行：默认断网、根文件系统只读，仅当前工作区可写。"
+            : "OS 级沙箱不可用，AporiaX 将拒绝执行命令。"
           : "此工具将访问或修改当前工作区，请确认本次操作符合预期。"}
       </div>
+      {approval.kind === "execute" && approval.sandbox?.available && (
+        <div className="approval-sandbox-facts">
+          <span>{approval.sandbox.backend}</span>
+          <span>网络：关闭</span>
+          <span>内存：{approval.sandbox.memory}</span>
+          <span>进程：{approval.sandbox.pidsLimit}</span>
+        </div>
+      )}
       <div className="approval-actions">
         <button
           type="button"
