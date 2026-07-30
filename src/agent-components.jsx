@@ -17,6 +17,7 @@ import {
   Undo2,
   X,
 } from "lucide-react";
+import { useI18n } from "./i18n";
 
 const CODE_EXTENSIONS = new Set([
   "c",
@@ -57,6 +58,7 @@ function formatBytes(value) {
 }
 
 function OfficeArtifactReview({ change }) {
+  const { tr } = useI18n();
   const artifact = change.artifact || {};
   const inspectedSlideRuns = artifact.slides?.reduce(
     (total, slide) => total + (Number(slide.textRuns) || 0),
@@ -69,20 +71,20 @@ function OfficeArtifactReview({ change }) {
   const metrics =
     artifact.kind === "document"
       ? [
-          ["内容块", artifact.blockCount ?? artifact.paragraphCount],
-          ["段落", artifact.paragraphCount],
-          ["表格", artifact.tableCount],
+          [tr("内容块", "Content blocks"), artifact.blockCount ?? artifact.paragraphCount],
+          [tr("段落", "Paragraphs"), artifact.paragraphCount],
+          [tr("表格", "Tables"), artifact.tableCount],
         ]
       : artifact.kind === "presentation"
         ? [
-            ["幻灯片", artifact.slideCount],
-            ["文本项", artifact.bulletCount ?? inspectedSlideRuns],
-            ["布局提醒", artifact.warnings?.length || 0],
+            [tr("幻灯片", "Slides"), artifact.slideCount],
+            [tr("文本项", "Text items"), artifact.bulletCount ?? inspectedSlideRuns],
+            [tr("布局提醒", "Layout warnings"), artifact.warnings?.length || 0],
           ]
         : [
-            ["工作表", artifact.sheetCount],
-            ["数据行", artifact.rowCount ?? inspectedRows],
-            ["公式", artifact.formulaCount],
+            [tr("工作表", "Worksheets"), artifact.sheetCount],
+            [tr("数据行", "Data rows"), artifact.rowCount ?? inspectedRows],
+            [tr("公式", "Formulas"), artifact.formulaCount],
           ];
 
   return (
@@ -92,14 +94,14 @@ function OfficeArtifactReview({ change }) {
           <FileText size={22} />
         </span>
         <div>
-          <strong>{artifact.label || "Office 工件"}</strong>
+          <strong>{artifact.label || tr("Office 工件", "Office artifact")}</strong>
           <span>
             {artifact.title || change.path} · {formatBytes(artifact.bytes)}
           </span>
         </div>
         <em>
           <Check size={13} />
-          结构已生成
+          {tr("结构已生成", "Structure generated")}
         </em>
       </div>
       <div className="office-artifact-metrics">
@@ -113,10 +115,12 @@ function OfficeArtifactReview({ change }) {
       <div className="office-visual-warning">
         <AlertTriangle size={16} />
         <div>
-          <strong>尚未完成视觉渲染检查</strong>
+          <strong>{tr("尚未完成视觉渲染检查", "Visual rendering has not been verified")}</strong>
           <span>
-            Harness 已验证文件包可以解析；最终分页、字体、图表和版式仍建议在
-            Office 中打开确认。
+            {tr(
+              "Harness 已验证文件包可以解析；最终分页、字体、图表和版式仍建议在 Office 中打开确认。",
+              "Harness verified that the package is readable. Open it in Office to confirm final pagination, fonts, charts, and layout.",
+            )}
           </span>
         </div>
       </div>
@@ -125,6 +129,7 @@ function OfficeArtifactReview({ change }) {
 }
 
 export function UserAttachments({ attachments }) {
+  const { tr } = useI18n();
   if (!attachments?.length) return null;
   return (
     <div className="message-attachment-grid">
@@ -138,13 +143,15 @@ export function UserAttachments({ attachments }) {
               <FileGlyph path={attachment.name} size={16} />
             </span>
             <span>
-              <strong>{attachment.name || "未命名附件"}</strong>
+              <strong>{attachment.name || tr("未命名附件", "Untitled attachment")}</strong>
               <small>
-                {attachment.format || "文件"}
+                {attachment.format || tr("文件", "File")}
                 {Number.isInteger(attachment.pageCount)
-                  ? ` · ${attachment.pageCount} 页`
+                  ? tr(" · {count} 页", " · {count} pages", { count: attachment.pageCount })
                   : ""}
-                {attachment.requiresOcr ? " · 需要 OCR" : " · 已解析"}
+                {attachment.requiresOcr
+                  ? tr(" · 需要 OCR", " · OCR required")
+                  : tr(" · 已解析", " · Parsed")}
               </small>
             </span>
           </div>
@@ -152,9 +159,9 @@ export function UserAttachments({ attachments }) {
           <figure key={attachment.id || attachment.name}>
             <img
               src={attachment.dataUrl}
-              alt={attachment.name || "图片附件"}
+              alt={attachment.name || tr("图片附件", "Image attachment")}
             />
-            <figcaption>{attachment.name || "图片"}</figcaption>
+            <figcaption>{attachment.name || tr("图片", "Image")}</figcaption>
           </figure>
         ),
       )}
@@ -163,6 +170,7 @@ export function UserAttachments({ attachments }) {
 }
 
 export function ApprovalCard({ approval, onRespond, responding }) {
+  const { tr } = useI18n();
   if (!approval) return null;
   return (
     <section className="approval-card">
@@ -171,13 +179,13 @@ export function ApprovalCard({ approval, onRespond, responding }) {
           <Terminal size={16} />
         </span>
         <div>
-          <strong>{approval.title || "需要批准"}</strong>
+          <strong>{approval.title || tr("需要批准", "Approval required")}</strong>
           <p>{approval.reason}</p>
         </div>
       </div>
       <div className="approval-command">
         <code>{approval.command}</code>
-        <span>工作目录：{approval.cwd || "."}</span>
+        <span>{tr("工作目录：{path}", "Working directory: {path}", { path: approval.cwd || "." })}</span>
       </div>
       <div className="approval-warning">
         {approval.kind === "execute" &&
@@ -188,25 +196,34 @@ export function ApprovalCard({ approval, onRespond, responding }) {
         )}
         {approval.kind === "execute"
           ? approval.sandbox?.available
-            ? "命令将在一次性 OS 容器中运行：默认断网、根文件系统只读，仅当前工作区可写。"
-            : "Docker 沙箱不可用：本次命令将在本机运行，可访问主机网络且不具备 OS 隔离。请逐字检查后再批准。"
-          : "此工具将访问或修改当前工作区，请确认本次操作符合预期。"}
+            ? tr(
+                "命令将在一次性 OS 容器中运行：默认断网、根文件系统只读，仅当前工作区可写。",
+                "The command will run in an ephemeral OS container: offline by default, read-only root filesystem, with write access only to this workspace.",
+              )
+            : tr(
+                "Docker 沙箱不可用：本次命令将在本机运行，可访问主机网络且不具备 OS 隔离。请逐字检查后再批准。",
+                "Docker is unavailable. This command will run on the host with network access and no OS isolation. Review it carefully before approving.",
+              )
+          : tr(
+              "此工具将访问或修改当前工作区，请确认本次操作符合预期。",
+              "This tool will access or modify the current workspace. Confirm that the action is expected.",
+            )}
       </div>
       {approval.kind === "execute" && (
         <div className="approval-sandbox-facts">
           {approval.sandbox?.available ? (
             <>
               <span>{approval.sandbox.backend}</span>
-              <span>网络：关闭</span>
-              <span>内存：{approval.sandbox.memory}</span>
-              <span>进程：{approval.sandbox.pidsLimit}</span>
+              <span>{tr("网络：关闭", "Network: off")}</span>
+              <span>{tr("内存：{value}", "Memory: {value}", { value: approval.sandbox.memory })}</span>
+              <span>{tr("进程：{value}", "Processes: {value}", { value: approval.sandbox.pidsLimit })}</span>
             </>
           ) : (
             <>
-              <span>本机回退</span>
-              <span>强制逐条审批</span>
-              <span>网络：可用</span>
-              <span>敏感环境变量：移除</span>
+              <span>{tr("本机回退", "Host fallback")}</span>
+              <span>{tr("强制逐条审批", "Approval required each time")}</span>
+              <span>{tr("网络：可用", "Network: available")}</span>
+              <span>{tr("敏感环境变量：移除", "Sensitive environment variables: removed")}</span>
             </>
           )}
         </div>
@@ -217,7 +234,7 @@ export function ApprovalCard({ approval, onRespond, responding }) {
           disabled={responding}
           onClick={() => onRespond(false)}
         >
-          拒绝
+          {tr("拒绝", "Deny")}
         </button>
         <button
           className="approve"
@@ -226,7 +243,7 @@ export function ApprovalCard({ approval, onRespond, responding }) {
           onClick={() => onRespond(true)}
         >
           {responding && <LoaderCircle className="spin" size={14} />}
-          本次允许
+          {tr("本次允许", "Allow once")}
         </button>
       </div>
     </section>
@@ -282,6 +299,7 @@ export function DiffReviewPanel({
   confirmed = false,
   onConfirm,
 }) {
+  const { tr } = useI18n();
   const availableChanges = changes || [];
   const [selectedPath, setSelectedPath] = useState(
     availableChanges.find((change) => !change.reverted)?.path ||
@@ -325,16 +343,16 @@ export function DiffReviewPanel({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="review-panel" aria-label="文件变更审核">
+      <section className="review-panel" aria-label={tr("文件变更审核", "File change review")}>
         <header className="review-panel-header">
           <div>
             <GitCompare size={17} />
             <div>
-              <strong>变更审核</strong>
-              <span>{availableChanges.length} 个文件检查点</span>
+              <strong>{tr("变更审核", "Change review")}</strong>
+              <span>{tr("{count} 个文件检查点", "{count} file checkpoint(s)", { count: availableChanges.length })}</span>
             </div>
           </div>
-          <button type="button" aria-label="关闭审核" onClick={onClose}>
+          <button type="button" aria-label={tr("关闭审核", "Close review")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -353,7 +371,7 @@ export function DiffReviewPanel({
                 {change.reverted ? (
                   <em className="reverted">
                     <Check size={12} />
-                    已撤销
+                    {tr("已撤销", "Reverted")}
                   </em>
                 ) : change.binary ? (
                   <em className="office-change-kind">
@@ -376,7 +394,7 @@ export function DiffReviewPanel({
                   <div>
                     <FileGlyph path={selected.path} />
                     <strong>{selected.path}</strong>
-                    {selected.created && <span>新增</span>}
+                    {selected.created && <span>{tr("新增", "New")}</span>}
                   </div>
                   <button
                     type="button"
@@ -384,7 +402,9 @@ export function DiffReviewPanel({
                     onClick={() => onRevert([selected.path])}
                   >
                     <Undo2 size={14} />
-                    {selected.reverted ? "已撤销" : "撤销此文件"}
+                    {selected.reverted
+                      ? tr("已撤销", "Reverted")
+                      : tr("撤销此文件", "Revert this file")}
                   </button>
                 </div>
                 {selected.binary ? (
@@ -410,19 +430,19 @@ export function DiffReviewPanel({
                       </div>
                     ))
                     ) : (
-                      <div className="diff-empty">文件内容没有变化。</div>
+                      <div className="diff-empty">{tr("文件内容没有变化。", "File content is unchanged.")}</div>
                     )}
                   </div>
                 )}
               </>
             ) : (
-              <div className="diff-empty">没有可审核的文件。</div>
+              <div className="diff-empty">{tr("没有可审核的文件。", "No files to review.")}</div>
             )}
           </main>
         </div>
 
         <footer className="review-panel-footer">
-          <span>撤销前会检查文件是否在此检查点后被再次修改。</span>
+          <span>{tr("撤销前会检查文件是否在此检查点后被再次修改。", "Before reverting, AporiaX checks whether the file changed after this checkpoint.")}</span>
           <div>
             {onConfirm && (
               <button
@@ -432,7 +452,9 @@ export function DiffReviewPanel({
                 onClick={onConfirm}
               >
                 <Check size={14} />
-                {confirmed ? "本轮修改已确认" : "确认保留本轮修改"}
+                {confirmed
+                  ? tr("本轮修改已确认", "Changes confirmed")
+                  : tr("确认保留本轮修改", "Keep these changes")}
               </button>
             )}
             <button
@@ -443,7 +465,7 @@ export function DiffReviewPanel({
               }
             >
               {reverting && <LoaderCircle className="spin" size={14} />}
-              撤销本轮全部更改
+              {tr("撤销本轮全部更改", "Revert all changes in this turn")}
             </button>
           </div>
         </footer>
@@ -460,6 +482,7 @@ export function FileExplorerPanel({
   embedded = false,
   initialPath = "",
 }) {
+  const { tr } = useI18n();
   const [entries, setEntries] = useState([]);
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
@@ -488,7 +511,7 @@ export function FileExplorerPanel({
       const result = await window.desktop.workspace.listTree(workspacePath);
       setEntries(result.entries || []);
     } catch (error) {
-      onNotice(error?.message || "无法读取工作区文件");
+      onNotice(error?.message || tr("无法读取工作区文件", "Unable to read workspace files"));
     } finally {
       setLoading(false);
     }
@@ -515,7 +538,7 @@ export function FileExplorerPanel({
     if (
       dirty &&
       entry.path !== selectedPath &&
-      !window.confirm("当前文件有未保存修改。放弃修改并打开其他文件吗？")
+      !window.confirm(tr("当前文件有未保存修改。放弃修改并打开其他文件吗？", "This file has unsaved changes. Discard them and open another file?"))
     ) {
       return;
     }
@@ -534,7 +557,7 @@ export function FileExplorerPanel({
       setPreview(null);
       setEditorContent("");
       setSavedContent("");
-      onNotice(error?.message || "无法预览文件");
+      onNotice(error?.message || tr("无法预览文件", "Unable to preview the file"));
     } finally {
       setPreviewLoading(false);
     }
@@ -569,7 +592,7 @@ export function FileExplorerPanel({
   const saveFile = async () => {
     if (!editable || !dirty || saving) return;
     if (!window.desktop?.workspace?.saveText) {
-      onNotice("当前桌面桥不支持保存，请重启 AporiaX");
+      onNotice(tr("当前桌面桥不支持保存，请重启 AporiaX", "The desktop bridge cannot save files. Restart AporiaX."));
       return;
     }
     setSaving(true);
@@ -583,9 +606,9 @@ export function FileExplorerPanel({
       setPreview((current) => ({ ...current, ...result }));
       setSavedContent(result.content);
       setEditorContent(result.content);
-      onNotice(`已保存 ${result.path}`);
+      onNotice(tr("已保存 {path}", "Saved {path}", { path: result.path }));
     } catch (error) {
-      onNotice(error?.message || "保存文件失败");
+      onNotice(error?.message || tr("保存文件失败", "Failed to save the file"));
     } finally {
       setSaving(false);
     }
@@ -607,15 +630,15 @@ export function FileExplorerPanel({
     >
       <header>
         <div>
-          <span>工作区</span>
-          <strong>文件与代码</strong>
+          <span>{tr("工作区", "Workspace")}</span>
+          <strong>{tr("文件与代码", "Files and code")}</strong>
         </div>
         <div>
-          <button type="button" aria-label="刷新文件" onClick={loadTree}>
+          <button type="button" aria-label={tr("刷新文件", "Refresh files")} onClick={loadTree}>
             <RefreshCw size={15} />
           </button>
           {!embedded && (
-            <button type="button" aria-label="关闭文件面板" onClick={onClose}>
+            <button type="button" aria-label={tr("关闭文件面板", "Close files panel")} onClick={onClose}>
               <X size={17} />
             </button>
           )}
@@ -626,8 +649,8 @@ export function FileExplorerPanel({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索文件"
-          aria-label="搜索工作区文件"
+          placeholder={tr("搜索文件", "Search files")}
+          aria-label={tr("搜索工作区文件", "Search workspace files")}
         />
       </div>
       <div className="file-explorer-body">
@@ -635,7 +658,7 @@ export function FileExplorerPanel({
           {loading ? (
             <div className="workspace-tree-state">
               <LoaderCircle className="spin" size={15} />
-              正在读取工作区
+              {tr("正在读取工作区", "Reading workspace")}
             </div>
           ) : filteredEntries.length ? (
             filteredEntries.map((entry) => (
@@ -656,14 +679,14 @@ export function FileExplorerPanel({
               </button>
             ))
           ) : (
-            <div className="workspace-tree-state">没有匹配的文件</div>
+            <div className="workspace-tree-state">{tr("没有匹配的文件", "No matching files")}</div>
           )}
         </div>
         <div className="workspace-preview">
           {previewLoading ? (
             <div className="workspace-preview-empty">
               <LoaderCircle className="spin" size={17} />
-              正在加载文件
+              {tr("正在加载文件", "Loading file")}
             </div>
           ) : preview ? (
             <>
@@ -671,14 +694,14 @@ export function FileExplorerPanel({
                 <FileGlyph path={preview.path} />
                 <strong>{preview.path}</strong>
                 {Number.isInteger(preview.pageCount) && (
-                  <span>{preview.pageCount} 页</span>
+                  <span>{tr("{count} 页", "{count} pages", { count: preview.pageCount })}</span>
                 )}
-                {preview.requiresOcr && <span>需要 OCR</span>}
-                {preview.truncated && <span>已截断</span>}
+                {preview.requiresOcr && <span>{tr("需要 OCR", "OCR required")}</span>}
+                {preview.truncated && <span>{tr("已截断", "Truncated")}</span>}
                 {editable && (
                   <div className="workspace-preview-actions">
                     <span className={dirty ? "dirty" : ""}>
-                      {dirty ? "未保存" : "已保存"}
+                      {dirty ? tr("未保存", "Unsaved") : tr("已保存", "Saved")}
                     </span>
                     <button
                       type="button"
@@ -690,7 +713,7 @@ export function FileExplorerPanel({
                       ) : (
                         <Save size={13} />
                       )}
-                      保存
+                      {tr("保存", "Save")}
                     </button>
                   </div>
                 )}
@@ -726,7 +749,7 @@ export function FileExplorerPanel({
                       editor.selectionEnd = start + 2;
                     });
                   }}
-                  aria-label={`编辑 ${preview.path}`}
+                  aria-label={tr("编辑 {path}", "Edit {path}", { path: preview.path })}
                   autoCapitalize="off"
                   autoCorrect="off"
                   spellCheck={false}
@@ -735,7 +758,7 @@ export function FileExplorerPanel({
             </>
           ) : (
             <div className="workspace-preview-empty">
-              选择文件以预览代码
+              {tr("选择文件以预览代码", "Choose a file to preview or edit")}
             </div>
           )}
         </div>

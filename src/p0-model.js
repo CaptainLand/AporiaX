@@ -30,29 +30,35 @@ export const ROUTE_STAGE_META = {
 };
 
 const ROUTE_TOOL_META = {
-  list_directory: { stage: "lens", title: "浏览工作区" },
-  read_file: { stage: "lens", title: "读取文件" },
-  search_text: { stage: "lens", title: "定位相关内容" },
-  git_status: { stage: "lens", title: "检查 Git 状态" },
-  git_diff: { stage: "lens", title: "检查代码差异" },
-  write_file: { stage: "forge", title: "写入文件" },
-  apply_patch: { stage: "forge", title: "修改代码" },
-  create_word_document: { stage: "forge", title: "创建 Word 文档" },
-  create_presentation: { stage: "forge", title: "创建演示文稿" },
-  create_spreadsheet: { stage: "forge", title: "创建电子表格" },
-  inspect_office_file: { stage: "trial", title: "检查 Office 文件" },
-  run_command: { stage: "trial", title: "运行验证命令" },
-  complete_self_check: { stage: "trial", title: "提交自检结果" },
+  list_directory: { stage: "lens", zh: "浏览工作区", en: "Browse workspace" },
+  read_file: { stage: "lens", zh: "读取文件", en: "Read file" },
+  search_text: { stage: "lens", zh: "定位相关内容", en: "Locate relevant content" },
+  git_status: { stage: "lens", zh: "检查 Git 状态", en: "Inspect Git status" },
+  git_diff: { stage: "lens", zh: "检查代码差异", en: "Inspect code diff" },
+  write_file: { stage: "forge", zh: "写入文件", en: "Write file" },
+  apply_patch: { stage: "forge", zh: "修改代码", en: "Patch code" },
+  create_word_document: { stage: "forge", zh: "创建 Word 文档", en: "Create Word document" },
+  create_presentation: { stage: "forge", zh: "创建演示文稿", en: "Create presentation" },
+  create_spreadsheet: { stage: "forge", zh: "创建电子表格", en: "Create spreadsheet" },
+  inspect_office_file: { stage: "trial", zh: "检查 Office 文件", en: "Inspect Office file" },
+  run_command: { stage: "trial", zh: "运行验证命令", en: "Run verification command" },
+  complete_self_check: { stage: "trial", zh: "提交自检结果", en: "Submit self-check result" },
 };
 
-export function getRouteToolMeta(tool, phase) {
+export function getRouteToolMeta(tool, phase, language = "zh-CN") {
   const meta = ROUTE_TOOL_META[tool] || {
     stage: phase === "self-check" ? "trial" : "route",
-    title: "执行工具",
+    zh: "执行工具",
+    en: "Run tool",
   };
-  return phase === "self-check" && meta.stage !== "forge"
-    ? { ...meta, stage: "trial" }
-    : meta;
+  return {
+    ...meta,
+    stage:
+      phase === "self-check" && meta.stage !== "forge"
+        ? "trial"
+        : meta.stage,
+    title: language === "en" ? meta.en : meta.zh,
+  };
 }
 
 export function updateRunAssistant(tasks, run, updater) {

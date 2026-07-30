@@ -53,6 +53,11 @@ import {
   updateRunAssistant,
 } from "./p0-model";
 import WelcomeParticleOcean from "./WelcomeParticleOcean";
+import {
+  I18nProvider,
+  LanguageSwitch,
+  useI18n,
+} from "./i18n";
 import "./styles.css";
 
 const STORAGE_KEY = "aporiax.tasks.v1";
@@ -103,6 +108,8 @@ const EMPTY_MODEL = {
   name: "未配置模型",
   shortName: "未配置",
   description: "请先添加模型 API",
+  descriptionZh: "请先添加模型 API",
+  descriptionEn: "Add a model API to begin",
   supportsImages: false,
   supportsThinking: false,
   supportsTools: false,
@@ -140,6 +147,16 @@ function getAvailableModels(providers) {
         provider.name,
         model.supportsImages ? "支持图片" : "仅文本",
         model.supportsTools === false ? "不支持工具" : "支持工具",
+      ].join(" · "),
+      descriptionZh: [
+        provider.name,
+        model.supportsImages ? "支持图片" : "仅文本",
+        model.supportsTools === false ? "不支持工具" : "支持工具",
+      ].join(" · "),
+      descriptionEn: [
+        provider.name,
+        model.supportsImages ? "Vision" : "Text only",
+        model.supportsTools === false ? "No tools" : "Tool use",
       ].join(" · "),
       icon: model.supportsThinking ? Brain : Zap,
     })),
@@ -198,6 +215,7 @@ function AppTitlebar() {
 }
 
 function WelcomeOverlay({ onContinue }) {
+  const { tr, isEnglish } = useI18n();
   return (
     <div className="welcome-backdrop">
       <WelcomeParticleOcean />
@@ -209,22 +227,34 @@ function WelcomeOverlay({ onContinue }) {
         aria-describedby="welcome-subtitle"
       >
         <h1 id="welcome-title">
-          <span>Every problem begins</span>
-          <span>
-            with an <em>aporia.</em>
-          </span>
+          {isEnglish ? (
+            <>
+              <span>Every problem begins</span>
+              <span>
+                with an <em>aporia.</em>
+              </span>
+            </>
+          ) : (
+            <span>每个答案，都始于一个尚未解开的疑问。</span>
+          )}
         </h1>
-        <p id="welcome-subtitle">每个答案，都始于一个尚未解开的疑问。</p>
+        <p id="welcome-subtitle">
+          {tr(
+            "Every problem begins with an aporia.",
+            "每个答案，都始于一个尚未解开的疑问。",
+          )}
+        </p>
         <button
           className="welcome-enter"
           type="button"
-          aria-label="进入 AporiaX"
+          aria-label={tr("进入 AporiaX", "Enter AporiaX")}
           onClick={onContinue}
         >
-          进入
+          {tr("进入", "Enter")}
           <ArrowRight size={16} />
         </button>
       </section>
+      <LanguageSwitch className="welcome-language-switch" />
     </div>
   );
 }
@@ -237,6 +267,7 @@ function Sidebar({
   searchOpen,
   onToggleSearch,
 }) {
+  const { tr } = useI18n();
   const [query, setQuery] = useState("");
   const searchRef = useRef(null);
   const filteredTasks = useMemo(() => {
@@ -256,15 +287,15 @@ function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-top">
         <div className="sidebar-heading">
-          <span>任务</span>
-          <IconButton label="搜索任务" onClick={onToggleSearch}>
+          <span>{tr("任务", "Tasks")}</span>
+          <IconButton label={tr("搜索任务", "Search tasks")} onClick={onToggleSearch}>
             <Search size={16} />
           </IconButton>
         </div>
 
         <button className="new-task-button" onClick={onNewTask}>
           <SquarePen size={17} />
-          <span>新建任务</span>
+          <span>{tr("新建任务", "New task")}</span>
           <span className="new-task-shortcut">Ctrl N</span>
         </button>
 
@@ -275,11 +306,11 @@ function Sidebar({
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索任务"
-              aria-label="搜索任务"
+              placeholder={tr("搜索任务", "Search tasks")}
+              aria-label={tr("搜索任务", "Search tasks")}
             />
             {query && (
-              <button aria-label="清空搜索" onClick={() => setQuery("")}>
+              <button aria-label={tr("清空搜索", "Clear search")} onClick={() => setQuery("")}>
                 <X size={14} />
               </button>
             )}
@@ -288,7 +319,7 @@ function Sidebar({
       </div>
 
       <div className="task-list">
-        <div className="section-label">最近任务</div>
+        <div className="section-label">{tr("最近任务", "Recent tasks")}</div>
         {filteredTasks.length ? (
           filteredTasks.map((task) => (
             <button
@@ -305,7 +336,9 @@ function Sidebar({
           ))
         ) : (
           <div className="sidebar-empty">
-            {tasks.length ? "没有匹配的任务" : "暂无任务"}
+            {tasks.length
+              ? tr("没有匹配的任务", "No matching tasks")
+              : tr("暂无任务", "No tasks yet")}
           </div>
         )}
       </div>
@@ -314,6 +347,7 @@ function Sidebar({
 }
 
 function ModelChoice({ model, selected, onSelect, compact = false }) {
+  const { tr } = useI18n();
   const ModelIcon = model.icon;
 
   return (
@@ -327,7 +361,7 @@ function ModelChoice({ model, selected, onSelect, compact = false }) {
       </span>
       <span className="model-choice-copy">
         <span className="model-choice-name">{model.name}</span>
-        <small>{model.description}</small>
+        <small>{tr(model.descriptionZh || model.description, model.descriptionEn || model.description)}</small>
       </span>
       {selected && <Check size={17} className="model-choice-check" />}
     </button>
@@ -374,6 +408,7 @@ function NewTaskModal({
   onNotice,
   onManageProviders,
 }) {
+  const { tr } = useI18n();
   const [workspacePath, setWorkspacePath] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
   const [title, setTitle] = useState("");
@@ -420,10 +455,10 @@ function NewTaskModal({
         return;
       }
 
-      onNotice("请在 Electron 桌面端选择工作目录。");
+      onNotice(tr("请在 Electron 桌面端选择工作目录。", "Choose a workspace in the Electron desktop app."));
     } catch (error) {
       if (error?.name !== "AbortError") {
-        onNotice("无法读取所选目录，请重试。");
+        onNotice(tr("无法读取所选目录，请重试。", "Unable to read that folder. Try again."));
       }
     } finally {
       setSelectingFolder(false);
@@ -438,9 +473,11 @@ function NewTaskModal({
       ...config,
       title:
         trimmedTitle ||
-        (workspaceName ? `${workspaceName} 中的新任务` : "新任务"),
+        (workspaceName
+          ? tr("{name} 中的新任务", "New task in {name}", { name: workspaceName })
+          : tr("新任务", "New task")),
       workspacePath: workspacePath || null,
-      workspaceName: workspaceName || "无工作区",
+      workspaceName: workspaceName || tr("无工作区", "No workspace"),
       permission: workspacePath ? config.permission : "read-only",
     });
   };
@@ -455,15 +492,15 @@ function NewTaskModal({
     >
       <form className="new-task-modal" onSubmit={submit}>
         <div className="modal-header">
-          <h2>新建任务</h2>
-          <IconButton label="关闭" type="button" onClick={onClose}>
+          <h2>{tr("新建任务", "New task")}</h2>
+          <IconButton label={tr("关闭", "Close")} type="button" onClick={onClose}>
             <X size={18} />
           </IconButton>
         </div>
 
         <div className="modal-body">
           <section className="form-section">
-            <label className="field-label">工作目录</label>
+            <label className="field-label">{tr("工作目录", "Workspace")}</label>
             <button
               className={`workspace-picker ${workspacePath ? "has-value" : ""}`}
               type="button"
@@ -476,19 +513,21 @@ function NewTaskModal({
               <span className="workspace-picker-copy">
                 <span>
                   {workspaceName ||
-                    (selectingFolder ? "正在打开目录…" : "选择一个本地文件夹")}
+                    (selectingFolder
+                      ? tr("正在打开目录…", "Opening folder…")
+                      : tr("选择一个本地文件夹", "Choose a local folder"))}
                 </span>
                 {workspacePath && <small>{workspacePath}</small>}
               </span>
               <span className="workspace-picker-action">
-                {workspacePath ? "更改" : "浏览"}
+                {workspacePath ? tr("更改", "Change") : tr("浏览", "Browse")}
               </span>
             </button>
           </section>
 
           <section className="form-section">
             <label className="field-label" htmlFor="task-title">
-              任务名称 <span>可选</span>
+              {tr("任务名称", "Task name")} <span>{tr("可选", "Optional")}</span>
             </label>
             <input
               id="task-title"
@@ -497,7 +536,9 @@ function NewTaskModal({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder={
-                workspaceName ? `${workspaceName} 中的新任务` : "例如：实现登录页面"
+                workspaceName
+                  ? tr("{name} 中的新任务", "New task in {name}", { name: workspaceName })
+                  : tr("例如：实现登录页面", "For example: build a sign-in page")
               }
               maxLength={80}
             />
@@ -505,13 +546,13 @@ function NewTaskModal({
 
           <section className="form-section">
             <div className="field-label-row">
-              <label className="field-label">模型</label>
+              <label className="field-label">{tr("模型", "Model")}</label>
               <button
                 className="inline-settings-link"
                 type="button"
                 onClick={onManageProviders}
               >
-                管理 Provider
+                {tr("管理 Provider", "Manage providers")}
               </button>
             </div>
             <div className="model-grid">
@@ -543,7 +584,7 @@ function NewTaskModal({
                   onClick={onManageProviders}
                 >
                   <Plus size={16} />
-                  添加第一个模型 API
+                  {tr("添加第一个模型 API", "Add your first model API")}
                 </button>
               )}
             </div>
@@ -554,12 +595,12 @@ function NewTaskModal({
               <div className="config-copy">
                 <div className="config-title">
                   <Brain size={16} />
-                  <span>深度思考</span>
+                  <span>{tr("深度思考", "Deep thinking")}</span>
                 </div>
               </div>
               <Switch
                 checked={config.thinking}
-                label="深度思考"
+                label={tr("深度思考", "Deep thinking")}
                 disabled={!selectedModel.supportsThinking}
                 onChange={(thinking) =>
                   setConfig((current) => ({ ...current, thinking }))
@@ -570,11 +611,11 @@ function NewTaskModal({
             {config.thinking && (
               <div className="config-row bordered">
                 <div className="config-copy">
-                  <div className="config-title">思考强度</div>
+                  <div className="config-title">{tr("思考强度", "Reasoning effort")}</div>
                 </div>
                 <SegmentedControl
                   value={config.effort}
-                  ariaLabel="思考强度"
+                  ariaLabel={tr("思考强度", "Reasoning effort")}
                   options={[
                     { value: "high", label: "High" },
                     { value: "max", label: "Max" },
@@ -588,13 +629,13 @@ function NewTaskModal({
           </section>
 
           <section className="form-section">
-            <label className="field-label">文件权限</label>
+            <label className="field-label">{tr("文件权限", "File access")}</label>
             <SegmentedControl
               value={config.permission}
-              ariaLabel="文件权限"
+              ariaLabel={tr("文件权限", "File access")}
               options={[
-                { value: "read-only", label: "只读" },
-                { value: "workspace-write", label: "工作区读写" },
+                { value: "read-only", label: tr("只读", "Read only") },
+                { value: "workspace-write", label: tr("工作区读写", "Workspace write") },
               ]}
               onChange={(permission) =>
                 setConfig((current) => ({ ...current, permission }))
@@ -605,7 +646,7 @@ function NewTaskModal({
 
         <div className="modal-footer">
           <button className="secondary-button" type="button" onClick={onClose}>
-            取消
+            {tr("取消", "Cancel")}
           </button>
           <button
             className="primary-button"
@@ -614,7 +655,7 @@ function NewTaskModal({
               !hasModels || (!workspacePath && !title.trim())
             }
           >
-            创建任务
+            {tr("创建任务", "Create task")}
           </button>
         </div>
       </form>
@@ -623,24 +664,28 @@ function NewTaskModal({
 }
 
 function EmptyState({ onNewTask }) {
+  const { tr } = useI18n();
   return (
     <main className="empty-state">
-      <h1>从一个疑问开始。</h1>
+      <h1>{tr("从一个疑问开始。", "Begin with an aporia.")}</h1>
       <p>
-        写代码、制作文档、演示文稿与表格。告诉 AporiaX，你想抵达哪里。
+        {tr(
+          "写代码、制作文档、演示文稿与表格。告诉 AporiaX，你想抵达哪里。",
+          "Write code, create documents, presentations, and spreadsheets. Tell AporiaX where you want to arrive.",
+        )}
       </p>
       <button className="primary-button large" onClick={onNewTask}>
         <Plus size={17} />
-        新建任务
+        {tr("新建任务", "New task")}
       </button>
       <div className="empty-state-meta">
         <span>
           <HardDrive size={14} />
-          本地工作区
+          {tr("本地工作区", "Local workspace")}
         </span>
         <span>
           <LockKeyhole size={14} />
-          权限可控
+          {tr("权限可控", "Controlled access")}
         </span>
       </div>
     </main>
@@ -648,6 +693,7 @@ function EmptyState({ onNewTask }) {
 }
 
 function ModelMenu({ task, providers, onUpdate, onClose }) {
+  const { tr } = useI18n();
   const menuRef = useRef(null);
   const selectedModel = getModel(
     providers,
@@ -672,7 +718,7 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
 
   return (
     <div className="model-menu" ref={menuRef}>
-      <div className="model-menu-heading">选择模型</div>
+      <div className="model-menu-heading">{tr("选择模型", "Choose a model")}</div>
       <div className="model-menu-options">
         {getAvailableModels(providers).map((model) => (
           <ModelChoice
@@ -698,22 +744,22 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
       <div className="model-menu-divider" />
       <div className="model-menu-row">
         <div>
-          <span className="model-menu-label">深度思考</span>
-          <small>先规划再执行</small>
+          <span className="model-menu-label">{tr("深度思考", "Deep thinking")}</span>
+          <small>{tr("先规划再执行", "Plan before acting")}</small>
         </div>
         <Switch
           checked={task.thinking}
-          label="深度思考"
+          label={tr("深度思考", "Deep thinking")}
           disabled={!selectedModel.supportsThinking}
           onChange={(thinking) => onUpdate({ thinking })}
         />
       </div>
       {task.thinking && (
         <div className="model-menu-row">
-          <span className="model-menu-label">思考强度</span>
+          <span className="model-menu-label">{tr("思考强度", "Reasoning effort")}</span>
           <SegmentedControl
             value={task.effort}
-            ariaLabel="思考强度"
+            ariaLabel={tr("思考强度", "Reasoning effort")}
             options={[
               { value: "high", label: "High" },
               { value: "max", label: "Max" },
@@ -808,6 +854,7 @@ function Composer({
   onNotice,
   isRunning,
 }) {
+  const { tr } = useI18n();
   const [message, setMessage] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
@@ -831,7 +878,11 @@ function Composer({
       return;
     }
     if (attachments.some(isImageAttachment) && !model.supportsImages) {
-      onNotice(`${model.shortName} 当前仅支持文字，不能读取图片`);
+      onNotice(tr(
+        "{model} 当前仅支持文字，不能读取图片",
+        "{model} is text-only and cannot read images",
+        { model: model.shortName },
+      ));
       return;
     }
     const accepted = onSend(content, attachments);
@@ -843,7 +894,11 @@ function Composer({
 
   const addImageFiles = async (fileList) => {
     if (!model.supportsImages) {
-      onNotice(`${model.shortName} 当前仅支持文字；识图需要接入视觉模型或 OCR`);
+      onNotice(tr(
+        "{model} 当前仅支持文字；识图需要接入视觉模型或 OCR",
+        "{model} is text-only; image understanding requires a vision model or OCR",
+        { model: model.shortName },
+      ));
       return;
     }
     const imageCount = attachments.filter(isImageAttachment).length;
@@ -857,20 +912,20 @@ function Composer({
     if (!candidates.length) return;
     const oversized = candidates.find((file) => file.size > 8_000_000);
     if (oversized) {
-      onNotice(`图片不能超过 8 MB：${oversized.name}`);
+      onNotice(tr("图片不能超过 8 MB：{name}", "Images cannot exceed 8 MB: {name}", { name: oversized.name }));
       return;
     }
     try {
       const images = await Promise.all(candidates.map(readImageFile));
       setAttachments((current) => [...current, ...images].slice(0, 6));
     } catch (error) {
-      onNotice(error?.message || "无法读取图片");
+      onNotice(error?.message || tr("无法读取图片", "Unable to read the image"));
     }
   };
 
   const addDocumentFiles = async (fileList) => {
     if (!window.desktop?.attachments?.parse) {
-      onNotice("附件解析能力不可用，请重启 AporiaX 桌面端");
+      onNotice(tr("附件解析能力不可用，请重启 AporiaX 桌面端", "Attachment parsing is unavailable. Restart AporiaX."));
       return;
     }
     const remaining = Math.max(0, 6 - attachments.length);
@@ -878,12 +933,12 @@ function Composer({
       .filter((file) => !file.type.startsWith("image/"))
       .slice(0, remaining);
     if (!candidates.length) {
-      if (remaining === 0) onNotice("每条消息最多添加 6 个附件");
+      if (remaining === 0) onNotice(tr("每条消息最多添加 6 个附件", "Each message can include up to 6 attachments"));
       return;
     }
     const oversized = candidates.find((file) => file.size > 8_000_000);
     if (oversized) {
-      onNotice(`附件不能超过 8 MB：${oversized.name}`);
+      onNotice(tr("附件不能超过 8 MB：{name}", "Attachments cannot exceed 8 MB: {name}", { name: oversized.name }));
       return;
     }
     setAttachmentLoading(true);
@@ -907,11 +962,15 @@ function Composer({
       ).length;
       onNotice(
         ocrCount
-          ? `已解析 ${parsed.length} 个附件，其中 ${ocrCount} 个 PDF 可能需要 OCR`
-          : `已解析 ${parsed.length} 个附件`,
+          ? tr(
+              "已解析 {count} 个附件，其中 {ocr} 个 PDF 可能需要 OCR",
+              "Parsed {count} attachments; {ocr} PDF file(s) may require OCR",
+              { count: parsed.length, ocr: ocrCount },
+            )
+          : tr("已解析 {count} 个附件", "Parsed {count} attachment(s)", { count: parsed.length }),
       );
     } catch (error) {
-      const cleanMessage = String(error?.message || "无法解析附件")
+      const cleanMessage = String(error?.message || tr("无法解析附件", "Unable to parse the attachment"))
         .replace(/^Error invoking remote method '[^']+':\s*/i, "")
         .replace(/^Error:\s*/i, "");
       onNotice(cleanMessage);
@@ -975,18 +1034,18 @@ function Composer({
                   <span className="composer-document-copy">
                     <strong>{attachment.name}</strong>
                     <small>
-                      {attachment.format || "文件"}
+                      {attachment.format || tr("文件", "File")}
                       {Number.isInteger(attachment.pageCount)
-                        ? ` · ${attachment.pageCount} 页`
+                        ? tr(" · {count} 页", " · {count} pages", { count: attachment.pageCount })
                         : ""}
                       {attachment.requiresOcr
-                        ? " · 需要 OCR"
+                        ? tr(" · 需要 OCR", " · OCR required")
                         : ` · ${formatAttachmentSize(attachment.size)}`}
                     </small>
                   </span>
                   <button
                     type="button"
-                    aria-label={`移除 ${attachment.name}`}
+                    aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
                     onClick={() =>
                       setAttachments((current) =>
                         current.filter(
@@ -1004,7 +1063,7 @@ function Composer({
                   <figcaption>{attachment.name}</figcaption>
                   <button
                     type="button"
-                    aria-label={`移除 ${attachment.name}`}
+                    aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
                     onClick={() =>
                       setAttachments((current) =>
                         current.filter(
@@ -1026,9 +1085,9 @@ function Composer({
           onChange={resizeTextarea}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder="描述你想完成的任务"
+          placeholder={tr("描述你想完成的任务", "Describe what you want to accomplish")}
           rows={1}
-          aria-label="任务输入"
+          aria-label={tr("任务输入", "Task prompt")}
           disabled={isRunning}
         />
         <div className="composer-toolbar">
@@ -1059,20 +1118,24 @@ function Composer({
               className={`composer-add ${!model.supportsImages ? "unsupported" : ""}`}
               aria-label={
                 model.supportsImages
-                  ? "添加图片"
-                  : "当前模型不支持图片"
+                  ? tr("添加图片", "Add image")
+                  : tr("当前模型不支持图片", "This model does not support images")
               }
               title={
                 model.supportsImages
-                  ? "添加图片"
-                  : "当前模型仅支持文字，识图需要视觉模型或 OCR"
+                  ? tr("添加图片", "Add image")
+                  : tr("当前模型仅支持文字，识图需要视觉模型或 OCR", "This model is text-only; image understanding requires vision or OCR")
               }
               type="button"
               disabled={isRunning}
               onClick={() => {
                 if (!model.supportsImages) {
                   onNotice(
-                    `${model.shortName} 当前仅支持文字；识图需要接入视觉模型或 OCR`,
+                    tr(
+                      "{model} 当前仅支持文字；识图需要接入视觉模型或 OCR",
+                      "{model} is text-only; image understanding requires a vision model or OCR",
+                      { model: model.shortName },
+                    ),
                   );
                   return;
                 }
@@ -1083,8 +1146,8 @@ function Composer({
             </button>
             <button
               className="composer-add composer-file-add"
-              aria-label="添加附件"
-              title="添加附件（PDF、Office、Markdown、文本或代码）"
+              aria-label={tr("添加附件", "Add attachment")}
+              title={tr("添加附件（PDF、Office、Markdown、文本或代码）", "Add PDF, Office, Markdown, text, or code files")}
               type="button"
               disabled={isRunning || attachmentLoading}
               onClick={() => attachmentInputRef.current?.click()}
@@ -1122,8 +1185,8 @@ function Composer({
           </div>
           <button
             className={`send-button ${isRunning ? "stop" : ""}`}
-            aria-label={isRunning ? "停止任务" : "发送"}
-            title={isRunning ? "停止任务" : "发送"}
+            aria-label={isRunning ? tr("停止任务", "Stop task") : tr("发送", "Send")}
+            title={isRunning ? tr("停止任务", "Stop task") : tr("发送", "Send")}
             disabled={
               isRunning
                 ? false
@@ -1142,16 +1205,17 @@ function Composer({
       </div>
       <p className="composer-hint">
         {isRunning
-          ? "任务运行中 · 点击停止按钮可安全中断"
+          ? tr("任务运行中 · 点击停止按钮可安全中断", "Task running · use Stop to interrupt safely")
           : model.supportsImages
-            ? "Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码"
-            : "Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件"}
+            ? tr("Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码", "Enter to send · Shift Enter for a new line · Add images, PDFs, documents, and code")
+            : tr("Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件", "Enter to send · Shift Enter for a new line · Add PDFs, documents, and code")}
       </p>
     </div>
   );
 }
 
 function MarkdownCodeBlock({ children }) {
+  const { tr } = useI18n();
   const [copied, setCopied] = useState(false);
   const codeElement = React.Children.toArray(children)[0];
   const className = codeElement?.props?.className || "";
@@ -1176,7 +1240,7 @@ function MarkdownCodeBlock({ children }) {
         <span>{language}</span>
         <button onClick={copyCode} type="button">
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          {copied ? "已复制" : "复制"}
+          {copied ? tr("已复制", "Copied") : tr("复制", "Copy")}
         </button>
       </div>
       <pre>
@@ -1331,6 +1395,7 @@ function EditedFilesCard({
   confirmed,
   onReview,
 }) {
+  const { tr } = useI18n();
   const [expanded, setExpanded] = useState(false);
   if (!files.length) return null;
 
@@ -1357,7 +1422,7 @@ function EditedFilesCard({
             <Files size={17} />
           </span>
           <div>
-            <strong>已编辑 {files.length} 个文件</strong>
+            <strong>{tr("已编辑 {count} 个文件", "Edited {count} file(s)", { count: files.length })}</strong>
             {hasLineStats ? (
               <span>
                 <b className="diff-add">+{additions}</b>
@@ -1366,8 +1431,12 @@ function EditedFilesCard({
             ) : (
               <span className="legacy-edit-note">
                 {officeFiles.length
-                  ? `${officeFiles.length} 个 Office 工件 · 可审核撤销`
-                  : "历史记录 · 无行数统计"}
+                  ? tr(
+                      "{count} 个 Office 工件 · 可审核撤销",
+                      "{count} Office artifact(s) · reviewable and reversible",
+                      { count: officeFiles.length },
+                    )
+                  : tr("历史记录 · 无行数统计", "Historical record · no line statistics")}
               </span>
             )}
           </div>
@@ -1376,7 +1445,7 @@ function EditedFilesCard({
           {confirmed && (
             <span className="edited-files-confirmed">
               <Check size={12} />
-              已确认
+              {tr("已确认", "Confirmed")}
             </span>
           )}
           <button
@@ -1388,7 +1457,11 @@ function EditedFilesCard({
                 : setExpanded((open) => !open)
             }
           >
-            {hasSnapshots ? "审核" : expanded ? "收起" : "展开"}
+            {hasSnapshots
+              ? tr("审核", "Review")
+              : expanded
+                ? tr("收起", "Collapse")
+                : tr("展开", "Expand")}
           </button>
         </div>
       </div>
@@ -1398,16 +1471,16 @@ function EditedFilesCard({
             <span className="edited-file-name">
               <FileIcon path={file.path} />
               <span title={file.path}>{file.path}</span>
-              {file.created && <em>新增</em>}
-              {file.reverted && <em className="reverted">已撤销</em>}
+              {file.created && <em>{tr("新增", "New")}</em>}
+              {file.reverted && <em className="reverted">{tr("已撤销", "Reverted")}</em>}
             </span>
             {file.reverted ? (
-              <span className="legacy-file-status">检查点已恢复</span>
+              <span className="legacy-file-status">{tr("检查点已恢复", "Checkpoint restored")}</span>
             ) : file.legacy ? (
-              <span className="legacy-file-status">已创建</span>
+              <span className="legacy-file-status">{tr("已创建", "Created")}</span>
             ) : file.binary ? (
               <span className="office-file-status">
-                {file.artifact?.label || "Office 工件"}
+                {file.artifact?.label || tr("Office 工件", "Office artifact")}
               </span>
             ) : (
               <span className="edited-file-diff">
@@ -1424,7 +1497,7 @@ function EditedFilesCard({
           type="button"
           onClick={() => setExpanded(true)}
         >
-          再显示 {hiddenCount} 个文件
+          {tr("再显示 {count} 个文件", "Show {count} more file(s)", { count: hiddenCount })}
           <ChevronDown size={14} />
         </button>
       )}
@@ -1433,6 +1506,7 @@ function EditedFilesCard({
 }
 
 function SelfCheckCard({ selfCheck }) {
+  const { tr } = useI18n();
   if (!selfCheck?.required || !selfCheck.completed) return null;
   const reviewedCount = selfCheck.reviewedFiles?.length || 0;
   const improvementCount = selfCheck.improvements?.length || 0;
@@ -1446,12 +1520,12 @@ function SelfCheckCard({ selfCheck }) {
           <Check size={14} />
         </span>
         <div>
-          <strong>强制自检已完成</strong>
+          <strong>{tr("强制自检已完成", "Mandatory self-check completed")}</strong>
           <span>
-            已复核 {reviewedCount} 个文件
+            {tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: reviewedCount })}
             {improvementCount > 0
-              ? `，自检中完成 ${improvementCount} 项改进`
-              : "，未发现必须继续修改的问题"}
+              ? tr("，自检中完成 {count} 项改进", "; completed {count} improvement(s)", { count: improvementCount })
+              : tr("，未发现必须继续修改的问题", "; no blocking issues found")}
           </span>
         </div>
       </div>
@@ -1464,26 +1538,30 @@ function SelfCheckCard({ selfCheck }) {
         >
           <strong>
             {verification.passed
-              ? "项目验证已通过"
+              ? tr("项目验证已通过", "Project verification passed")
               : verification.attempted
-                ? "项目验证未通过"
-                : "项目验证未执行"}
+                ? tr("项目验证未通过", "Project verification failed")
+                : tr("项目验证未执行", "Project verification was not run")}
           </strong>
           <span>
             {verification.results?.length
               ? verification.results
                   .map(
                     (result) =>
-                      `${result.command}${result.exitCode === null ? "" : `（退出码 ${result.exitCode}）`}`,
+                      `${result.command}${
+                        result.exitCode === null
+                          ? ""
+                          : tr("（退出码 {code}）", " (exit code {code})", { code: result.exitCode })
+                      }`,
                   )
                   .join("；")
-              : "Harness 已发现验证脚本，但没有可用结果。"}
+              : tr("Harness 已发现验证脚本，但没有可用结果。", "Harness found a verification script but no result was available.")}
           </span>
         </div>
       )}
       {remainingRisks.length > 0 && (
         <details>
-          <summary>仍需人工确认 {remainingRisks.length} 项</summary>
+          <summary>{tr("仍需人工确认 {count} 项", "{count} item(s) still need human review", { count: remainingRisks.length })}</summary>
           <ul>
             {remainingRisks.map((risk, index) => (
               <li key={`${index}-${risk}`}>{risk}</li>
@@ -1496,6 +1574,7 @@ function SelfCheckCard({ selfCheck }) {
 }
 
 function AssistantMessage({ message, onRetry }) {
+  const { tr } = useI18n();
   const failed = message.error || message.status === "failed";
   const interrupted = message.status === "interrupted";
 
@@ -1506,9 +1585,9 @@ function AssistantMessage({ message, onRetry }) {
       <div className="assistant-message-heading">
         <strong>
           {failed
-            ? "运行失败"
+            ? tr("运行失败", "Run failed")
             : interrupted
-              ? "任务已停止"
+              ? tr("任务已停止", "Task stopped")
               : "AporiaX"}
         </strong>
       </div>
@@ -1520,7 +1599,7 @@ function AssistantMessage({ message, onRetry }) {
             <MarkdownMessage content={message.content} />
           )
         ) : (
-          <span className="stream-placeholder">正在生成回复…</span>
+          <span className="stream-placeholder">{tr("正在生成回复…", "Generating a response…")}</span>
         )}
       </div>
       {(failed || interrupted) && message.prompt && (
@@ -1530,7 +1609,7 @@ function AssistantMessage({ message, onRetry }) {
           onClick={() => onRetry(message)}
         >
           <RotateCcw size={13} />
-          重试本轮
+          {tr("重试本轮", "Retry turn")}
         </button>
       )}
     </article>
@@ -1548,6 +1627,7 @@ function Conversation({
   onRevert,
   onConfirmChanges,
 }) {
+  const { tr } = useI18n();
   const [reviewMessageId, setReviewMessageId] = useState(null);
   const [reverting, setReverting] = useState(false);
   const reviewMessage = task.messages.find(
@@ -1567,10 +1647,12 @@ function Conversation({
   if (!task.messages.length) {
     return (
       <div className="conversation-empty">
-        <h2>从这里，穿过不确定性。</h2>
+        <h2>{tr("从这里，穿过不确定性。", "Trace a path through uncertainty.")}</h2>
         <p>
-          描述你想抵达的结果。AporiaX
-          会规划路径、留下证据，并为关键修改保留回退锚点。
+          {tr(
+            "描述你想抵达的结果。AporiaX 会规划路径、留下证据，并为关键修改保留回退锚点。",
+            "Describe the outcome you want. AporiaX will plan a route, preserve evidence, and anchor important changes for rollback.",
+          )}
         </p>
       </div>
     );
@@ -1619,10 +1701,10 @@ function Conversation({
         <div className="harness-running">
           <LoaderCircle className="spin" size={16} />
           <div>
-            <strong>{runStatus?.title || "Harness 正在运行"}</strong>
+            <strong>{runStatus?.title || tr("Harness 正在运行", "Harness is running")}</strong>
             <p>
               {runStatus?.detail ||
-                "模型正在检查授权工作区并规划下一步。"}
+                tr("模型正在检查授权工作区并规划下一步。", "The model is inspecting the authorized workspace and planning its next step.")}
             </p>
           </div>
         </div>
@@ -1650,6 +1732,7 @@ function RouteView({
   onRespondApproval,
   onRevert,
 }) {
+  const { tr, language } = useI18n();
   const runs = collectTaskRouteRuns(task);
   const [selectedRunId, setSelectedRunId] = useState(null);
   const [review, setReview] = useState(null);
@@ -1685,8 +1768,8 @@ function RouteView({
     return (
       <div className="route-empty">
         <span>Route</span>
-        <h2>行动路径尚未展开。</h2>
-        <p>任务开始执行后，真实的观察、修改与验证会依次出现在这里。</p>
+        <h2>{tr("行动路径尚未展开。", "No route has unfolded yet.")}</h2>
+        <p>{tr("任务开始执行后，真实的观察、修改与验证会依次出现在这里。", "Once execution begins, observations, changes, and verification will appear here in order.")}</p>
       </div>
     );
   }
@@ -1697,14 +1780,14 @@ function RouteView({
         <header className="route-overview">
           <div>
             <span className="route-kicker">
-              Route · 第 {selectedRunIndex + 1} 次任务
+              {tr("Route · 第 {count} 次任务", "Route · Task run {count}", { count: selectedRunIndex + 1 })}
             </span>
             <h2>{selectedRun?.prompt || task.title}</h2>
           </div>
           <div className="route-overview-actions">
             {runs.length > 1 && (
               <label className="route-run-picker">
-                <span>任务轮次</span>
+                <span>{tr("任务轮次", "Task run")}</span>
                 <select
                   value={selectedRun?.id || ""}
                   onChange={(event) => {
@@ -1727,14 +1810,26 @@ function RouteView({
             >
               <span />
               {selectedRun?.status === "running"
-                ? "执行中"
-                : `${completedCount}/${entries.length} 步完成`}
+                ? tr("执行中", "Running")
+                : tr("{done}/{total} 步完成", "{done}/{total} steps complete", {
+                    done: completedCount,
+                    total: entries.length,
+                  })}
             </div>
           </div>
         </header>
 
         <div className="route-step-list">
           {entries.map((entry, index) => {
+            const entryTitle = entry.tool
+              ? getRouteToolMeta(entry.tool, entry.phase, language).title
+              : entry.kind === "self-check-start"
+                ? tr("进入强制自检", "Begin mandatory self-check")
+                : entry.kind === "self-check-complete"
+                  ? tr("强制自检已完成", "Mandatory self-check completed")
+                  : entry.stage === "deliver"
+                    ? tr("整理最终产物", "Prepare final deliverables")
+                    : entry.title;
             const duration = formatRouteDuration(entry);
             const normalizedPath = entry.path
               ?.replaceAll("\\", "/")
@@ -1750,23 +1845,25 @@ function RouteView({
               entry.path ||
               entry.command ||
               entry.detail ||
-              (entry.exitCode === 0 ? "命令执行成功" : "Harness 行动记录");
+              (entry.exitCode === 0
+                ? tr("命令执行成功", "Command completed successfully")
+                : tr("Harness 行动记录", "Harness action record"));
             const statusText =
               entry.status === "running"
-                ? "正在执行"
+                ? tr("正在执行", "Running")
                 : entry.status === "waiting"
-                  ? "等待批准"
+                  ? tr("等待批准", "Awaiting approval")
                   : entry.status === "skipped"
-                    ? "不适用"
+                    ? tr("不适用", "Not applicable")
                     : entry.status === "retry"
                       ? entry.tool === "complete_self_check"
-                        ? "已转入补检"
-                        : "等待重试"
+                        ? tr("已转入补检", "Additional checks queued")
+                        : tr("等待重试", "Awaiting retry")
                       : entry.status === "recovered"
-                        ? "已重试成功"
+                        ? tr("已重试成功", "Recovered")
                         : entry.status === "failed"
-                          ? "未完成"
-                          : duration || "完成";
+                          ? tr("未完成", "Incomplete")
+                          : duration || tr("完成", "Complete");
             return (
               <details
                 className={`route-step ${entry.status || "completed"}`}
@@ -1780,7 +1877,7 @@ function RouteView({
                     {String(index + 1).padStart(2, "0")}
                   </span>
                   <span className="route-step-copy">
-                    <strong>{entry.title}</strong>
+                    <strong>{entryTitle}</strong>
                     <span title={detail}>{detail}</span>
                   </span>
                   <em>{statusText}</em>
@@ -1789,25 +1886,25 @@ function RouteView({
                 <div className="route-step-detail">
                   {entry.tool && (
                     <div>
-                      <span>工具</span>
+                      <span>{tr("工具", "Tool")}</span>
                       <code>{entry.tool}</code>
                     </div>
                   )}
                   {entry.path && (
                     <div>
-                      <span>文件</span>
+                      <span>{tr("文件", "File")}</span>
                       <code>{entry.path}</code>
                     </div>
                   )}
                   {entry.command && (
                     <div>
-                      <span>命令</span>
+                      <span>{tr("命令", "Command")}</span>
                       <code>{entry.command}</code>
                     </div>
                   )}
                   {(entry.additions > 0 || entry.deletions > 0) && (
                     <div>
-                      <span>修改</span>
+                      <span>{tr("修改", "Changes")}</span>
                       <p className="route-change-count">
                         <b>+{entry.additions || 0}</b>
                         <i>-{entry.deletions || 0}</i>
@@ -1816,7 +1913,7 @@ function RouteView({
                   )}
                   {artifact && (
                     <div>
-                      <span>产物</span>
+                      <span>{tr("产物", "Artifact")}</span>
                       <p>
                         {artifact.label || getDeliverableType({ path: entry.path || "" })}
                       </p>
@@ -1824,7 +1921,7 @@ function RouteView({
                   )}
                   {entry.detail && (
                     <div>
-                      <span>结果</span>
+                      <span>{tr("结果", "Result")}</span>
                       <p>{entry.detail}</p>
                     </div>
                   )}
@@ -1838,7 +1935,7 @@ function RouteView({
                         })
                       }
                     >
-                      查看具体修改
+                      {tr("查看具体修改", "View changes")}
                       <ArrowRight size={13} />
                     </button>
                   )}
@@ -1889,6 +1986,7 @@ function SettingsPanel({
   onSelectWorkspace,
   style,
 }) {
+  const { tr } = useI18n();
   const provider =
     providers.find((candidate) => candidate.id === task.providerId) ||
     providers[0];
@@ -1896,39 +1994,42 @@ function SettingsPanel({
     <aside className="settings-panel" style={style}>
       <div className="settings-panel-header">
         <div>
-          <span className="eyebrow">当前任务</span>
-          <h2>任务设置</h2>
+          <span className="eyebrow">{tr("当前任务", "Current task")}</span>
+          <h2>{tr("任务设置", "Task settings")}</h2>
         </div>
-        <IconButton label="关闭设置面板" onClick={onClose}>
+        <IconButton label={tr("关闭设置面板", "Close settings")} onClick={onClose}>
           <PanelRightClose size={18} />
         </IconButton>
       </div>
 
       <section className="settings-section">
-        <div className="settings-label">模型服务</div>
+        <div className="settings-label">{tr("模型服务", "Model service")}</div>
         <div className="api-status-row">
           <div className="api-status-copy">
             <span className={`api-status-dot ${provider ? "ready" : ""}`} />
             <div>
               <strong>
                 {provider
-                  ? `${provider.name} · ${provider.models?.length || 0} 个模型`
-                  : "需要添加模型 API"}
+                  ? tr("{name} · {count} 个模型", "{name} · {count} model(s)", {
+                      name: provider.name,
+                      count: provider.models?.length || 0,
+                    })
+                  : tr("需要添加模型 API", "Add a model API")}
               </strong>
               <span>
                 {provider?.baseUrl ||
-                  "支持多个 OpenAI-compatible Provider"}
+                  tr("支持多个 OpenAI-compatible Provider", "Supports multiple OpenAI-compatible providers")}
               </span>
             </div>
           </div>
           <button className="settings-link" onClick={onManageProviders}>
-            {provider ? "管理" : "添加"}
+            {provider ? tr("管理", "Manage") : tr("添加", "Add")}
           </button>
         </div>
       </section>
 
       <section className="settings-section">
-        <div className="settings-label">命令沙箱</div>
+        <div className="settings-label">{tr("命令沙箱", "Command sandbox")}</div>
         <div className="sandbox-status-card">
           <span
             className={`sandbox-status-icon ${
@@ -1944,12 +2045,12 @@ function SettingsPanel({
           <div>
             <strong>
               {sandboxStatus?.available
-                ? "容器沙箱已就绪"
-                : "本机审批模式"}
+                ? tr("容器沙箱已就绪", "Container sandbox ready")
+                : tr("本机审批模式", "Host approval mode")}
             </strong>
             <span>
               {sandboxStatus?.detail ||
-                "正在检测 Docker 与 AporiaX 沙箱镜像"}
+                tr("正在检测 Docker 与 AporiaX 沙箱镜像", "Checking Docker and the AporiaX sandbox image")}
             </span>
           </div>
         </div>
@@ -1963,29 +2064,31 @@ function SettingsPanel({
             {sandboxPreparing && (
               <LoaderCircle className="spin" size={14} />
             )}
-            {sandboxPreparing ? "正在准备沙箱" : "准备 Docker 沙箱"}
+            {sandboxPreparing
+              ? tr("正在准备沙箱", "Preparing sandbox")
+              : tr("准备 Docker 沙箱", "Prepare Docker sandbox")}
           </button>
         )}
         {sandboxStatus?.available && (
           <div className="sandbox-constraints">
-            <span>断网</span>
-            <span>只读系统</span>
+            <span>{tr("断网", "Offline")}</span>
+            <span>{tr("只读系统", "Read-only system")}</span>
             <span>{sandboxStatus.memory || "1536m"}</span>
-            <span>{sandboxStatus.pidsLimit || 256} 进程</span>
+            <span>{tr("{count} 进程", "{count} processes", { count: sandboxStatus.pidsLimit || 256 })}</span>
           </div>
         )}
         {sandboxStatus && !sandboxStatus.available && (
           <div className="sandbox-constraints fallback">
-            <span>逐条审批</span>
-            <span>本机执行</span>
-            <span>可联网</span>
-            <span>无 OS 隔离</span>
+            <span>{tr("逐条审批", "Per-command approval")}</span>
+            <span>{tr("本机执行", "Runs on host")}</span>
+            <span>{tr("可联网", "Network available")}</span>
+            <span>{tr("无 OS 隔离", "No OS isolation")}</span>
           </div>
         )}
       </section>
 
       <section className="settings-section">
-        <div className="settings-label">工作目录</div>
+        <div className="settings-label">{tr("工作目录", "Workspace")}</div>
         <div className="workspace-summary">
           {task.workspacePath ? (
             <FolderOpen size={17} />
@@ -1995,7 +2098,7 @@ function SettingsPanel({
           <div>
             <strong>{task.workspaceName}</strong>
             <span title={task.workspacePath || ""}>
-              {task.workspacePath || "当前任务只能进行纯对话"}
+              {task.workspacePath || tr("当前任务只能进行纯对话", "This task is limited to conversation")}
             </span>
           </div>
         </div>
@@ -2003,14 +2106,28 @@ function SettingsPanel({
           className="workspace-settings-button"
           onClick={onSelectWorkspace}
         >
-          {task.workspacePath ? "更改工作目录" : "绑定工作目录"}
+          {task.workspacePath
+            ? tr("更改工作目录", "Change workspace")
+            : tr("绑定工作目录", "Bind workspace")}
         </button>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-label">{tr("界面语言", "Interface language")}</div>
+        <LanguageSwitch />
+        <p className="settings-language-note">
+          {tr(
+            "界面和新回复会使用所选语言；历史消息与文件内容保持原样。",
+            "The interface and new replies use this language; existing messages and files remain unchanged.",
+          )}
+        </p>
       </section>
     </aside>
   );
 }
 
 function RenameTaskModal({ task, onClose, onRename }) {
+  const { tr } = useI18n();
   const [title, setTitle] = useState(task.title || "");
   const inputRef = useRef(null);
 
@@ -2036,16 +2153,16 @@ function RenameTaskModal({ task, onClose, onRename }) {
       <form className="rename-task-modal" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <h2>重命名任务</h2>
-            <p>任务记录和工作目录不会发生变化。</p>
+            <h2>{tr("重命名任务", "Rename task")}</h2>
+            <p>{tr("任务记录和工作目录不会发生变化。", "Task history and workspace will not change.")}</p>
           </div>
-          <IconButton label="关闭" type="button" onClick={onClose}>
+          <IconButton label={tr("关闭", "Close")} type="button" onClick={onClose}>
             <X size={18} />
           </IconButton>
         </div>
         <div className="api-key-body">
           <label className="field-label" htmlFor="rename-task-title">
-            任务名称
+            {tr("任务名称", "Task name")}
           </label>
           <input
             id="rename-task-title"
@@ -2058,10 +2175,10 @@ function RenameTaskModal({ task, onClose, onRename }) {
         </div>
         <div className="modal-footer">
           <button className="secondary-button" type="button" onClick={onClose}>
-            取消
+            {tr("取消", "Cancel")}
           </button>
           <button className="primary-button" type="submit" disabled={!title.trim()}>
-            保存
+            {tr("保存", "Save")}
           </button>
         </div>
       </form>
@@ -2070,6 +2187,7 @@ function RenameTaskModal({ task, onClose, onRename }) {
 }
 
 function PanelResizer({ panelName, width, minimum, maximum, onResize }) {
+  const { tr } = useI18n();
   const startResize = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -2106,7 +2224,7 @@ function PanelResizer({ panelName, width, minimum, maximum, onResize }) {
     <div
       className="panel-resizer"
       role="separator"
-      aria-label={`调整${panelName}宽度`}
+      aria-label={tr("调整面板宽度", "Resize panel")}
       aria-orientation="vertical"
       aria-valuemin={minimum}
       aria-valuemax={maximum}
@@ -2114,7 +2232,7 @@ function PanelResizer({ panelName, width, minimum, maximum, onResize }) {
       tabIndex={0}
       onDoubleClick={() =>
         onResize(
-          panelName === "任务设置"
+          panelName === "settings"
             ? DEFAULT_SETTINGS_PANEL_WIDTH
             : DEFAULT_FILES_PANEL_WIDTH,
         )
@@ -2154,6 +2272,7 @@ function TaskWorkspace({
   theme,
   onToggleTheme,
 }) {
+  const { tr } = useI18n();
   const [activeView, setActiveView] = useState("dialogue");
   const [workspaceFocusPath, setWorkspaceFocusPath] = useState("");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -2280,22 +2399,22 @@ function TaskWorkspace({
     if (!task.workspacePath) return;
     try {
       await navigator.clipboard.writeText(task.workspacePath);
-      onNotice("工作目录路径已复制");
+      onNotice(tr("工作目录路径已复制", "Workspace path copied"));
     } catch {
-      onNotice("无法复制工作目录路径");
+      onNotice(tr("无法复制工作目录路径", "Unable to copy the workspace path"));
     }
     setMoreMenuOpen(false);
   };
 
   const openWorkspace = async () => {
     if (!task.workspacePath || !window.desktop?.openWorkspace) {
-      onNotice("当前工作目录无法在资源管理器中打开");
+      onNotice(tr("当前工作目录无法在资源管理器中打开", "This workspace cannot be opened in File Explorer"));
       return;
     }
     try {
       await window.desktop.openWorkspace(task.workspacePath);
     } catch {
-      onNotice("无法打开工作目录");
+      onNotice(tr("无法打开工作目录", "Unable to open the workspace"));
     }
     setMoreMenuOpen(false);
   };
@@ -2306,7 +2425,7 @@ function TaskWorkspace({
         <header className="thread-header">
           <div className="thread-heading">
             <IconButton
-              label={sidebarCollapsed ? "展开任务侧栏" : "收起任务侧栏"}
+              label={sidebarCollapsed ? tr("展开任务侧栏", "Expand task sidebar") : tr("收起任务侧栏", "Collapse task sidebar")}
               className="thread-header-button"
               onClick={onToggleSidebar}
             >
@@ -2319,8 +2438,8 @@ function TaskWorkspace({
             <IconButton
               label={
                 task.workspacePath
-                  ? "浏览工作区文件"
-                  : "绑定工作目录"
+                  ? tr("浏览工作区文件", "Browse workspace files")
+                  : tr("绑定工作目录", "Bind workspace")
               }
               className={`thread-header-button thread-folder-button ${activeView === "workspace" ? "active" : ""}`}
               onClick={() => {
@@ -2350,8 +2469,8 @@ function TaskWorkspace({
             <IconButton
               label={
                 theme === "dark"
-                  ? "切换为日间模式"
-                  : "切换为夜间模式"
+                  ? tr("切换为日间模式", "Switch to light mode")
+                  : tr("切换为夜间模式", "Switch to dark mode")
               }
               className={`theme-toggle ${theme === "dark" ? "active" : ""}`}
               onClick={onToggleTheme}
@@ -2359,7 +2478,7 @@ function TaskWorkspace({
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </IconButton>
             <IconButton
-              label={settingsOpen ? "关闭任务设置" : "打开任务设置"}
+              label={settingsOpen ? tr("关闭任务设置", "Close task settings") : tr("打开任务设置", "Open task settings")}
               className={settingsOpen ? "active" : ""}
               onClick={() => {
                 onToggleSettings();
@@ -2369,7 +2488,7 @@ function TaskWorkspace({
             </IconButton>
             <div className="task-more-menu-wrap" ref={moreMenuRef}>
               <IconButton
-                label="更多操作"
+                label={tr("更多操作", "More actions")}
                 className={moreMenuOpen ? "active" : ""}
                 aria-expanded={moreMenuOpen}
                 aria-haspopup="menu"
@@ -2388,7 +2507,7 @@ function TaskWorkspace({
                     }}
                   >
                     <SquarePen size={15} />
-                    重命名任务
+                    {tr("重命名任务", "Rename task")}
                   </button>
                   <button
                     type="button"
@@ -2397,11 +2516,11 @@ function TaskWorkspace({
                     onClick={showFilesPanel}
                   >
                     <Files size={15} />
-                    文件与代码
+                    {tr("文件与代码", "Files and code")}
                   </button>
                   <button type="button" role="menuitem" onClick={showSettingsPanel}>
                     <Settings2 size={15} />
-                    任务设置
+                    {tr("任务设置", "Task settings")}
                   </button>
                   <div className="task-more-menu-divider" />
                   <button
@@ -2411,7 +2530,7 @@ function TaskWorkspace({
                     onClick={copyWorkspacePath}
                   >
                     <Copy size={15} />
-                    复制工作目录路径
+                    {tr("复制工作目录路径", "Copy workspace path")}
                   </button>
                   <button
                     type="button"
@@ -2420,7 +2539,7 @@ function TaskWorkspace({
                     onClick={openWorkspace}
                   >
                     <HardDrive size={15} />
-                    在资源管理器中打开
+                    {tr("在资源管理器中打开", "Open in File Explorer")}
                   </button>
                 </div>
               )}
@@ -2428,7 +2547,7 @@ function TaskWorkspace({
           </div>
         </header>
 
-        <nav className="thread-view-tabs" aria-label="任务视图">
+        <nav className="thread-view-tabs" aria-label={tr("任务视图", "Task views")}>
           {[
             { id: "dialogue", label: "Dialogue" },
             { id: "route", label: "Route" },
@@ -2525,7 +2644,7 @@ function TaskWorkspace({
       {settingsOpen ? (
         <>
           <PanelResizer
-            panelName="任务设置"
+            panelName="settings"
             width={settingsPanelWidth}
             minimum={260}
             maximum={620}
@@ -2551,7 +2670,7 @@ function TaskWorkspace({
           onRename={(title) => {
             onUpdateTask({ title });
             setRenameOpen(false);
-            onNotice("任务已重命名");
+            onNotice(tr("任务已重命名", "Task renamed"));
           }}
         />
       )}
@@ -2598,6 +2717,7 @@ function ProviderManagerModal({
   onChanged,
   onNotice,
 }) {
+  const { tr } = useI18n();
   const [form, setForm] = useState(() =>
     providers[0] ? providerToForm(providers[0]) : emptyProviderForm(),
   );
@@ -2643,12 +2763,12 @@ function ProviderManagerModal({
           .map((model) => model.id)
           .join("\n"),
       }));
-      onNotice(`已识别 ${result.models.length} 个模型`);
+      onNotice(tr("已识别 {count} 个模型", "Discovered {count} model(s)", { count: result.models.length }));
     } catch (discoverError) {
       setError(
         cleanIpcError(
           discoverError,
-          "无法自动发现模型，可以手动填写模型 ID。",
+          tr("无法自动发现模型，可以手动填写模型 ID。", "Unable to discover models automatically. Enter model IDs manually."),
         ),
       );
     } finally {
@@ -2678,9 +2798,9 @@ function ProviderManagerModal({
       });
       await onChanged();
       setForm(emptyProviderForm());
-      onNotice(form.id ? "Provider 已更新" : "Provider 已添加");
+      onNotice(form.id ? tr("Provider 已更新", "Provider updated") : tr("Provider 已添加", "Provider added"));
     } catch (saveError) {
-      setError(cleanIpcError(saveError, "保存 Provider 失败。"));
+      setError(cleanIpcError(saveError, tr("保存 Provider 失败。", "Failed to save the provider.")));
     } finally {
       setSaving(false);
     }
@@ -2691,7 +2811,11 @@ function ProviderManagerModal({
       !editingProvider ||
       editingProvider.environmentKey ||
       !window.confirm(
-        `移除 ${editingProvider.name}？已有任务记录不会被删除，但需要重新选择模型。`,
+        tr(
+          "移除 {name}？已有任务记录不会被删除，但需要重新选择模型。",
+          "Remove {name}? Existing task history will remain, but you will need to choose another model.",
+          { name: editingProvider.name },
+        ),
       )
     ) {
       return;
@@ -2702,9 +2826,9 @@ function ProviderManagerModal({
       await window.desktop.providers.remove(editingProvider.id);
       await onChanged();
       setForm(emptyProviderForm());
-      onNotice("Provider 已移除");
+      onNotice(tr("Provider 已移除", "Provider removed"));
     } catch (removeError) {
-      setError(cleanIpcError(removeError, "移除 Provider 失败。"));
+      setError(cleanIpcError(removeError, tr("移除 Provider 失败。", "Failed to remove the provider.")));
     } finally {
       setSaving(false);
     }
@@ -2715,10 +2839,10 @@ function ProviderManagerModal({
       <form className="provider-manager-modal" onSubmit={submit}>
         <div className="modal-header">
           <div>
-            <h2>模型 Provider</h2>
-            <p>添加多个 OpenAI-compatible API，并为任务自由选择模型。</p>
+            <h2>{tr("模型 Provider", "Model providers")}</h2>
+            <p>{tr("添加多个 OpenAI-compatible API，并为任务自由选择模型。", "Add multiple OpenAI-compatible APIs and choose any model per task.")}</p>
           </div>
-          <IconButton label="关闭" type="button" onClick={onClose}>
+          <IconButton label={tr("关闭", "Close")} type="button" onClick={onClose}>
             <X size={18} />
           </IconButton>
         </div>
@@ -2734,7 +2858,7 @@ function ProviderManagerModal({
               }}
             >
               <Plus size={15} />
-              新增 API
+              {tr("新增 API", "Add API")}
             </button>
             {providers.map((provider) => (
               <button
@@ -2748,7 +2872,7 @@ function ProviderManagerModal({
               >
                 <span>
                   <strong>{provider.name}</strong>
-                  <small>{provider.models?.length || 0} 个模型</small>
+                  <small>{tr("{count} 个模型", "{count} model(s)", { count: provider.models?.length || 0 })}</small>
                 </span>
                 <ChevronDown size={13} />
               </button>
@@ -2759,16 +2883,16 @@ function ProviderManagerModal({
             <div className="secure-key-note">
               <KeyRound size={17} />
               <div>
-                <strong>密钥由系统安全存储加密保管</strong>
+                <strong>{tr("密钥由系统安全存储加密保管", "API keys are encrypted by the operating system")}</strong>
                 <span>
-                  编辑时留空会保留原密钥；本地无鉴权 API 可以不填。
+                  {tr("编辑时留空会保留原密钥；本地无鉴权 API 可以不填。", "Leave it blank while editing to keep the current key. Local APIs without authentication do not need one.")}
                 </span>
               </div>
             </div>
 
             <div className="provider-form-grid">
               <label>
-                <span>名称</span>
+                <span>{tr("名称", "Name")}</span>
                 <input
                   ref={nameRef}
                   className="text-field"
@@ -2780,7 +2904,7 @@ function ProviderManagerModal({
                       name: event.target.value,
                     }))
                   }
-                  placeholder="例如 OpenAI、OpenRouter、本地 Ollama"
+                  placeholder={tr("例如 OpenAI、OpenRouter、本地 Ollama", "For example: OpenAI, OpenRouter, or local Ollama")}
                 />
               </label>
               <label>
@@ -2800,8 +2924,8 @@ function ProviderManagerModal({
               <label className="provider-key-field">
                 <span>
                   {editingProvider?.hasApiKey
-                    ? "替换 API Key（可选）"
-                    : "API Key（可选）"}
+                    ? tr("替换 API Key（可选）", "Replace API key (optional)")
+                    : tr("API Key（可选）", "API key (optional)")}
                 </span>
                 <input
                   className="text-field"
@@ -2817,8 +2941,8 @@ function ProviderManagerModal({
                   }
                   placeholder={
                     editingProvider?.hasApiKey
-                      ? "已安全保存；留空保持不变"
-                      : "sk-… 或其他服务商密钥"
+                      ? tr("已安全保存；留空保持不变", "Stored securely; leave blank to keep it")
+                      : tr("sk-… 或其他服务商密钥", "sk-… or another provider key")
                   }
                 />
               </label>
@@ -2826,8 +2950,8 @@ function ProviderManagerModal({
 
             <div className="provider-model-heading">
               <div>
-                <strong>模型 ID</strong>
-                <span>每行一个；自动识别视觉、思考和工具能力。</span>
+                <strong>{tr("模型 ID", "Model IDs")}</strong>
+                <span>{tr("每行一个；自动识别视觉、思考和工具能力。", "One per line; vision, reasoning, and tool capabilities are detected automatically.")}</span>
               </div>
               <button
                 className="secondary-button"
@@ -2840,7 +2964,7 @@ function ProviderManagerModal({
                 ) : (
                   <Search size={14} />
                 )}
-                自动发现
+                {tr("自动发现", "Discover")}
               </button>
             </div>
             <textarea
@@ -2856,9 +2980,9 @@ function ProviderManagerModal({
               spellCheck={false}
             />
             <div className="provider-detection-summary">
-              <span>{modelIds.length} 个模型</span>
+              <span>{tr("{count} 个模型", "{count} model(s)", { count: modelIds.length })}</span>
               <span>Chat Completions</span>
-              <span>Bearer / 无鉴权</span>
+              <span>{tr("Bearer / 无鉴权", "Bearer / no authentication")}</span>
             </div>
             {error && <p className="api-key-error">{error}</p>}
           </div>
@@ -2873,7 +2997,7 @@ function ProviderManagerModal({
               onClick={() => void removeCurrentProvider()}
             >
               <Trash2 size={14} />
-              移除 Provider
+              {tr("移除 Provider", "Remove provider")}
             </button>
           ) : (
             <span />
@@ -2884,7 +3008,7 @@ function ProviderManagerModal({
               type="button"
               onClick={onClose}
             >
-              关闭
+              {tr("关闭", "Close")}
             </button>
             <button
               className="primary-button"
@@ -2897,7 +3021,7 @@ function ProviderManagerModal({
               }
             >
               {saving && <LoaderCircle className="spin" size={14} />}
-              {form.id ? "保存修改" : "添加 Provider"}
+              {form.id ? tr("保存修改", "Save changes") : tr("添加 Provider", "Add provider")}
             </button>
           </div>
         </div>
@@ -2907,6 +3031,7 @@ function ProviderManagerModal({
 }
 
 function App() {
+  const { language, tr } = useI18n();
   const [tasks, setTasks] = useState(readSavedTasks);
   const [activeTaskId, setActiveTaskId] = useState(
     () => readSavedTasks()[0]?.id || null,
@@ -2962,7 +3087,7 @@ function App() {
       const status = {
         available: false,
         state: "error",
-        detail: cleanIpcError(error, "无法检测命令沙箱"),
+        detail: cleanIpcError(error, tr("无法检测命令沙箱", "Unable to inspect the command sandbox")),
       };
       setSandboxStatus(status);
       return status;
@@ -3014,7 +3139,7 @@ function App() {
           setActiveTaskId(storedTasks[0]?.id || null);
         }
       } catch {
-        if (active) setNotice("任务历史加载失败，已使用本地缓存");
+        if (active) setNotice(tr("任务历史加载失败，已使用本地缓存", "Task history failed to load; using the local cache"));
       } finally {
         if (active) setStorageReady(true);
       }
@@ -3029,7 +3154,7 @@ function App() {
     if (!storageReady || !window.desktop?.tasks) return undefined;
     const timeout = window.setTimeout(() => {
       void window.desktop.tasks.save(tasks).catch(() => {
-        setNotice("任务检查点保存失败");
+        setNotice(tr("任务检查点保存失败", "Failed to save the task checkpoint"));
       });
     }, 350);
     return () => window.clearTimeout(timeout);
@@ -3039,7 +3164,7 @@ function App() {
     void reloadProviders().catch(() => {
       setProviders([]);
       setProvidersReady(true);
-      setNotice("模型 Provider 加载失败");
+      setNotice(tr("模型 Provider 加载失败", "Failed to load model providers"));
     });
     void refreshSandboxStatus();
   }, []);
@@ -3074,19 +3199,19 @@ function App() {
   useEffect(() => {
     if (!window.desktop?.harness?.onEvent) return undefined;
     const toolLabels = {
-      list_directory: "正在浏览工作区",
-      read_file: "正在读取文件",
-      search_text: "正在搜索代码",
-      git_status: "正在检查 Git 状态",
-      git_diff: "正在读取代码差异",
-      write_file: "正在修改文件",
-      apply_patch: "正在精确修改代码",
-      create_word_document: "正在生成 Word 文档",
-      create_presentation: "正在生成 PowerPoint",
-      create_spreadsheet: "正在生成 Excel 工作簿",
-      inspect_office_file: "正在检查 Office 工件",
-      run_command: "正在准备验证命令",
-      complete_self_check: "正在提交自检报告",
+      list_directory: tr("正在浏览工作区", "Browsing workspace"),
+      read_file: tr("正在读取文件", "Reading file"),
+      search_text: tr("正在搜索代码", "Searching code"),
+      git_status: tr("正在检查 Git 状态", "Inspecting Git status"),
+      git_diff: tr("正在读取代码差异", "Reading code diff"),
+      write_file: tr("正在修改文件", "Writing file"),
+      apply_patch: tr("正在精确修改代码", "Applying a precise code patch"),
+      create_word_document: tr("正在生成 Word 文档", "Creating Word document"),
+      create_presentation: tr("正在生成 PowerPoint", "Creating PowerPoint presentation"),
+      create_spreadsheet: tr("正在生成 Excel 工作簿", "Creating Excel workbook"),
+      inspect_office_file: tr("正在检查 Office 工件", "Inspecting Office artifact"),
+      run_command: tr("正在准备验证命令", "Preparing verification command"),
+      complete_self_check: tr("正在提交自检报告", "Submitting self-check report"),
     };
     return window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
@@ -3115,14 +3240,14 @@ function App() {
         setRunStatus({
           title:
             event.phase === "self-check"
-              ? "AporiaX 正在强制自检"
-              : "AporiaX 正在生成",
+              ? tr("AporiaX 正在强制自检", "AporiaX is running its mandatory self-check")
+              : tr("AporiaX 正在生成", "AporiaX is responding"),
           detail:
             event.phase === "self-check"
-              ? "正在重新读取本轮修改的代码并检查可改进项"
+              ? tr("正在重新读取本轮修改的代码并检查可改进项", "Re-reading this turn's changes and looking for improvements")
               : event.round > 1
-                ? `正在处理第 ${event.round} 轮工具结果`
-                : "正在理解任务并规划操作",
+                ? tr("正在处理第 {round} 轮工具结果", "Processing tool results from round {round}", { round: event.round })
+                : tr("正在理解任务并规划操作", "Understanding the task and planning actions"),
         });
         return;
       }
@@ -3164,22 +3289,30 @@ function App() {
           ),
         );
         setRunStatus({
-          title: `${event.provider || "模型服务"} 正在自动重试 ${event.attempt}/${event.maxAttempts}`,
-          detail: "请求暂时无响应或服务繁忙，已保留本轮任务状态",
+          title: tr(
+            "{provider} 正在自动重试 {attempt}/{max}",
+            "{provider} is retrying automatically {attempt}/{max}",
+            {
+              provider: event.provider || tr("模型服务", "Model service"),
+              attempt: event.attempt,
+              max: event.maxAttempts,
+            },
+          ),
+          detail: tr("请求暂时无响应或服务繁忙，已保留本轮任务状态", "The request timed out or the service is busy. This turn's state has been preserved."),
         });
         return;
       }
 
       if (event.type === "context.compacted") {
         setRunStatus({
-          title: "正在压缩长任务上下文",
-          detail: `已压缩 ${event.compactedMessages || 0} 条旧工具输出，保留最近操作`,
+          title: tr("正在压缩长任务上下文", "Compacting long task context"),
+          detail: tr("已压缩 {count} 条旧工具输出，保留最近操作", "Compacted {count} older tool outputs while retaining recent actions", { count: event.compactedMessages || 0 }),
         });
         return;
       }
 
       if (event.type === "tool.started") {
-        const meta = getRouteToolMeta(event.tool, event.phase);
+        const meta = getRouteToolMeta(event.tool, event.phase, language);
         const now = new Date().toISOString();
         run.routeCounter = (run.routeCounter || 0) + 1;
         setTasks((current) =>
@@ -3205,13 +3338,13 @@ function App() {
           })),
         );
         setRunStatus({
-          title: toolLabels[event.tool] || "Harness 正在运行",
+          title: toolLabels[event.tool] || tr("Harness 正在运行", "Harness is running"),
           detail:
             event.tool === "run_command"
-              ? "命令执行前等待批准；Docker 不可用时将明确回退到本机审批模式"
+              ? tr("命令执行前等待批准；Docker 不可用时将明确回退到本机审批模式", "Commands wait for approval; when Docker is unavailable, AporiaX explicitly falls back to host approval mode")
               : event.phase === "self-check"
-                ? "强制复核本轮修改，发现问题会继续修复"
-                : "操作范围限制在当前工作区内",
+                ? tr("强制复核本轮修改，发现问题会继续修复", "Reviewing this turn's changes and continuing to fix any issues")
+                : tr("操作范围限制在当前工作区内", "Actions are limited to the current workspace"),
         });
         return;
       }
@@ -3251,7 +3384,7 @@ function App() {
                     status: "recovered",
                     detail:
                       route[index].detail ||
-                      "后续重试已成功",
+                      tr("后续重试已成功", "A later retry succeeded"),
                   };
                 }
               }
@@ -3261,19 +3394,19 @@ function App() {
         );
         setRunStatus({
           title: event.skipped
-            ? "检查不适用于当前工作区"
+            ? tr("检查不适用于当前工作区", "Check is not applicable to this workspace")
             : event.retry
               ? event.tool === "complete_self_check"
-                ? "自检条件尚未满足"
-                : "工具参数将自动重试"
+                ? tr("自检条件尚未满足", "Self-check conditions are not yet satisfied")
+                : tr("工具参数将自动重试", "Tool arguments will be retried automatically")
               : event.success
-                ? "操作已完成"
-                : "操作未完成",
+                ? tr("操作已完成", "Action completed")
+                : tr("操作未完成", "Action incomplete"),
           detail:
             event.detail ||
             (event.success
-              ? "正在整理结果并决定下一步"
-              : "Agent 正在根据错误调整方案"),
+              ? tr("正在整理结果并决定下一步", "Organizing results and deciding the next step")
+              : tr("Agent 正在根据错误调整方案", "The agent is adjusting its plan based on the error")),
         });
         return;
       }
@@ -3313,8 +3446,8 @@ function App() {
                 id: `${event.runId}-self-check-start`,
                 kind: "self-check-start",
                 stage: "trial",
-                title: "进入强制自检",
-                detail: `复核 ${event.paths?.length || 0} 个修改文件`,
+                title: tr("进入强制自检", "Begin mandatory self-check"),
+                detail: tr("复核 {count} 个修改文件", "Review {count} changed file(s)", { count: event.paths?.length || 0 }),
                 status: "completed",
                 startedAt: now,
                 finishedAt: now,
@@ -3323,10 +3456,10 @@ function App() {
           })),
         );
         setRunStatus({
-          title: "进入强制自检",
+          title: tr("进入强制自检", "Begin mandatory self-check"),
           detail: event.verificationCandidates?.length
-            ? `复核 ${event.paths?.length || 0} 个文件，并尝试项目构建或测试`
-            : `必须重新读取 ${event.paths?.length || 0} 个修改文件后才能完成任务`,
+            ? tr("复核 {count} 个文件，并尝试项目构建或测试", "Review {count} file(s), then attempt the project build or tests", { count: event.paths?.length || 0 })
+            : tr("必须重新读取 {count} 个修改文件后才能完成任务", "All {count} changed file(s) must be re-read before the task can finish", { count: event.paths?.length || 0 }),
         });
         return;
       }
@@ -3342,10 +3475,10 @@ function App() {
                 id: `${event.runId}-self-check-complete`,
                 kind: "self-check-complete",
                 stage: "trial",
-                title: "强制自检已完成",
+                title: tr("强制自检已完成", "Mandatory self-check completed"),
                 detail: event.report?.verification?.passed
-                  ? "项目验证已通过"
-                  : `已复核 ${event.report?.reviewedFiles?.length || 0} 个文件`,
+                  ? tr("项目验证已通过", "Project verification passed")
+                  : tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: event.report?.reviewedFiles?.length || 0 }),
                 status: "completed",
                 startedAt: now,
                 finishedAt: now,
@@ -3354,8 +3487,8 @@ function App() {
           })),
         );
         setRunStatus({
-          title: "强制自检已通过",
-          detail: `已复核 ${event.report?.reviewedFiles?.length || 0} 个修改文件，正在整理最终答复`,
+          title: tr("强制自检已通过", "Mandatory self-check passed"),
+          detail: tr("已复核 {count} 个修改文件，正在整理最终答复", "Reviewed {count} changed file(s); preparing the final response", { count: event.report?.reviewedFiles?.length || 0 }),
         });
         return;
       }
@@ -3375,7 +3508,7 @@ function App() {
                     {
                       id: `${event.runId}-deliver`,
                       stage: "deliver",
-                      title: "整理最终产物",
+                      title: tr("整理最终产物", "Prepare final deliverables"),
                       status: "completed",
                       startedAt: now,
                       finishedAt: now,
@@ -3409,12 +3542,12 @@ function App() {
           taskId: run.taskId,
         });
         setRunStatus({
-          title: "等待命令审批",
-          detail: "确认后 Harness 才会在本机执行该命令",
+          title: tr("等待命令审批", "Awaiting command approval"),
+          detail: tr("确认后 Harness 才会在本机执行该命令", "Harness will run this command on the host only after approval"),
         });
       }
     });
-  }, []);
+  }, [language, tr]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -3457,17 +3590,17 @@ function App() {
     setActiveTaskId(task.id);
     setNewTaskOpen(false);
     setSettingsOpen(false);
-    setNotice("任务已创建");
+    setNotice(tr("任务已创建", "Task created"));
   };
 
   const sendMessage = (content, attachments = []) => {
     if (!window.desktop?.harness) {
-      setNotice("请在 Electron 桌面端运行 Harness");
+      setNotice(tr("请在 Electron 桌面端运行 Harness", "Run the Harness in the Electron desktop app"));
       return false;
     }
     if (!providers.length) {
       setProviderManagerOpen(true);
-      setNotice("请先添加一个模型 Provider");
+      setNotice(tr("请先添加一个模型 Provider", "Add a model provider first"));
       return false;
     }
     if (!activeTask || runningTaskId) return false;
@@ -3494,7 +3627,7 @@ function App() {
         {
           id: `${runId}-route-start`,
           stage: "route",
-          title: "理解任务并准备行动",
+          title: tr("理解任务并准备行动", "Understand the task and prepare actions"),
           status: "running",
           startedAt: new Date().toISOString(),
         },
@@ -3524,8 +3657,8 @@ function App() {
     setActiveRunId(runId);
     setApproval(null);
     setRunStatus({
-      title: "正在启动 Harness",
-      detail: "正在加载项目指令与任务上下文",
+      title: tr("正在启动 Harness", "Starting Harness"),
+      detail: tr("正在加载项目指令与任务上下文", "Loading project instructions and task context"),
     });
 
     void window.desktop.harness
@@ -3537,6 +3670,7 @@ function App() {
         thinking: activeTask.thinking,
         effort: activeTask.effort,
         permission: activeTask.permission,
+        language,
         messages: [...activeTask.messages, userMessage],
       })
       .then((result) => {
@@ -3584,13 +3718,13 @@ function App() {
           ),
         );
         if (result.status === "failed") {
-          setNotice("Harness 运行失败");
+          setNotice(tr("Harness 运行失败", "Harness run failed"));
         } else if (result.status === "interrupted") {
-          setNotice("任务已停止，已保留文件检查点");
+          setNotice(tr("任务已停止，已保留文件检查点", "Task stopped; file checkpoints were preserved"));
         }
       })
       .catch((error) => {
-        const cleanMessage = String(error?.message || "Harness 运行失败")
+        const cleanMessage = String(error?.message || tr("Harness 运行失败", "Harness run failed"))
           .replace(/^Error invoking remote method '[^']+':\s*/i, "")
           .replace(/^Error:\s*/i, "");
         setTasks((current) =>
@@ -3634,7 +3768,7 @@ function App() {
               : task,
           ),
         );
-        setNotice("Harness 运行失败");
+        setNotice(tr("Harness 运行失败", "Harness run failed"));
       })
       .finally(() => {
         runsRef.current.delete(runId);
@@ -3654,14 +3788,14 @@ function App() {
   const stopActiveRun = async () => {
     if (!activeRunId || !window.desktop?.harness?.interrupt) return;
     setRunStatus({
-      title: "正在停止任务",
-      detail: "等待当前操作安全退出",
+      title: tr("正在停止任务", "Stopping task"),
+      detail: tr("等待当前操作安全退出", "Waiting for the current operation to exit safely"),
     });
     setApproval(null);
     try {
       await window.desktop.harness.interrupt(activeRunId);
     } catch {
-      setNotice("无法停止任务，请稍后重试");
+      setNotice(tr("无法停止任务，请稍后重试", "Unable to stop the task. Try again shortly."));
     }
   };
 
@@ -3676,20 +3810,20 @@ function App() {
         approved,
       });
       if (!accepted) {
-        setNotice("审批请求已经失效");
+        setNotice(tr("审批请求已经失效", "The approval request has expired"));
         return;
       }
       setApproval((current) =>
         current?.id === currentApproval.id ? null : current,
       );
       setRunStatus({
-        title: approved ? "操作已批准" : "操作已拒绝",
+        title: approved ? tr("操作已批准", "Action approved") : tr("操作已拒绝", "Action denied"),
         detail: approved
-          ? "Harness 正在执行工具并收集结果"
-          : "Agent 会根据拒绝结果调整方案",
+          ? tr("Harness 正在执行工具并收集结果", "Harness is running the tool and collecting results")
+          : tr("Agent 会根据拒绝结果调整方案", "The agent will adjust its plan after the denial"),
       });
     } catch {
-      setNotice("无法提交审批结果");
+      setNotice(tr("无法提交审批结果", "Unable to submit the approval response"));
     } finally {
       setApprovalResponding(false);
     }
@@ -3717,7 +3851,7 @@ function App() {
         task?.modelId,
       ).supportsImages
     ) {
-      setNotice("当前模型不支持识图，已移除图片并按文字内容重试");
+      setNotice(tr("当前模型不支持识图，已移除图片并按文字内容重试", "This model cannot read images. Images were removed before retrying the text."));
       return sendMessage(
         assistantMessage.prompt || sourceMessage?.content || "",
         retryAttachments.filter(
@@ -3733,7 +3867,7 @@ function App() {
 
   const revertMessageChanges = async (messageId, paths) => {
     if (!window.desktop?.workspace?.revert) {
-      setNotice("桌面文件恢复能力不可用");
+      setNotice(tr("桌面文件恢复能力不可用", "Desktop file recovery is unavailable"));
       return [];
     }
     const task = tasksRef.current.find((candidate) =>
@@ -3743,7 +3877,7 @@ function App() {
       (candidate) => candidate.id === messageId,
     );
     if (!task?.workspacePath || !message?.changes?.length) {
-      setNotice("没有可恢复的文件检查点");
+      setNotice(tr("没有可恢复的文件检查点", "No restorable file checkpoint was found"));
       return [];
     }
     const pathSet = new Set(paths);
@@ -3785,15 +3919,17 @@ function App() {
       );
       const conflicts = results.length - revertedPaths.size;
       if (conflicts > 0) {
-        setNotice(
-          `已撤销 ${revertedPaths.size} 个文件，${conflicts} 个文件因后续改动未覆盖`,
-        );
+        setNotice(tr(
+          "已撤销 {count} 个文件，{conflicts} 个文件因后续改动未覆盖",
+          "Reverted {count} file(s); {conflicts} file(s) were left intact because of later changes",
+          { count: revertedPaths.size, conflicts },
+        ));
       } else {
-        setNotice(`已恢复 ${revertedPaths.size} 个文件检查点`);
+        setNotice(tr("已恢复 {count} 个文件检查点", "Restored {count} file checkpoint(s)", { count: revertedPaths.size }));
       }
       return results;
     } catch (error) {
-      const cleanMessage = String(error?.message || "撤销失败")
+      const cleanMessage = String(error?.message || tr("撤销失败", "Revert failed"))
         .replace(/^Error invoking remote method '[^']+':\s*/i, "")
         .replace(/^Error:\s*/i, "");
       setNotice(cleanMessage);
@@ -3813,19 +3949,19 @@ function App() {
         ),
       })),
     );
-    setNotice("已确认保留上一轮修改");
+    setNotice(tr("已确认保留上一轮修改", "Confirmed that the previous turn's changes should be kept"));
   };
 
   const prepareCommandSandbox = async () => {
     if (!window.desktop?.sandbox?.prepare || sandboxPreparing) return;
     setSandboxPreparing(true);
-    setNotice("正在构建 AporiaX 沙箱镜像，首次准备可能需要几分钟");
+    setNotice(tr("正在构建 AporiaX 沙箱镜像，首次准备可能需要几分钟", "Building the AporiaX sandbox image. The first setup may take a few minutes."));
     try {
       const status = await window.desktop.sandbox.prepare();
       setSandboxStatus(status);
-      setNotice("OS 级命令沙箱已就绪");
+      setNotice(tr("OS 级命令沙箱已就绪", "OS-level command sandbox is ready"));
     } catch (error) {
-      setNotice(cleanIpcError(error, "沙箱准备失败"));
+      setNotice(cleanIpcError(error, tr("沙箱准备失败", "Sandbox preparation failed")));
       await refreshSandboxStatus();
     } finally {
       setSandboxPreparing(false);
@@ -3834,7 +3970,7 @@ function App() {
 
   const selectWorkspaceForActiveTask = async () => {
     if (!window.desktop?.selectDirectory) {
-      setNotice("桌面桥未加载，请关闭旧窗口后重新启动 Electron");
+      setNotice(tr("桌面桥未加载，请关闭旧窗口后重新启动 Electron", "The desktop bridge is not loaded. Close the old window and restart Electron."));
       return;
     }
     try {
@@ -3845,9 +3981,9 @@ function App() {
         workspaceName: getFolderName(selectedPath),
         permission: "workspace-write",
       });
-      setNotice("工作目录已绑定");
+      setNotice(tr("工作目录已绑定", "Workspace bound"));
     } catch {
-      setNotice("无法打开目录选择器，请重启 Electron");
+      setNotice(tr("无法打开目录选择器，请重启 Electron", "Unable to open the folder picker. Restart Electron."));
     }
   };
 
@@ -3874,7 +4010,7 @@ function App() {
           {!activeTask && (
             <div className="surface-toolbar">
               <IconButton
-                label={sidebarCollapsed ? "展开任务侧栏" : "收起任务侧栏"}
+                label={sidebarCollapsed ? tr("展开任务侧栏", "Expand task sidebar") : tr("收起任务侧栏", "Collapse task sidebar")}
                 onClick={() => setSidebarCollapsed((current) => !current)}
               >
                 {sidebarCollapsed ? (
@@ -3883,7 +4019,7 @@ function App() {
                   <PanelLeftClose size={17} />
                 )}
               </IconButton>
-              <span>工作区</span>
+              <span>{tr("工作区", "Workspace")}</span>
             </div>
           )}
 
@@ -3957,6 +4093,8 @@ function App() {
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <App />
+    <I18nProvider>
+      <App />
+    </I18nProvider>
   </React.StrictMode>,
 );

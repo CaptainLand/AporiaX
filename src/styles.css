@@ -5242,6 +5242,121 @@ body.panel-is-resizing * {
   }
 }
 
+/* Language controls */
+.language-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid rgba(124, 145, 158, 0.28);
+  border-radius: 9px;
+  background: rgba(245, 248, 250, 0.72);
+  gap: 2px;
+}
+
+.language-switch button {
+  height: 29px;
+  padding: 0 10px;
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  color: #70808a;
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.language-switch button:hover {
+  color: #31434e;
+}
+
+.language-switch button.active {
+  color: #173849;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 5px rgba(28, 48, 58, 0.12);
+}
+
+.welcome-language-switch {
+  position: absolute;
+  z-index: 3;
+  right: clamp(24px, 3vw, 46px);
+  bottom: clamp(22px, 3vh, 38px);
+  border-color: rgba(174, 200, 216, 0.16);
+  background: rgba(12, 12, 17, 0.44);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.welcome-language-switch button {
+  color: rgba(211, 216, 222, 0.58);
+}
+
+.welcome-language-switch button:hover {
+  color: rgba(237, 242, 246, 0.88);
+}
+
+.welcome-language-switch button.active {
+  color: #dff3ff;
+  background: rgba(91, 167, 205, 0.18);
+  box-shadow:
+    inset 0 0 0 1px rgba(117, 183, 223, 0.17),
+    0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+.settings-language-note {
+  margin: 10px 0 0;
+  color: #7e8b93;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+:root[data-theme="dark"] .language-switch {
+  border-color: rgba(121, 149, 165, 0.22);
+  background: rgba(9, 14, 18, 0.52);
+}
+
+:root[data-theme="dark"] .language-switch button {
+  color: #788993;
+}
+
+:root[data-theme="dark"] .language-switch button:hover {
+  color: #c5d7e0;
+}
+
+:root[data-theme="dark"] .language-switch button.active {
+  color: #bfe9f8;
+  background: rgba(70, 146, 182, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(104, 187, 224, 0.14);
+}
+
+:root[data-theme="dark"] .settings-language-note {
+  color: #71818a;
+}
+
+html[lang="zh-CN"] .welcome-card h1 {
+  max-width: 11em;
+  font-family:
+    "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  font-size: clamp(46px, 5.8vw, 88px);
+  letter-spacing: -0.045em;
+  line-height: 1.13;
+}
+
+@media (max-width: 760px) {
+  .welcome-language-switch {
+    right: 20px;
+    bottom: 18px;
+  }
+
+  html[lang="zh-CN"] .welcome-card h1 {
+    font-size: clamp(38px, 10.8vw, 58px);
+  }
+}
+
 /* Results: quiet headings and liquid-glass surfaces */
 .markdown-message h3 {
   display: block;

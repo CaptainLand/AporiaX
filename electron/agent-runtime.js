@@ -1720,12 +1720,39 @@ async function discoverVerificationCommands(workspaceRoot, changeMap) {
   return candidates.slice(0, 8);
 }
 
-function createSelfCheckPrompt(changeMap, verificationCandidates) {
+function createSelfCheckPrompt(
+  changeMap,
+  verificationCandidates,
+  language = "zh-CN",
+) {
   const changes = buildChanges(changeMap);
   const changedPaths = changes.map((change) => change.path);
   const includesOfficeArtifacts = changes.some(
     (change) => change.binary && isOfficePath(change.path),
   );
+  if (language === "en") {
+    return [
+      "Begin the mandatory self-check phase. A final answer will not be accepted yet.",
+      "Use read_file to re-read every file changed in this turn, then check correctness, completeness, security, performance, and obvious edge cases:",
+      ...changedPaths.map((path) => `- ${path}`),
+      includesOfficeArtifacts
+        ? "For every changed .docx, .pptx, or .xlsx file, use inspect_office_file instead of read_file. Confirm that the package is valid and that its document blocks, slides, sheets, rows, and formulas match the request. If an Office artifact is wrong, regenerate it with its create_* tool rather than write_file. Structural inspection does not prove the final visual layout, so record the missing visual render check in remaining_risks."
+        : "",
+      "Fix problems immediately with write_file or apply_patch. Re-read every file after its latest write.",
+      verificationCandidates.length
+        ? [
+            "Harness found the following project verification commands. Use run_command to attempt at least one relevant check; command execution still requires user approval:",
+            ...verificationCandidates.map(
+              (candidate) =>
+                `- ${candidate.command} (directory: ${candidate.cwd})`,
+            ),
+          ].join("\n")
+        : "No test, typecheck, lint, or build script was found in package.json. Perform a static review and record the missing runtime verification as a remaining risk.",
+      "After all checks, call complete_self_check with concrete checks, improvements, and remaining risks. Do not provide the final answer before calling it.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   return [
     "进入强制自检阶段。最终答复暂时不会被接受。",
     "你必须使用 read_file 重新读取下面每个本轮修改过的文件，并检查正确性、完整性、安全性、性能和明显的边界情况：",
@@ -1770,24 +1797,34 @@ function sanitizeFinalAnswer(content) {
     .trim();
 }
 
-function formatToolStepDetail(toolName, modelResult) {
+function formatToolStepDetail(
+  toolName,
+  modelResult,
+  language = "zh-CN",
+) {
   if (modelResult?.reason) return modelResult.reason;
   const error = String(modelResult?.error || "");
   if (!error) return null;
   if (/Invalid arguments/i.test(error)) {
-    return "工具参数格式无效，Agent 将重新生成参数";
+    return language === "en"
+      ? "Invalid tool arguments; the agent will regenerate them"
+      : "工具参数格式无效，Agent 将重新生成参数";
   }
   if (/Mandatory self-check has not started yet/i.test(error)) {
-    return "Harness 已自动进入强制自检，继续复核本轮修改";
+    return language === "en"
+      ? "Harness started the mandatory self-check and will continue reviewing this turn"
+      : "Harness 已自动进入强制自检，继续复核本轮修改";
   }
   if (/Re-read these changed files/i.test(error)) {
     return error.replace(
       /^Re-read these changed files after their latest write before completing self-check:\s*/i,
-      "仍需重新读取：",
+      language === "en" ? "Still needs re-reading: " : "仍需重新读取：",
     );
   }
   if (/Run at least one detected project verification command/i.test(error)) {
-    return "仍需运行一项已检测到的项目验证命令";
+    return language === "en"
+      ? "At least one detected project verification command still needs to run"
+      : "仍需运行一项已检测到的项目验证命令";
   }
   return error;
 }
@@ -1799,6 +1836,7 @@ export async function runHarness({
   thinking,
   effort,
   permission,
+  language = "zh-CN",
   messages,
   signal,
   onEvent,
@@ -1816,12 +1854,17 @@ export async function runHarness({
     throw new Error("A valid model Provider is required.");
   }
   const emit = createEventEmitter(onEvent);
+  const isEnglish = language === "en";
+  const responseLanguage =
+    isEnglish ? "English" : "Simplified Chinese";
   const modelConfig = providerConfig.models.find(
     (candidate) => candidate.id === modelId,
   );
   if (!modelConfig) {
     throw new Error(
-      `模型 ${modelId || "unknown"} 不属于 Provider ${providerConfig.name}。`,
+      isEnglish
+        ? `Model ${modelId || "unknown"} does not belong to provider ${providerConfig.name}.`
+        : `模型 ${modelId || "unknown"} 不属于 Provider ${providerConfig.name}。`,
     );
   }
   const provider = createOpenAICompatibleProvider({
@@ -1895,6 +1938,7 @@ export async function runHarness({
       role: "system",
       content: [
         "You are AporiaX, a local coding and productivity agent.",
+        `Reply to the user in ${responseLanguage}. Keep file paths, command names, source code, API identifiers, and user-provided proper nouns unchanged.`,
         "Inspect the authorized workspace with tools before making claims about its contents.",
         "Use search_text to locate relevant code before reading many files.",
         "Use workspace-relative paths only.",
@@ -2022,13 +2066,18 @@ export async function runHarness({
           });
           conversation.push({
             role: "assistant",
-            content: message.content || "初步实现已经完成。",
+            content:
+              message.content ||
+              (isEnglish
+                ? "The initial implementation is complete."
+                : "初步实现已经完成。"),
           });
           conversation.push({
             role: "user",
             content: createSelfCheckPrompt(
               changeMap,
               selfCheck.verificationCandidates,
+              language,
             ),
           });
           continue;
@@ -2041,19 +2090,33 @@ export async function runHarness({
           );
           conversation.push({
             role: "assistant",
-            content: message.content || "自检尚未完成。",
+            content:
+              message.content ||
+              (isEnglish
+                ? "The self-check is not complete yet."
+                : "自检尚未完成。"),
           });
           conversation.push({
             role: "user",
-            content: [
-              "强制自检尚未完成，当前最终答复被 Harness 拦截。",
-              pendingPaths.length
-                ? `仍需在最新写入后重新读取：\n${pendingPaths
-                    .map((path) => `- ${path}`)
-                    .join("\n")}`
-                : "所有改动文件已读取，但还没有成功调用 complete_self_check。",
-              "继续自检并调用 complete_self_check，不要直接结束任务。",
-            ].join("\n"),
+            content: isEnglish
+              ? [
+                  "The mandatory self-check is incomplete, so Harness blocked the final answer.",
+                  pendingPaths.length
+                    ? `Re-read these files after their latest write:\n${pendingPaths
+                        .map((path) => `- ${path}`)
+                        .join("\n")}`
+                    : "All changed files were read, but complete_self_check has not succeeded.",
+                  "Continue the self-check and call complete_self_check before finishing.",
+                ].join("\n")
+              : [
+                  "强制自检尚未完成，当前最终答复被 Harness 拦截。",
+                  pendingPaths.length
+                    ? `仍需在最新写入后重新读取：\n${pendingPaths
+                        .map((path) => `- ${path}`)
+                        .join("\n")}`
+                    : "所有改动文件已读取，但还没有成功调用 complete_self_check。",
+                  "继续自检并调用 complete_self_check，不要直接结束任务。",
+                ].join("\n"),
           });
           continue;
         }
@@ -2063,7 +2126,9 @@ export async function runHarness({
           content:
             typeof message.content === "string" && message.content.trim()
               ? sanitizeFinalAnswer(message.content)
-              : "任务已完成，但模型没有返回文本结果。",
+              : isEnglish
+                ? "The task completed, but the model returned no text."
+                : "任务已完成，但模型没有返回文本结果。",
           steps,
           changes: buildChanges(changeMap),
           usage: totalUsage,
@@ -2318,6 +2383,7 @@ export async function runHarness({
         const stepDetail = formatToolStepDetail(
           toolCall.function.name,
           modelResult,
+          language,
         );
         const shouldRetry =
           !success &&
@@ -2365,7 +2431,9 @@ export async function runHarness({
     if (error?.name === "AbortError" || signal?.aborted) {
       const interruptedResult = {
         status: "interrupted",
-        content: "任务已停止。已经完成的文件修改仍保留，可在审核面板中撤销。",
+        content: isEnglish
+          ? "The task was stopped. Completed file changes remain available and can be reverted from the review panel."
+          : "任务已停止。已经完成的文件修改仍保留，可在审核面板中撤销。",
         steps,
         changes: buildChanges(changeMap),
         usage: totalUsage,
@@ -2389,7 +2457,9 @@ export async function runHarness({
     const failedResult = {
       status: "failed",
       error: true,
-      content: error?.message || "Harness 运行失败。",
+      content:
+        error?.message ||
+        (isEnglish ? "Harness run failed." : "Harness 运行失败。"),
       steps,
       changes: buildChanges(changeMap),
       usage: totalUsage,

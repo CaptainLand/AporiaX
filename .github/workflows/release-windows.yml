@@ -6,7 +6,7 @@ on:
       tag:
         description: Existing release tag
         required: true
-        default: v0.2.1
+        default: v0.3.0
 
 permissions:
   contents: write
@@ -44,14 +44,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ inputs.tag }}"
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $notes = "docs/RELEASE_NOTES_$tag.md"
+          if (-not (Test-Path -LiteralPath $notes)) {
+            throw "Release notes not found: $notes"
+          }
           gh release upload $tag `
-            "release/AporiaX-Setup-0.2.1-x64.exe" `
-            "release/AporiaX-Portable-0.2.1-x64.exe" `
+            "release/AporiaX-Setup-$version-x64.exe" `
+            "release/AporiaX-Portable-$version-x64.exe" `
             --repo "${{ github.repository }}" `
             --clobber
           gh release edit $tag `
             --repo "${{ github.repository }}" `
-            --title "AporiaX v0.2.1 — Preview" `
-            --notes-file "docs/RELEASE_NOTES_v0.2.1.md" `
+            --title "AporiaX $tag — Preview" `
+            --notes-file $notes `
             --prerelease `
             --draft=false

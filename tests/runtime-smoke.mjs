@@ -378,7 +378,10 @@ try {
   let hostFallbackIndex = 0;
   let hostFallbackExecutorCalled = false;
   let hostFallbackApprovalCount = 0;
-  globalThis.fetch = async () => {
+  let englishSystemPrompt = "";
+  globalThis.fetch = async (_url, options) => {
+    const requestBody = JSON.parse(options.body);
+    englishSystemPrompt = requestBody.messages?.[0]?.content || "";
     const delta = hostFallbackResponses[hostFallbackIndex];
     hostFallbackIndex += 1;
     if (!delta) {
@@ -393,6 +396,7 @@ try {
     thinking: false,
     effort: "high",
     permission: "workspace-write",
+    language: "en",
     messages: [{ role: "user", content: "运行版本检查。" }],
     sandboxStatusResolver: async () => ({
       ...testSandboxStatus,
@@ -428,6 +432,11 @@ try {
   assert.equal(hostFallbackApprovalCount, 1);
   assert.equal(hostFallbackResult.steps[0]?.success, true);
   assert.equal(hostFallbackResult.steps[0]?.command, "node --version");
+  assert.match(
+    englishSystemPrompt,
+    /Reply to the user in English/,
+    "the selected interface language must reach the Harness system prompt",
+  );
 
   const reviewedVersions = new Map();
   const selfCheckChanges = new Map([

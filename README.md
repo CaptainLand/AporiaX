@@ -5,6 +5,10 @@
 <h1 align="center">AporiaX</h1>
 
 <p align="center">
+  <strong>简体中文</strong> · <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   <strong>从一个疑问开始。</strong><br>
   写代码、制作文档、演示文稿与表格。告诉 AporiaX，你想抵达哪里。
 </p>
@@ -14,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v0.2.1"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?include_prereleases&color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.2.1/AporiaX-Setup-0.2.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v0.3.0"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?include_prereleases&color=59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Setup-0.3.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -24,7 +28,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX `v0.2.1` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
+> AporiaX `v0.3.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
 > `run_command` 会优先在 Docker OS 级容器沙箱中执行；
 > Docker 或镜像不可用时会回退到本机执行，并强制逐条审批。本机模式可联网且不具备 OS 隔离。
 
@@ -44,6 +48,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 | 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、单文件或整轮撤销 |
 | 强制自检 | 复读本轮修改，尝试测试或构建，发现问题后继续修复并报告剩余风险 |
 | 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
+| 中英双语 | 开屏与设置页即时切换；界面和新回复跟随语言，历史消息与文件保持原样 |
 | 附件与解析 | PDF、Office、Markdown、代码和图片附件；PDF 本地文本提取 |
 | 权限与执行 | `allow` / `ask` / `deny` 策略；Docker 沙箱优先，本机强制审批降级 |
 
@@ -54,8 +59,8 @@ Provider 模型的视觉能力决定。
 
 | Windows x64 | 适合场景 |
 | --- | --- |
-| [下载安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.2.1/AporiaX-Setup-0.2.1-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
-| [下载便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.2.1/AporiaX-Portable-0.2.1-x64.exe) | 不安装，直接运行和试用 |
+| [下载安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Setup-0.3.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
+| [下载便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Portable-0.3.0-x64.exe) | 不安装，直接运行和试用 |
 
 首次启动后：
 
@@ -156,7 +161,7 @@ build/      应用图标等构建资源
 
 Harness 现状和后续计划见
 [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md)。本版本说明见
-[docs/RELEASE_NOTES_v0.2.1.md](docs/RELEASE_NOTES_v0.2.1.md)。
+[docs/RELEASE_NOTES_v0.3.0.md](docs/RELEASE_NOTES_v0.3.0.md)。
 
 ## 参与贡献
 
