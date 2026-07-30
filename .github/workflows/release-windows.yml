@@ -1,0 +1,57 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag
+        required: true
+        default: v0.2.1
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify runtime
+        run: npm run test:runtime
+
+      - name: Verify P0 models
+        run: npm run test:p0
+
+      - name: Build Windows packages
+        run: npm run dist:win
+
+      - name: Upload packages and publish preview release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ inputs.tag }}"
+          gh release upload $tag `
+            "release/AporiaX-Setup-0.2.1-x64.exe" `
+            "release/AporiaX-Portable-0.2.1-x64.exe" `
+            --repo "${{ github.repository }}" `
+            --clobber
+          gh release edit $tag `
+            --repo "${{ github.repository }}" `
+            --title "AporiaX v0.2.1 — Preview" `
+            --notes-file "docs/RELEASE_NOTES_v0.2.1.md" `
+            --prerelease `
+            --draft=false
