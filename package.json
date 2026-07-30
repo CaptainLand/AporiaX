@@ -1,0 +1,97 @@
+{
+  "name": "aporiax-desktop",
+  "productName": "AporiaX",
+  "description": "A local desktop coding agent with reviewable tools and mandatory self-check.",
+  "author": "AporiaX",
+  "license": "MIT",
+  "homepage": "https://github.com/CaptainLand/AporiaX#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CaptainLand/AporiaX.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CaptainLand/AporiaX/issues"
+  },
+  "private": true,
+  "version": "0.1.1",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
+    "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && electron . --dev",
+    "build": "vite build",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "preview": "vite preview",
+    "start": "electron .",
+    "test:runtime": "node tests/runtime-smoke.mjs",
+    "test:p0": "node tests/p0-model-smoke.mjs"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^4.10.38",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.2.1",
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.1.0",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.aporiax.desktop",
+    "productName": "AporiaX",
+    "asar": true,
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "AporiaX-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AporiaX"
+    },
+    "portable": {
+      "artifactName": "AporiaX-Portable-${version}-${arch}.${ext}"
+    }
+  }
+}
