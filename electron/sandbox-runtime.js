@@ -1,6 +1,24 @@
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { spawn } from "node:child_process";
 
 export const SANDBOX_IMAGE = "aporiax-sandbox:0.1";
@@ -11,6 +29,16 @@ export const SANDBOX_PIDS_LIMIT = 256;
 const MAX_SANDBOX_OUTPUT_CHARS = 80_000;
 const STATUS_TIMEOUT_MS = 8_000;
 const PREPARE_TIMEOUT_MS = 15 * 60_000;
+const LOCAL_SANDBOX_DIRECTORY = "aporiax-local-sandbox";
+const LOCAL_SANDBOX_MAX_FILES = 25_000;
+const LOCAL_SANDBOX_IGNORED_NAMES = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".pnpm-store",
+  ".yarn",
+  "node_modules",
+]);
 
 export const SANDBOX_DOCKERFILE = `FROM node:20-bookworm-slim
 
@@ -128,19 +156,23 @@ function sandboxState({
   imageId = "",
 }) {
   return {
-    backend: "docker",
+    backend: state === "ready" ? "docker" : "local-workspace",
     state,
     available: state === "ready",
+    localAvailable: true,
+    autoApprovalSafe: true,
     fallbackAvailable: true,
-    executionMode: state === "ready" ? "container" : "host-approval",
+    executionMode: state === "ready" ? "container" : "local-workspace",
     detail,
     engineVersion,
     image: SANDBOX_IMAGE,
     imageReady,
     imageId,
-    network: "none",
-    filesystem: "workspace-write",
-    rootFilesystem: "read-only",
+    network: state === "ready" ? "none" : "host",
+    filesystem:
+      state === "ready" ? "workspace-write" : "temporary-workspace-copy",
+    rootFilesystem: state === "ready" ? "read-only" : "host",
+    isolation: state === "ready" ? "os-container" : "workspace-copy",
     memory: SANDBOX_MEMORY,
     cpus: Number(SANDBOX_CPUS),
     pidsLimit: SANDBOX_PIDS_LIMIT,
@@ -160,12 +192,12 @@ export async function getSandboxStatus() {
       return sandboxState({
         state: "cli-missing",
         detail:
-          "未找到 Docker CLI。命令仍可在逐条批准后于本机运行，但不具备 OS 隔离。",
+          "本地工作区沙箱已就绪。Docker 未安装；如需断网、只读系统等更强隔离，可选装 Docker Desktop。",
       });
     }
     return sandboxState({
       state: "engine-stopped",
-      detail: `无法连接 Docker：${error?.message || "未知错误"}。命令将改为逐条批准后在本机运行。`,
+      detail: `本地工作区沙箱已就绪。Docker 暂不可用（${error?.message || "未知错误"}），不会影响本地沙箱自动执行。`,
     });
   }
 
@@ -173,7 +205,7 @@ export async function getSandboxStatus() {
     return sandboxState({
       state: "engine-stopped",
       detail:
-        "Docker Desktop 尚未启动。命令将改为逐条批准后在本机运行，不具备 OS 隔离。",
+        "本地工作区沙箱已就绪。Docker Desktop 未启动；启动后可自动升级为更强的容器隔离。",
     });
   }
   const engineVersion = versionResult.stdout.trim();
@@ -188,13 +220,13 @@ export async function getSandboxStatus() {
     return sandboxState({
       state: "image-missing",
       detail:
-        "Docker 已连接，但 AporiaX 沙箱镜像尚未准备。命令将暂时逐条批准后在本机运行。",
+        "本地工作区沙箱已就绪。Docker 已连接，可选准备 AporiaX 镜像以启用更强隔离。",
       engineVersion,
     });
   }
   return sandboxState({
     state: "ready",
-    detail: "OS 级容器沙箱已就绪。",
+    detail: "Docker 强隔离沙箱已就绪：默认断网、只读系统，仅工作区可写。",
     engineVersion,
     imageReady: true,
     imageId: imageResult.stdout.trim(),
@@ -426,10 +458,195 @@ export function createHostFallbackEnvironment(
     normalizedNames.add(normalizedName);
     environment[name] = value;
   }
-  environment.APORIAX_EXECUTION_MODE = "host-approval";
+  environment.APORIAX_EXECUTION_MODE = "local-workspace-sandbox";
   environment.CI = environment.CI || "1";
   environment.NO_COLOR = environment.NO_COLOR || "1";
   return environment;
+}
+
+function isPathInside(rootPath, targetPath) {
+  const pathFromRoot = relative(resolve(rootPath), resolve(targetPath));
+  return (
+    pathFromRoot === "" ||
+    (!pathFromRoot.startsWith(`..${sep}`) &&
+      pathFromRoot !== ".." &&
+      !isAbsolute(pathFromRoot))
+  );
+}
+
+function shouldIgnoreLocalSandboxPath(relativePath) {
+  if (!relativePath) return false;
+  return relativePath
+    .split(/[\\/]+/)
+    .some((part) => LOCAL_SANDBOX_IGNORED_NAMES.has(part));
+}
+
+async function hashFile(filePath) {
+  const content = await readFile(filePath);
+  return createHash("sha256").update(content).digest("hex");
+}
+
+async function scanLocalSandboxFiles(rootPath) {
+  const files = new Map();
+  const pending = [{ absolutePath: rootPath, relativePath: "" }];
+  while (pending.length) {
+    const current = pending.pop();
+    const entries = await readdir(current.absolutePath, {
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      const entryRelativePath = current.relativePath
+        ? join(current.relativePath, entry.name)
+        : entry.name;
+      if (shouldIgnoreLocalSandboxPath(entryRelativePath)) continue;
+      const entryAbsolutePath = join(current.absolutePath, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(
+          `Local sandbox does not sync symbolic links: ${entryRelativePath}`,
+        );
+      }
+      if (entry.isDirectory()) {
+        pending.push({
+          absolutePath: entryAbsolutePath,
+          relativePath: entryRelativePath,
+        });
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new Error(
+          `Local sandbox found an unsupported file type: ${entryRelativePath}`,
+        );
+      }
+      files.set(entryRelativePath, await hashFile(entryAbsolutePath));
+      if (files.size > LOCAL_SANDBOX_MAX_FILES) {
+        throw new Error(
+          `Local sandbox supports at most ${LOCAL_SANDBOX_MAX_FILES} project files.`,
+        );
+      }
+    }
+  }
+  return files;
+}
+
+async function copyWorkspaceToLocalSandbox(
+  workspaceRoot,
+  sandboxWorkspace,
+  { shareDependencies = true } = {},
+) {
+  await cp(workspaceRoot, sandboxWorkspace, {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    filter: async (sourcePath) => {
+      const sourceRelativePath = relative(workspaceRoot, sourcePath);
+      if (shouldIgnoreLocalSandboxPath(sourceRelativePath)) return false;
+      if (!sourceRelativePath) return true;
+      return !(await lstat(sourcePath)).isSymbolicLink();
+    },
+  });
+
+  if (!shareDependencies) return;
+  const sourceDependencies = join(workspaceRoot, "node_modules");
+  try {
+    if ((await lstat(sourceDependencies)).isDirectory()) {
+      await symlink(
+        sourceDependencies,
+        join(sandboxWorkspace, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    }
+  } catch {
+    // A project without installed dependencies can still run commands.
+  }
+}
+
+function commandMayMutateDependencies(command) {
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:i|install|ci|add|remove|uninstall|update|upgrade)\b/i.test(
+    command,
+  );
+}
+
+async function synchronizeLocalSandbox({
+  workspaceRoot,
+  sandboxWorkspace,
+  baselineFiles,
+}) {
+  const sandboxFiles = await scanLocalSandboxFiles(sandboxWorkspace);
+  const currentFiles = await scanLocalSandboxFiles(workspaceRoot);
+  const changedPaths = new Set();
+  for (const [path, hash] of sandboxFiles) {
+    if (baselineFiles.get(path) !== hash) changedPaths.add(path);
+  }
+  for (const path of baselineFiles.keys()) {
+    if (!sandboxFiles.has(path)) changedPaths.add(path);
+  }
+
+  const conflicts = [];
+  for (const path of changedPaths) {
+    if (currentFiles.get(path) !== baselineFiles.get(path)) {
+      conflicts.push(path);
+    }
+  }
+  if (conflicts.length) {
+    throw new Error(
+      `Local sandbox did not apply changes because the original workspace changed during execution: ${conflicts
+        .slice(0, 5)
+        .join(", ")}`,
+    );
+  }
+
+  let written = 0;
+  let deleted = 0;
+  for (const path of changedPaths) {
+    const targetPath = resolve(workspaceRoot, path);
+    if (!isPathInside(workspaceRoot, targetPath)) {
+      throw new Error(`Local sandbox rejected an unsafe path: ${path}`);
+    }
+    if (!sandboxFiles.has(path)) {
+      await rm(targetPath, { force: true });
+      deleted += 1;
+      continue;
+    }
+    const sourcePath = resolve(sandboxWorkspace, path);
+    if (!isPathInside(sandboxWorkspace, sourcePath)) {
+      throw new Error(`Local sandbox rejected an unsafe source path: ${path}`);
+    }
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, await readFile(sourcePath));
+    written += 1;
+  }
+  return {
+    written,
+    deleted,
+    changed: changedPaths.size,
+  };
+}
+
+function localSandboxRootPath(baseDirectory) {
+  return resolve(
+    baseDirectory || tmpdir(),
+    LOCAL_SANDBOX_DIRECTORY,
+  );
+}
+
+async function createLocalSandboxDirectory(baseDirectory) {
+  const localSandboxRoot = localSandboxRootPath(baseDirectory);
+  await mkdir(localSandboxRoot, { recursive: true });
+  return mkdtemp(join(localSandboxRoot, `${process.pid}-`));
+}
+
+async function removeLocalSandboxDirectory(
+  sandboxDirectory,
+  baseDirectory,
+) {
+  const localSandboxRoot = localSandboxRootPath(baseDirectory);
+  if (
+    sandboxDirectory === localSandboxRoot ||
+    !isPathInside(localSandboxRoot, sandboxDirectory)
+  ) {
+    throw new Error("Refused to remove an unsafe local sandbox path.");
+  }
+  await rm(sandboxDirectory, { recursive: true, force: true });
 }
 
 function hostShell(command) {
@@ -444,6 +661,89 @@ function hostShell(command) {
     program: "/bin/sh",
     args: ["-lc", command],
   };
+}
+
+export async function runLocalSandboxedCommand({
+  command,
+  workspaceRoot,
+  cwd,
+  signal,
+  onOutput,
+  sandboxStatus,
+  localSandboxBaseDirectory,
+}) {
+  const sandboxDirectory = await createLocalSandboxDirectory(
+    localSandboxBaseDirectory,
+  );
+  const sandboxWorkspace = join(sandboxDirectory, "workspace");
+  const relativeCwd = relative(workspaceRoot, cwd) || ".";
+  if (
+    relativeCwd === ".." ||
+    relativeCwd.startsWith(`..${sep}`) ||
+    isAbsolute(relativeCwd)
+  ) {
+    await removeLocalSandboxDirectory(
+      sandboxDirectory,
+      localSandboxBaseDirectory,
+    );
+    throw new Error("Command working directory must stay inside the workspace.");
+  }
+
+  try {
+    const baselineFiles = await scanLocalSandboxFiles(workspaceRoot);
+    const shareDependencies = !commandMayMutateDependencies(command);
+    await copyWorkspaceToLocalSandbox(
+      workspaceRoot,
+      sandboxWorkspace,
+      { shareDependencies },
+    );
+    const localCwd = resolve(sandboxWorkspace, relativeCwd);
+    if (!isPathInside(sandboxWorkspace, localCwd)) {
+      throw new Error("Local sandbox rejected the command working directory.");
+    }
+    const shell = hostShell(command);
+    const result = await runProcess({
+      ...shell,
+      cwd: localCwd,
+      env: createHostFallbackEnvironment(),
+      signal,
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      onOutput,
+    });
+    const sync =
+      result.timedOut || signal?.aborted
+        ? { written: 0, deleted: 0, changed: 0, discarded: true }
+        : await synchronizeLocalSandbox({
+            workspaceRoot,
+            sandboxWorkspace,
+            baselineFiles,
+          });
+    return {
+      ...result,
+      sandbox: {
+        backend: "local-workspace",
+        fallback: true,
+        isolation: "workspace-copy",
+        network: "host",
+        rootFilesystem: "host",
+        workspace: "temporary-copy-with-conflict-checked-sync",
+        sharedDependencies: shareDependencies
+          ? "root-node-modules"
+          : "disabled-for-package-mutation",
+        sensitiveEnvironment: "removed",
+        timeoutMs: SANDBOX_TIMEOUT_MS,
+        sync,
+        reason:
+          sandboxStatus?.detail ||
+          "Docker strong isolation is unavailable or not enabled.",
+      },
+    };
+  } finally {
+    await removeLocalSandboxDirectory(
+      sandboxDirectory,
+      localSandboxBaseDirectory,
+    );
+  }
 }
 
 export async function runHostFallbackCommand({
@@ -491,7 +791,7 @@ export async function runCommandWithFallback(options) {
       sandboxStatus: status,
     });
   }
-  return runHostFallbackCommand({
+  return runLocalSandboxedCommand({
     ...options,
     sandboxStatus: status,
   });

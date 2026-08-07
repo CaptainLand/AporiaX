@@ -9,7 +9,7 @@
 - OpenCode 风格的工具注册表、工具风险元数据和细粒度权限策略
 - `list_directory`、`read_file`、`search_text`、只读 `git_status` / `git_diff`、`write_file`、精确 `apply_patch`
 - 内置 `.docx`、`.pptx`、`.xlsx` 生成工具与 Office 文件结构检查
-- Docker 优先的 OS 级沙箱 `run_command`，以及强制逐条审批的本机降级模式
+- 默认本地临时工作区沙箱 `run_command`，自动执行并冲突检查同步；Docker 可选提供 OS 级强隔离
 - 标准化 Turn / Tool / File 事件流与通用 Provider 边界
 - 文件前后快照、逐行 Diff、冲突检测和安全撤销
 - Office 二进制检查点、工件摘要审核、结构自检与安全撤销
@@ -22,7 +22,7 @@
 
 仍需加强：
 
-- Windows 原生 AppContainer 后端与 Linux `bubblewrap` 后端；当前命令沙箱依赖 Docker
+- Windows 原生 AppContainer 后端与 Linux `bubblewrap` 后端；当前本地模式是工作区级隔离，Docker 才提供 OS 级隔离
 - SQLite append-only 事件存储；当前使用 Electron 用户目录 JSON
 - Git 提交、分支/Worktree 管理和结构化补丁
 - 视觉模型 Provider 与 OCR 降级链路

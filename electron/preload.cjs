@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("desktop", {
     saveText: (request) =>
       ipcRenderer.invoke("workspace:save-text", request),
     revert: (request) => ipcRenderer.invoke("workspace:revert", request),
+    restoreAnchor: (request) =>
+      ipcRenderer.invoke("workspace:restore-anchor", request),
   },
   attachments: {
     parse: (request) => ipcRenderer.invoke("attachments:parse", request),
@@ -39,6 +41,17 @@ contextBridge.exposeInMainWorld("desktop", {
   sandbox: {
     status: () => ipcRenderer.invoke("sandbox:status"),
     prepare: () => ipcRenderer.invoke("sandbox:prepare"),
+  },
+  notifications: {
+    taskCompleted: (payload) =>
+      ipcRenderer.invoke("desktop:task-completed", payload),
+    onTaskRequested: (listener) => {
+      const handler = (_event, payload) => listener(payload);
+      ipcRenderer.on("desktop:task-requested", handler);
+      return () => {
+        ipcRenderer.removeListener("desktop:task-requested", handler);
+      };
+    },
   },
   window: {
     minimize: () => ipcRenderer.invoke("desktop:minimize"),
@@ -61,6 +74,13 @@ contextBridge.exposeInMainWorld("desktop", {
     run: (request) => ipcRenderer.invoke("harness:run", request),
     interrupt: (runId) =>
       ipcRenderer.invoke("harness:interrupt", runId),
+    pause: (runId) => ipcRenderer.invoke("harness:pause", runId),
+    resume: (runId) => ipcRenderer.invoke("harness:resume", runId),
+    steer: (request) => ipcRenderer.invoke("harness:steer", request),
+    recoverableRuns: () =>
+      ipcRenderer.invoke("harness:recoverable-runs"),
+    acknowledgeRecovery: (runId) =>
+      ipcRenderer.invoke("harness:acknowledge-recovery", runId),
     respondToApproval: (response) =>
       ipcRenderer.invoke("harness:approval-response", response),
     onEvent: (listener) => {

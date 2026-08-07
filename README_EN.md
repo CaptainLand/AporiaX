@@ -31,9 +31,11 @@ chat response.
 
 > [!IMPORTANT]
 > AporiaX `v0.3.0` is still a preview and currently ships for Windows x64.
-> `run_command` prefers an OS-level Docker container sandbox. If Docker or the
-> image is unavailable, AporiaX falls back to host execution with approval
-> required for every command. Host mode has network access and no OS isolation.
+> `run_command` runs automatically in a temporary local workspace copy and
+> conflict-checks project changes before synchronizing them back. Docker is
+> entirely optional; enabling it upgrades execution to an offline,
+> read-only-root OS-level container. The local sandbox isolates workspace
+> changes but still uses the current user's host network and process permissions.
 
 ## Why AporiaX
 
@@ -53,7 +55,7 @@ chat response.
 | Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, task-level model selection |
 | Bilingual interface | Switch Chinese and English from the welcome screen or settings; new replies follow the interface language |
 | Attachments | PDF, Office, Markdown, code, and image attachments with local PDF text extraction |
-| Permissions and execution | `allow` / `ask` / `deny` policy, Docker-first sandboxing, explicit host fallback |
+| Permissions and execution | `allow` / `ask` / `deny` policy, automatic local workspace sandbox, optional stronger Docker isolation |
 
 Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled
 yet. Image delivery depends on the vision capability of the selected model.
@@ -71,16 +73,17 @@ After the first launch:
 2. Add an OpenAI-compatible API provider and model.
 3. Describe the outcome, then inspect Route, file changes, self-check, and deliverables.
 
-Docker Desktop is optional. When enabled, commands run in a network-disabled
-container by default. Without Docker, every host command asks for separate
-approval and is clearly marked as network-enabled with no OS isolation.
+Docker Desktop is optional. Without it, commands run automatically in a
+temporary workspace copy and project changes are conflict-checked before they
+are synchronized back. With Docker enabled, commands use a network-disabled
+container with stronger OS-level isolation.
 
 ## Run from source
 
-Node.js 20 or newer is required. Start Docker Desktop if you want containerized
-`run_command`; the in-app **Prepare Docker sandbox** action builds the local
-`aporiax-sandbox:0.1` image. Commands remain available without Docker, but they
-run with the current user's host permissions after explicit approval.
+Node.js 20 or newer is required. Start Docker Desktop only if you want stronger
+containerized `run_command`; the in-app **Enable stronger Docker isolation**
+action builds the local `aporiax-sandbox:0.1` image. Commands work without
+Docker and do not require per-command approval in automatic mode.
 
 ```powershell
 git clone https://github.com/CaptainLand/AporiaX.git

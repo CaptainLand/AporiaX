@@ -10,9 +10,11 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
+  captureWorkspaceState,
   getPendingSelfCheckPaths,
   listWorkspaceTree,
   readWorkspacePreview,
+  restoreWorkspaceAnchor,
   revertWorkspaceChanges,
   runHarness,
   saveWorkspaceTextFile,
@@ -38,7 +40,16 @@ import {
   SANDBOX_IMAGE,
   buildDockerSandboxArgs,
   createHostFallbackEnvironment,
+  runLocalSandboxedCommand,
 } from "../electron/sandbox-runtime.js";
+import {
+  acknowledgeRecoverableRun,
+  appendRunJournalEvent,
+  beginRunJournal,
+  finishRunJournal,
+  listRecoverableRuns,
+  updateRunJournalMetadata,
+} from "../electron/run-store.js";
 
 const testRoot = await mkdtemp(join(resolve("."), ".runtime-smoke-"));
 const originalFetch = globalThis.fetch;
@@ -53,6 +64,8 @@ const testSandboxStatus = {
   backend: "test",
   state: "ready",
   available: true,
+  localAvailable: true,
+  autoApprovalSafe: true,
   detail: "Test sandbox ready.",
   image: "test",
   imageReady: true,
@@ -150,6 +163,44 @@ function createPdfFixture(text = "Hello from PDF") {
 }
 
 try {
+  const journalRoot = join(testRoot, "run-journal");
+  await beginRunJournal(journalRoot, {
+    runId: "runtime-resume-1",
+    taskId: "task-1",
+    assistantId: "assistant-1",
+    sourceUserId: "user-1",
+    prompt: "Continue a durable task",
+    workspacePath: testRoot,
+    providerId: "deepseek",
+    modelId: "deepseek-v4-pro",
+  });
+  await appendRunJournalEvent(journalRoot, "runtime-resume-1", {
+    type: "tool.started",
+    tool: "read_file",
+  });
+  await updateRunJournalMetadata(journalRoot, "runtime-resume-1", {
+    status: "paused",
+    lastEventType: "control.paused",
+  });
+  assert.deepEqual(
+    (await listRecoverableRuns(journalRoot)).map((record) => record.runId),
+    ["runtime-resume-1"],
+    "paused runs should survive process restarts and be offered for recovery",
+  );
+  await acknowledgeRecoverableRun(journalRoot, "runtime-resume-1");
+  assert.equal((await listRecoverableRuns(journalRoot)).length, 0);
+
+  await beginRunJournal(journalRoot, {
+    runId: "runtime-complete-1",
+    taskId: "task-2",
+    assistantId: "assistant-2",
+  });
+  await finishRunJournal(journalRoot, "runtime-complete-1", {
+    status: "completed",
+    changes: [{ path: "done.txt" }],
+  });
+  assert.equal((await listRecoverableRuns(journalRoot)).length, 0);
+
   assert.equal(
     normalizeProviderBaseUrl(
       "https://api.example.com/v1/chat/completions",
@@ -167,6 +218,13 @@ try {
   });
   assert.equal(customProvider.models.length, 2);
   assert.equal(customProvider.models[0].supportsThinking, false);
+  const inferredProvider = normalizeProviderInput({
+    name: "",
+    baseUrl: "https://api.openai.com/v1",
+    models: ["gpt-5.2"],
+  });
+  assert.equal(inferredProvider.name, "OpenAI");
+  assert.equal(inferredProvider.models[0].id, "gpt-5.2");
 
   const sandboxArgs = buildDockerSandboxArgs({
     command: "npm test",
@@ -201,7 +259,47 @@ try {
     ).length,
     1,
   );
-  assert.equal(hostEnvironment.APORIAX_EXECUTION_MODE, "host-approval");
+  assert.equal(
+    hostEnvironment.APORIAX_EXECUTION_MODE,
+    "local-workspace-sandbox",
+  );
+
+  const localSandboxRoot = join(testRoot, "local-sandbox-fixture");
+  await mkdir(localSandboxRoot, { recursive: true });
+  await writeFile(join(localSandboxRoot, "changed.txt"), "before\n");
+  await writeFile(
+    join(localSandboxRoot, "sandbox-write-fixture.cjs"),
+    "const fs = require('fs');\nfs.writeFileSync('changed.txt', 'after');\nfs.writeFileSync('created.txt', 'new');\n",
+  );
+  const localSandboxResult = await runLocalSandboxedCommand({
+    command: "node sandbox-write-fixture.cjs",
+    workspaceRoot: localSandboxRoot,
+    cwd: localSandboxRoot,
+    localSandboxBaseDirectory: testRoot,
+    sandboxStatus: {
+      state: "engine-stopped",
+      available: false,
+      localAvailable: true,
+      autoApprovalSafe: true,
+      detail: "Docker is optional in this test.",
+    },
+  });
+  assert.equal(localSandboxResult.exitCode, 0);
+  assert.equal(localSandboxResult.sandbox.backend, "local-workspace");
+  assert.equal(localSandboxResult.sandbox.isolation, "workspace-copy");
+  assert.equal(
+    localSandboxResult.sandbox.sync.changed,
+    2,
+    JSON.stringify(localSandboxResult),
+  );
+  assert.equal(
+    await readFile(join(localSandboxRoot, "changed.txt"), "utf8"),
+    "after",
+  );
+  assert.equal(
+    await readFile(join(localSandboxRoot, "created.txt"), "utf8"),
+    "new",
+  );
 
   const readOnlyPolicy = createPermissionPolicy("read-only", {
     read_file: "allow",
@@ -367,45 +465,48 @@ try {
     "parsed attachments must not send binary source data to the model",
   );
 
-  const hostFallbackResponses = [
-    createToolDelta("host-fallback-command", "run_command", {
+  const localSandboxResponses = [
+    createToolDelta("local-sandbox-command", "run_command", {
       command: "node --version",
       cwd: ".",
       reason: "验证运行环境。",
     }),
-    { content: "Host fallback completed after approval." },
+    { content: "Local sandbox command completed automatically." },
   ];
-  let hostFallbackIndex = 0;
-  let hostFallbackExecutorCalled = false;
-  let hostFallbackApprovalCount = 0;
+  let localSandboxIndex = 0;
+  let localSandboxExecutorCalled = false;
   let englishSystemPrompt = "";
   globalThis.fetch = async (_url, options) => {
     const requestBody = JSON.parse(options.body);
     englishSystemPrompt = requestBody.messages?.[0]?.content || "";
-    const delta = hostFallbackResponses[hostFallbackIndex];
-    hostFallbackIndex += 1;
+    const delta = localSandboxResponses[localSandboxIndex];
+    localSandboxIndex += 1;
     if (!delta) {
-      throw new Error("Unexpected extra host-fallback request.");
+      throw new Error("Unexpected extra local-sandbox request.");
     }
     return createSseResponse(delta);
   };
-  const hostFallbackResult = await runHarness({
+  const localSandboxHarnessResult = await runHarness({
     provider: testProvider,
     workspacePath: testRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,
     effort: "high",
     permission: "workspace-write",
+    approvalMode: "sandbox-auto",
     language: "en",
     messages: [{ role: "user", content: "运行版本检查。" }],
     sandboxStatusResolver: async () => ({
       ...testSandboxStatus,
       available: false,
+      localAvailable: true,
+      autoApprovalSafe: true,
+      executionMode: "local-workspace",
       state: "engine-stopped",
       detail: "Docker stopped.",
     }),
     sandboxExecutor: async ({ sandboxStatus }) => {
-      hostFallbackExecutorCalled = true;
+      localSandboxExecutorCalled = true;
       assert.equal(sandboxStatus.state, "engine-stopped");
       return {
         exitCode: 0,
@@ -414,28 +515,35 @@ try {
         stdout: "v20.20.2\n",
         stderr: "",
         sandbox: {
-          backend: "host",
+          backend: "local-workspace",
           fallback: true,
           network: "host",
-          isolation: "none",
+          isolation: "workspace-copy",
         },
       };
     },
-    requestApproval: async ({ sandbox }) => {
-      hostFallbackApprovalCount += 1;
-      assert.equal(sandbox.available, false);
-      return { approved: true };
+    requestApproval: async () => {
+      throw new Error(
+        "Local sandbox commands must not request approval in automatic mode.",
+      );
     },
   });
-  assert.equal(hostFallbackResult.status, "completed");
-  assert.equal(hostFallbackExecutorCalled, true);
-  assert.equal(hostFallbackApprovalCount, 1);
-  assert.equal(hostFallbackResult.steps[0]?.success, true);
-  assert.equal(hostFallbackResult.steps[0]?.command, "node --version");
+  assert.equal(localSandboxHarnessResult.status, "completed");
+  assert.equal(localSandboxExecutorCalled, true);
+  assert.equal(localSandboxHarnessResult.steps[0]?.success, true);
+  assert.equal(
+    localSandboxHarnessResult.steps[0]?.command,
+    "node --version",
+  );
   assert.match(
     englishSystemPrompt,
     /Reply to the user in English/,
     "the selected interface language must reach the Harness system prompt",
+  );
+  assert.match(
+    englishSystemPrompt,
+    /temporary copy of the authorized workspace/,
+    "the Harness must describe local workspace isolation accurately",
   );
 
   const reviewedVersions = new Map();
@@ -477,6 +585,23 @@ try {
     "utf8",
   );
   const scriptedModelResponses = [
+    createToolDelta("plan-1", "update_plan", {
+      explanation: "先实现，再验证并交付。",
+      steps: [
+        {
+          id: "implement",
+          title: "实现并检查模块",
+          status: "in_progress",
+          detail: "创建文件并完成所需修改",
+        },
+        {
+          id: "verify",
+          title: "运行验证与强制自检",
+          status: "pending",
+          detail: "重新读取修改并运行项目测试",
+        },
+      ],
+    }),
     createToolDelta("write-1", "write_file", {
       path: "checked.js",
       content: "export const checked = true;\n",
@@ -547,16 +672,27 @@ try {
     thinking: false,
     effort: "high",
     permission: "workspace-write",
+    approvalMode: "sandbox-auto",
     messages: [
       {
         role: "user",
         content: "创建一个经过自检的模块。",
       },
     ],
-    requestApproval: async () => ({ approved: true }),
+    requestApproval: async () => {
+      throw new Error(
+        "Docker commands must not request approval in sandbox auto-approval mode.",
+      );
+    },
     onEvent: (event) => harnessEvents.push(event),
   });
   assert.equal(harnessResult.status, "completed");
+  assert.equal(harnessResult.plan?.steps?.length, 2);
+  assert.equal(
+    harnessEvents.some((event) => event.type === "plan.updated"),
+    true,
+    "structured plans should be projected as first-class runtime events",
+  );
   assert.equal(harnessResult.selfCheck?.completed, true);
   assert.deepEqual(harnessResult.selfCheck?.reviewedFiles, [
     "checked.js",
@@ -599,6 +735,26 @@ try {
   assert.equal(
     harnessEvents.some((event) => event.type === "turn.completed"),
     true,
+  );
+  assert.equal(
+    harnessEvents.some(
+      (event) =>
+        event.type === "tool.started" &&
+        event.tool === "write_file" &&
+        event.path === "checked.js",
+    ),
+    true,
+    "live tool events should identify the file currently being edited",
+  );
+  assert.equal(
+    harnessEvents.some(
+      (event) =>
+        event.type === "tool.started" &&
+        event.tool === "run_command" &&
+        event.command === "npm run test",
+    ),
+    true,
+    "live tool events should identify the command currently being verified",
   );
   assert.deepEqual(
     harnessEvents.map((event) => event.sequence),
@@ -665,6 +821,77 @@ try {
       (event) => event.type === "self_check.started",
     ).length,
     1,
+  );
+
+  const commandSnapshotRoot = join(testRoot, "command-snapshot");
+  await mkdir(commandSnapshotRoot, { recursive: true });
+  const commandSnapshotResponses = [
+    createToolDelta("command-create", "run_command", {
+      command:
+        "node -e \"require('fs').writeFileSync('command-created.js','export const commandCreated = true;\\\\n')\"",
+      cwd: ".",
+      reason: "Create a file through the command sandbox.",
+    }),
+    { content: "The command-created file now exists." },
+    createToolDelta("command-read", "read_file", {
+      path: "command-created.js",
+    }),
+    createToolDelta("command-verify", "run_command", {
+      command: "node --check command-created.js",
+      cwd: ".",
+      reason: "Verify the command-created JavaScript file.",
+    }),
+    createToolDelta("command-self-check", "complete_self_check", {
+      summary: "Re-read and syntax-checked the command-created file.",
+      checks: ["File content", "JavaScript syntax"],
+      improvements: [],
+      remaining_risks: [],
+    }),
+    { content: "Command-created change captured and verified." },
+  ];
+  let commandSnapshotIndex = 0;
+  const commandSnapshotEvents = [];
+  globalThis.fetch = async () => {
+    const delta = commandSnapshotResponses[commandSnapshotIndex];
+    commandSnapshotIndex += 1;
+    if (!delta) {
+      throw new Error("Unexpected extra command-snapshot request.");
+    }
+    return createSseResponse(delta);
+  };
+  const commandSnapshotResult = await runTestHarness({
+    runId: "command-snapshot-run",
+    workspacePath: commandSnapshotRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: false,
+    effort: "high",
+    permission: "workspace-write",
+    approvalMode: "sandbox-auto",
+    messages: [
+      {
+        role: "user",
+        content: "Create and verify a JavaScript file using commands.",
+      },
+    ],
+    onEvent: (event) => commandSnapshotEvents.push(event),
+  });
+  assert.equal(commandSnapshotResult.status, "completed");
+  assert.equal(commandSnapshotResult.anchor?.id, "command-snapshot-run");
+  assert.equal(commandSnapshotResult.anchor?.snapshotComplete, true);
+  const commandCreatedChange = commandSnapshotResult.changes.find(
+    (change) => change.path === "command-created.js",
+  );
+  assert.equal(commandCreatedChange?.created, true);
+  assert.equal(commandCreatedChange?.beforeMissing, true);
+  assert.equal(commandCreatedChange?.source, "workspace-snapshot");
+  assert.equal(
+    commandSnapshotEvents.some(
+      (event) =>
+        event.type === "file.changed" &&
+        event.path === "command-created.js" &&
+        event.source === "workspace-snapshot",
+    ),
+    true,
   );
 
   const wordArtifact = await createOfficeArtifact(
@@ -1030,6 +1257,143 @@ try {
   });
   assert.equal(removed[0]?.success, true);
   await assert.rejects(access(join(testRoot, "created.txt")));
+
+  const anchorDirectory = join(testRoot, "anchor-fixtures");
+  await mkdir(join(anchorDirectory, "node_modules"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(anchorDirectory, "history.txt"),
+    "zero\n",
+    "utf8",
+  );
+  await writeFile(
+    join(anchorDirectory, "node_modules", "ignored.txt"),
+    "ignored\n",
+    "utf8",
+  );
+  const capturedAnchor = await captureWorkspaceState(anchorDirectory);
+  assert.equal(capturedAnchor.files.has("history.txt"), true);
+  assert.equal(
+    capturedAnchor.files.has("node_modules/ignored.txt"),
+    false,
+  );
+
+  await writeFile(
+    join(anchorDirectory, "history.txt"),
+    "two\n",
+    "utf8",
+  );
+  const crossTurnRestore = await restoreWorkspaceAnchor({
+    workspacePath: anchorDirectory,
+    checkpoints: [
+      {
+        id: "newer-turn",
+        changes: [
+          {
+            path: "history.txt",
+            beforeContent: "one\n",
+            afterContent: "two\n",
+            beforeMissing: false,
+            afterMissing: false,
+          },
+        ],
+      },
+      {
+        id: "older-turn",
+        changes: [
+          {
+            path: "history.txt",
+            beforeContent: "zero\n",
+            afterContent: "one\n",
+            beforeMissing: false,
+            afterMissing: false,
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(crossTurnRestore.success, true);
+  assert.deepEqual(crossTurnRestore.restoredCheckpoints, [
+    "newer-turn",
+    "older-turn",
+  ]);
+  assert.equal(
+    await readFile(join(anchorDirectory, "history.txt"), "utf8"),
+    "zero\n",
+  );
+
+  await writeFile(
+    join(anchorDirectory, "history.txt"),
+    "external edit\n",
+    "utf8",
+  );
+  const conflictingRestore = await restoreWorkspaceAnchor({
+    workspacePath: anchorDirectory,
+    checkpoints: [
+      {
+        id: "conflicting-turn",
+        changes: [
+          {
+            path: "history.txt",
+            beforeContent: "zero\n",
+            afterContent: "two\n",
+            beforeMissing: false,
+            afterMissing: false,
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(conflictingRestore.success, false);
+  assert.equal(conflictingRestore.reason, "preflight-conflict");
+  assert.equal(
+    await readFile(join(anchorDirectory, "history.txt"), "utf8"),
+    "external edit\n",
+  );
+
+  await writeFile(
+    join(anchorDirectory, "created-by-agent.txt"),
+    "generated\n",
+    "utf8",
+  );
+  const structuralRestore = await restoreWorkspaceAnchor({
+    workspacePath: anchorDirectory,
+    checkpoints: [
+      {
+        id: "structural-turn",
+        changes: [
+          {
+            path: "created-by-agent.txt",
+            beforeContent: "",
+            afterContent: "generated\n",
+            beforeMissing: true,
+            afterMissing: false,
+            created: true,
+          },
+          {
+            path: "deleted-by-agent.txt",
+            beforeContent: "original\n",
+            afterContent: "",
+            beforeMissing: false,
+            afterMissing: true,
+            deleted: true,
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(structuralRestore.success, true);
+  await assert.rejects(
+    access(join(anchorDirectory, "created-by-agent.txt")),
+  );
+  assert.equal(
+    await readFile(
+      join(anchorDirectory, "deleted-by-agent.txt"),
+      "utf8",
+    ),
+    "original\n",
+  );
 
   console.log("Runtime smoke test passed.");
 } finally {

@@ -2,7 +2,7 @@
   "name": "aporiax-desktop",
   "productName": "AporiaX",
   "description": "A local desktop coding agent with reviewable tools and mandatory self-check.",
-  "author": "AporiaX",
+  "author": "SeaLandX",
   "license": "MIT",
   "homepage": "https://github.com/CaptainLand/AporiaX#readme",
   "repository": {
@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.3",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -52,6 +52,7 @@
   "build": {
     "appId": "com.aporiax.desktop",
     "productName": "AporiaX",
+    "copyright": "Copyright © 2026 SeaLandX",
     "asar": true,
     "npmRebuild": false,
     "electronDist": "node_modules/electron/dist",

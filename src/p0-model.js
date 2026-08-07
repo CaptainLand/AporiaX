@@ -129,6 +129,7 @@ export function enrichRouteEntries(route, steps, result) {
       deletions: step.deletions || 0,
       artifact: step.artifact || null,
       exitCode: step.exitCode,
+      planStepId: step.planStepId || entry.planStepId || null,
     };
   });
 
@@ -153,6 +154,7 @@ export function enrichRouteEntries(route, steps, result) {
       deletions: step.deletions || 0,
       artifact: step.artifact || null,
       exitCode: step.exitCode,
+      planStepId: step.planStepId || null,
     });
   }
 
@@ -262,6 +264,23 @@ export function collectTaskRouteEntries(task) {
   return collectTaskRouteRuns(task).flatMap((run) => run.entries);
 }
 
+export function summarizeRoutePrompt(value, maximum = 32) {
+  const clean = String(value || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^[\s>*#\-+`\d.、:：]+/g, "")
+    .replace(/[*_~`|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return "";
+
+  const firstSentence =
+    clean.match(/^.*?[。！？.!?](?:\s|$)/)?.[0]?.trim() || clean;
+  if (firstSentence.length <= maximum) return firstSentence;
+  return `${firstSentence.slice(0, maximum).trimEnd()}…`;
+}
+
 export function collectTaskRouteRuns(task) {
   const messages = task?.messages || [];
   const userMessages = new Map(
@@ -275,19 +294,23 @@ export function collectTaskRouteRuns(task) {
     .map((message, index) => {
       const entries = routeEntriesFromMessage(message);
       const sourceMessage = userMessages.get(message.sourceUserId);
+      const prompt =
+        sourceMessage?.content ||
+        message.prompt ||
+        `任务 ${index + 1}`;
       return {
         id: message.id,
         messageId: message.id,
-        prompt:
-          sourceMessage?.content ||
-          message.prompt ||
-          `任务 ${index + 1}`,
+        prompt,
+        summary: summarizeRoutePrompt(prompt),
         createdAt: message.createdAt || sourceMessage?.createdAt || null,
         completedAt: message.completedAt || null,
         status: message.status || "completed",
         entries,
         changes: message.changes || [],
         selfCheck: message.selfCheck || null,
+        plan: message.plan || null,
+        contextCheckpoints: message.contextCheckpoints || [],
       };
     })
     .filter(

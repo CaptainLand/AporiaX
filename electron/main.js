@@ -1,5 +1,6 @@
 import {
   BrowserWindow,
+  Notification,
   app,
   dialog,
   ipcMain,
@@ -20,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   listWorkspaceTree,
   readWorkspacePreview,
+  restoreWorkspaceAnchor,
   revertWorkspaceChanges,
   runHarness,
   saveWorkspaceTextFile,
@@ -35,14 +37,105 @@ import {
   getSandboxStatus,
   prepareSandbox,
 } from "./sandbox-runtime.js";
+import {
+  acknowledgeRecoverableRun,
+  appendRunJournalEvent,
+  beginRunJournal,
+  finishRunJournal,
+  listRecoverableRuns,
+  updateRunJournalMetadata,
+} from "./run-store.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
 const isDevelopment = process.argv.includes("--dev");
 
 let mainWindow = null;
+let completionFlashTimer = null;
 const activeRuns = new Map();
 const pendingApprovals = new Map();
+
+function createRunControl() {
+  let paused = false;
+  let pauseWaiters = [];
+  const steeringQueue = [];
+
+  const settlePauseWaiters = () => {
+    const waiters = pauseWaiters;
+    pauseWaiters = [];
+    for (const waiter of waiters) waiter.resolve();
+  };
+
+  return {
+    get paused() {
+      return paused;
+    },
+    pause() {
+      if (paused) return false;
+      paused = true;
+      return true;
+    },
+    resume() {
+      if (!paused) return false;
+      paused = false;
+      settlePauseWaiters();
+      return true;
+    },
+    enqueueSteering(message) {
+      steeringQueue.push(message);
+      return steeringQueue.length;
+    },
+    consumeSteering() {
+      return steeringQueue.splice(0, steeringQueue.length);
+    },
+    async waitIfPaused(signal) {
+      if (!paused) return;
+      if (signal?.aborted) {
+        throw Object.assign(new Error("The task was interrupted."), {
+          name: "AbortError",
+        });
+      }
+      await new Promise((resolveWait, rejectWait) => {
+        let waiterEntry = null;
+        const handleAbort = () => {
+          pauseWaiters = pauseWaiters.filter(
+            (waiter) => waiter !== waiterEntry,
+          );
+          rejectWait(
+            Object.assign(new Error("The task was interrupted."), {
+              name: "AbortError",
+            }),
+          );
+        };
+        signal?.addEventListener("abort", handleAbort, { once: true });
+        waiterEntry = {
+          resolve: () => {
+            signal?.removeEventListener("abort", handleAbort);
+            resolveWait();
+          },
+        };
+        pauseWaiters.push(waiterEntry);
+      });
+    },
+    abort() {
+      paused = false;
+      settlePauseWaiters();
+    },
+  };
+}
+
+function queueRunJournalEvent(run, payload) {
+  run.journalTail = run.journalTail
+    .then(() =>
+      appendRunJournalEvent(
+        app.getPath("userData"),
+        run.runId,
+        payload,
+      ),
+    )
+    .catch(() => undefined);
+  return run.journalTail;
+}
 
 function assertTrustedSender(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -322,6 +415,56 @@ function applyWindowTheme(theme) {
   return normalizedTheme;
 }
 
+function focusTask(taskId) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.flashFrame(false);
+  if (completionFlashTimer) {
+    clearTimeout(completionFlashTimer);
+    completionFlashTimer = null;
+  }
+  mainWindow.webContents.send("desktop:task-requested", { taskId });
+}
+
+function notifyTaskCompleted(payload) {
+  const taskId =
+    typeof payload?.taskId === "string" ? payload.taskId.slice(0, 100) : "";
+  const title =
+    typeof payload?.title === "string" && payload.title.trim()
+      ? payload.title.trim().slice(0, 120)
+      : "AporiaX · Task completed";
+  const body =
+    typeof payload?.body === "string"
+      ? payload.body.trim().slice(0, 240)
+      : "";
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.flashFrame(true);
+    if (completionFlashTimer) clearTimeout(completionFlashTimer);
+    completionFlashTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.flashFrame(false);
+      }
+      completionFlashTimer = null;
+    }, 2400);
+  }
+
+  if (!Notification.isSupported()) {
+    return { flashed: true, notified: false };
+  }
+  const notification = new Notification({
+    title,
+    body,
+    icon: join(projectRoot, "build", "icon.ico"),
+    silent: false,
+  });
+  notification.on("click", () => focusTask(taskId));
+  notification.show();
+  return { flashed: true, notified: true };
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     title: "AporiaX",
@@ -374,6 +517,13 @@ function createMainWindow() {
 
   mainWindow.on("maximize", sendWindowState);
   mainWindow.on("unmaximize", sendWindowState);
+  mainWindow.on("focus", () => {
+    mainWindow?.flashFrame(false);
+    if (completionFlashTimer) {
+      clearTimeout(completionFlashTimer);
+      completionFlashTimer = null;
+    }
+  });
   mainWindow.webContents.on("did-finish-load", sendWindowState);
 
   mainWindow.once("ready-to-show", () => {
@@ -424,6 +574,11 @@ ipcMain.handle("desktop:is-maximized", (event) => {
 ipcMain.handle("desktop:set-theme", (event, theme) => {
   assertTrustedSender(event);
   return applyWindowTheme(theme);
+});
+
+ipcMain.handle("desktop:task-completed", (event, payload) => {
+  assertTrustedSender(event);
+  return notifyTaskCompleted(payload);
 });
 
 ipcMain.handle("desktop:select-directory", async (event) => {
@@ -489,6 +644,11 @@ ipcMain.handle("workspace:save-text", async (event, request) => {
 ipcMain.handle("workspace:revert", async (event, request) => {
   assertTrustedSender(event);
   return revertWorkspaceChanges(request);
+});
+
+ipcMain.handle("workspace:restore-anchor", async (event, request) => {
+  assertTrustedSender(event);
+  return restoreWorkspaceAnchor(request);
 });
 
 ipcMain.handle("attachments:parse", async (event, request) => {
@@ -569,17 +729,36 @@ ipcMain.handle("harness:run", async (event, request) => {
   const provider = await resolveProvider(request?.providerId);
 
   const controller = new AbortController();
-  activeRuns.set(runId, {
+  const control = createRunControl();
+  const run = {
+    runId,
     controller,
+    control,
     senderId: event.sender.id,
+    journalTail: Promise.resolve(),
+  };
+  await beginRunJournal(app.getPath("userData"), {
+    runId,
+    taskId: request?.taskId,
+    assistantId: request?.assistantId,
+    sourceUserId: request?.sourceUserId,
+    prompt: request?.prompt,
+    workspacePath: request?.workspacePath,
+    providerId: request?.providerId,
+    modelId: request?.modelId,
   });
+  activeRuns.set(runId, run);
 
   try {
-    return await runHarness({
+    const result = await runHarness({
       ...request,
       provider,
       signal: controller.signal,
-      onEvent: (payload) => sendHarnessEvent(event, runId, payload),
+      control,
+      onEvent: (payload) => {
+        sendHarnessEvent(event, runId, payload);
+        queueRunJournalEvent(run, payload);
+      },
       requestApproval: (details) =>
         requestHarnessApproval(
           event,
@@ -588,7 +767,22 @@ ipcMain.handle("harness:run", async (event, request) => {
           controller.signal,
         ),
     });
+    await run.journalTail;
+    await finishRunJournal(
+      app.getPath("userData"),
+      runId,
+      result,
+    );
+    return result;
+  } catch (error) {
+    await run.journalTail;
+    await finishRunJournal(app.getPath("userData"), runId, {
+      status: controller.signal.aborted ? "interrupted" : "failed",
+      changes: [],
+    }).catch(() => undefined);
+    throw error;
   } finally {
+    control.abort();
     activeRuns.delete(runId);
     for (const [approvalId, approval] of pendingApprovals) {
       if (approval.runId !== runId) continue;
@@ -603,6 +797,64 @@ ipcMain.handle("harness:interrupt", (event, runId) => {
   const run = activeRuns.get(runId);
   if (!run || run.senderId !== event.sender.id) return false;
   run.controller.abort();
+  run.control.abort();
+  return true;
+});
+
+ipcMain.handle("harness:pause", async (event, runId) => {
+  assertTrustedSender(event);
+  const run = activeRuns.get(runId);
+  if (!run || run.senderId !== event.sender.id) return false;
+  if (!run.control.pause()) return true;
+  const payload = { type: "control.paused" };
+  sendHarnessEvent(event, runId, payload);
+  queueRunJournalEvent(run, payload);
+  await updateRunJournalMetadata(app.getPath("userData"), runId, {
+    status: "paused",
+    lastEventType: payload.type,
+  }).catch(() => undefined);
+  return true;
+});
+
+ipcMain.handle("harness:resume", async (event, runId) => {
+  assertTrustedSender(event);
+  const run = activeRuns.get(runId);
+  if (!run || run.senderId !== event.sender.id) return false;
+  if (!run.control.resume()) return true;
+  const payload = { type: "control.resumed" };
+  sendHarnessEvent(event, runId, payload);
+  queueRunJournalEvent(run, payload);
+  await updateRunJournalMetadata(app.getPath("userData"), runId, {
+    status: "running",
+    lastEventType: payload.type,
+  }).catch(() => undefined);
+  return true;
+});
+
+ipcMain.handle("harness:steer", (event, { runId, message }) => {
+  assertTrustedSender(event);
+  const run = activeRuns.get(runId);
+  if (!run || run.senderId !== event.sender.id) return false;
+  const content = String(message?.content || "").trim();
+  const attachments = Array.isArray(message?.attachments)
+    ? message.attachments.slice(0, 6)
+    : [];
+  if (!content && attachments.length === 0) return false;
+  const steeringMessage = {
+    id: String(message?.id || randomUUID()),
+    role: "user",
+    content,
+    attachments,
+    createdAt: String(message?.createdAt || new Date().toISOString()),
+  };
+  const queued = run.control.enqueueSteering(steeringMessage);
+  const payload = {
+    type: "steering.queued",
+    messageId: steeringMessage.id,
+    queued,
+  };
+  sendHarnessEvent(event, runId, payload);
+  queueRunJournalEvent(run, payload);
   return true;
 });
 
@@ -626,10 +878,30 @@ ipcMain.handle(
 
 ipcMain.handle("harness:active-runs", (event) => {
   assertTrustedSender(event);
-  return [...activeRuns.keys()];
+  return [...activeRuns.values()].map((run) => ({
+    runId: run.runId,
+    paused: run.control.paused,
+  }));
 });
 
+ipcMain.handle("harness:recoverable-runs", async (event) => {
+  assertTrustedSender(event);
+  return listRecoverableRuns(app.getPath("userData"));
+});
+
+ipcMain.handle(
+  "harness:acknowledge-recovery",
+  async (event, runId) => {
+    assertTrustedSender(event);
+    await acknowledgeRecoverableRun(app.getPath("userData"), runId);
+    return true;
+  },
+);
+
 app.whenReady().then(() => {
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.aporiax.desktop");
+  }
   createMainWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

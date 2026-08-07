@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { diffLines } from "diff";
 import {
   AlertTriangle,
   ArrowUp,
@@ -17,23 +18,31 @@ import {
   Folder,
   FolderOpen,
   HardDrive,
+  History,
   ImagePlus,
+  Info,
   KeyRound,
+  Languages,
   LoaderCircle,
   LockKeyhole,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
+  Palette,
+  Pause,
+  Play,
   Plus,
   RotateCcw,
   Search,
   Settings2,
+  ShieldCheck,
   Square,
   SquarePen,
   Moon,
   Sun,
   Trash2,
+  Undo2,
   X,
   Zap,
 } from "lucide-react";
@@ -50,6 +59,7 @@ import {
   formatRouteDuration,
   getDeliverableType,
   getRouteToolMeta,
+  summarizeRoutePrompt,
   updateRunAssistant,
 } from "./p0-model";
 import WelcomeParticleOcean from "./WelcomeParticleOcean";
@@ -67,6 +77,64 @@ const FILES_PANEL_WIDTH_KEY = "aporiax.files-panel-width.v1";
 const THEME_STORAGE_KEY = "aporiax.theme.v1";
 const DEFAULT_SETTINGS_PANEL_WIDTH = 320;
 const DEFAULT_FILES_PANEL_WIDTH = 520;
+
+function mergeRecoverableRuns(tasks, records, tr) {
+  if (!Array.isArray(records) || records.length === 0) return tasks;
+  const byTask = new Map();
+  for (const record of records) {
+    if (!record?.taskId || !record?.assistantId) continue;
+    const bucket = byTask.get(record.taskId) || [];
+    bucket.push(record);
+    byTask.set(record.taskId, bucket);
+  }
+  return tasks.map((task) => {
+    const recoverable = byTask.get(task.id) || [];
+    if (!recoverable.length) return task;
+    let messages = [...task.messages];
+    for (const record of recoverable) {
+      const recovery = {
+        runId: record.runId,
+        startedAt: record.startedAt || null,
+        workspacePath: record.workspacePath || task.workspacePath,
+      };
+      const existingIndex = messages.findIndex(
+        (message) => message.id === record.assistantId,
+      );
+      const recoveryContent = tr(
+        "AporiaX 上次退出时这项任务仍在执行。运行日志和工作区修改已保留，可以从当前检查点恢复。",
+        "This task was still running when AporiaX last closed. Its run journal and workspace changes were preserved, so it can resume from the current checkpoint.",
+      );
+      if (existingIndex >= 0) {
+        messages[existingIndex] = {
+          ...messages[existingIndex],
+          status: "interrupted",
+          error: false,
+          content: messages[existingIndex].content || recoveryContent,
+          prompt: messages[existingIndex].prompt || record.prompt,
+          sourceUserId:
+            messages[existingIndex].sourceUserId || record.sourceUserId,
+          recoverable: recovery,
+        };
+        continue;
+      }
+      messages.push({
+        id: record.assistantId,
+        role: "assistant",
+        status: "interrupted",
+        error: false,
+        content: recoveryContent,
+        prompt: record.prompt || "",
+        sourceUserId: record.sourceUserId || "",
+        route: [],
+        steps: [],
+        changes: [],
+        recoverable: recovery,
+        createdAt: record.startedAt || new Date().toISOString(),
+      });
+    }
+    return { ...task, messages };
+  });
+}
 
 function migrateLegacyLocalStorage() {
   const migrations = [
@@ -99,8 +167,6 @@ function readPanelWidth(storageKey, fallback, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, saved));
 }
 
-const LEGACY_DEEPSEEK_PROVIDER_ID = "deepseek";
-const LEGACY_DEEPSEEK_MODEL_ID = "deepseek-v4-pro";
 const EMPTY_MODEL = {
   id: "",
   providerId: "",
@@ -120,6 +186,7 @@ const DEFAULT_TASK_OPTIONS = {
   thinking: true,
   effort: "high",
   permission: "workspace-write",
+  approvalMode: "sandbox-auto",
 };
 
 function readSavedTasks() {
@@ -128,6 +195,54 @@ function readSavedTasks() {
     return Array.isArray(saved) ? saved : [];
   } catch {
     return [];
+  }
+}
+
+function createLightweightTaskCache(tasks) {
+  return (tasks || []).map((task) => ({
+    ...task,
+    anchorRestores: (task.anchorRestores || []).slice(-10),
+    messages: (task.messages || []).slice(-50).map((message) => ({
+      ...message,
+      content: String(message.content || "").slice(-60_000),
+      changes: [],
+      anchor: message.anchor
+        ? {
+            ...message.anchor,
+            warning:
+              "Snapshot payload is stored in the desktop task history.",
+          }
+        : null,
+      attachments: (message.attachments || []).map((attachment) => ({
+        ...attachment,
+        dataUrl: undefined,
+        data: undefined,
+        content: String(attachment.content || "").slice(0, 20_000),
+      })),
+    })),
+  }));
+}
+
+function cacheTasksLocally(tasks) {
+  const serialized = JSON.stringify(tasks);
+  try {
+    if (new Blob([serialized]).size <= 3_500_000) {
+      localStorage.setItem(STORAGE_KEY, serialized);
+      return;
+    }
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(createLightweightTaskCache(tasks)),
+    );
+  } catch {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(createLightweightTaskCache(tasks).slice(0, 20)),
+      );
+    } catch {
+      // The desktop JSON store remains authoritative when browser quota is full.
+    }
   }
 }
 
@@ -181,8 +296,8 @@ function getDefaultTaskConfig(providers) {
   return {
     ...DEFAULT_TASK_OPTIONS,
     thinking: Boolean(model.supportsThinking),
-    providerId: model.providerId || LEGACY_DEEPSEEK_PROVIDER_ID,
-    modelId: model.id || LEGACY_DEEPSEEK_MODEL_ID,
+    providerId: model.providerId || "",
+    modelId: model.id || "",
   };
 }
 
@@ -199,23 +314,29 @@ function IconButton({ label, className = "", children, ...props }) {
   );
 }
 
-function AppTitlebar() {
+function AppTitlebar({ onOpenSettings }) {
+  const { tr } = useI18n();
   return (
     <header className="titlebar">
-      <div className="titlebar-brand">
+      <button
+        className="titlebar-brand"
+        type="button"
+        onClick={onOpenSettings}
+        aria-label={tr("打开 AporiaX 设置", "Open AporiaX settings")}
+        title={tr("打开设置", "Open settings")}
+      >
         <div className="brand-mark">
           <span>A</span>
           <i>X</i>
         </div>
         <span>AporiaX</span>
-      </div>
+      </button>
       <div className="titlebar-drag" />
     </header>
   );
 }
 
 function WelcomeOverlay({ onContinue }) {
-  const { tr, isEnglish } = useI18n();
   return (
     <div className="welcome-backdrop">
       <WelcomeParticleOcean />
@@ -227,30 +348,19 @@ function WelcomeOverlay({ onContinue }) {
         aria-describedby="welcome-subtitle"
       >
         <h1 id="welcome-title">
-          {isEnglish ? (
-            <>
-              <span>Every problem begins</span>
-              <span>
-                with an <em>aporia.</em>
-              </span>
-            </>
-          ) : (
-            <span>每个答案，都始于一个尚未解开的疑问。</span>
-          )}
+          <span>Every problem begins</span>
+          <span>
+            with an <em>aporia.</em>
+          </span>
         </h1>
-        <p id="welcome-subtitle">
-          {tr(
-            "Every problem begins with an aporia.",
-            "每个答案，都始于一个尚未解开的疑问。",
-          )}
-        </p>
+        <p id="welcome-subtitle">每个答案，都始于一个尚未解开的疑问。</p>
         <button
           className="welcome-enter"
           type="button"
-          aria-label={tr("进入 AporiaX", "Enter AporiaX")}
+          aria-label="Enter AporiaX"
           onClick={onContinue}
         >
-          {tr("进入", "Enter")}
+          Enter
           <ArrowRight size={16} />
         </button>
       </section>
@@ -264,12 +374,20 @@ function Sidebar({
   activeTaskId,
   onSelectTask,
   onNewTask,
+  onRenameTask,
+  onDeleteTask,
+  onNotice,
+  runningTaskId,
   searchOpen,
   onToggleSearch,
 }) {
   const { tr } = useI18n();
   const [query, setQuery] = useState("");
+  const [contextMenu, setContextMenu] = useState(null);
+  const [renameTask, setRenameTask] = useState(null);
+  const [deleteTask, setDeleteTask] = useState(null);
   const searchRef = useRef(null);
+  const contextMenuRef = useRef(null);
   const filteredTasks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return tasks;
@@ -282,6 +400,58 @@ function Sidebar({
     if (searchOpen) searchRef.current?.focus();
     if (!searchOpen) setQuery("");
   }, [searchOpen]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const closeMenu = (event) => {
+      if (!contextMenuRef.current?.contains(event.target)) {
+        setContextMenu(null);
+      }
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeMenu);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeMenu);
+    };
+  }, [contextMenu]);
+
+  const contextTask = tasks.find(
+    (task) => task.id === contextMenu?.taskId,
+  );
+
+  const copyTaskWorkspace = async (task) => {
+    if (!task?.workspacePath) return;
+    try {
+      await navigator.clipboard.writeText(task.workspacePath);
+      onNotice(tr("工作目录路径已复制", "Workspace path copied"));
+    } catch {
+      onNotice(
+        tr(
+          "无法复制工作目录路径",
+          "Unable to copy the workspace path",
+        ),
+      );
+    }
+    setContextMenu(null);
+  };
+
+  const openTaskWorkspace = async (task) => {
+    if (!task?.workspacePath || !window.desktop?.openWorkspace) return;
+    try {
+      await window.desktop.openWorkspace(task.workspacePath);
+    } catch {
+      onNotice(
+        tr("无法打开工作目录", "Unable to open the workspace"),
+      );
+    }
+    setContextMenu(null);
+  };
 
   return (
     <aside className="sidebar">
@@ -325,7 +495,25 @@ function Sidebar({
             <button
               key={task.id}
               className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
-              onClick={() => onSelectTask(task.id)}
+              onClick={() => {
+                setContextMenu(null);
+                onSelectTask(task.id);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                onSelectTask(task.id);
+                setContextMenu({
+                  taskId: task.id,
+                  x: Math.min(
+                    event.clientX,
+                    Math.max(10, window.innerWidth - 218),
+                  ),
+                  y: Math.min(
+                    event.clientY,
+                    Math.max(10, window.innerHeight - 230),
+                  ),
+                });
+              }}
             >
               <MessageSquare size={15} />
               <span className="task-item-copy">
@@ -342,6 +530,83 @@ function Sidebar({
           </div>
         )}
       </div>
+      {contextTask && contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="sidebar-task-context-menu"
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <span className="sidebar-context-title" title={contextTask.title}>
+            {contextTask.title}
+          </span>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setRenameTask(contextTask);
+              setContextMenu(null);
+            }}
+          >
+            <SquarePen size={15} />
+            {tr("重命名任务", "Rename task")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!contextTask.workspacePath}
+            onClick={() => void copyTaskWorkspace(contextTask)}
+          >
+            <Copy size={15} />
+            {tr("复制工作目录路径", "Copy workspace path")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!contextTask.workspacePath}
+            onClick={() => void openTaskWorkspace(contextTask)}
+          >
+            <FolderOpen size={15} />
+            {tr("在资源管理器中打开", "Open in File Explorer")}
+          </button>
+          <div className="sidebar-context-divider" />
+          <button
+            className="danger"
+            type="button"
+            role="menuitem"
+            disabled={runningTaskId === contextTask.id}
+            onClick={() => {
+              setDeleteTask(contextTask);
+              setContextMenu(null);
+            }}
+          >
+            <Trash2 size={15} />
+            {runningTaskId === contextTask.id
+              ? tr("运行中，无法删除", "Running; cannot delete")
+              : tr("删除任务", "Delete task")}
+          </button>
+        </div>
+      )}
+      {renameTask && (
+        <RenameTaskModal
+          task={renameTask}
+          onClose={() => setRenameTask(null)}
+          onRename={(title) => {
+            onRenameTask(renameTask.id, title);
+            setRenameTask(null);
+          }}
+        />
+      )}
+      {deleteTask && (
+        <DeleteTaskModal
+          task={deleteTask}
+          onClose={() => setDeleteTask(null)}
+          onDelete={() => {
+            onDeleteTask(deleteTask.id);
+            setDeleteTask(null);
+          }}
+        />
+      )}
     </aside>
   );
 }
@@ -361,6 +626,7 @@ function ModelChoice({ model, selected, onSelect, compact = false }) {
       </span>
       <span className="model-choice-copy">
         <span className="model-choice-name">{model.name}</span>
+        {!compact && <code className="model-choice-id">{model.id}</code>}
         <small>{tr(model.descriptionZh || model.description, model.descriptionEn || model.description)}</small>
       </span>
       {selected && <Check size={17} className="model-choice-check" />}
@@ -406,7 +672,6 @@ function NewTaskModal({
   onClose,
   onCreate,
   onNotice,
-  onManageProviders,
 }) {
   const { tr } = useI18n();
   const [workspacePath, setWorkspacePath] = useState("");
@@ -418,11 +683,6 @@ function NewTaskModal({
   const [selectingFolder, setSelectingFolder] = useState(false);
   const titleRef = useRef(null);
   const hasModels = getAvailableModels(providers).length > 0;
-  const selectedModel = getModel(
-    providers,
-    config.providerId,
-    config.modelId,
-  );
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -545,90 +805,6 @@ function NewTaskModal({
           </section>
 
           <section className="form-section">
-            <div className="field-label-row">
-              <label className="field-label">{tr("模型", "Model")}</label>
-              <button
-                className="inline-settings-link"
-                type="button"
-                onClick={onManageProviders}
-              >
-                {tr("管理 Provider", "Manage providers")}
-              </button>
-            </div>
-            <div className="model-grid">
-              {getAvailableModels(providers).length ? (
-                getAvailableModels(providers).map((model) => (
-                  <ModelChoice
-                    key={`${model.providerId}:${model.id}`}
-                    model={model}
-                    selected={
-                      config.providerId === model.providerId &&
-                      config.modelId === model.id
-                    }
-                    onSelect={(selection) =>
-                      setConfig((current) => ({
-                        ...current,
-                        providerId: selection.providerId,
-                        modelId: selection.id,
-                        thinking: selection.supportsThinking
-                          ? current.thinking
-                          : false,
-                      }))
-                    }
-                  />
-                ))
-              ) : (
-                <button
-                  className="empty-provider-choice"
-                  type="button"
-                  onClick={onManageProviders}
-                >
-                  <Plus size={16} />
-                  {tr("添加第一个模型 API", "Add your first model API")}
-                </button>
-              )}
-            </div>
-          </section>
-
-          <section className="form-section configuration-card">
-            <div className="config-row">
-              <div className="config-copy">
-                <div className="config-title">
-                  <Brain size={16} />
-                  <span>{tr("深度思考", "Deep thinking")}</span>
-                </div>
-              </div>
-              <Switch
-                checked={config.thinking}
-                label={tr("深度思考", "Deep thinking")}
-                disabled={!selectedModel.supportsThinking}
-                onChange={(thinking) =>
-                  setConfig((current) => ({ ...current, thinking }))
-                }
-              />
-            </div>
-
-            {config.thinking && (
-              <div className="config-row bordered">
-                <div className="config-copy">
-                  <div className="config-title">{tr("思考强度", "Reasoning effort")}</div>
-                </div>
-                <SegmentedControl
-                  value={config.effort}
-                  ariaLabel={tr("思考强度", "Reasoning effort")}
-                  options={[
-                    { value: "high", label: "High" },
-                    { value: "max", label: "Max" },
-                  ]}
-                  onChange={(effort) =>
-                    setConfig((current) => ({ ...current, effort }))
-                  }
-                />
-              </div>
-            )}
-          </section>
-
-          <section className="form-section">
             <label className="field-label">{tr("文件权限", "File access")}</label>
             <SegmentedControl
               value={config.permission}
@@ -641,6 +817,33 @@ function NewTaskModal({
                 setConfig((current) => ({ ...current, permission }))
               }
             />
+          </section>
+
+          <section className="form-section configuration-card">
+            <div className="config-row">
+              <div className="config-copy">
+                <div className="config-title">
+                  <ShieldCheck size={16} />
+                  <span>{tr("命令自动执行", "Automatic command execution")}</span>
+                </div>
+                <p>
+                  {tr(
+                    "命令默认在本地临时工作区自动执行；Docker 可选，用于加强系统级隔离。",
+                    "Commands run automatically in a temporary local workspace. Docker is optional for stronger system isolation.",
+                  )}
+                </p>
+              </div>
+              <Switch
+                checked={config.approvalMode !== "manual"}
+                label={tr("命令自动执行", "Automatic command execution")}
+                onChange={(enabled) =>
+                  setConfig((current) => ({
+                    ...current,
+                    approvalMode: enabled ? "sandbox-auto" : "manual",
+                  }))
+                }
+              />
+            </div>
           </section>
         </div>
 
@@ -850,9 +1053,14 @@ function Composer({
   providers,
   onSend,
   onStop,
+  onPause,
+  onResume,
   onUpdateTask,
   onNotice,
   isRunning,
+  isPaused,
+  queuedCount = 0,
+  pendingSteeringCount = 0,
 }) {
   const { tr } = useI18n();
   const [message, setMessage] = useState("");
@@ -872,7 +1080,6 @@ function Composer({
     const content = message.trim();
     if (
       (!content && !attachments.length) ||
-      isRunning ||
       attachmentLoading
     ) {
       return;
@@ -1007,7 +1214,6 @@ function Composer({
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
-        if (isRunning) return;
         const dropped = [...event.dataTransfer.files];
         const images = dropped.filter((file) =>
           file.type.startsWith("image/"),
@@ -1088,7 +1294,6 @@ function Composer({
           placeholder={tr("描述你想完成的任务", "Describe what you want to accomplish")}
           rows={1}
           aria-label={tr("任务输入", "Task prompt")}
-          disabled={isRunning}
         />
         <div className="composer-toolbar">
           <div className="composer-toolbar-left">
@@ -1127,7 +1332,6 @@ function Composer({
                   : tr("当前模型仅支持文字，识图需要视觉模型或 OCR", "This model is text-only; image understanding requires vision or OCR")
               }
               type="button"
-              disabled={isRunning}
               onClick={() => {
                 if (!model.supportsImages) {
                   onNotice(
@@ -1149,7 +1353,7 @@ function Composer({
               aria-label={tr("添加附件", "Add attachment")}
               title={tr("添加附件（PDF、Office、Markdown、文本或代码）", "Add PDF, Office, Markdown, text, or code files")}
               type="button"
-              disabled={isRunning || attachmentLoading}
+              disabled={attachmentLoading}
               onClick={() => attachmentInputRef.current?.click()}
             >
               {attachmentLoading ? (
@@ -1183,29 +1387,87 @@ function Composer({
               </button>
             </div>
           </div>
-          <button
-            className={`send-button ${isRunning ? "stop" : ""}`}
-            aria-label={isRunning ? tr("停止任务", "Stop task") : tr("发送", "Send")}
-            title={isRunning ? tr("停止任务", "Stop task") : tr("发送", "Send")}
-            disabled={
-              isRunning
-                ? false
-                : attachmentLoading ||
-                  (!message.trim() && !attachments.length)
-            }
-            onClick={isRunning ? onStop : send}
-          >
-            {isRunning ? (
-              <Square size={13} fill="currentColor" />
-            ) : (
-              <ArrowUp size={17} />
+          <div className="composer-run-actions">
+            {isRunning && (
+              <>
+                <button
+                  className="composer-pause-button"
+                  type="button"
+                  aria-label={
+                    isPaused
+                      ? tr("继续当前任务", "Resume current task")
+                      : tr("暂停当前任务", "Pause current task")
+                  }
+                  title={
+                    isPaused
+                      ? tr("继续当前任务", "Resume current task")
+                      : tr("在安全边界暂停", "Pause at a safe boundary")
+                  }
+                  onClick={isPaused ? onResume : onPause}
+                >
+                  {isPaused ? (
+                    <Play size={13} fill="currentColor" />
+                  ) : (
+                    <Pause size={13} fill="currentColor" />
+                  )}
+                </button>
+                <button
+                  className="composer-stop-button"
+                  type="button"
+                  aria-label={tr("停止当前任务", "Stop current task")}
+                  title={tr("停止当前任务", "Stop current task")}
+                  onClick={onStop}
+                >
+                  <Square size={12} fill="currentColor" />
+                </button>
+              </>
             )}
-          </button>
+            <button
+              className="send-button"
+              aria-label={
+                isRunning
+                  ? tr("发送追问", "Queue follow-up")
+                  : tr("发送", "Send")
+              }
+              title={
+                isRunning
+                  ? tr("发送追问", "Queue follow-up")
+                  : tr("发送", "Send")
+              }
+              disabled={
+                attachmentLoading ||
+                (!message.trim() && !attachments.length)
+              }
+              onClick={send}
+            >
+              <ArrowUp size={17} />
+            </button>
+          </div>
         </div>
       </div>
       <p className="composer-hint">
         {isRunning
-          ? tr("任务运行中 · 点击停止按钮可安全中断", "Task running · use Stop to interrupt safely")
+          ? isPaused
+            ? tr(
+                "任务已暂停 · 可以继续补充要求，恢复后会应用",
+                "Task paused · add guidance now; it will apply after resume",
+              )
+            : pendingSteeringCount > 0
+              ? tr(
+                  "任务运行中 · {count} 条新要求将在下一安全边界应用",
+                  "Task running · {count} instruction(s) will apply at the next safe boundary",
+                  { count: pendingSteeringCount },
+                )
+              : queuedCount > 0
+            ? tr(
+                "当前任务运行中 · {count} 条追问已排队",
+                "Task running · {count} follow-up(s) queued",
+                { count: queuedCount },
+              )
+            : tr(
+                "任务运行中 · 可以继续纠偏，新要求会在安全边界立即接入",
+                "Task running · keep steering; new guidance is applied at a safe boundary",
+              )
           : model.supportsImages
             ? tr("Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码", "Enter to send · Shift Enter for a new line · Add images, PDFs, documents, and code")
             : tr("Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件", "Enter to send · Shift Enter for a new line · Add PDFs, documents, and code")}
@@ -1351,6 +1613,7 @@ function collectEditedFiles(steps, content, changes) {
       binary: Boolean(change.binary),
       artifact: change.artifact || null,
       created: Boolean(change.created),
+      deleted: Boolean(change.deleted || change.afterMissing),
       reverted: Boolean(change.reverted),
       legacy: false,
     }));
@@ -1387,6 +1650,22 @@ function collectEditedFiles(steps, content, changes) {
       created: true,
       legacy: true,
     }));
+}
+
+function countChangedLines(beforeContent, afterContent) {
+  let additions = 0;
+  let deletions = 0;
+  for (const part of diffLines(
+    String(beforeContent || ""),
+    String(afterContent || ""),
+  )) {
+    const count =
+      Number(part.count) ||
+      Math.max(1, String(part.value || "").split(/\r?\n/).length - 1);
+    if (part.added) additions += count;
+    if (part.removed) deletions += count;
+  }
+  return { additions, deletions };
 }
 
 function EditedFilesCard({
@@ -1453,7 +1732,7 @@ function EditedFilesCard({
             type="button"
             onClick={() =>
               hasSnapshots
-                ? onReview()
+                ? onReview(null)
                 : setExpanded((open) => !open)
             }
           >
@@ -1467,11 +1746,27 @@ function EditedFilesCard({
       </div>
       <div className="edited-file-list">
         {visibleFiles.map((file) => (
-          <div className="edited-file-row" key={file.path}>
+          <button
+            className="edited-file-row"
+            key={file.path}
+            type="button"
+            disabled={!hasSnapshots}
+            onClick={() => onReview(file.path)}
+            title={
+              hasSnapshots
+                ? tr(
+                    "审核并编辑 {path}",
+                    "Review and edit {path}",
+                    { path: file.path },
+                  )
+                : file.path
+            }
+          >
             <span className="edited-file-name">
               <FileIcon path={file.path} />
               <span title={file.path}>{file.path}</span>
               {file.created && <em>{tr("新增", "New")}</em>}
+              {file.deleted && <em className="deleted">{tr("已删除", "Deleted")}</em>}
               {file.reverted && <em className="reverted">{tr("已撤销", "Reverted")}</em>}
             </span>
             {file.reverted ? (
@@ -1488,7 +1783,7 @@ function EditedFilesCard({
                 <b className="diff-delete">-{file.deletions}</b>
               </span>
             )}
-          </div>
+          </button>
         ))}
       </div>
       {hiddenCount > 0 && (
@@ -1609,11 +1904,82 @@ function AssistantMessage({ message, onRetry }) {
           onClick={() => onRetry(message)}
         >
           <RotateCcw size={13} />
-          {tr("重试本轮", "Retry turn")}
+          {message.recoverable
+            ? tr("恢复任务", "Resume task")
+            : tr("重试本轮", "Retry turn")}
         </button>
       )}
     </article>
   );
+}
+
+function getLiveRunProgress(message) {
+  const planSteps = message?.plan?.steps || [];
+  if (planSteps.length) {
+    const completedCount = planSteps.filter(
+      (step) => step.status === "completed",
+    ).length;
+    const blockedCount = planSteps.filter(
+      (step) => step.status === "blocked",
+    ).length;
+    const currentStep =
+      planSteps.find((step) => step.status === "in_progress") ||
+      planSteps.find((step) => step.status === "pending") ||
+      planSteps.at(-1) ||
+      null;
+    const inProgressCredit = planSteps.some(
+      (step) => step.status === "in_progress",
+    )
+      ? 0.35
+      : 0;
+    return {
+      entries: message?.route || [],
+      completedCount,
+      currentEntry: currentStep
+        ? {
+            title: currentStep.title,
+            detail: currentStep.detail || "",
+            stage: "route",
+          }
+        : null,
+      progress: Math.min(
+        message?.status === "running" ? 96 : 100,
+        Math.round(
+          ((completedCount + inProgressCredit) / planSteps.length) * 100,
+        ),
+      ),
+      totalCount: planSteps.length,
+      blockedCount,
+      plan: message.plan,
+    };
+  }
+  const entries = message?.route || [];
+  const completedCount = entries.filter((entry) =>
+    ["completed", "skipped", "recovered"].includes(entry.status),
+  ).length;
+  const currentEntry =
+    [...entries]
+      .reverse()
+      .find((entry) => ["running", "waiting", "retry"].includes(entry.status)) ||
+    entries.at(-1) ||
+    null;
+  const stageBase = {
+    route: 12,
+    forge: 42,
+    trial: 74,
+    deliver: 93,
+  };
+  const base = stageBase[currentEntry?.stage] || 8;
+  const progress = Math.min(96, base + Math.min(12, completedCount * 2));
+  return {
+    entries,
+    completedCount,
+    currentEntry,
+    progress,
+    totalCount: entries.length,
+    blockedCount: entries.filter((entry) => entry.status === "failed").length,
+    plan: null,
+  };
 }
 
 function Conversation({
@@ -1626,13 +1992,22 @@ function Conversation({
   onRetry,
   onRevert,
   onConfirmChanges,
+  onSaveChanges,
+  onNotice,
 }) {
   const { tr } = useI18n();
-  const [reviewMessageId, setReviewMessageId] = useState(null);
+  const [reviewRequest, setReviewRequest] = useState(null);
   const [reverting, setReverting] = useState(false);
   const reviewMessage = task.messages.find(
-    (message) => message.id === reviewMessageId,
+    (message) => message.id === reviewRequest?.messageId,
   );
+  const activeRunMessage = [...task.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" && message.status === "running",
+    );
+  const liveProgress = getLiveRunProgress(activeRunMessage);
 
   const revertChanges = async (paths) => {
     if (!reviewMessage) return;
@@ -1663,11 +2038,37 @@ function Conversation({
       {task.messages.map((message) => {
         if (message.role === "user") {
           return (
-          <article className="user-message" key={message.id}>
+          <article
+            className={`user-message ${message.queued ? "queued" : ""} ${message.steeringStatus ? "steering" : ""}`}
+            key={message.id}
+          >
             {message.content && (
               <div className="message-bubble">{message.content}</div>
             )}
             <UserAttachments attachments={message.attachments} />
+            {message.queued && (
+              <span className="queued-message-state">
+                <LoaderCircle size={12} />
+                {tr("已排队，当前任务完成后继续", "Queued · runs after the current task")}
+              </span>
+            )}
+            {message.steeringStatus && !message.queued && (
+              <span className={`steering-message-state ${message.steeringStatus}`}>
+                {message.steeringStatus === "pending" && (
+                  <LoaderCircle size={12} />
+                )}
+                {message.steeringStatus === "applied" && <Check size={12} />}
+                {message.steeringStatus === "failed" && <AlertTriangle size={12} />}
+                {message.steeringStatus === "pending"
+                  ? tr(
+                      "等待下一安全边界应用",
+                      "Waiting for the next safe boundary",
+                    )
+                  : message.steeringStatus === "applied"
+                    ? tr("已应用到当前任务", "Applied to the current task")
+                    : tr("即时纠偏失败，已转入队列", "Live steering failed and was queued")}
+              </span>
+            )}
           </article>
           );
         }
@@ -1685,7 +2086,13 @@ function Conversation({
                 files={files}
                 hasSnapshots={Boolean(message.changes?.length)}
                 confirmed={Boolean(message.reviewConfirmedAt)}
-                onReview={() => setReviewMessageId(message.id)}
+                onReview={(path) =>
+                  setReviewRequest({
+                    messageId: message.id,
+                    path,
+                    mode: path ? "edit" : "diff",
+                  })
+                }
               />
             )}
             <SelfCheckCard selfCheck={message.selfCheck} />
@@ -1699,13 +2106,45 @@ function Conversation({
       />
       {isRunning && (
         <div className="harness-running">
-          <LoaderCircle className="spin" size={16} />
-          <div>
-            <strong>{runStatus?.title || tr("Harness 正在运行", "Harness is running")}</strong>
-            <p>
-              {runStatus?.detail ||
-                tr("模型正在检查授权工作区并规划下一步。", "The model is inspecting the authorized workspace and planning its next step.")}
-            </p>
+          <div className="harness-running-heading">
+            <span className="harness-running-icon">
+              <LoaderCircle className="spin" size={15} />
+            </span>
+            <div>
+              <strong>{runStatus?.title || tr("Harness 正在运行", "Harness is running")}</strong>
+              <span>
+                {tr(
+                  "约 {progress}% · 已完成 {count} 个动作",
+                  "About {progress}% · {count} action(s) complete",
+                  {
+                    progress: liveProgress.progress,
+                    count: liveProgress.completedCount,
+                  },
+                )}
+              </span>
+            </div>
+            <b>{liveProgress.progress}%</b>
+          </div>
+          <div className="harness-progress-track" aria-hidden="true">
+            <span style={{ width: `${liveProgress.progress}%` }} />
+          </div>
+          <div className="harness-current-action">
+            <span>{tr("正在做", "Now")}</span>
+            <div>
+              <strong>
+                {liveProgress.currentEntry?.title ||
+                  tr("理解任务并规划下一步", "Understanding the task and planning next steps")}
+              </strong>
+              <p>
+                {liveProgress.currentEntry?.path ||
+                  liveProgress.currentEntry?.detail ||
+                  runStatus?.detail ||
+                  tr(
+                    "模型正在检查授权工作区并规划下一步。",
+                    "The model is inspecting the authorized workspace and planning its next step.",
+                  )}
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -1714,8 +2153,15 @@ function Conversation({
           changes={reviewMessage.changes}
           confirmed={Boolean(reviewMessage.reviewConfirmedAt)}
           reverting={reverting}
-          onClose={() => setReviewMessageId(null)}
+          workspacePath={task.workspacePath}
+          initialPath={reviewRequest?.path || ""}
+          initialMode={reviewRequest?.mode || "diff"}
+          onClose={() => setReviewRequest(null)}
           onConfirm={() => onConfirmChanges(reviewMessage.id)}
+          onSave={(result) =>
+            onSaveChanges(reviewMessage.id, result)
+          }
+          onNotice={onNotice}
           onRevert={revertChanges}
         />
       )}
@@ -1731,20 +2177,27 @@ function RouteView({
   approvalResponding,
   onRespondApproval,
   onRevert,
+  onSaveChanges,
+  onNotice,
 }) {
   const { tr, language } = useI18n();
   const runs = collectTaskRouteRuns(task);
-  const [selectedRunId, setSelectedRunId] = useState(null);
+  const latestRunId = runs.at(-1)?.id || null;
+  const [selectedRunId, setSelectedRunId] = useState(latestRunId);
   const [review, setReview] = useState(null);
   const [reverting, setReverting] = useState(false);
   const selectedRun =
     runs.find((run) => run.id === selectedRunId) || runs.at(-1);
   const entries = selectedRun?.entries || [];
-  const completedCount = entries.filter((entry) =>
-    ["completed", "skipped", "retry", "recovered"].includes(
-      entry.status,
-    ),
-  ).length;
+  const planSteps = selectedRun?.plan?.steps || [];
+  const completedCount = planSteps.length
+    ? planSteps.filter((step) => step.status === "completed").length
+    : entries.filter((entry) =>
+        ["completed", "skipped", "retry", "recovered"].includes(
+          entry.status,
+        ),
+      ).length;
+  const totalCount = planSteps.length || entries.length;
   const selectedRunIndex = Math.max(
     0,
     runs.findIndex((run) => run.id === selectedRun?.id),
@@ -1753,6 +2206,17 @@ function RouteView({
   const reviewChanges = (reviewRun?.changes || []).filter(
     (change) => !review?.paths?.length || review.paths.includes(change.path),
   );
+
+  useEffect(() => {
+    setSelectedRunId(latestRunId);
+    setReview(null);
+  }, [task.id]);
+
+  useEffect(() => {
+    if (!isRunning || !latestRunId) return;
+    setSelectedRunId(latestRunId);
+    setReview(null);
+  }, [isRunning, latestRunId]);
 
   const revertChanges = async (paths) => {
     if (!reviewRun) return;
@@ -1782,7 +2246,10 @@ function RouteView({
             <span className="route-kicker">
               {tr("Route · 第 {count} 次任务", "Route · Task run {count}", { count: selectedRunIndex + 1 })}
             </span>
-            <h2>{selectedRun?.prompt || task.title}</h2>
+            <h2>
+              {selectedRun?.summary ||
+                summarizeRoutePrompt(selectedRun?.prompt || task.title)}
+            </h2>
           </div>
           <div className="route-overview-actions">
             {runs.length > 1 && (
@@ -1790,6 +2257,7 @@ function RouteView({
                 <span>{tr("任务轮次", "Task run")}</span>
                 <select
                   value={selectedRun?.id || ""}
+                  disabled={isRunning}
                   onChange={(event) => {
                     setSelectedRunId(event.target.value);
                     setReview(null);
@@ -1797,7 +2265,8 @@ function RouteView({
                 >
                   {runs.map((run, index) => (
                     <option value={run.id} key={run.id}>
-                      {String(index + 1).padStart(2, "0")} · {run.prompt}
+                      {String(index + 1).padStart(2, "0")} ·{" "}
+                      {run.summary || summarizeRoutePrompt(run.prompt)}
                     </option>
                   ))}
                 </select>
@@ -1810,15 +2279,81 @@ function RouteView({
             >
               <span />
               {selectedRun?.status === "running"
-                ? tr("执行中", "Running")
-                : tr("{done}/{total} 步完成", "{done}/{total} steps complete", {
+                  ? tr("执行中", "Running")
+                  : tr("{done}/{total} 步完成", "{done}/{total} steps complete", {
                     done: completedCount,
-                    total: entries.length,
+                    total: totalCount,
                   })}
             </div>
           </div>
         </header>
 
+        {planSteps.length > 0 && (
+          <section className="route-plan" aria-label={tr("执行计划", "Execution plan")}>
+            <header>
+              <div>
+                <span>{tr("执行计划", "Execution plan")}</span>
+                <strong>
+                  {tr(
+                    "{done}/{total} 个目标已完成",
+                    "{done}/{total} objectives complete",
+                    { done: completedCount, total: planSteps.length },
+                  )}
+                </strong>
+              </div>
+              <em>{tr("修订 {revision}", "Revision {revision}", { revision: selectedRun.plan.revision || 1 })}</em>
+            </header>
+            <ol>
+              {planSteps.map((step, index) => {
+                const evidence = entries.filter(
+                  (entry) => entry.planStepId === step.id,
+                );
+                return (
+                  <li className={step.status} key={step.id}>
+                    <span className="route-plan-index">
+                      {step.status === "completed" ? (
+                        <Check size={14} />
+                      ) : step.status === "in_progress" ? (
+                        <LoaderCircle className="spin" size={14} />
+                      ) : step.status === "blocked" ? (
+                        <AlertTriangle size={14} />
+                      ) : (
+                        String(index + 1).padStart(2, "0")
+                      )}
+                    </span>
+                    <div>
+                      <strong>{step.title}</strong>
+                      {step.detail && <p>{step.detail}</p>}
+                      {evidence.length > 0 && (
+                        <small>
+                          {tr(
+                            "{count} 条行动证据",
+                            "{count} action record(s)",
+                            { count: evidence.length },
+                          )}
+                        </small>
+                      )}
+                    </div>
+                    <em>
+                      {step.status === "completed"
+                        ? tr("完成", "Done")
+                        : step.status === "in_progress"
+                          ? tr("进行中", "In progress")
+                          : step.status === "blocked"
+                            ? tr("受阻", "Blocked")
+                            : tr("待处理", "Pending")}
+                    </em>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        )}
+
+        <div className="route-evidence-heading">
+          <span>{tr("行动证据", "Action evidence")}</span>
+          <em>{tr("{count} 条记录", "{count} records", { count: entries.length })}</em>
+        </div>
         <div className="route-step-list">
           {entries.map((entry, index) => {
             const entryTitle = entry.tool
@@ -1932,6 +2467,7 @@ function RouteView({
                         setReview({
                           runId: selectedRun.id,
                           paths: relatedChanges.map((change) => change.path),
+                          path: relatedChanges[0]?.path || "",
                         })
                       }
                     >
@@ -1967,7 +2503,13 @@ function RouteView({
         <DiffReviewPanel
           changes={reviewChanges}
           reverting={reverting}
+          workspacePath={task.workspacePath}
+          initialPath={review?.path || ""}
           onClose={() => setReview(null)}
+          onSave={(result) =>
+            onSaveChanges(reviewRun.messageId, result)
+          }
+          onNotice={onNotice}
           onRevert={revertChanges}
         />
       )}
@@ -1978,6 +2520,7 @@ function RouteView({
 function SettingsPanel({
   task,
   onClose,
+  onUpdateTask,
   providers,
   onManageProviders,
   sandboxStatus,
@@ -2033,10 +2576,12 @@ function SettingsPanel({
         <div className="sandbox-status-card">
           <span
             className={`sandbox-status-icon ${
-              sandboxStatus?.available ? "ready" : "fallback"
+              sandboxStatus?.available || sandboxStatus?.localAvailable
+                ? "ready"
+                : "fallback"
             }`}
           >
-            {sandboxStatus?.available ? (
+            {sandboxStatus?.available || sandboxStatus?.localAvailable ? (
               <LockKeyhole size={16} />
             ) : (
               <AlertTriangle size={16} />
@@ -2044,9 +2589,13 @@ function SettingsPanel({
           </span>
           <div>
             <strong>
-              {sandboxStatus?.available
-                ? tr("容器沙箱已就绪", "Container sandbox ready")
-                : tr("本机审批模式", "Host approval mode")}
+              {!sandboxStatus
+                ? tr("正在检测沙箱", "Checking sandbox")
+                : sandboxStatus.available
+                  ? tr("Docker 强隔离已就绪", "Docker strong isolation ready")
+                  : sandboxStatus.localAvailable
+                    ? tr("本地沙箱已就绪", "Local sandbox ready")
+                    : tr("沙箱暂不可用", "Sandbox unavailable")}
             </strong>
             <span>
               {sandboxStatus?.detail ||
@@ -2065,8 +2614,8 @@ function SettingsPanel({
               <LoaderCircle className="spin" size={14} />
             )}
             {sandboxPreparing
-              ? tr("正在准备沙箱", "Preparing sandbox")
-              : tr("准备 Docker 沙箱", "Prepare Docker sandbox")}
+              ? tr("正在准备 Docker 强隔离", "Preparing Docker isolation")
+              : tr("启用 Docker 加强隔离（可选）", "Enable stronger Docker isolation (optional)")}
           </button>
         )}
         {sandboxStatus?.available && (
@@ -2079,12 +2628,32 @@ function SettingsPanel({
         )}
         {sandboxStatus && !sandboxStatus.available && (
           <div className="sandbox-constraints fallback">
-            <span>{tr("逐条审批", "Per-command approval")}</span>
-            <span>{tr("本机执行", "Runs on host")}</span>
-            <span>{tr("可联网", "Network available")}</span>
-            <span>{tr("无 OS 隔离", "No OS isolation")}</span>
+            <span>{tr("临时工作区", "Temporary workspace")}</span>
+            <span>{tr("自动执行", "Automatic execution")}</span>
+            <span>{tr("使用本机网络", "Host network")}</span>
+            <span>{tr("Docker 可选", "Docker optional")}</span>
           </div>
         )}
+        <div className="sandbox-auto-approval">
+          <div>
+            <strong>{tr("命令自动执行", "Automatic command execution")}</strong>
+            <span>
+              {tr(
+                "本地临时工作区与 Docker 沙箱内的命令不再逐条确认；关闭后恢复手动审批。",
+                "Commands in the local temporary workspace and Docker sandbox run without repeated prompts. Turn this off to restore manual approval.",
+              )}
+            </span>
+          </div>
+          <Switch
+            checked={task.approvalMode !== "manual"}
+            label={tr("命令自动执行", "Automatic command execution")}
+            onChange={(enabled) =>
+              onUpdateTask({
+                approvalMode: enabled ? "sandbox-auto" : "manual",
+              })
+            }
+          />
+        </div>
       </section>
 
       <section className="settings-section">
@@ -2186,6 +2755,61 @@ function RenameTaskModal({ task, onClose, onRename }) {
   );
 }
 
+function DeleteTaskModal({ task, onClose, onDelete }) {
+  const { tr } = useI18n();
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-backdrop delete-task-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="delete-task-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-task-title"
+      >
+        <div className="delete-task-heading">
+          <span>
+            <Trash2 size={18} />
+          </span>
+          <div>
+            <h2 id="delete-task-title">
+              {tr("删除这个任务？", "Delete this task?")}
+            </h2>
+            <p>{task.title}</p>
+          </div>
+        </div>
+        <p className="delete-task-description">
+          {tr(
+            "任务对话、Route 记录和文件检查点将从 AporiaX 中移除。工作区中的真实文件不会被删除或回退。",
+            "The conversation, Route history, and file checkpoints will be removed from AporiaX. Files in the workspace will not be deleted or reverted.",
+          )}
+        </p>
+        <div className="delete-task-actions">
+          <button className="secondary-button" type="button" onClick={onClose}>
+            {tr("取消", "Cancel")}
+          </button>
+          <button className="delete-task-confirm" type="button" onClick={onDelete}>
+            {tr("删除任务", "Delete task")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PanelResizer({ panelName, width, minimum, maximum, onResize }) {
   const { tr } = useI18n();
   const startResize = (event) => {
@@ -2245,6 +2869,225 @@ function PanelResizer({ panelName, width, minimum, maximum, onResize }) {
   );
 }
 
+function collectTaskAnchors(task) {
+  const userMessages = new Map(
+    (task.messages || [])
+      .filter((message) => message.role === "user")
+      .map((message) => [message.id, message]),
+  );
+
+  return (task.messages || [])
+    .filter(
+      (message) =>
+        message.role === "assistant" &&
+        Array.isArray(message.changes) &&
+        message.changes.length > 0,
+    )
+    .map((message, index) => {
+      const source = userMessages.get(message.sourceUserId);
+      const activeChanges = message.changes.filter(
+        (change) => !change.reverted,
+      );
+      return {
+        id: message.id,
+        number: index + 1,
+        prompt:
+          message.prompt?.trim() ||
+          source?.content?.trim() ||
+          "AporiaX task",
+        createdAt:
+          message.anchor?.startedAt ||
+          message.createdAt ||
+          message.completedAt,
+        completedAt:
+          message.anchor?.completedAt || message.completedAt,
+        status: message.anchor?.status || message.status || "completed",
+        changes: message.changes,
+        activeChanges,
+        snapshotComplete:
+          message.anchor?.snapshotComplete !== false,
+        warning: message.anchor?.warning || "",
+        restoredAt: message.anchorRestoredAt || "",
+      };
+    });
+}
+
+function AnchorHistory({
+  task,
+  isRunning,
+  onRestore,
+}) {
+  const { tr } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [confirmId, setConfirmId] = useState("");
+  const [restoringId, setRestoringId] = useState("");
+  const anchors = useMemo(() => collectTaskAnchors(task), [task]);
+  const visibleAnchors = expanded
+    ? [...anchors].reverse()
+    : anchors.length
+      ? [anchors.at(-1)]
+      : [];
+
+  const requestRestore = async (anchor) => {
+    if (confirmId !== anchor.id) {
+      setConfirmId(anchor.id);
+      return;
+    }
+    setRestoringId(anchor.id);
+    try {
+      const result = await onRestore(anchor.id);
+      if (result?.success) {
+        setConfirmId("");
+      }
+    } finally {
+      setRestoringId("");
+    }
+  };
+
+  if (!anchors.length) {
+    return (
+      <section className="anchor-history empty">
+        <div className="anchor-history-heading">
+          <span className="anchor-history-mark">
+            <History size={16} />
+          </span>
+          <div>
+            <strong>Anchor</strong>
+            <span>
+              {tr(
+                "完成一次会修改文件的任务后，这里会保留跨轮快照。",
+                "Cross-turn snapshots appear after a task changes files.",
+              )}
+            </span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className={`anchor-history ${expanded ? "expanded" : ""}`}>
+      <button
+        className="anchor-history-heading"
+        type="button"
+        onClick={() => {
+          setExpanded((open) => !open);
+          setConfirmId("");
+        }}
+        aria-expanded={expanded}
+      >
+        <span className="anchor-history-mark">
+          <History size={16} />
+        </span>
+        <div>
+          <strong>Anchor</strong>
+          <span>
+            {tr(
+              "{count} 个跨轮快照 · 恢复前会检查后续改动",
+              "{count} cross-turn snapshot(s) · conflicts are checked before restore",
+              { count: anchors.length },
+            )}
+          </span>
+        </div>
+        <ChevronDown size={15} />
+      </button>
+
+      <div className="anchor-history-list">
+        {visibleAnchors.map((anchor) => {
+          const anchorIndex = anchors.findIndex(
+            (candidate) => candidate.id === anchor.id,
+          );
+          const affected = anchors
+            .slice(anchorIndex)
+            .filter((candidate) => candidate.activeChanges.length > 0);
+          const affectedFiles = new Set(
+            affected.flatMap((candidate) =>
+              candidate.activeChanges.map((change) => change.path),
+            ),
+          );
+          const restoring = restoringId === anchor.id;
+          const restored = anchor.activeChanges.length === 0;
+          return (
+            <article
+              className={`anchor-history-item ${restored ? "restored" : ""}`}
+              key={anchor.id}
+            >
+              <span className="anchor-index">
+                {String(anchor.number).padStart(2, "0")}
+              </span>
+              <div className="anchor-copy">
+                <strong title={anchor.prompt}>{anchor.prompt}</strong>
+                <span>
+                  {tr(
+                    "{count} 个文件 · {status}",
+                    "{count} file(s) · {status}",
+                    {
+                      count: anchor.changes.length,
+                      status: restored
+                        ? tr("已恢复", "restored")
+                        : anchor.snapshotComplete
+                          ? tr("快照完整", "snapshot ready")
+                          : tr("部分快照", "partial snapshot"),
+                    },
+                  )}
+                </span>
+                {anchor.warning && (
+                  <em title={anchor.warning}>
+                    {tr("部分文件未进入快照", "Some files were not captured")}
+                  </em>
+                )}
+                {confirmId === anchor.id && !restored && (
+                  <span className="anchor-confirm-copy">
+                    {tr(
+                      "将回到本轮开始前，并撤销其后的 {turns} 轮、共 {files} 个文件。工作区若有额外改动，恢复会安全停止。",
+                      "Return to the state before this turn, reverting {turns} turn(s) across {files} file(s). Restore stops safely if later edits are detected.",
+                      {
+                        turns: affected.length,
+                        files: affectedFiles.size,
+                      },
+                    )}
+                  </span>
+                )}
+              </div>
+              <div className="anchor-actions">
+                {confirmId === anchor.id && !restored && (
+                  <button
+                    type="button"
+                    className="anchor-cancel"
+                    disabled={restoring}
+                    onClick={() => setConfirmId("")}
+                  >
+                    {tr("取消", "Cancel")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={confirmId === anchor.id ? "confirm" : ""}
+                  disabled={isRunning || restoring || restored}
+                  onClick={() => void requestRestore(anchor)}
+                >
+                  {restoring ? (
+                    <LoaderCircle className="spin" size={14} />
+                  ) : restored ? (
+                    <Check size={14} />
+                  ) : (
+                    <Undo2 size={14} />
+                  )}
+                  {restored
+                    ? tr("已恢复", "Restored")
+                    : confirmId === anchor.id
+                      ? tr("确认恢复", "Confirm restore")
+                      : tr("恢复到这里", "Restore here")}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function TaskWorkspace({
   task,
   providers,
@@ -2254,21 +3097,27 @@ function TaskWorkspace({
   onToggleSettings,
   onSend,
   onStop,
+  onPause,
+  onResume,
   onRetry,
   onRevert,
+  onRestoreAnchor,
   onConfirmChanges,
+  onSaveChanges,
   runStatus,
   approval,
   approvalResponding,
   onRespondApproval,
   onUpdateTask,
   isRunning,
+  isPaused,
   onManageProviders,
   sandboxStatus,
   sandboxPreparing,
   onPrepareSandbox,
   onSelectWorkspace,
   onNotice,
+  onDeleteTask,
   theme,
   onToggleTheme,
 }) {
@@ -2277,6 +3126,7 @@ function TaskWorkspace({
   const [workspaceFocusPath, setWorkspaceFocusPath] = useState("");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [settingsPanelWidth, setSettingsPanelWidth] = useState(() =>
     readPanelWidth(
       SETTINGS_PANEL_WIDTH_KEY,
@@ -2305,6 +3155,7 @@ function TaskWorkspace({
     setWorkspaceFocusPath("");
     setMoreMenuOpen(false);
     setRenameOpen(false);
+    setDeleteOpen(false);
   }, [task.id]);
 
   useEffect(() => {
@@ -2541,6 +3392,22 @@ function TaskWorkspace({
                     <HardDrive size={15} />
                     {tr("在资源管理器中打开", "Open in File Explorer")}
                   </button>
+                  <div className="task-more-menu-divider" />
+                  <button
+                    className="danger"
+                    type="button"
+                    role="menuitem"
+                    disabled={isRunning}
+                    onClick={() => {
+                      setDeleteOpen(true);
+                      setMoreMenuOpen(false);
+                    }}
+                  >
+                    <Trash2 size={15} />
+                    {isRunning
+                      ? tr("任务运行中，无法删除", "Cannot delete a running task")
+                      : tr("删除任务", "Delete task")}
+                  </button>
                 </div>
               )}
             </div>
@@ -2597,6 +3464,8 @@ function TaskWorkspace({
               onRetry={onRetry}
               onRevert={onRevert}
               onConfirmChanges={onConfirmChanges}
+              onSaveChanges={onSaveChanges}
+              onNotice={onNotice}
             />
           </div>
           <div
@@ -2606,6 +3475,7 @@ function TaskWorkspace({
             aria-hidden={activeView !== "route"}
           >
             <RouteView
+              key={task.id}
               task={task}
               isRunning={isRunning}
               runStatus={runStatus}
@@ -2613,6 +3483,8 @@ function TaskWorkspace({
               approvalResponding={approvalResponding}
               onRespondApproval={onRespondApproval}
               onRevert={onRevert}
+              onSaveChanges={onSaveChanges}
+              onNotice={onNotice}
             />
           </div>
           <div
@@ -2621,12 +3493,19 @@ function TaskWorkspace({
             }`}
             aria-hidden={activeView !== "workspace"}
           >
-            <FileExplorerPanel
-              workspacePath={task.workspacePath}
-              embedded
-              initialPath={workspaceFocusPath}
-              onNotice={onNotice}
-            />
+            <div className="workspace-view-stack">
+              <AnchorHistory
+                task={task}
+                isRunning={isRunning}
+                onRestore={onRestoreAnchor}
+              />
+              <FileExplorerPanel
+                workspacePath={task.workspacePath}
+                embedded
+                initialPath={workspaceFocusPath}
+                onNotice={onNotice}
+              />
+            </div>
           </div>
         </div>
 
@@ -2635,9 +3514,20 @@ function TaskWorkspace({
           providers={providers}
           onSend={onSend}
           onStop={onStop}
+          onPause={onPause}
+          onResume={onResume}
           onUpdateTask={onUpdateTask}
           onNotice={onNotice}
           isRunning={isRunning}
+          isPaused={isPaused}
+          queuedCount={task.messages.filter(
+            (message) => message.role === "user" && message.queued,
+          ).length}
+          pendingSteeringCount={task.messages.filter(
+            (message) =>
+              message.role === "user" &&
+              message.steeringStatus === "pending",
+          ).length}
         />
       </section>
 
@@ -2654,6 +3544,7 @@ function TaskWorkspace({
             task={task}
             providers={providers}
             onClose={onToggleSettings}
+            onUpdateTask={onUpdateTask}
             onManageProviders={onManageProviders}
             sandboxStatus={sandboxStatus}
             sandboxPreparing={sandboxPreparing}
@@ -2674,6 +3565,16 @@ function TaskWorkspace({
           }}
         />
       )}
+      {deleteOpen && (
+        <DeleteTaskModal
+          task={task}
+          onClose={() => setDeleteOpen(false)}
+          onDelete={() => {
+            onDeleteTask(task.id);
+            setDeleteOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -2681,6 +3582,59 @@ function TaskWorkspace({
 function Toast({ message }) {
   if (!message) return null;
   return <div className="toast">{message}</div>;
+}
+
+function summarizeCompletionContent(content, fallback) {
+  const clean = String(content || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/^[\s>*#\-+`]+/gm, "")
+    .replace(/[*_~`|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return fallback;
+  return clean.length > 220
+    ? `${clean.slice(0, 220).trimEnd()}…`
+    : clean;
+}
+
+function TaskCompletionToast({
+  notification,
+  onOpen,
+  onClose,
+}) {
+  const { tr } = useI18n();
+  if (!notification) return null;
+  return (
+    <aside
+      className="task-completion-toast"
+      role="status"
+      aria-live="polite"
+    >
+      <span className="task-completion-icon">
+        <Check size={16} />
+      </span>
+      <div className="task-completion-copy">
+        <span>{tr("任务完成", "Task completed")}</span>
+        <strong>{notification.title}</strong>
+        <p>{notification.summary}</p>
+        <button type="button" onClick={onOpen}>
+          {tr("查看任务", "View task")}
+          <ArrowRight size={13} />
+        </button>
+      </div>
+      <button
+        className="task-completion-close"
+        type="button"
+        aria-label={tr("关闭完成通知", "Dismiss completion notification")}
+        onClick={onClose}
+      >
+        <X size={15} />
+      </button>
+    </aside>
+  );
 }
 
 function emptyProviderForm() {
@@ -2692,6 +3646,25 @@ function emptyProviderForm() {
     modelsText: "",
   };
 }
+
+const PROVIDER_PRESETS = [
+  {
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+  },
+  {
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+  },
+  {
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+  },
+  {
+    name: "Ollama",
+    baseUrl: "http://localhost:11434/v1",
+  },
+];
 
 function providerToForm(provider) {
   return {
@@ -2716,6 +3689,8 @@ function ProviderManagerModal({
   onClose,
   onChanged,
   onNotice,
+  onSaved,
+  embedded = false,
 }) {
   const { tr } = useI18n();
   const [form, setForm] = useState(() =>
@@ -2779,7 +3754,6 @@ function ProviderManagerModal({
   const submit = async (event) => {
     event.preventDefault();
     if (
-      !form.name.trim() ||
       !form.baseUrl.trim() ||
       !modelIds.length ||
       saving
@@ -2789,16 +3763,22 @@ function ProviderManagerModal({
     setSaving(true);
     setError("");
     try {
-      await window.desktop.providers.save({
+      const wasEditing = Boolean(form.id);
+      const savedProvider = await window.desktop.providers.save({
         id: form.id || undefined,
         name: form.name,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
         models: modelIds,
       });
-      await onChanged();
-      setForm(emptyProviderForm());
-      onNotice(form.id ? tr("Provider 已更新", "Provider updated") : tr("Provider 已添加", "Provider added"));
+      const nextProviders = await onChanged();
+      setForm(providerToForm(savedProvider));
+      onNotice(wasEditing ? tr("Provider 已更新", "Provider updated") : tr("Provider 已添加", "Provider added"));
+      onSaved?.({
+        created: !wasEditing,
+        provider: savedProvider,
+        providers: nextProviders,
+      });
     } catch (saveError) {
       setError(cleanIpcError(saveError, tr("保存 Provider 失败。", "Failed to save the provider.")));
     } finally {
@@ -2835,20 +3815,35 @@ function ProviderManagerModal({
   };
 
   return (
-    <div className="modal-backdrop">
-      <form className="provider-manager-modal" onSubmit={submit}>
-        <div className="modal-header">
-          <div>
-            <h2>{tr("模型 Provider", "Model providers")}</h2>
-            <p>{tr("添加多个 OpenAI-compatible API，并为任务自由选择模型。", "Add multiple OpenAI-compatible APIs and choose any model per task.")}</p>
+    <div
+      className={
+        embedded ? "provider-manager-embedded-host" : "modal-backdrop"
+      }
+    >
+      <form
+        className={`provider-manager-modal ${embedded ? "embedded" : ""}`}
+        onSubmit={submit}
+      >
+        {!embedded && (
+          <div className="modal-header">
+            <div>
+              <h2>{tr("模型 Provider", "Model providers")}</h2>
+              <p>{tr("添加多个 OpenAI-compatible API，并为任务自由选择模型。", "Add multiple OpenAI-compatible APIs and choose any model per task.")}</p>
+            </div>
+            <IconButton label={tr("关闭", "Close")} type="button" onClick={onClose}>
+              <X size={18} />
+            </IconButton>
           </div>
-          <IconButton label={tr("关闭", "Close")} type="button" onClick={onClose}>
-            <X size={18} />
-          </IconButton>
-        </div>
+        )}
 
         <div className="provider-manager-body">
           <aside className="provider-list">
+            {embedded && (
+              <div className="provider-list-heading">
+                <span>Providers</span>
+                <small>{providers.length}</small>
+              </div>
+            )}
             <button
               className={!form.id ? "active add-provider" : "add-provider"}
               type="button"
@@ -2880,19 +3875,37 @@ function ProviderManagerModal({
           </aside>
 
           <div className="provider-editor">
-            <div className="secure-key-note">
-              <KeyRound size={17} />
-              <div>
-                <strong>{tr("密钥由系统安全存储加密保管", "API keys are encrypted by the operating system")}</strong>
-                <span>
-                  {tr("编辑时留空会保留原密钥；本地无鉴权 API 可以不填。", "Leave it blank while editing to keep the current key. Local APIs without authentication do not need one.")}
-                </span>
+            {!editingProvider && (
+              <div className="provider-presets">
+                <span>{tr("常用服务", "Common services")}</span>
+                <div>
+                  {PROVIDER_PRESETS.map((preset) => (
+                    <button
+                      type="button"
+                      key={preset.name}
+                      className={
+                        form.baseUrl === preset.baseUrl ? "active" : ""
+                      }
+                      onClick={() => {
+                        setForm((current) => ({
+                          ...current,
+                          name: preset.name,
+                          baseUrl: preset.baseUrl,
+                          modelsText: "",
+                        }));
+                        setError("");
+                      }}
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="provider-form-grid">
               <label>
-                <span>{tr("名称", "Name")}</span>
+                <span>{tr("名称（可选）", "Name (optional)")}</span>
                 <input
                   ref={nameRef}
                   className="text-field"
@@ -2925,7 +3938,7 @@ function ProviderManagerModal({
                 <span>
                   {editingProvider?.hasApiKey
                     ? tr("替换 API Key（可选）", "Replace API key (optional)")
-                    : tr("API Key（可选）", "API key (optional)")}
+                    : tr("API Key", "API key")}
                 </span>
                 <input
                   className="text-field"
@@ -2942,7 +3955,7 @@ function ProviderManagerModal({
                   placeholder={
                     editingProvider?.hasApiKey
                       ? tr("已安全保存；留空保持不变", "Stored securely; leave blank to keep it")
-                      : tr("sk-… 或其他服务商密钥", "sk-… or another provider key")
+                      : tr("云服务通常必填；本地无鉴权服务可留空", "Usually required for cloud services; optional for unauthenticated local APIs")
                   }
                 />
               </label>
@@ -2951,7 +3964,7 @@ function ProviderManagerModal({
             <div className="provider-model-heading">
               <div>
                 <strong>{tr("模型 ID", "Model IDs")}</strong>
-                <span>{tr("每行一个；自动识别视觉、思考和工具能力。", "One per line; vision, reasoning, and tool capabilities are detected automatically.")}</span>
+                <span>{tr("自动发现，或每行填写一个模型。", "Discover automatically, or enter one model per line.")}</span>
               </div>
               <button
                 className="secondary-button"
@@ -2981,8 +3994,6 @@ function ProviderManagerModal({
             />
             <div className="provider-detection-summary">
               <span>{tr("{count} 个模型", "{count} model(s)", { count: modelIds.length })}</span>
-              <span>Chat Completions</span>
-              <span>{tr("Bearer / 无鉴权", "Bearer / no authentication")}</span>
             </div>
             {error && <p className="api-key-error">{error}</p>}
           </div>
@@ -3008,13 +4019,12 @@ function ProviderManagerModal({
               type="button"
               onClick={onClose}
             >
-              {tr("关闭", "Close")}
+              {embedded ? tr("返回通用设置", "Back to General") : tr("关闭", "Close")}
             </button>
             <button
               className="primary-button"
               type="submit"
               disabled={
-                !form.name.trim() ||
                 !form.baseUrl.trim() ||
                 !modelIds.length ||
                 saving
@@ -3026,6 +4036,277 @@ function ProviderManagerModal({
           </div>
         </div>
       </form>
+    </div>
+  );
+}
+
+function ApplicationSettingsModal({
+  initialSection = "general",
+  theme,
+  onThemeChange,
+  providers,
+  sandboxStatus,
+  onProvidersChanged,
+  onProviderSaved,
+  onNotice,
+  onClose,
+}) {
+  const { tr } = useI18n();
+  const [section, setSection] = useState(initialSection);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-backdrop application-settings-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="application-settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="application-settings-title"
+      >
+        <header className="application-settings-header">
+          <div>
+            <span className="application-settings-mark">
+              <span>A</span>
+              <i>X</i>
+            </span>
+            <div>
+              <h2 id="application-settings-title">
+                {tr("AporiaX 设置", "AporiaX Settings")}
+              </h2>
+              <p>{tr("应用偏好与本地能力", "Application preferences and local capabilities")}</p>
+            </div>
+          </div>
+          <IconButton label={tr("关闭设置", "Close settings")} onClick={onClose}>
+            <X size={18} />
+          </IconButton>
+        </header>
+
+        <div className="application-settings-body">
+          <nav
+            className="application-settings-nav"
+            aria-label={tr("设置分类", "Settings sections")}
+          >
+            <button
+              type="button"
+              className={section === "general" ? "active" : ""}
+              onClick={() => setSection("general")}
+            >
+              <Settings2 size={16} />
+              {tr("通用", "General")}
+            </button>
+            <button
+              type="button"
+              className={section === "models" ? "active" : ""}
+              onClick={() => setSection("models")}
+            >
+              <KeyRound size={16} />
+              {tr("模型与 API", "Models & APIs")}
+            </button>
+            <button
+              type="button"
+              className={section === "about" ? "active" : ""}
+              onClick={() => setSection("about")}
+            >
+              <Info size={16} />
+              {tr("关于", "About")}
+            </button>
+          </nav>
+
+          <main className={`application-settings-content ${section}-section`}>
+            {section === "general" ? (
+              <>
+                <div className="application-settings-intro">
+                  <span>{tr("通用", "General")}</span>
+                  <h3>{tr("让 AporiaX 以你的方式工作。", "Make AporiaX work your way.")}</h3>
+                </div>
+
+                <section className="preference-card">
+                  <div className="preference-card-heading">
+                    <span>
+                      <Languages size={17} />
+                    </span>
+                    <div>
+                      <strong>{tr("界面语言", "Interface language")}</strong>
+                      <p>
+                        {tr(
+                          "影响应用界面和之后生成的回复，不改写已有内容。",
+                          "Applies to the interface and future replies without rewriting existing content.",
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <LanguageSwitch />
+                </section>
+
+                <section className="preference-card appearance-preference">
+                  <div className="preference-card-heading">
+                    <span>
+                      <Palette size={17} />
+                    </span>
+                    <div>
+                      <strong>{tr("外观", "Appearance")}</strong>
+                      <p>{tr("选择适合当前环境的界面明暗。", "Choose the appearance that fits your environment.")}</p>
+                    </div>
+                  </div>
+                  <div
+                    className="appearance-options"
+                    role="group"
+                    aria-label={tr("外观主题", "Appearance theme")}
+                  >
+                    <button
+                      type="button"
+                      className={theme === "light" ? "active" : ""}
+                      onClick={() => onThemeChange("light")}
+                    >
+                      <Sun size={16} />
+                      <span>{tr("日间", "Light")}</span>
+                      {theme === "light" && <Check size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      className={theme === "dark" ? "active" : ""}
+                      onClick={() => onThemeChange("dark")}
+                    >
+                      <Moon size={16} />
+                      <span>{tr("夜间", "Dark")}</span>
+                      {theme === "dark" && <Check size={14} />}
+                    </button>
+                  </div>
+                </section>
+
+                <section className="preference-card">
+                  <div className="preference-card-heading">
+                    <span>
+                      <Brain size={17} />
+                    </span>
+                    <div>
+                      <strong>{tr("模型服务", "Model services")}</strong>
+                      <p>
+                        {providers.length
+                          ? tr(
+                              "已连接 {providers} 个 Provider，共 {models} 个模型。",
+                              "{providers} provider(s) connected with {models} model(s).",
+                              {
+                                providers: providers.length,
+                                models: providers.reduce(
+                                  (count, provider) =>
+                                    count + (provider.models?.length || 0),
+                                  0,
+                                ),
+                              },
+                            )
+                          : tr(
+                              "尚未添加模型 Provider。",
+                              "No model provider has been added yet.",
+                            )}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    className="preference-action"
+                    type="button"
+                    onClick={() => setSection("models")}
+                  >
+                    {tr("管理", "Manage")}
+                    <ArrowRight size={14} />
+                  </button>
+                </section>
+
+                <section className="preference-card">
+                  <div className="preference-card-heading">
+                    <span
+                      className={
+                        sandboxStatus?.available ||
+                        sandboxStatus?.localAvailable
+                          ? "ready"
+                          : ""
+                      }
+                    >
+                      <ShieldCheck size={17} />
+                    </span>
+                    <div>
+                      <strong>{tr("本地执行边界", "Local execution boundary")}</strong>
+                      <p>
+                        {sandboxStatus?.available
+                          ? tr(
+                              "Docker 强隔离已就绪：默认断网、只读系统，仅工作区可写。",
+                              "Docker strong isolation is ready: offline by default, read-only system, workspace-only writes.",
+                            )
+                          : tr(
+                              "默认使用本地临时工作区自动执行。Docker 可有可无，仅用于加强系统级安全隔离。",
+                              "Commands run automatically in a local temporary workspace. Docker is optional and only adds stronger system isolation.",
+                            )}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="preference-status">
+                    {sandboxStatus?.available
+                      ? tr("强隔离", "Strong isolation")
+                      : tr("本地沙箱", "Local sandbox")}
+                  </span>
+                </section>
+              </>
+            ) : section === "models" ? (
+              <ProviderManagerModal
+                embedded
+                providers={providers}
+                onClose={() => setSection("general")}
+                onChanged={onProvidersChanged}
+                onSaved={onProviderSaved}
+                onNotice={onNotice}
+              />
+            ) : (
+              <section className="application-about">
+                <span className="application-about-mark">
+                  <span>A</span>
+                  <i>X</i>
+                </span>
+                <span className="application-about-kicker">AporiaX</span>
+                <h3>Every problem begins with an aporia.</h3>
+                <p>每个答案，都始于一个尚未解开的疑问。</p>
+                <div className="application-about-principles">
+                  <div>
+                    <strong>Route</strong>
+                    <span>{tr("看见行动路径", "See the path of action")}</span>
+                  </div>
+                  <div>
+                    <strong>Evidence</strong>
+                    <span>{tr("保留判断依据", "Preserve the evidence")}</span>
+                  </div>
+                  <div>
+                    <strong>Anchor</strong>
+                    <span>{tr("跨轮快照，安全回退", "Cross-turn snapshots, safe return")}</span>
+                  </div>
+                </div>
+                <div className="application-author-credit">
+                  <strong>
+                    {tr(
+                      "由 SeaLandX 设计与开发",
+                      "Designed and built by SeaLandX",
+                    )}
+                  </strong>
+                </div>
+                <span className="application-preview-label">
+                  {tr("本地优先 · Preview", "Local-first · Preview")}
+                </span>
+              </section>
+            )}
+          </main>
+        </div>
+      </section>
     </div>
   );
 }
@@ -3043,14 +4324,20 @@ function App() {
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const [notice, setNotice] = useState("");
+  const [completionNotice, setCompletionNotice] = useState(null);
   const [providers, setProviders] = useState([]);
   const [providersReady, setProvidersReady] = useState(false);
-  const [providerManagerOpen, setProviderManagerOpen] =
+  const [resumeNewTaskAfterProvider, setResumeNewTaskAfterProvider] =
     useState(false);
+  const [applicationSettingsOpen, setApplicationSettingsOpen] =
+    useState(false);
+  const [applicationSettingsSection, setApplicationSettingsSection] =
+    useState("general");
   const [sandboxStatus, setSandboxStatus] = useState(null);
   const [sandboxPreparing, setSandboxPreparing] = useState(false);
   const [runningTaskId, setRunningTaskId] = useState(null);
   const [activeRunId, setActiveRunId] = useState(null);
+  const [runPaused, setRunPaused] = useState(false);
   const [runStatus, setRunStatus] = useState(null);
   const [approval, setApproval] = useState(null);
   const [approvalResponding, setApprovalResponding] = useState(false);
@@ -3061,6 +4348,32 @@ function App() {
   const tasksRef = useRef(tasks);
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
+
+  const openApplicationSettings = (section = "general") => {
+    setApplicationSettingsSection(section);
+    setApplicationSettingsOpen(true);
+  };
+
+  const requestNewTask = () => {
+    if (!providersReady) {
+      setNotice(tr("正在加载模型配置，请稍候", "Loading model configuration"));
+      return;
+    }
+    if (!getAvailableModels(providers).length) {
+      setResumeNewTaskAfterProvider(true);
+      setNewTaskOpen(false);
+      openApplicationSettings("models");
+      setNotice(
+        tr(
+          "先连接一个模型 API，保存后会继续创建任务",
+          "Connect a model API first. Task creation will continue after you save it.",
+        ),
+      );
+      return;
+    }
+    setResumeNewTaskAfterProvider(false);
+    setNewTaskOpen(true);
+  };
 
   const reloadProviders = async () => {
     if (!window.desktop?.providers?.list) {
@@ -3096,7 +4409,7 @@ function App() {
 
   useEffect(() => {
     tasksRef.current = tasks;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    cacheTasksLocally(tasks);
   }, [tasks]);
 
   useEffect(() => {
@@ -3129,14 +4442,40 @@ function App() {
       try {
         const storedTasks = await window.desktop.tasks.load();
         if (!active) return;
+        let hydratedTasks =
+          storedTasks === null ||
+          (storedTasks.length === 0 && tasksRef.current.length > 0)
+            ? tasksRef.current
+            : storedTasks;
         if (
           storedTasks === null ||
           (storedTasks.length === 0 && tasksRef.current.length > 0)
         ) {
           await window.desktop.tasks.save(tasksRef.current);
-        } else {
-          setTasks(storedTasks);
-          setActiveTaskId(storedTasks[0]?.id || null);
+        }
+        const recoverableRuns =
+          (await window.desktop.harness?.recoverableRuns?.()) || [];
+        hydratedTasks = mergeRecoverableRuns(
+          hydratedTasks || [],
+          recoverableRuns,
+          tr,
+        );
+        if (!active) return;
+        setTasks(hydratedTasks);
+        setActiveTaskId(hydratedTasks[0]?.id || null);
+        if (recoverableRuns.length) {
+          setNotice(
+            tr(
+              "已恢复 {count} 个中断任务的检查点",
+              "Recovered checkpoints for {count} interrupted task(s)",
+              { count: recoverableRuns.length },
+            ),
+          );
+          await Promise.allSettled(
+            recoverableRuns.map((record) =>
+              window.desktop.harness.acknowledgeRecovery?.(record.runId),
+            ),
+          );
         }
       } catch {
         if (active) setNotice(tr("任务历史加载失败，已使用本地缓存", "Task history failed to load; using the local cache"));
@@ -3211,14 +4550,106 @@ function App() {
       create_spreadsheet: tr("正在生成 Excel 工作簿", "Creating Excel workbook"),
       inspect_office_file: tr("正在检查 Office 工件", "Inspecting Office artifact"),
       run_command: tr("正在准备验证命令", "Preparing verification command"),
+      update_plan: tr("正在更新执行计划", "Updating the execution plan"),
       complete_self_check: tr("正在提交自检报告", "Submitting self-check report"),
     };
     return window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
 
+      if (event.type === "control.paused") {
+        setRunPaused(true);
+        setRunStatus({
+          title: tr("任务已暂停", "Task paused"),
+          detail: tr(
+            "已停在安全边界；可以补充要求、检查 Route，或继续运行",
+            "Stopped at a safe boundary. Add guidance, inspect Route, or resume.",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "control.resumed") {
+        setRunPaused(false);
+        setRunStatus({
+          title: tr("正在继续任务", "Resuming task"),
+          detail: tr(
+            "将从已保留的上下文与工作区状态继续",
+            "Continuing with the preserved context and workspace state",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "steering.queued") {
+        setRunStatus({
+          title: tr("已收到新的执行要求", "New guidance received"),
+          detail: tr(
+            "将在下一安全边界合并到当前任务",
+            "It will be merged into the current task at the next safe boundary",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "steering.applied") {
+        const messageIds = new Set(event.messageIds || []);
+        setTasks((current) =>
+          current.map((task) =>
+            task.id === run.taskId
+              ? {
+                  ...task,
+                  messages: task.messages.map((message) =>
+                    messageIds.has(message.id)
+                      ? {
+                          ...message,
+                          queued: false,
+                          steeringStatus: "applied",
+                          appliedAt: new Date().toISOString(),
+                        }
+                      : message,
+                  ),
+                }
+              : task,
+          ),
+        );
+        setRunStatus({
+          title: tr("新要求已接入当前任务", "Guidance applied to the current task"),
+          detail: tr(
+            "AporiaX 正在依据新要求调整后续步骤",
+            "AporiaX is adapting the remaining steps to the new guidance",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "plan.updated") {
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => ({
+            ...message,
+            plan: event.plan,
+          })),
+        );
+        const activeStep = event.plan?.steps?.find(
+          (step) => step.status === "in_progress",
+        );
+        setRunStatus({
+          title: tr("执行计划已更新", "Execution plan updated"),
+          detail:
+            activeStep?.title ||
+            tr(
+              "Route 已同步为模型当前的真实计划",
+              "Route now reflects the model's current plan",
+            ),
+        });
+        return;
+      }
+
       if (event.type === "turn.started") {
+        setRunPaused(false);
         if (event.sandbox) setSandboxStatus(event.sandbox);
+        run.sandbox = event.sandbox || null;
+        run.approvalMode = event.approvalMode || "manual";
         return;
       }
 
@@ -3331,6 +4762,10 @@ function App() {
                 title: meta.title,
                 tool: event.tool,
                 phase: event.phase,
+                path: event.path || "",
+                command: event.command || "",
+                detail: event.detail || "",
+                planStepId: event.planStepId || null,
                 status: "running",
                 startedAt: now,
               },
@@ -3340,11 +4775,26 @@ function App() {
         setRunStatus({
           title: toolLabels[event.tool] || tr("Harness 正在运行", "Harness is running"),
           detail:
-            event.tool === "run_command"
-              ? tr("命令执行前等待批准；Docker 不可用时将明确回退到本机审批模式", "Commands wait for approval; when Docker is unavailable, AporiaX explicitly falls back to host approval mode")
+            event.path ||
+            event.command ||
+            event.detail ||
+            (event.tool === "run_command"
+              ? run.approvalMode === "sandbox-auto"
+                ? tr(
+                    run.sandbox?.available
+                      ? "命令将在 Docker 强隔离沙箱内自动执行"
+                      : "命令将在本地临时工作区内自动执行",
+                    run.sandbox?.available
+                      ? "The command will run automatically in the strongly isolated Docker sandbox"
+                      : "The command will run automatically in a temporary local workspace",
+                  )
+                : tr(
+                    "命令正在等待手动批准",
+                    "The command is waiting for manual approval",
+                  )
               : event.phase === "self-check"
                 ? tr("强制复核本轮修改，发现问题会继续修复", "Reviewing this turn's changes and continuing to fix any issues")
-                : tr("操作范围限制在当前工作区内", "Actions are limited to the current workspace"),
+                : tr("操作范围限制在当前工作区内", "Actions are limited to the current workspace")),
         });
         return;
       }
@@ -3543,11 +4993,30 @@ function App() {
         });
         setRunStatus({
           title: tr("等待命令审批", "Awaiting command approval"),
-          detail: tr("确认后 Harness 才会在本机执行该命令", "Harness will run this command on the host only after approval"),
+          detail: event.approval?.sandbox?.available
+            ? tr(
+                "确认后 Harness 将在隔离的 Docker 容器中执行该命令",
+                "After approval, Harness will run this command in the isolated Docker container",
+              )
+            : tr(
+                "确认后 Harness 将在本地临时工作区中执行该命令",
+                "After approval, Harness will run this command in a temporary local workspace",
+              ),
         });
       }
     });
   }, [language, tr]);
+
+  useEffect(() => {
+    if (!window.desktop?.notifications?.onTaskRequested) {
+      return undefined;
+    }
+    return window.desktop.notifications.onTaskRequested(({ taskId }) => {
+      if (!tasksRef.current.some((task) => task.id === taskId)) return;
+      setActiveTaskId(taskId);
+      setWelcomeOpen(false);
+    });
+  }, []);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -3556,10 +5025,19 @@ function App() {
   }, [notice]);
 
   useEffect(() => {
+    if (!completionNotice) return undefined;
+    const timeout = window.setTimeout(
+      () => setCompletionNotice(null),
+      10_000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [completionNotice]);
+
+  useEffect(() => {
     const handleKeyDown = (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        setNewTaskOpen(true);
+        requestNewTask();
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
@@ -3569,7 +5047,7 @@ function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [providers, providersReady, tr]);
 
   const updateActiveTask = (patch) => {
     setTasks((current) =>
@@ -3577,6 +5055,18 @@ function App() {
         task.id === activeTaskId ? { ...task, ...patch } : task,
       ),
     );
+  };
+
+  const renameTaskById = (taskId, title) => {
+    const nextTitle = String(title || "").trim();
+    if (!nextTitle) return false;
+    setTasks((current) =>
+      current.map((task) =>
+        task.id === taskId ? { ...task, title: nextTitle } : task,
+      ),
+    );
+    setNotice(tr("任务已重命名", "Task renamed"));
+    return true;
   };
 
   const createTask = (input) => {
@@ -3593,33 +5083,173 @@ function App() {
     setNotice(tr("任务已创建", "Task created"));
   };
 
-  const sendMessage = (content, attachments = []) => {
+  const deleteTask = (taskId) => {
+    if (runningTaskId === taskId) {
+      setNotice(
+        tr(
+          "任务正在运行，请先停止任务再删除。",
+          "This task is running. Stop it before deleting.",
+        ),
+      );
+      return false;
+    }
+    const currentTasks = tasksRef.current;
+    const taskIndex = currentTasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) return false;
+    const remainingTasks = currentTasks.filter((task) => task.id !== taskId);
+    const nextActiveTask =
+      remainingTasks[Math.min(taskIndex, remainingTasks.length - 1)] ||
+      remainingTasks[0] ||
+      null;
+    setTasks(remainingTasks);
+    setActiveTaskId((current) =>
+      current === taskId ? nextActiveTask?.id || null : current,
+    );
+    setSettingsOpen(false);
+    setNotice(tr("任务已删除，工作区文件保持不变", "Task deleted; workspace files were left unchanged"));
+    return true;
+  };
+
+  const sendMessage = (content, attachments = [], request = {}) => {
     if (!window.desktop?.harness) {
       setNotice(tr("请在 Electron 桌面端运行 Harness", "Run the Harness in the Electron desktop app"));
       return false;
     }
     if (!providers.length) {
-      setProviderManagerOpen(true);
+      openApplicationSettings("models");
       setNotice(tr("请先添加一个模型 Provider", "Add a model provider first"));
       return false;
     }
-    if (!activeTask || runningTaskId) return false;
+    const targetTask = request.taskId
+      ? tasksRef.current.find((task) => task.id === request.taskId)
+      : activeTask;
+    if (!targetTask) return false;
+
+    if (runningTaskId && !request.force) {
+      const createdAt = new Date().toISOString();
+      if (
+        targetTask.id === runningTaskId &&
+        activeRunId &&
+        window.desktop.harness.steer
+      ) {
+        const steeringMessage = {
+          id: crypto.randomUUID(),
+          role: "user",
+          content,
+          attachments,
+          steeringStatus: "pending",
+          createdAt,
+        };
+        setTasks((current) =>
+          current.map((task) =>
+            task.id === targetTask.id
+              ? {
+                  ...task,
+                  messages: [...task.messages, steeringMessage],
+                }
+              : task,
+          ),
+        );
+        void window.desktop.harness
+          .steer({
+            runId: activeRunId,
+            message: steeringMessage,
+          })
+          .then((accepted) => {
+            if (accepted) return;
+            throw new Error("The active run no longer accepts steering.");
+          })
+          .catch(() => {
+            setTasks((current) =>
+              current.map((task) =>
+                task.id === targetTask.id
+                  ? {
+                      ...task,
+                      messages: task.messages.map((message) =>
+                        message.id === steeringMessage.id
+                          ? {
+                              ...message,
+                              steeringStatus: "failed",
+                              queued: true,
+                              queuedAt: new Date().toISOString(),
+                            }
+                          : message,
+                      ),
+                    }
+                  : task,
+              ),
+            );
+            setNotice(
+              tr(
+                "即时纠偏未能接入，已自动转入下一轮队列",
+                "Live steering could not be applied and was queued for the next turn",
+              ),
+            );
+          });
+        setNotice(
+          tr(
+            "新要求已发送，将在下一安全边界接入当前任务",
+            "Guidance sent; it will join the current task at the next safe boundary",
+          ),
+        );
+        return true;
+      }
+      const queuedMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content,
+        attachments,
+        queued: true,
+        queuedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === targetTask.id
+            ? {
+                ...task,
+                messages: [...task.messages, queuedMessage],
+              }
+            : task,
+        ),
+      );
+      setNotice(
+        tr(
+          "追问已加入队列，当前任务结束后自动继续",
+          "Follow-up queued and will run after the current task",
+        ),
+      );
+      return true;
+    }
 
     const runId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
-    const userMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content,
-      attachments,
-      createdAt: new Date().toISOString(),
-    };
+    const queuedSource = request.userMessageId
+      ? targetTask.messages.find(
+          (message) =>
+            message.id === request.userMessageId && message.queued,
+        )
+      : null;
+    const userMessage = queuedSource
+      ? {
+          ...queuedSource,
+          queued: false,
+          steeringStatus: null,
+          startedAt: new Date().toISOString(),
+        }
+      : {
+          id: crypto.randomUUID(),
+          role: "user",
+          content,
+          attachments,
+          createdAt: new Date().toISOString(),
+        };
     const assistantMessage = {
       id: assistantId,
       role: "assistant",
       status: "running",
       content: "",
-      prompt: content,
+      prompt: userMessage.content,
       sourceUserId: userMessage.id,
       steps: [],
       changes: [],
@@ -3636,25 +5266,39 @@ function App() {
     };
     setTasks((current) =>
       current.map((task) =>
-        task.id === activeTaskId
+        task.id === targetTask.id
           ? {
               ...task,
-              messages: [
-                ...task.messages,
-                userMessage,
-                assistantMessage,
-              ],
+              messages: queuedSource
+                ? [
+                    ...task.messages.map((message) =>
+                      message.id === userMessage.id
+                        ? userMessage
+                        : message,
+                    ),
+                    assistantMessage,
+                  ]
+                : [
+                    ...task.messages,
+                    userMessage,
+                    assistantMessage,
+                  ],
             }
           : task,
       ),
     );
     runsRef.current.set(runId, {
-      taskId: activeTask.id,
+      taskId: targetTask.id,
       assistantId,
       routeCounter: 0,
+      approvalMode:
+        targetTask.approvalMode === "manual"
+          ? "manual"
+          : "sandbox-auto",
     });
-    setRunningTaskId(activeTask.id);
+    setRunningTaskId(targetTask.id);
     setActiveRunId(runId);
+    setRunPaused(false);
     setApproval(null);
     setRunStatus({
       title: tr("正在启动 Harness", "Starting Harness"),
@@ -3664,19 +5308,33 @@ function App() {
     void window.desktop.harness
       .run({
         runId,
-        workspacePath: activeTask.workspacePath,
-        providerId: activeTask.providerId,
-        modelId: activeTask.modelId,
-        thinking: activeTask.thinking,
-        effort: activeTask.effort,
-        permission: activeTask.permission,
+        taskId: targetTask.id,
+        assistantId,
+        sourceUserId: userMessage.id,
+        prompt: userMessage.content,
+        workspacePath: targetTask.workspacePath,
+        providerId: targetTask.providerId,
+        modelId: targetTask.modelId,
+        thinking: targetTask.thinking,
+        effort: targetTask.effort,
+        permission: targetTask.permission,
+        approvalMode:
+          targetTask.approvalMode === "manual"
+            ? "manual"
+            : "sandbox-auto",
         language,
-        messages: [...activeTask.messages, userMessage],
+        messages: [
+          ...targetTask.messages.filter(
+            (message) =>
+              !message.queued && message.id !== userMessage.id,
+          ),
+          userMessage,
+        ],
       })
       .then((result) => {
         setTasks((current) =>
           current.map((task) =>
-            task.id === activeTask.id
+            task.id === targetTask.id
               ? {
                   ...task,
                   messages: task.messages.map((message) =>
@@ -3686,9 +5344,10 @@ function App() {
                           status: result.status || "completed",
                           error: Boolean(result.error),
                            content: result.content,
-                           steps: result.steps || [],
-                           changes: result.changes || [],
-                           route: enrichRouteEntries(
+                          steps: result.steps || [],
+                          changes: result.changes || [],
+                          anchor: result.anchor || null,
+                          route: enrichRouteEntries(
                              closeRunningRouteEntries(
                                message.route,
                                new Date().toISOString(),
@@ -3702,13 +5361,18 @@ function App() {
                           permissionConfigFile:
                             result.permissionConfigFile || null,
                           provider:
-                            result.provider || activeTask.providerId,
+                            result.provider || targetTask.providerId,
                           providerName:
                             result.providerName || "",
-                          model: result.model || activeTask.modelId,
+                          model: result.model || targetTask.modelId,
                           sandbox: result.sandbox || null,
                           tools: result.tools || [],
                           selfCheck: result.selfCheck || null,
+                          plan: result.plan || message.plan || null,
+                          contextCheckpoints:
+                            result.contextCheckpoints ||
+                            message.contextCheckpoints ||
+                            [],
                           completedAt: new Date().toISOString(),
                         }
                       : message,
@@ -3721,6 +5385,24 @@ function App() {
           setNotice(tr("Harness 运行失败", "Harness run failed"));
         } else if (result.status === "interrupted") {
           setNotice(tr("任务已停止，已保留文件检查点", "Task stopped; file checkpoints were preserved"));
+        } else if (result.status === "completed") {
+          const summary = summarizeCompletionContent(
+            result.content,
+            tr(
+              "任务已经完成，打开任务查看完整结果。",
+              "The task is complete. Open it to view the full result.",
+            ),
+          );
+          setCompletionNotice({
+            taskId: targetTask.id,
+            title: targetTask.title,
+            summary,
+          });
+          void window.desktop?.notifications?.taskCompleted?.({
+            taskId: targetTask.id,
+            title: `AporiaX · ${targetTask.title}`,
+            body: summary,
+          });
         }
       })
       .catch((error) => {
@@ -3729,7 +5411,7 @@ function App() {
           .replace(/^Error:\s*/i, "");
         setTasks((current) =>
           current.map((task) =>
-            task.id === activeTask.id
+            task.id === targetTask.id
               ? {
                   ...task,
                   messages: task.messages.map((message) =>
@@ -3773,13 +5455,47 @@ function App() {
       .finally(() => {
         runsRef.current.delete(runId);
         setRunningTaskId((current) =>
-          current === activeTask.id ? null : current,
+          current === targetTask.id ? null : current,
         );
         setActiveRunId((current) => (current === runId ? null : current));
+        setRunPaused(false);
         setApproval((current) =>
           current?.runId === runId ? null : current,
         );
-        setRunStatus(null);
+        const nextQueued = tasksRef.current
+          .flatMap((task) =>
+            task.messages
+              .filter(
+                (message) =>
+                  message.role === "user" &&
+                  message.queued &&
+                  message.id !== userMessage.id,
+              )
+              .map((message) => ({ taskId: task.id, message })),
+          )
+          .sort((left, right) =>
+            String(left.message.queuedAt || left.message.createdAt).localeCompare(
+              String(right.message.queuedAt || right.message.createdAt),
+            ),
+          )[0];
+        if (nextQueued) {
+          setRunStatus({
+            title: tr("正在继续排队的追问", "Starting the queued follow-up"),
+            detail: tr(
+              "上一轮已结束，正在载入下一条问题",
+              "The previous run finished; loading the next question",
+            ),
+          });
+          window.setTimeout(() => {
+            sendMessage("", [], {
+              force: true,
+              taskId: nextQueued.taskId,
+              userMessageId: nextQueued.message.id,
+            });
+          }, 40);
+        } else {
+          setRunStatus(null);
+        }
       });
 
     return true;
@@ -3796,6 +5512,33 @@ function App() {
       await window.desktop.harness.interrupt(activeRunId);
     } catch {
       setNotice(tr("无法停止任务，请稍后重试", "Unable to stop the task. Try again shortly."));
+    }
+  };
+
+  const pauseActiveRun = async () => {
+    if (!activeRunId || !window.desktop?.harness?.pause) return;
+    setRunStatus({
+      title: tr("正在暂停任务", "Pausing task"),
+      detail: tr(
+        "等待当前模型请求或工具操作抵达安全边界",
+        "Waiting for the current model request or tool action to reach a safe boundary",
+      ),
+    });
+    try {
+      const accepted = await window.desktop.harness.pause(activeRunId);
+      if (!accepted) throw new Error("Run is no longer active.");
+    } catch {
+      setNotice(tr("无法暂停任务，请稍后重试", "Unable to pause the task. Try again shortly."));
+    }
+  };
+
+  const resumeActiveRun = async () => {
+    if (!activeRunId || !window.desktop?.harness?.resume) return;
+    try {
+      const accepted = await window.desktop.harness.resume(activeRunId);
+      if (!accepted) throw new Error("Run is no longer active.");
+    } catch {
+      setNotice(tr("无法继续任务，请稍后重试", "Unable to resume the task. Try again shortly."));
     }
   };
 
@@ -3937,6 +5680,139 @@ function App() {
     }
   };
 
+  const restoreTaskToAnchor = async (taskId, anchorMessageId) => {
+    if (!window.desktop?.workspace?.restoreAnchor) {
+      setNotice(
+        tr(
+          "桌面端跨轮恢复能力不可用",
+          "Cross-turn restore is unavailable in this desktop build",
+        ),
+      );
+      return { success: false, reason: "bridge-unavailable" };
+    }
+    if (runningTaskId === taskId) {
+      setNotice(
+        tr(
+          "请先停止当前任务，再恢复 Anchor",
+          "Stop the running task before restoring an Anchor",
+        ),
+      );
+      return { success: false, reason: "task-running" };
+    }
+
+    const task = tasksRef.current.find(
+      (candidate) => candidate.id === taskId,
+    );
+    const anchorMessages = (task?.messages || []).filter(
+      (message) =>
+        message.role === "assistant" &&
+        Array.isArray(message.changes) &&
+        message.changes.length > 0,
+    );
+    const selectedIndex = anchorMessages.findIndex(
+      (message) => message.id === anchorMessageId,
+    );
+    if (!task?.workspacePath || selectedIndex < 0) {
+      setNotice(
+        tr(
+          "没有找到可恢复的跨轮快照",
+          "No restorable cross-turn snapshot was found",
+        ),
+      );
+      return { success: false, reason: "anchor-not-found" };
+    }
+
+    const targets = anchorMessages
+      .slice(selectedIndex)
+      .filter((message) =>
+        message.changes.some((change) => !change.reverted),
+      );
+    const checkpoints = [...targets].reverse().map((message) => ({
+      id: message.id,
+      changes: message.changes.filter((change) => !change.reverted),
+    }));
+    if (!checkpoints.length) {
+      return { success: false, reason: "anchor-already-restored" };
+    }
+
+    try {
+      const result = await window.desktop.workspace.restoreAnchor({
+        workspacePath: task.workspacePath,
+        checkpoints,
+      });
+      if (!result?.success) {
+        const firstConflict = result?.conflicts?.[0];
+        setNotice(
+          firstConflict?.path
+            ? tr(
+                "恢复已安全停止：{path} 在快照后又被修改",
+                "Restore stopped safely: {path} changed after the snapshot",
+                { path: firstConflict.path },
+              )
+            : tr(
+                "Anchor 恢复未执行，工作区保持不变",
+                "Anchor restore was not applied; the workspace is unchanged",
+              ),
+        );
+        return result || { success: false };
+      }
+
+      const restoredIds = new Set(result.restoredCheckpoints || []);
+      const restoredAt =
+        result.restoredAt || new Date().toISOString();
+      setTasks((current) =>
+        current.map((candidate) =>
+          candidate.id === taskId
+            ? {
+                ...candidate,
+                anchorRestores: [
+                  ...(candidate.anchorRestores || []).slice(-19),
+                  {
+                    id: crypto.randomUUID(),
+                    anchorMessageId,
+                    restoredAt,
+                    restoredFiles: result.restoredFiles || 0,
+                  },
+                ],
+                messages: candidate.messages.map((message) =>
+                  restoredIds.has(message.id)
+                    ? {
+                        ...message,
+                        anchorRestoredAt: restoredAt,
+                        changes: message.changes.map((change) =>
+                          change.reverted
+                            ? change
+                            : { ...change, reverted: true },
+                        ),
+                      }
+                    : message,
+                ),
+              }
+            : candidate,
+        ),
+      );
+      setNotice(
+        tr(
+          "已恢复 {turns} 轮 Anchor，共还原 {files} 个文件",
+          "Restored {turns} Anchor turn(s) across {files} file(s)",
+          {
+            turns: restoredIds.size,
+            files: result.restoredFiles || 0,
+          },
+        ),
+      );
+      return result;
+    } catch (error) {
+      const cleanMessage = String(
+        error?.message || tr("Anchor 恢复失败", "Anchor restore failed"),
+      )
+        .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+        .replace(/^Error:\s*/i, "");
+      setNotice(cleanMessage);
+      return { success: false, reason: "ipc-error" };
+    }
+  };
+
   const confirmMessageChanges = (messageId) => {
     const confirmedAt = new Date().toISOString();
     setTasks((current) =>
@@ -3952,14 +5828,44 @@ function App() {
     setNotice(tr("已确认保留上一轮修改", "Confirmed that the previous turn's changes should be kept"));
   };
 
+  const saveReviewedMessageChange = (
+    messageId,
+    { path, content, savedAt },
+  ) => {
+    setTasks((current) =>
+      current.map((task) => ({
+        ...task,
+        messages: task.messages.map((message) => {
+          if (message.id !== messageId) return message;
+          return {
+            ...message,
+            reviewConfirmedAt: null,
+            changes: (message.changes || []).map((change) => {
+              if (change.path !== path) return change;
+              return {
+                ...change,
+                ...countChangedLines(change.beforeContent, content),
+                afterContent: content,
+                afterMissing: false,
+                deleted: false,
+                reverted: false,
+                userEditedAt: savedAt || new Date().toISOString(),
+              };
+            }),
+          };
+        }),
+      })),
+    );
+  };
+
   const prepareCommandSandbox = async () => {
     if (!window.desktop?.sandbox?.prepare || sandboxPreparing) return;
     setSandboxPreparing(true);
-    setNotice(tr("正在构建 AporiaX 沙箱镜像，首次准备可能需要几分钟", "Building the AporiaX sandbox image. The first setup may take a few minutes."));
+    setNotice(tr("正在准备可选的 Docker 强隔离镜像，首次构建可能需要几分钟", "Preparing the optional Docker strong-isolation image. The first build may take a few minutes."));
     try {
       const status = await window.desktop.sandbox.prepare();
       setSandboxStatus(status);
-      setNotice(tr("OS 级命令沙箱已就绪", "OS-level command sandbox is ready"));
+      setNotice(tr("Docker 强隔离已启用；本地沙箱仍可随时作为默认后备", "Docker strong isolation is enabled; the local sandbox remains available as the default fallback"));
     } catch (error) {
       setNotice(cleanIpcError(error, tr("沙箱准备失败", "Sandbox preparation failed")));
       await refreshSandboxStatus();
@@ -3993,14 +5899,18 @@ function App() {
 
   return (
     <div className="app-shell" data-theme={theme}>
-      <AppTitlebar />
+      <AppTitlebar onOpenSettings={() => openApplicationSettings("general")} />
       <div className="app-content">
         {!sidebarCollapsed && (
           <Sidebar
             tasks={tasks}
             activeTaskId={activeTaskId}
             onSelectTask={setActiveTaskId}
-            onNewTask={() => setNewTaskOpen(true)}
+            onNewTask={requestNewTask}
+            onRenameTask={renameTaskById}
+            onDeleteTask={deleteTask}
+            onNotice={setNotice}
+            runningTaskId={runningTaskId}
             searchOpen={searchOpen}
             onToggleSearch={() => setSearchOpen((open) => !open)}
           />
@@ -4035,9 +5945,15 @@ function App() {
               onToggleSettings={() => setSettingsOpen((open) => !open)}
               onSend={sendMessage}
               onStop={stopActiveRun}
+              onPause={pauseActiveRun}
+              onResume={resumeActiveRun}
               onRetry={retryMessage}
               onRevert={revertMessageChanges}
+              onRestoreAnchor={(messageId) =>
+                restoreTaskToAnchor(activeTask.id, messageId)
+              }
               onConfirmChanges={confirmMessageChanges}
+              onSaveChanges={saveReviewedMessageChange}
               runStatus={runStatus}
               approval={
                 approval?.taskId === activeTask.id ? approval : null
@@ -4046,12 +5962,16 @@ function App() {
               onRespondApproval={respondToApproval}
               onUpdateTask={updateActiveTask}
               isRunning={runningTaskId === activeTask.id}
-              onManageProviders={() => setProviderManagerOpen(true)}
+              isPaused={
+                runningTaskId === activeTask.id && runPaused
+              }
+              onManageProviders={() => openApplicationSettings("models")}
               sandboxStatus={sandboxStatus}
               sandboxPreparing={sandboxPreparing}
               onPrepareSandbox={() => void prepareCommandSandbox()}
               onSelectWorkspace={selectWorkspaceForActiveTask}
               onNotice={setNotice}
+              onDeleteTask={deleteTask}
               theme={theme}
               onToggleTheme={() =>
                 setTheme((current) =>
@@ -4060,7 +5980,7 @@ function App() {
               }
             />
           ) : (
-            <EmptyState onNewTask={() => setNewTaskOpen(true)} />
+            <EmptyState onNewTask={requestNewTask} />
           )}
         </section>
       </div>
@@ -4071,21 +5991,51 @@ function App() {
           onClose={() => setNewTaskOpen(false)}
           onCreate={createTask}
           onNotice={setNotice}
-          onManageProviders={() => {
-            setNewTaskOpen(false);
-            setProviderManagerOpen(true);
+        />
+      )}
+      {applicationSettingsOpen && (
+        <ApplicationSettingsModal
+          initialSection={applicationSettingsSection}
+          theme={theme}
+          onThemeChange={setTheme}
+          providers={providers}
+          sandboxStatus={sandboxStatus}
+          onProvidersChanged={reloadProviders}
+          onProviderSaved={({ providers: nextProviders }) => {
+            if (
+              resumeNewTaskAfterProvider &&
+              getAvailableModels(nextProviders).length
+            ) {
+              setResumeNewTaskAfterProvider(false);
+              setApplicationSettingsOpen(false);
+              setNewTaskOpen(true);
+              setNotice(
+                tr(
+                  "模型已连接，现在选择工作目录",
+                  "The model is connected. Now choose a workspace.",
+                ),
+              );
+            }
+          }}
+          onNotice={setNotice}
+          onClose={() => {
+            setApplicationSettingsOpen(false);
+            setResumeNewTaskAfterProvider(false);
           }}
         />
       )}
-      {providerManagerOpen && (
-        <ProviderManagerModal
-          providers={providers}
-          onClose={() => setProviderManagerOpen(false)}
-          onChanged={reloadProviders}
-          onNotice={setNotice}
-        />
-      )}
       {welcomeOpen && <WelcomeOverlay onContinue={dismissWelcome} />}
+      <TaskCompletionToast
+        notification={completionNotice}
+        onClose={() => setCompletionNotice(null)}
+        onOpen={() => {
+          if (completionNotice?.taskId) {
+            setActiveTaskId(completionNotice.taskId);
+            setWelcomeOpen(false);
+          }
+          setCompletionNotice(null);
+        }}
+      />
       <Toast message={notice} />
     </div>
   );

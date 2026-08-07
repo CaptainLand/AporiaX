@@ -8,7 +8,7 @@ import React, {
 } from "react";
 
 export const LANGUAGE_STORAGE_KEY = "aporiax.language.v1";
-export const DEFAULT_LANGUAGE = "zh-CN";
+export const DEFAULT_LANGUAGE = "en";
 export const SUPPORTED_LANGUAGES = ["zh-CN", "en"];
 
 const I18nContext = createContext(null);

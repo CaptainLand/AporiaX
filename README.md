@@ -29,8 +29,9 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 
 > [!IMPORTANT]
 > AporiaX `v0.3.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
-> `run_command` 会优先在 Docker OS 级容器沙箱中执行；
-> Docker 或镜像不可用时会回退到本机执行，并强制逐条审批。本机模式可联网且不具备 OS 隔离。
+> `run_command` 默认在本地临时工作区副本中自动执行，结束后通过冲突检查同步项目变更，
+> 不需要逐条批准。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
+> 本地沙箱主要隔离工作区改动，仍使用当前用户的本机网络与进程权限。
 
 ## 为什么是 AporiaX
 
@@ -50,7 +51,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 | 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
 | 中英双语 | 开屏与设置页即时切换；界面和新回复跟随语言，历史消息与文件保持原样 |
 | 附件与解析 | PDF、Office、Markdown、代码和图片附件；PDF 本地文本提取 |
-| 权限与执行 | `allow` / `ask` / `deny` 策略；Docker 沙箱优先，本机强制审批降级 |
+| 权限与执行 | `allow` / `ask` / `deny` 策略；本地工作区沙箱自动执行，Docker 可选加强隔离 |
 
 扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。图片是否发送由每个
 Provider 模型的视觉能力决定。

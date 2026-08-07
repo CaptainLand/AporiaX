@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import {
   lstat,
+  mkdir,
   readFile,
   readdir,
   realpath,
@@ -50,10 +51,15 @@ const MAX_PATCH_TEXT_CHARS = 120_000;
 const MAX_TREE_ENTRIES = 700;
 const MAX_TREE_DEPTH = 6;
 const MAX_GIT_DIFF_CHARS = 120_000;
+const MAX_ANCHOR_FILES = 1_200;
+const MAX_ANCHOR_TOTAL_BYTES = 8_000_000;
+const MAX_ANCHOR_TEXT_FILE_BYTES = 1_000_000;
+const MAX_ANCHOR_BINARY_FILE_BYTES = 2_000_000;
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
-const CONTEXT_COMPACT_THRESHOLD_CHARS = 900_000;
 const COMPACTED_TOOL_CONTENT_CHARS = 2_000;
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
+const MIN_CONTEXT_RESERVE_TOKENS = 12_000;
 const PROJECT_INSTRUCTION_FILES = [
   "AGENTS.md",
   "APORIAX.md",
@@ -75,8 +81,78 @@ const TREE_IGNORES = new Set([
   "dist",
   "node_modules",
 ]);
+const ANCHOR_IGNORES = new Set([
+  ...TREE_IGNORES,
+  ".cache",
+  ".parcel-cache",
+  ".runtime-smoke",
+  ".venv",
+  "__pycache__",
+  "build",
+  "out",
+  "release",
+  "release_update",
+  "release_v031_latest",
+  "target",
+  "venv",
+]);
 
 const TOOL_DEFINITIONS = [
+  {
+    type: "function",
+    function: {
+      name: "update_plan",
+      description:
+        "Create or revise the explicit execution plan shown to the user. Use this before a multi-step task and whenever the route changes.",
+      parameters: {
+        type: "object",
+        properties: {
+          explanation: {
+            type: "string",
+            description:
+              "A concise reason for creating or revising this plan.",
+          },
+          steps: {
+            type: "array",
+            minItems: 1,
+            maxItems: 20,
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description:
+                    "Stable short identifier reused across plan updates.",
+                },
+                title: {
+                  type: "string",
+                  description: "Concrete user-facing step title.",
+                },
+                status: {
+                  type: "string",
+                  enum: [
+                    "pending",
+                    "in_progress",
+                    "completed",
+                    "blocked",
+                  ],
+                },
+                detail: {
+                  type: "string",
+                  description:
+                    "Optional short evidence, blocker, or expected output.",
+                },
+              },
+              required: ["id", "title", "status"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["steps"],
+        additionalProperties: false,
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -319,6 +395,7 @@ const TOOL_DEFINITIONS = [
 ];
 
 const TOOL_RISKS = {
+  update_plan: "control",
   list_directory: "read",
   read_file: "read",
   search_text: "read",
@@ -418,6 +495,200 @@ async function verifyWritableTarget(workspaceRoot, requestedPath) {
   return targetPath;
 }
 
+function anchorFileLimit(path) {
+  return isOfficePath(path)
+    ? MAX_OFFICE_FILE_BYTES
+    : MAX_ANCHOR_TEXT_FILE_BYTES;
+}
+
+function decodeAnchorFile(path, buffer) {
+  if (isOfficePath(path)) {
+    return {
+      path,
+      binary: true,
+      content: buffer.toString("base64"),
+      bytes: buffer.length,
+    };
+  }
+  try {
+    return {
+      path,
+      binary: false,
+      content: new TextDecoder("utf-8", { fatal: true }).decode(buffer),
+      bytes: buffer.length,
+    };
+  } catch {
+    if (buffer.length > MAX_ANCHOR_BINARY_FILE_BYTES) return null;
+    return {
+      path,
+      binary: true,
+      content: buffer.toString("base64"),
+      bytes: buffer.length,
+    };
+  }
+}
+
+async function captureWorkspaceStateFromRoot(
+  workspaceRoot,
+  signal,
+) {
+  const files = new Map();
+  let totalBytes = 0;
+  let skippedFiles = 0;
+  let truncated = false;
+
+  async function visit(relativeDirectory, depth) {
+    throwIfAborted(signal);
+    if (
+      files.size >= MAX_ANCHOR_FILES ||
+      totalBytes >= MAX_ANCHOR_TOTAL_BYTES ||
+      depth > 12
+    ) {
+      truncated = true;
+      return;
+    }
+    const directoryPath =
+      relativeDirectory === "."
+        ? workspaceRoot
+        : resolveWorkspacePath(workspaceRoot, relativeDirectory);
+    let entries;
+    try {
+      entries = await readdir(directoryPath, { withFileTypes: true });
+    } catch {
+      skippedFiles += 1;
+      return;
+    }
+    entries.sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+    for (const entry of entries) {
+      throwIfAborted(signal);
+      if (
+        files.size >= MAX_ANCHOR_FILES ||
+        totalBytes >= MAX_ANCHOR_TOTAL_BYTES
+      ) {
+        truncated = true;
+        break;
+      }
+      if (entry.isSymbolicLink() || ANCHOR_IGNORES.has(entry.name)) {
+        continue;
+      }
+      const relativePath =
+        relativeDirectory === "."
+          ? entry.name
+          : `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        await visit(relativePath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        const filePath = resolveWorkspacePath(
+          workspaceRoot,
+          relativePath,
+        );
+        const stats = await lstat(filePath);
+        if (
+          !stats.isFile() ||
+          stats.isSymbolicLink() ||
+          stats.size > anchorFileLimit(relativePath) ||
+          totalBytes + stats.size > MAX_ANCHOR_TOTAL_BYTES
+        ) {
+          skippedFiles += 1;
+          if (totalBytes + stats.size > MAX_ANCHOR_TOTAL_BYTES) {
+            truncated = true;
+          }
+          continue;
+        }
+        const record = decodeAnchorFile(
+          relativePath.replace(/\\/g, "/"),
+          await readFile(filePath),
+        );
+        if (!record) {
+          skippedFiles += 1;
+          continue;
+        }
+        files.set(record.path, record);
+        totalBytes += record.bytes;
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        skippedFiles += 1;
+      }
+    }
+  }
+
+  await visit(".", 0);
+  return {
+    files,
+    capturedFiles: files.size,
+    totalBytes,
+    skippedFiles,
+    truncated,
+  };
+}
+
+export async function captureWorkspaceState(workspacePath, options = {}) {
+  const workspaceRoot = await getVerifiedWorkspaceRoot(workspacePath);
+  return captureWorkspaceStateFromRoot(workspaceRoot, options.signal);
+}
+
+function reconcileWorkspaceState(
+  changeMap,
+  beforeSnapshot,
+  afterSnapshot,
+) {
+  if (!beforeSnapshot?.files || !afterSnapshot?.files) return [];
+  const changed = [];
+  const paths = new Set([
+    ...beforeSnapshot.files.keys(),
+    ...afterSnapshot.files.keys(),
+  ]);
+  for (const path of paths) {
+    const before = beforeSnapshot.files.get(path) || null;
+    const after = afterSnapshot.files.get(path) || null;
+    if (
+      Boolean(before) === Boolean(after) &&
+      before?.binary === after?.binary &&
+      before?.content === after?.content
+    ) {
+      continue;
+    }
+    const current = changeMap.get(path);
+    const binary = Boolean(
+      before?.binary || after?.binary || current?.binary,
+    );
+    const change = {
+      ...(current || {}),
+      path,
+      beforeContent:
+        before?.content ?? current?.beforeContent ?? "",
+      afterContent: after?.content ?? "",
+      beforeMissing: !before,
+      afterMissing: !after,
+      binary,
+      artifact: current?.artifact || null,
+      created: !before,
+      deleted: !after,
+      reverted: false,
+      source: current?.source || "workspace-snapshot",
+    };
+    if (binary) {
+      change.additions = 0;
+      change.deletions = 0;
+    } else {
+      const lineChanges = calculateLineChanges(
+        change.beforeContent,
+        change.afterContent,
+      );
+      change.additions = lineChanges.additions;
+      change.deletions = lineChanges.deletions;
+    }
+    changeMap.set(path, change);
+    changed.push(change);
+  }
+  return changed;
+}
+
 function parseToolArguments(toolCall) {
   try {
     const parsed = JSON.parse(toolCall.function.arguments || "{}");
@@ -429,6 +700,37 @@ function parseToolArguments(toolCall) {
     throw new Error(`Invalid arguments for ${toolCall.function.name}.`, {
       cause: error,
     });
+  }
+}
+
+function describeToolActivity(toolCall) {
+  try {
+    const input = JSON.parse(toolCall.function.arguments || "{}");
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return {};
+    }
+    const path =
+      input.path ||
+      input.filePath ||
+      input.outputPath ||
+      input.destination ||
+      input.archivePath ||
+      "";
+    const command =
+      typeof input.command === "string" ? input.command : "";
+    const detail =
+      input.query ||
+      input.pattern ||
+      input.title ||
+      input.name ||
+      "";
+    return {
+      ...(path ? { path: String(path).slice(0, 260) } : {}),
+      ...(command ? { command: command.slice(0, 420) } : {}),
+      ...(detail ? { detail: String(detail).slice(0, 260) } : {}),
+    };
+  } catch {
+    return {};
   }
 }
 
@@ -473,6 +775,8 @@ function mergeFileChange(changeMap, change) {
   }
 
   current.afterContent = change.afterContent;
+  current.afterMissing = Boolean(change.afterMissing);
+  current.deleted = Boolean(change.afterMissing || change.deleted);
   current.binary = Boolean(current.binary || change.binary);
   current.artifact = change.artifact || current.artifact || null;
   if (current.binary) {
@@ -501,7 +805,11 @@ export function getPendingSelfCheckPaths(
   return changeList
     .filter(
       (change) =>
-        change?.beforeContent !== change?.afterContent &&
+        !change?.afterMissing &&
+        (!change?.binary || isOfficePath(change.path)) &&
+        (Boolean(change?.beforeMissing) !==
+          Boolean(change?.afterMissing) ||
+          change?.beforeContent !== change?.afterContent) &&
         reviewedVersions.get(change.path) !== change.afterContent,
     )
     .map((change) => change.path);
@@ -550,6 +858,54 @@ function normalizeSelfCheckReport(input) {
       input.remaining_risks,
       "remaining_risks",
     ),
+  };
+}
+
+function normalizeExecutionPlan(input, previousPlan = null) {
+  if (!Array.isArray(input?.steps) || input.steps.length === 0) {
+    throw new Error("update_plan requires at least one plan step.");
+  }
+  if (input.steps.length > 20) {
+    throw new Error("update_plan supports at most 20 plan steps.");
+  }
+  const ids = new Set();
+  let activeSteps = 0;
+  const steps = input.steps.map((step, index) => {
+    const id = String(step?.id || `step-${index + 1}`)
+      .trim()
+      .slice(0, 80);
+    const title = String(step?.title || "").trim().slice(0, 240);
+    const status = String(step?.status || "pending");
+    if (!id || ids.has(id)) {
+      throw new Error("Every plan step must have a unique id.");
+    }
+    if (!title) {
+      throw new Error("Every plan step must have a title.");
+    }
+    if (
+      !["pending", "in_progress", "completed", "blocked"].includes(
+        status,
+      )
+    ) {
+      throw new Error(`Unsupported plan step status: ${status}`);
+    }
+    ids.add(id);
+    if (status === "in_progress") activeSteps += 1;
+    return {
+      id,
+      title,
+      status,
+      detail: String(step?.detail || "").trim().slice(0, 500),
+    };
+  });
+  if (activeSteps > 1) {
+    throw new Error("Only one plan step can be in progress at a time.");
+  }
+  return {
+    revision: (previousPlan?.revision || 0) + 1,
+    explanation: String(input?.explanation || "").trim().slice(0, 500),
+    steps,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -719,6 +1075,7 @@ async function executeTool({
   toolCall,
   workspaceRoot,
   permissionPolicy,
+  approvalMode = "manual",
   requestApproval,
   signal,
   sandboxExecutor = runCommandWithFallback,
@@ -738,9 +1095,19 @@ async function executeTool({
   if (permissionAction === "deny") {
     throw new Error(`Permission denied for tool: ${toolName}`);
   }
+  const sandboxAutoApproved =
+    approvalMode === "sandbox-auto" &&
+    toolName === "run_command" &&
+    Boolean(
+      sandboxStatus?.autoApprovalSafe ||
+        sandboxStatus?.available ||
+        sandboxStatus?.localAvailable,
+    );
   const requiresApproval =
-    permissionAction === "ask" ||
-    (toolName === "run_command" && !sandboxStatus?.available);
+    (permissionAction === "ask" && !sandboxAutoApproved) ||
+    (toolName === "run_command" &&
+      approvalMode === "manual" &&
+      !sandboxAutoApproved);
   if (requiresApproval) {
     const approval = await requestApproval({
       kind: descriptor.risk,
@@ -835,6 +1202,8 @@ async function executeTool({
         path: generated.path,
         beforeContent: previousBuffer.toString("base64"),
         afterContent: generated.buffer.toString("base64"),
+        beforeMissing: created,
+        afterMissing: false,
         binary: true,
         artifact: generated.artifact,
         created,
@@ -968,6 +1337,8 @@ async function executeTool({
         path: input.path,
         beforeContent: previousContent,
         afterContent: input.content,
+        beforeMissing: created,
+        afterMissing: false,
         created,
         reverted: false,
         ...lineChanges,
@@ -1030,6 +1401,8 @@ async function executeTool({
         path: input.path,
         beforeContent: previousContent,
         afterContent: nextContent,
+        beforeMissing: false,
+        afterMissing: false,
         created: false,
         reverted: false,
         ...lineChanges,
@@ -1343,62 +1716,121 @@ function appendToolCallDelta(toolCalls, incomingCall) {
   toolCalls[index] = current;
 }
 
-function compactConversationForRequest(conversation, onEvent) {
-  let totalChars = JSON.stringify(conversation).length;
-  if (totalChars <= CONTEXT_COMPACT_THRESHOLD_CHARS) return;
+function estimateConversationTokens(conversation) {
+  return Math.ceil(JSON.stringify(conversation).length / 4);
+}
 
-  let compactedMessages = 0;
-  const keepRecentFrom = Math.max(1, conversation.length - 10);
-  for (
-    let index = 1;
-    index < keepRecentFrom &&
-    totalChars > CONTEXT_COMPACT_THRESHOLD_CHARS;
-    index += 1
-  ) {
-    const message = conversation[index];
-    if (
-      message?.role !== "tool" ||
-      typeof message.content !== "string" ||
-      message.content.length <= COMPACTED_TOOL_CONTENT_CHARS
-    ) {
+function messageTextForCheckpoint(message) {
+  if (typeof message?.content === "string") return message.content;
+  if (!Array.isArray(message?.content)) return "";
+  return message.content
+    .filter((item) => item?.type === "text")
+    .map((item) => item.text || "")
+    .join("\n");
+}
+
+function buildStructuredContextCheckpoint(messages) {
+  const goals = [];
+  const decisions = [];
+  const toolEvidence = [];
+  const seenEvidence = new Set();
+
+  for (const message of messages) {
+    const text = messageTextForCheckpoint(message).replace(/\s+/g, " ").trim();
+    if (message?.role === "user" && text) {
+      goals.push(text.slice(0, 700));
       continue;
     }
-    let compactedContent;
+    if (message?.role === "assistant" && text) {
+      decisions.push(text.slice(0, 700));
+      continue;
+    }
+    if (message?.role !== "tool" || typeof message.content !== "string") {
+      continue;
+    }
     try {
       const parsed = JSON.parse(message.content);
-      compactedContent = JSON.stringify({
-        compacted: true,
+      const evidence = {
         path: parsed?.path || null,
         command: parsed?.command || null,
         query: parsed?.query || null,
         exitCode:
           typeof parsed?.exitCode === "number" ? parsed.exitCode : null,
-        note:
-          "Older verbose tool output was compacted. Re-run the tool if exact content is needed.",
-      });
+        error: parsed?.error ? String(parsed.error).slice(0, 300) : null,
+      };
+      const key = JSON.stringify(evidence);
+      if (key !== "{}" && !seenEvidence.has(key)) {
+        seenEvidence.add(key);
+        toolEvidence.push(evidence);
+      }
     } catch {
-      compactedContent = JSON.stringify({
-        compacted: true,
-        preview: message.content.slice(
-          0,
-          COMPACTED_TOOL_CONTENT_CHARS,
-        ),
-        note:
-          "Older verbose tool output was compacted. Re-run the tool if exact content is needed.",
-      });
+      const preview = message.content
+        .slice(0, COMPACTED_TOOL_CONTENT_CHARS)
+        .replace(/\s+/g, " ");
+      if (preview && !seenEvidence.has(preview)) {
+        seenEvidence.add(preview);
+        toolEvidence.push({ preview });
+      }
     }
-    totalChars -= message.content.length - compactedContent.length;
-    message.content = compactedContent;
-    compactedMessages += 1;
   }
 
-  if (compactedMessages > 0) {
-    onEvent?.({
-      type: "context.compacted",
-      compactedMessages,
-      estimatedChars: totalChars,
-    });
+  return {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    goals: goals.slice(-8),
+    decisions: decisions.slice(-8),
+    evidence: toolEvidence.slice(-30),
+    compactedMessages: messages.length,
+    recoveryInstruction:
+      "Re-read files or rerun tools when exact older output is required.",
+  };
+}
+
+function compactConversationForRequest(
+  conversation,
+  onEvent,
+  contextCheckpoints,
+  contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
+) {
+  const reserveTokens = Math.max(
+    MIN_CONTEXT_RESERVE_TOKENS,
+    Math.floor(contextWindowTokens * 0.12),
+  );
+  const compactAtTokens = Math.max(
+    20_000,
+    contextWindowTokens - reserveTokens,
+  );
+  const estimatedTokensBefore = estimateConversationTokens(conversation);
+  if (estimatedTokensBefore <= compactAtTokens) return null;
+
+  let keepRecentFrom = Math.max(2, conversation.length - 12);
+  while (
+    keepRecentFrom < conversation.length &&
+    conversation[keepRecentFrom]?.role === "tool"
+  ) {
+    keepRecentFrom += 1;
   }
+  const olderMessages = conversation.slice(1, keepRecentFrom);
+  if (olderMessages.length < 4) return null;
+
+  const checkpoint = buildStructuredContextCheckpoint(olderMessages);
+  conversation.splice(1, olderMessages.length, {
+    role: "system",
+    content: `AporiaX durable context checkpoint:\n${JSON.stringify(
+      checkpoint,
+    )}`,
+  });
+  contextCheckpoints.push(checkpoint);
+  const estimatedTokensAfter = estimateConversationTokens(conversation);
+  onEvent?.({
+    type: "context.compacted",
+    checkpoint,
+    compactedMessages: olderMessages.length,
+    estimatedTokensBefore,
+    estimatedTokensAfter,
+    contextWindowTokens,
+  });
+  return checkpoint;
 }
 
 async function callModelProvider({
@@ -1620,7 +2052,10 @@ async function callModelProviderOnce({
 
 function buildChanges(changeMap) {
   return [...changeMap.values()].filter(
-    (change) => change.beforeContent !== change.afterContent,
+    (change) =>
+      Boolean(change.beforeMissing) !==
+        Boolean(change.afterMissing) ||
+      change.beforeContent !== change.afterContent,
   );
 }
 
@@ -1726,9 +2161,19 @@ function createSelfCheckPrompt(
   language = "zh-CN",
 ) {
   const changes = buildChanges(changeMap);
-  const changedPaths = changes.map((change) => change.path);
+  const reviewableChanges = changes.filter(
+    (change) =>
+      !change.afterMissing &&
+      (!change.binary || isOfficePath(change.path)),
+  );
+  const changedPaths = reviewableChanges.map(
+    (change) => change.path,
+  );
   const includesOfficeArtifacts = changes.some(
-    (change) => change.binary && isOfficePath(change.path),
+    (change) =>
+      !change.afterMissing &&
+      change.binary &&
+      isOfficePath(change.path),
   );
   if (language === "en") {
     return [
@@ -1830,16 +2275,19 @@ function formatToolStepDetail(
 }
 
 export async function runHarness({
+  runId = "",
   provider: providerConfig,
   workspacePath,
   modelId,
   thinking,
   effort,
   permission,
+  approvalMode = "manual",
   language = "zh-CN",
   messages,
   signal,
   onEvent,
+  control = null,
   requestApproval = async () => ({ approved: false }),
   sandboxExecutor = runCommandWithFallback,
   sandboxStatusResolver = getSandboxStatus,
@@ -1872,6 +2320,10 @@ export async function runHarness({
     model: modelConfig,
     onEvent: emit,
   });
+  const contextWindowTokens = Math.max(
+    32_000,
+    Number(modelConfig.contextWindow || DEFAULT_CONTEXT_WINDOW_TOKENS),
+  );
 
   const hasWorkspace =
     typeof workspacePath === "string" && Boolean(workspacePath.trim());
@@ -1880,6 +2332,8 @@ export async function runHarness({
     : null;
   const projectInstructions = await loadProjectInstructions(workspaceRoot);
   const projectConfig = await loadProjectConfig(workspaceRoot);
+  const effectiveApprovalMode =
+    approvalMode === "sandbox-auto" ? "sandbox-auto" : "manual";
   const permissionPolicy = createPermissionPolicy(
     permission,
     projectConfig.permissions,
@@ -1899,18 +2353,41 @@ export async function runHarness({
       : null;
   const commandToolAvailable = canRunCommands;
   const commandUsesContainer = Boolean(sandboxStatus?.available);
+  const commandUsesLocalSandbox =
+    commandToolAvailable &&
+    !commandUsesContainer &&
+    Boolean(
+      sandboxStatus?.localAvailable ||
+        sandboxStatus?.autoApprovalSafe,
+    );
   const toolCatalog = hasWorkspace
     ? TOOL_REGISTRY.catalog(permissionPolicy).map((tool) =>
         tool.name === "run_command" &&
         commandToolAvailable &&
-        !commandUsesContainer
+        effectiveApprovalMode === "sandbox-auto" &&
+        (commandUsesContainer || commandUsesLocalSandbox)
           ? {
               ...tool,
-              permission: "ask",
-              executionMode: "host-approval",
+              permission: "allow",
+              executionMode: commandUsesContainer
+                ? "container-auto-approval"
+                : "local-workspace-auto-approval",
               warning:
-                "Docker sandbox unavailable. Every host command requires explicit approval.",
+                commandUsesContainer
+                  ? "Commands run automatically inside the isolated Docker sandbox."
+                  : "Commands run automatically in a temporary workspace copy. Docker is optional for stronger OS isolation.",
             }
+          : tool.name === "run_command" &&
+              commandToolAvailable &&
+              !commandUsesContainer &&
+              !commandUsesLocalSandbox
+            ? {
+                ...tool,
+                permission: "ask",
+                executionMode: "host-approval",
+                warning:
+                  "No sandbox backend is available. Host execution requires explicit approval.",
+              }
           : tool,
       )
     : [];
@@ -1929,6 +2406,7 @@ export async function runHarness({
     model: modelId,
     workspace: hasWorkspace,
     permissionMode: permission,
+    approvalMode: effectiveApprovalMode,
     permissionConfigFile: projectConfig.file,
     tools: toolCatalog,
     sandbox: sandboxStatus,
@@ -1949,13 +2427,16 @@ export async function runHarness({
         "Do not use emoji, pictograms, decorative symbols, or status glyphs anywhere in the final answer.",
         "Do not generate SVG markup or SVG files unless the user explicitly asks for SVG output.",
         "Use git_status and git_diff to inspect repository changes when the workspace is a Git repository.",
+        "For work that needs more than one meaningful action, call update_plan before changing files. Keep one step in_progress at a time and update the plan whenever the route changes.",
         "Use create_word_document, create_presentation, and create_spreadsheet for real Office files. Do not try to write Office binaries with write_file.",
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
         "After creating or replacing an Office file, use inspect_office_file during mandatory self-check. Treat structural inspection as distinct from final visual rendering.",
         commandUsesContainer
           ? "Use run_command only when a command materially verifies the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
-          : commandToolAvailable
-            ? "Use run_command only when it materially verifies the result. The Docker sandbox is unavailable, so every command requires explicit user approval and runs on the host without OS isolation or network restrictions. Keep commands scoped to the authorized workspace and never claim container isolation."
+          : commandUsesLocalSandbox
+            ? "Use run_command only when it materially verifies the result. Commands run in a temporary copy of the authorized workspace and changes are conflict-checked before being synchronized back. This local sandbox uses the host network and process permissions; never claim OS-level or network isolation. Docker is optional and only adds stronger isolation."
+            : commandToolAvailable
+              ? "Use run_command only when it materially verifies the result. No sandbox backend is available, so commands require explicit user approval. Keep commands scoped to the authorized workspace and never claim isolation."
             : "Command execution is disabled for this task. Never claim that a build or test was run.",
         "When the Harness starts the mandatory self-check phase, re-read every changed file, fix issues you find, re-read files after fixes, and call complete_self_check before answering.",
         "The desktop UI already presents changed files, verification, Route history, and deliverables. Do not repeat them as Markdown inventory tables or tool-call logs in the final answer.",
@@ -1966,9 +2447,15 @@ export async function runHarness({
                 ? "Workspace file changes are available subject to the effective Harness permission policy."
                 : "File mutation tools are disabled for this task.",
               commandUsesContainer
-                ? "The sandboxed command tool is available subject to the effective Harness permission policy."
+                ? effectiveApprovalMode === "sandbox-auto"
+                  ? "Commands inside the isolated Docker sandbox are automatically approved."
+                  : "Sandboxed commands require explicit approval before execution."
+                : commandUsesLocalSandbox
+                  ? effectiveApprovalMode === "sandbox-auto"
+                    ? "Commands in the local temporary-workspace sandbox are automatically approved without per-command prompts."
+                    : "Commands in the local temporary-workspace sandbox require explicit approval."
                 : canRunCommands
-                  ? `The command tool uses mandatory host approval because the Docker sandbox is unavailable: ${sandboxStatus?.detail || "unknown reason"}`
+                  ? `The command tool uses mandatory host approval because no sandbox backend is available: ${sandboxStatus?.detail || "unknown reason"}`
                   : "The command tool is disabled for this task.",
             ].join(" "),
         "Keep the final answer concise. State the outcome, important limitations, and any user action still required.",
@@ -1990,6 +2477,12 @@ export async function runHarness({
 
   const steps = [];
   const changeMap = new Map();
+  const contextCheckpoints = [];
+  let plan = null;
+  const anchorStartedAt = new Date().toISOString();
+  let anchorBaseline = null;
+  let anchorLatest = null;
+  let anchorCaptureError = "";
   const selfCheck = {
     started: false,
     completed: false,
@@ -2002,15 +2495,122 @@ export async function runHarness({
   };
   let totalUsage = null;
 
+  const applyRuntimeControlBoundary = async () => {
+    await control?.waitIfPaused?.(signal);
+    const steeringMessages = control?.consumeSteering?.() || [];
+    if (!steeringMessages.length) return;
+    const sanitizedSteering = sanitizeConversation(steeringMessages, {
+      supportsImages: provider.supportsImages,
+    });
+    if (!sanitizedSteering.length) return;
+    conversation.push(...sanitizedSteering);
+    emit({
+      type: "steering.applied",
+      messageIds: steeringMessages.map((message) => message.id),
+      count: steeringMessages.length,
+    });
+  };
+
+  const refreshAnchorSnapshot = async ({
+    ignoreAbort = false,
+  } = {}) => {
+    if (!anchorBaseline || !workspaceRoot) return [];
+    try {
+      const nextSnapshot = await captureWorkspaceStateFromRoot(
+        workspaceRoot,
+        ignoreAbort ? undefined : signal,
+      );
+      const previousSnapshot = anchorLatest || anchorBaseline;
+      const changedSinceLast = new Set();
+      const paths = new Set([
+        ...previousSnapshot.files.keys(),
+        ...nextSnapshot.files.keys(),
+      ]);
+      for (const path of paths) {
+        const previous = previousSnapshot.files.get(path) || null;
+        const next = nextSnapshot.files.get(path) || null;
+        if (
+          Boolean(previous) !== Boolean(next) ||
+          previous?.binary !== next?.binary ||
+          previous?.content !== next?.content
+        ) {
+          changedSinceLast.add(path);
+        }
+      }
+      reconcileWorkspaceState(
+        changeMap,
+        anchorBaseline,
+        nextSnapshot,
+      );
+      anchorLatest = nextSnapshot;
+      return buildChanges(changeMap).filter((change) =>
+        changedSinceLast.has(change.path),
+      );
+    } catch (error) {
+      if (error?.name === "AbortError" && !ignoreAbort) throw error;
+      anchorCaptureError = error?.message || "Snapshot capture failed.";
+      return [];
+    }
+  };
+
+  const finalizeAnchor = async (status) => {
+    await refreshAnchorSnapshot({ ignoreAbort: true });
+    const changes = buildChanges(changeMap);
+    const latest = anchorLatest || anchorBaseline;
+    return {
+      changes,
+      anchor: {
+        id: runId || `anchor-${anchorStartedAt}`,
+        startedAt: anchorStartedAt,
+        completedAt: new Date().toISOString(),
+        status,
+        scope: "workspace-delta",
+        changedFiles: changes.length,
+        capturedFiles: latest?.capturedFiles || 0,
+        skippedFiles: Math.max(
+          anchorBaseline?.skippedFiles || 0,
+          latest?.skippedFiles || 0,
+        ),
+        snapshotComplete: Boolean(
+          anchorBaseline &&
+            latest &&
+            !anchorBaseline.truncated &&
+            !latest.truncated &&
+            !anchorCaptureError,
+        ),
+        warning: anchorCaptureError,
+      },
+    };
+  };
+
   try {
+    if (hasWorkspace && canWriteWorkspace) {
+      try {
+        anchorBaseline = await captureWorkspaceStateFromRoot(
+          workspaceRoot,
+          signal,
+        );
+        anchorLatest = anchorBaseline;
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        anchorCaptureError =
+          error?.message || "Initial snapshot capture failed.";
+      }
+    }
     for (let step = 0; ; step += 1) {
       throwIfAborted(signal);
+      await applyRuntimeControlBoundary();
       emit({
         type: "response.reset",
         round: step + 1,
         phase: selfCheck.started ? "self-check" : "work",
       });
-      compactConversationForRequest(conversation, emit);
+      compactConversationForRequest(
+        conversation,
+        emit,
+        contextCheckpoints,
+        contextWindowTokens,
+      );
       const { message, usage } = await provider.complete({
         signal,
         body: {
@@ -2121,6 +2721,7 @@ export async function runHarness({
           continue;
         }
 
+        const finalizedAnchor = await finalizeAnchor("completed");
         const completedResult = {
           status: "completed",
           content:
@@ -2130,7 +2731,8 @@ export async function runHarness({
                 ? "The task completed, but the model returned no text."
                 : "任务已完成，但模型没有返回文本结果。",
           steps,
-          changes: buildChanges(changeMap),
+          changes: finalizedAnchor.changes,
+          anchor: finalizedAnchor.anchor,
           usage: totalUsage,
           instructionFiles: projectInstructions.files,
           permissionConfigFile: projectConfig.file,
@@ -2140,6 +2742,8 @@ export async function runHarness({
           sandbox: sandboxStatus,
           tools: toolCatalog,
           selfCheck: buildSelfCheckResult(selfCheck, changeMap),
+          plan,
+          contextCheckpoints,
         };
         emit({
           type: "turn.completed",
@@ -2163,9 +2767,11 @@ export async function runHarness({
 
       for (const toolCall of message.tool_calls) {
         throwIfAborted(signal);
+        await control?.waitIfPaused?.(signal);
         let result;
         let success = true;
         let matchedVerificationCandidate = null;
+        const activity = describeToolActivity(toolCall);
         emit({
           type: "tool.requested",
           callId: toolCall.id,
@@ -2176,9 +2782,29 @@ export async function runHarness({
           type: "tool.started",
           tool: toolCall.function.name,
           phase: selfCheck.started ? "self-check" : "work",
+          planStepId:
+            plan?.steps.find((step) => step.status === "in_progress")
+              ?.id || null,
+          ...activity,
         });
         try {
-          if (toolCall.function.name === "complete_self_check") {
+          if (toolCall.function.name === "update_plan") {
+            plan = normalizeExecutionPlan(
+              parseToolArguments(toolCall),
+              plan,
+            );
+            result = {
+              modelResult: {
+                updated: true,
+                revision: plan.revision,
+                steps: plan.steps,
+              },
+            };
+            emit({
+              type: "plan.updated",
+              plan,
+            });
+          } else if (toolCall.function.name === "complete_self_check") {
             if (!selfCheck.started) {
               const changes = buildChanges(changeMap);
               if (!changes.length) {
@@ -2286,6 +2912,7 @@ export async function runHarness({
               toolCall,
               workspaceRoot,
               permissionPolicy,
+              approvalMode: effectiveApprovalMode,
               requestApproval,
               signal,
               sandboxExecutor,
@@ -2305,6 +2932,37 @@ export async function runHarness({
               if (selfCheck.started) {
                 selfCheck.completed = false;
                 selfCheck.report = null;
+              }
+            }
+            if (toolCall.function.name === "run_command") {
+              const snapshotChanges = await refreshAnchorSnapshot();
+              if (snapshotChanges.length > 0) {
+                result.modelResult.workspaceChanges =
+                  snapshotChanges.map((change) => ({
+                    path: change.path,
+                    created: Boolean(change.created),
+                    deleted: Boolean(change.deleted),
+                    binary: Boolean(change.binary),
+                    additions: change.additions || 0,
+                    deletions: change.deletions || 0,
+                  }));
+                for (const change of snapshotChanges) {
+                  emit({
+                    type: "file.changed",
+                    path: change.path,
+                    additions: change.additions,
+                    deletions: change.deletions,
+                    binary: Boolean(change.binary),
+                    artifact: change.artifact || null,
+                    created: change.created,
+                    deleted: change.deleted,
+                    source: "workspace-snapshot",
+                  });
+                }
+                if (selfCheck.started) {
+                  selfCheck.completed = false;
+                  selfCheck.report = null;
+                }
               }
             }
             if (
@@ -2391,6 +3049,9 @@ export async function runHarness({
             /Invalid arguments/i.test(modelResult?.error || ""));
         steps.push({
           name: toolCall.function.name,
+          planStepId:
+            plan?.steps.find((step) => step.status === "in_progress")
+              ?.id || null,
           success,
           skipped: Boolean(modelResult?.skipped),
           retry: shouldRetry,
@@ -2429,13 +3090,15 @@ export async function runHarness({
 
   } catch (error) {
     if (error?.name === "AbortError" || signal?.aborted) {
+      const finalizedAnchor = await finalizeAnchor("interrupted");
       const interruptedResult = {
         status: "interrupted",
         content: isEnglish
           ? "The task was stopped. Completed file changes remain available and can be reverted from the review panel."
           : "任务已停止。已经完成的文件修改仍保留，可在审核面板中撤销。",
         steps,
-        changes: buildChanges(changeMap),
+        changes: finalizedAnchor.changes,
+        anchor: finalizedAnchor.anchor,
         usage: totalUsage,
         instructionFiles: projectInstructions.files,
         permissionConfigFile: projectConfig.file,
@@ -2445,6 +3108,8 @@ export async function runHarness({
         sandbox: sandboxStatus,
         tools: toolCatalog,
         selfCheck: buildSelfCheckResult(selfCheck, changeMap),
+        plan,
+        contextCheckpoints,
       };
       emit({
         type: "turn.cancelled",
@@ -2454,6 +3119,7 @@ export async function runHarness({
       });
       return interruptedResult;
     }
+    const finalizedAnchor = await finalizeAnchor("failed");
     const failedResult = {
       status: "failed",
       error: true,
@@ -2461,7 +3127,8 @@ export async function runHarness({
         error?.message ||
         (isEnglish ? "Harness run failed." : "Harness 运行失败。"),
       steps,
-      changes: buildChanges(changeMap),
+      changes: finalizedAnchor.changes,
+      anchor: finalizedAnchor.anchor,
       usage: totalUsage,
       instructionFiles: projectInstructions.files,
       permissionConfigFile: projectConfig.file,
@@ -2471,6 +3138,8 @@ export async function runHarness({
       sandbox: sandboxStatus,
       tools: toolCatalog,
       selfCheck: buildSelfCheckResult(selfCheck, changeMap),
+      plan,
+      contextCheckpoints,
     };
     emit({
       type: "turn.failed",
@@ -2636,6 +3305,138 @@ export async function saveWorkspaceTextFile({
   };
 }
 
+function checkpointBinaryLimit(path) {
+  return isOfficePath(path)
+    ? MAX_OFFICE_FILE_BYTES
+    : MAX_ANCHOR_BINARY_FILE_BYTES;
+}
+
+function normalizeCheckpointState(change, side) {
+  const before = side === "before";
+  const missing = before
+    ? Boolean(change.beforeMissing ?? change.created)
+    : Boolean(change.afterMissing ?? change.deleted);
+  return {
+    missing,
+    binary: Boolean(change.binary),
+    content: missing
+      ? ""
+      : String(
+          before ? change.beforeContent ?? "" : change.afterContent ?? "",
+        ),
+  };
+}
+
+function validateCheckpoint(change) {
+  if (
+    !change ||
+    typeof change.path !== "string" ||
+    !change.path.trim() ||
+    typeof change.beforeContent !== "string" ||
+    typeof change.afterContent !== "string"
+  ) {
+    return false;
+  }
+  if (!change.binary) {
+    return (
+      change.beforeContent.length <= MAX_FILE_WRITE_CHARS * 6 &&
+      change.afterContent.length <= MAX_FILE_WRITE_CHARS * 6
+    );
+  }
+  const maximum = Math.ceil(checkpointBinaryLimit(change.path) * 1.4);
+  return (
+    change.beforeContent.length <= maximum &&
+    change.afterContent.length <= maximum
+  );
+}
+
+async function readCheckpointState(
+  workspaceRoot,
+  requestedPath,
+  binary,
+) {
+  const filePath = resolveWorkspacePath(workspaceRoot, requestedPath);
+  try {
+    const stats = await lstat(filePath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error("Checkpoint target is not a regular file.");
+    }
+    const verifiedPath = await realpath(filePath);
+    if (!isPathInside(workspaceRoot, verifiedPath)) {
+      throw new Error("Checkpoint target escapes the workspace.");
+    }
+    const buffer = await readFile(verifiedPath);
+    return {
+      missing: false,
+      binary,
+      content: binary
+        ? buffer.toString("base64")
+        : buffer.toString("utf8"),
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { missing: true, binary, content: "" };
+    }
+    throw error;
+  }
+}
+
+function checkpointStatesEqual(left, right) {
+  return (
+    Boolean(left?.missing) === Boolean(right?.missing) &&
+    (left?.missing ||
+      (Boolean(left?.binary) === Boolean(right?.binary) &&
+        left?.content === right?.content))
+  );
+}
+
+async function writeCheckpointState(
+  workspaceRoot,
+  requestedPath,
+  state,
+) {
+  const filePath = resolveWorkspacePath(workspaceRoot, requestedPath);
+  if (state.missing) {
+    try {
+      const stats = await lstat(filePath);
+      if (!stats.isFile() || stats.isSymbolicLink()) {
+        throw new Error("Refusing to remove a non-file checkpoint target.");
+      }
+      const verifiedPath = await realpath(filePath);
+      if (!isPathInside(workspaceRoot, verifiedPath)) {
+        throw new Error("Checkpoint target escapes the workspace.");
+      }
+      await rm(verifiedPath, { force: true });
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    return;
+  }
+
+  await mkdir(dirname(filePath), { recursive: true });
+  const verifiedParent = await realpath(dirname(filePath));
+  if (!isPathInside(workspaceRoot, verifiedParent)) {
+    throw new Error("Checkpoint parent escapes the workspace.");
+  }
+  try {
+    const stats = await lstat(filePath);
+    if (stats.isSymbolicLink() || stats.isDirectory()) {
+      throw new Error("Refusing to overwrite a symbolic link or directory.");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (state.binary) {
+    const buffer = Buffer.from(state.content, "base64");
+    if (buffer.length > checkpointBinaryLimit(requestedPath)) {
+      throw new Error("Binary checkpoint exceeds the restore limit.");
+    }
+    await writeFile(filePath, buffer);
+  } else {
+    await writeFile(filePath, state.content, "utf8");
+  }
+}
+
 export async function revertWorkspaceChanges({
   workspacePath,
   changes,
@@ -2645,18 +3446,7 @@ export async function revertWorkspaceChanges({
   const results = [];
 
   for (const change of changes.slice(0, 100)) {
-    if (
-      !change ||
-      typeof change.path !== "string" ||
-      typeof change.beforeContent !== "string" ||
-      typeof change.afterContent !== "string" ||
-      (change.binary &&
-        (!isOfficePath(change.path) ||
-          change.beforeContent.length >
-            Math.ceil(MAX_OFFICE_FILE_BYTES * 1.4) ||
-          change.afterContent.length >
-            Math.ceil(MAX_OFFICE_FILE_BYTES * 1.4)))
-    ) {
+    if (!validateCheckpoint(change)) {
       results.push({
         path: change?.path || "unknown",
         success: false,
@@ -2664,23 +3454,14 @@ export async function revertWorkspaceChanges({
       });
       continue;
     }
-
     try {
-      const filePath = await verifyWritableTarget(
+      const expected = normalizeCheckpointState(change, "after");
+      const current = await readCheckpointState(
         workspaceRoot,
         change.path,
+        expected.binary,
       );
-      let currentContent = null;
-      try {
-        const currentBuffer = await readFile(filePath);
-        currentContent = change.binary
-          ? currentBuffer.toString("base64")
-          : currentBuffer.toString("utf8");
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-      }
-
-      if (currentContent !== change.afterContent) {
+      if (!checkpointStatesEqual(current, expected)) {
         results.push({
           path: change.path,
           success: false,
@@ -2688,21 +3469,11 @@ export async function revertWorkspaceChanges({
         });
         continue;
       }
-
-      if (change.created) {
-        await rm(filePath, { force: true });
-      } else if (change.binary) {
-        const previousBuffer = Buffer.from(
-          change.beforeContent,
-          "base64",
-        );
-        if (previousBuffer.length > MAX_OFFICE_FILE_BYTES) {
-          throw new Error("Office checkpoint exceeds the restore limit.");
-        }
-        await writeFile(filePath, previousBuffer);
-      } else {
-        await writeFile(filePath, change.beforeContent, "utf8");
-      }
+      await writeCheckpointState(
+        workspaceRoot,
+        change.path,
+        normalizeCheckpointState(change, "before"),
+      );
       results.push({ path: change.path, success: true });
     } catch (error) {
       results.push({
@@ -2714,4 +3485,136 @@ export async function revertWorkspaceChanges({
   }
 
   return results;
+}
+
+export async function restoreWorkspaceAnchor({
+  workspacePath,
+  checkpoints,
+}) {
+  const workspaceRoot = await getVerifiedWorkspaceRoot(workspacePath);
+  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
+    return {
+      success: false,
+      restoredFiles: 0,
+      restoredCheckpoints: [],
+      conflicts: [],
+      reason: "no-checkpoints",
+    };
+  }
+
+  const operations = [];
+  for (const checkpoint of checkpoints.slice(0, 100)) {
+    for (const change of (checkpoint?.changes || []).slice(0, 100)) {
+      if (change?.reverted) continue;
+      operations.push({
+        checkpointId: String(checkpoint?.id || ""),
+        change,
+      });
+      if (operations.length >= 500) break;
+    }
+    if (operations.length >= 500) break;
+  }
+  if (!operations.length) {
+    return {
+      success: false,
+      restoredFiles: 0,
+      restoredCheckpoints: [],
+      conflicts: [],
+      reason: "no-active-checkpoints",
+    };
+  }
+
+  const virtualStates = new Map();
+  const originalStates = new Map();
+  const conflicts = [];
+  for (const operation of operations) {
+    const { change } = operation;
+    if (!validateCheckpoint(change)) {
+      conflicts.push({
+        path: change?.path || "unknown",
+        checkpointId: operation.checkpointId,
+        reason: "invalid-checkpoint",
+      });
+      continue;
+    }
+    let current = virtualStates.get(change.path);
+    if (!current) {
+      current = await readCheckpointState(
+        workspaceRoot,
+        change.path,
+        Boolean(change.binary),
+      );
+      originalStates.set(change.path, current);
+    }
+    const expected = normalizeCheckpointState(change, "after");
+    if (!checkpointStatesEqual(current, expected)) {
+      conflicts.push({
+        path: change.path,
+        checkpointId: operation.checkpointId,
+        reason: "file-changed-after-checkpoint",
+      });
+      continue;
+    }
+    virtualStates.set(
+      change.path,
+      normalizeCheckpointState(change, "before"),
+    );
+  }
+
+  if (conflicts.length > 0) {
+    return {
+      success: false,
+      restoredFiles: 0,
+      restoredCheckpoints: [],
+      conflicts,
+      reason: "preflight-conflict",
+    };
+  }
+
+  const appliedPaths = [];
+  try {
+    for (const [path, state] of virtualStates) {
+      await writeCheckpointState(workspaceRoot, path, state);
+      appliedPaths.push(path);
+    }
+  } catch (error) {
+    const rollbackFailures = [];
+    for (const path of [...appliedPaths].reverse()) {
+      try {
+        await writeCheckpointState(
+          workspaceRoot,
+          path,
+          originalStates.get(path),
+        );
+      } catch (rollbackError) {
+        rollbackFailures.push({
+          path,
+          reason: rollbackError.message,
+        });
+      }
+    }
+    return {
+      success: false,
+      restoredFiles: 0,
+      restoredCheckpoints: [],
+      conflicts: [
+        {
+          path: appliedPaths.at(-1) || "workspace",
+          reason: error.message,
+        },
+        ...rollbackFailures,
+      ],
+      reason: "restore-failed",
+    };
+  }
+
+  return {
+    success: true,
+    restoredFiles: virtualStates.size,
+    restoredCheckpoints: [
+      ...new Set(operations.map((operation) => operation.checkpointId)),
+    ],
+    conflicts: [],
+    restoredAt: new Date().toISOString(),
+  };
 }

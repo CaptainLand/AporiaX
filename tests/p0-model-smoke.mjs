@@ -7,6 +7,7 @@ import {
   collectTaskRouteRuns,
   enrichRouteEntries,
   getRouteToolMeta,
+  summarizeRoutePrompt,
   updateRunAssistant,
 } from "../src/p0-model.js";
 
@@ -200,6 +201,12 @@ const roundTask = {
       sourceUserId: "user-round-1",
       role: "assistant",
       status: "completed",
+      plan: {
+        revision: 2,
+        steps: [
+          { id: "page", title: "创建页面", status: "completed" },
+        ],
+      },
       route: [{ id: "step-1", title: "创建页面", status: "completed" }],
       changes: [{ path: "index.html", additions: 20, deletions: 0 }],
     },
@@ -222,6 +229,15 @@ const routeRuns = collectTaskRouteRuns(roundTask);
 assert.equal(routeRuns.length, 2);
 assert.equal(routeRuns[0].prompt, "创建品牌介绍页面");
 assert.equal(routeRuns[1].prompt, "把标题改成蓝色");
+assert.equal(routeRuns[0].summary, "创建品牌介绍页面");
+assert.equal(routeRuns[0].plan.revision, 2);
+assert.equal(routeRuns[0].plan.steps[0].id, "page");
+assert.equal(
+  summarizeRoutePrompt(
+    "01：这是一个很长的任务提示词，需要处理多个文件并完成验证，同时保留完整的修改记录。",
+  ),
+  "这是一个很长的任务提示词，需要处理多个文件并完成验证，同时保留完…",
+);
 assert.equal(collectLatestDeliverables(roundTask).files[0].additions, 1);
 
 const recoveredRun = collectTaskRouteRuns({

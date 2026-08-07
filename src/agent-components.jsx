@@ -128,6 +128,61 @@ function OfficeArtifactReview({ change }) {
   );
 }
 
+function estimateBase64Bytes(content) {
+  if (!content) return 0;
+  const padding = content.endsWith("==")
+    ? 2
+    : content.endsWith("=")
+      ? 1
+      : 0;
+  return Math.max(0, Math.floor((content.length * 3) / 4) - padding);
+}
+
+function BinaryCheckpointReview({ change }) {
+  const { tr } = useI18n();
+  const beforeBytes = change.beforeMissing
+    ? 0
+    : estimateBase64Bytes(change.beforeContent);
+  const afterBytes = change.afterMissing
+    ? 0
+    : estimateBase64Bytes(change.afterContent);
+  return (
+    <div className="binary-checkpoint-review">
+      <span className="binary-checkpoint-icon">
+        <FileText size={22} />
+      </span>
+      <div>
+        <strong>
+          {change.deleted || change.afterMissing
+            ? tr("二进制文件已删除", "Binary file deleted")
+            : change.created || change.beforeMissing
+              ? tr("二进制文件已创建", "Binary file created")
+              : tr("二进制快照", "Binary snapshot")}
+        </strong>
+        <span>{change.path}</span>
+      </div>
+      <dl>
+        <div>
+          <dt>{tr("之前", "Before")}</dt>
+          <dd>
+            {change.beforeMissing
+              ? tr("不存在", "Missing")
+              : formatBytes(beforeBytes)}
+          </dd>
+        </div>
+        <div>
+          <dt>{tr("之后", "After")}</dt>
+          <dd>
+            {change.afterMissing
+              ? tr("已删除", "Deleted")
+              : formatBytes(afterBytes)}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
 export function UserAttachments({ attachments }) {
   const { tr } = useI18n();
   if (!attachments?.length) return null;
@@ -298,14 +353,26 @@ export function DiffReviewPanel({
   reverting,
   confirmed = false,
   onConfirm,
+  workspacePath = "",
+  initialPath = "",
+  initialMode = "diff",
+  onSave,
+  onNotice = () => {},
 }) {
   const { tr } = useI18n();
   const availableChanges = changes || [];
   const [selectedPath, setSelectedPath] = useState(
-    availableChanges.find((change) => !change.reverted)?.path ||
+    availableChanges.find((change) => change.path === initialPath)?.path ||
+      availableChanges.find((change) => !change.reverted)?.path ||
       availableChanges[0]?.path ||
       "",
   );
+  const [viewMode, setViewMode] = useState(initialMode);
+  const [editorContent, setEditorContent] = useState("");
+  const [savedContent, setSavedContent] = useState("");
+  const [editorLoading, setEditorLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [previewMeta, setPreviewMeta] = useState(null);
   const selected =
     availableChanges.find((change) => change.path === selectedPath) ||
     availableChanges[0];
@@ -319,6 +386,16 @@ export function DiffReviewPanel({
   const activeChanges = availableChanges.filter(
     (change) => !change.reverted,
   );
+  const editable = Boolean(
+    selected &&
+      workspacePath &&
+      !selected.binary &&
+      !selected.deleted &&
+      !selected.afterMissing &&
+      !previewMeta?.readOnly &&
+      !previewMeta?.truncated,
+  );
+  const dirty = editable && editorContent !== savedContent;
 
   useEffect(() => {
     if (
@@ -335,6 +412,122 @@ export function DiffReviewPanel({
     );
   }, [availableChanges, selected]);
 
+  useEffect(() => {
+    if (
+      !initialPath ||
+      !availableChanges.some((change) => change.path === initialPath)
+    ) {
+      return;
+    }
+    setSelectedPath(initialPath);
+  }, [availableChanges, initialPath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewMeta(null);
+    setEditorContent("");
+    setSavedContent("");
+
+    if (
+      !selected ||
+      selected.binary ||
+      selected.deleted ||
+      selected.afterMissing
+    ) {
+      if (viewMode === "edit") setViewMode("diff");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const fallbackContent = String(selected.afterContent || "");
+    if (!workspacePath || !window.desktop?.workspace?.readPreview) {
+      setEditorContent(fallbackContent);
+      setSavedContent(fallbackContent);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setEditorLoading(true);
+    void window.desktop.workspace
+      .readPreview(workspacePath, selected.path)
+      .then((result) => {
+        if (cancelled) return;
+        setPreviewMeta(result);
+        const content = result.binary ? "" : String(result.content || "");
+        setEditorContent(content);
+        setSavedContent(content);
+        if (result.binary && viewMode === "edit") setViewMode("diff");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setEditorContent(fallbackContent);
+        setSavedContent(fallbackContent);
+        onNotice(
+          error?.message ||
+            tr(
+              "无法读取当前文件，已显示检查点内容",
+              "Unable to read the current file; showing checkpoint content instead",
+            ),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setEditorLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selected?.path,
+    selected?.binary,
+    selected?.deleted,
+    selected?.afterMissing,
+    selected?.afterContent,
+    workspacePath,
+  ]);
+
+  const saveSelectedFile = async () => {
+    if (!selected || !editable || !dirty || saving) return;
+    if (!window.desktop?.workspace?.saveText) {
+      onNotice(
+        tr(
+          "当前桌面桥不支持保存，请重启 AporiaX",
+          "The desktop bridge cannot save files. Restart AporiaX.",
+        ),
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await window.desktop.workspace.saveText({
+        workspacePath,
+        requestedPath: selected.path,
+        content: editorContent,
+        expectedContent: savedContent,
+      });
+      setPreviewMeta((current) => ({ ...(current || {}), ...result }));
+      setEditorContent(result.content);
+      setSavedContent(result.content);
+      onSave?.({
+        path: selected.path,
+        content: result.content,
+        savedAt: result.savedAt,
+      });
+      onNotice(
+        tr("已保存 {path}", "Saved {path}", { path: result.path }),
+      );
+    } catch (error) {
+      onNotice(
+        error?.message || tr("保存文件失败", "Failed to save the file"),
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div
       className="review-backdrop"
@@ -343,7 +536,19 @@ export function DiffReviewPanel({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="review-panel" aria-label={tr("文件变更审核", "File change review")}>
+      <section
+        className="review-panel"
+        aria-label={tr("文件变更审核", "File change review")}
+        onKeyDown={(event) => {
+          if (
+            (event.ctrlKey || event.metaKey) &&
+            event.key.toLowerCase() === "s"
+          ) {
+            event.preventDefault();
+            void saveSelectedFile();
+          }
+        }}
+      >
         <header className="review-panel-header">
           <div>
             <GitCompare size={17} />
@@ -373,9 +578,13 @@ export function DiffReviewPanel({
                     <Check size={12} />
                     {tr("已撤销", "Reverted")}
                   </em>
+                ) : change.deleted || change.afterMissing ? (
+                  <em className="deleted-change-kind">
+                    {tr("已删除", "Deleted")}
+                  </em>
                 ) : change.binary ? (
                   <em className="office-change-kind">
-                    {change.artifact?.label || "Office"}
+                    {change.artifact?.label || tr("二进制", "Binary")}
                   </em>
                 ) : (
                   <em>
@@ -395,20 +604,82 @@ export function DiffReviewPanel({
                     <FileGlyph path={selected.path} />
                     <strong>{selected.path}</strong>
                     {selected.created && <span>{tr("新增", "New")}</span>}
+                    {(selected.deleted || selected.afterMissing) && (
+                      <span className="deleted">
+                        {tr("已删除", "Deleted")}
+                      </span>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    disabled={selected.reverted || reverting}
-                    onClick={() => onRevert([selected.path])}
-                  >
-                    <Undo2 size={14} />
-                    {selected.reverted
-                      ? tr("已撤销", "Reverted")
-                      : tr("撤销此文件", "Revert this file")}
-                  </button>
+                  <div className="diff-preview-actions">
+                    {!selected.binary &&
+                      !selected.deleted &&
+                      !selected.afterMissing && (
+                        <div
+                          className="review-mode-switch"
+                          role="group"
+                          aria-label={tr("审核视图", "Review view")}
+                        >
+                          <button
+                            className={viewMode === "diff" ? "active" : ""}
+                            type="button"
+                            onClick={() => setViewMode("diff")}
+                          >
+                            {tr("对比", "Diff")}
+                          </button>
+                          <button
+                            className={viewMode === "edit" ? "active" : ""}
+                            type="button"
+                            disabled={!editable && Boolean(previewMeta)}
+                            onClick={() => setViewMode("edit")}
+                          >
+                            {tr("编辑", "Edit")}
+                          </button>
+                        </div>
+                      )}
+                    <button
+                      type="button"
+                      disabled={selected.reverted || reverting}
+                      onClick={() => onRevert([selected.path])}
+                    >
+                      <Undo2 size={14} />
+                      {selected.reverted
+                        ? tr("已撤销", "Reverted")
+                        : tr("撤销此文件", "Revert this file")}
+                    </button>
+                  </div>
                 </div>
                 {selected.binary ? (
-                  <OfficeArtifactReview change={selected} />
+                  selected.artifact ? (
+                    <OfficeArtifactReview change={selected} />
+                  ) : (
+                    <BinaryCheckpointReview change={selected} />
+                  )
+                ) : viewMode === "edit" ? (
+                  editorLoading ? (
+                    <div className="diff-empty">
+                      <LoaderCircle className="spin" size={15} />
+                      {tr("正在读取文件", "Loading file")}
+                    </div>
+                  ) : editable ? (
+                    <textarea
+                      className="review-code-editor"
+                      value={editorContent}
+                      onChange={(event) =>
+                        setEditorContent(event.target.value)
+                      }
+                      spellCheck={false}
+                      aria-label={tr("编辑 {path}", "Edit {path}", {
+                        path: selected.path,
+                      })}
+                    />
+                  ) : (
+                    <div className="diff-empty">
+                      {tr(
+                        "此文件只能审核，不能作为文本安全编辑。",
+                        "This file can be reviewed, but not safely edited as text.",
+                      )}
+                    </div>
+                  )
                 ) : (
                   <div className="diff-lines">
                     {rows.length ? (
@@ -442,8 +713,37 @@ export function DiffReviewPanel({
         </div>
 
         <footer className="review-panel-footer">
-          <span>{tr("撤销前会检查文件是否在此检查点后被再次修改。", "Before reverting, AporiaX checks whether the file changed after this checkpoint.")}</span>
+          <span>
+            {viewMode === "edit" && editable
+              ? dirty
+                ? tr(
+                    "有未保存的修改 · Ctrl+S 保存",
+                    "Unsaved changes · Ctrl+S to save",
+                  )
+                : tr("文件内容已保存", "File content is saved")
+              : tr(
+                  "撤销前会检查文件是否在此检查点后被再次修改。",
+                  "Before reverting, AporiaX checks whether the file changed after this checkpoint.",
+                )}
+          </span>
           <div>
+            {viewMode === "edit" && editable && (
+              <button
+                className="save-review-button"
+                type="button"
+                disabled={!dirty || saving}
+                onClick={() => void saveSelectedFile()}
+              >
+                {saving ? (
+                  <LoaderCircle className="spin" size={14} />
+                ) : (
+                  <Save size={14} />
+                )}
+                {saving
+                  ? tr("保存中", "Saving")
+                  : tr("保存文件", "Save file")}
+              </button>
+            )}
             {onConfirm && (
               <button
                 className="confirm-review-button"
