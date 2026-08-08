@@ -1,0 +1,42 @@
+title: "[Question / 提问] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for starting a discussion about AporiaX.
+
+        感谢你参与 AporiaX 的讨论。请勿提交 API Key、访问令牌、私人文件或其他敏感信息。
+  - type: input
+    id: version
+    attributes:
+      label: AporiaX version / AporiaX 版本
+      placeholder: "e.g. v0.3.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic / 主题
+      options:
+        - Getting started / 新手上手
+        - Models and APIs / 模型与 API
+        - Harness and tools / Harness 与工具
+        - Route, Evidence, Anchor
+        - Documents, slides, spreadsheets / 文档、演示与表格
+        - Sandbox and local execution / 沙箱与本地执行
+        - Other / 其他
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question / 问题
+      description: What are you trying to do, and where are you blocked? / 你想完成什么，现在卡在哪里？
+      placeholder: Include the goal, what you tried, and the result you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Useful context / 补充信息
+      description: Screenshots, logs, model/provider, and OS are useful. Remove secrets first. / 可附截图、日志、模型与系统信息，请先移除敏感内容。

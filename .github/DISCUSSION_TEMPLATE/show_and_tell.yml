@@ -1,0 +1,37 @@
+title: "[Showcase / 作品展示] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Show the community what you made with AporiaX.
+
+        欢迎展示你用 AporiaX 完成的代码、文档、演示文稿、表格或工作流。
+  - type: input
+    id: project
+    attributes:
+      label: Project / 项目名称
+      placeholder: What did you make?
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: From aporia to outcome / 从疑问到结果
+      description: What was the original problem, and what did AporiaX deliver? / 最初的问题是什么，AporiaX 最终交付了什么？
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Route and Evidence / 路径与依据
+      description: Share the important steps, tools, validation, or Anchor checkpoints. / 分享关键步骤、工具、验证方式或 Anchor 快照。
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots or links / 截图或链接
+      description: Drag in screenshots or link a public repository. Never include credentials or private files. / 可拖入截图或公开仓库链接，请勿包含密钥及私人文件。
+  - type: textarea
+    id: reflection
+    attributes:
+      label: What should improve next? / 下一步希望改进什么？
+      description: Tell us what worked and what still felt difficult. / 告诉我们哪些体验不错，哪些地方仍然困难。
