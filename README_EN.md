@@ -23,6 +23,10 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
+</p>
+
 AporiaX is a local-first desktop agent that turns ambiguous requests into
 observable, verifiable, and reversible routes. It works directly inside an
 authorized workspace, edits code, creates real Office files, and keeps actions,
@@ -42,6 +46,27 @@ chat response.
 - **Route** shows the steps that actually occurred during every task.
 - **Evidence** preserves tool calls, file changes, verification, and failures.
 - **Anchor** creates file checkpoints for line-by-line review and safe rollback.
+
+## See the work happen
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX particle-ocean welcome screen" /></td>
+    <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Begin with an aporia</strong><br><sub>A restrained particle-ocean welcome screen with bilingual entry</sub></td>
+    <td align="center"><strong>Route · Evidence · Anchor</strong><br><sub>See the route, preserve the evidence, and roll back safely</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/dialogue.png" alt="AporiaX Dialogue and mandatory self-check" /></td>
+    <td width="50%"><img src="docs/assets/route.png" alt="AporiaX Route action trace" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Dialogue</strong><br><sub>Tasks, self-checks, deliverables, and follow-ups in one workflow</sub></td>
+    <td align="center"><strong>Route</strong><br><sub>Inspect tools, files, commands, timing, and concrete changes step by step</sub></td>
+  </tr>
+</table>
 
 ## What it can do today
 

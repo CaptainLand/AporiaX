@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas / 问题与想法
+    url: https://github.com/CaptainLand/AporiaX/discussions
+    about: Ask for help or discuss an early idea before filing an issue. / 在提交 Issue 前提问或讨论早期想法。
+  - name: Download the latest release / 下载最新版本
+    url: https://github.com/CaptainLand/AporiaX/releases/latest
+    about: Confirm the problem still occurs in the latest version. / 请先确认问题在最新版本中仍然存在。

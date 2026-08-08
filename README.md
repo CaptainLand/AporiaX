@@ -23,6 +23,10 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
+</p>
+
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的
 行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、
 验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
@@ -38,6 +42,27 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
 - **Evidence**：保留工具调用、文件修改、验证结果和失败原因。
 - **Anchor**：为文件修改建立检查点，支持逐行审核和安全回退。
+
+## 看见行动如何发生
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX 粒子海欢迎页" /></td>
+    <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>从一个疑问开始</strong><br><sub>克制的粒子海开屏与中英双语入口</sub></td>
+    <td align="center"><strong>Route · Evidence · Anchor</strong><br><sub>看见路径，保留依据，随时安全回退</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/dialogue.png" alt="AporiaX Dialogue 对话与自检" /></td>
+    <td width="50%"><img src="docs/assets/route.png" alt="AporiaX Route 行动路径" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Dialogue</strong><br><sub>任务、自检、产物与继续追问留在同一工作流</sub></td>
+    <td align="center"><strong>Route</strong><br><sub>逐步查看工具、文件、命令、耗时与具体修改</sub></td>
+  </tr>
+</table>
 
 ## 现在可以做什么
 

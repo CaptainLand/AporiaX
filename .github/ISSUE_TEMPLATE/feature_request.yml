@@ -1,0 +1,50 @@
+name: Feature request / 功能建议
+description: Propose an improvement to AporiaX / 提议一项 AporiaX 改进
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AporiaX grows around real workflows. Tell us what outcome is difficult today.
+        AporiaX 希望围绕真实工作流成长，请先告诉我们现在什么事情最难完成。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 问题
+      description: What are you trying to accomplish, and where does the current workflow fail? / 你想完成什么，当前流程卡在哪里？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed experience / 期望体验
+      description: Describe the behavior from a user's perspective. / 从用户视角描述期望行为。
+    validations:
+      required: true
+  - type: dropdown
+    id: principle
+    attributes:
+      label: Product principle / 产品原则
+      options:
+        - Route — visible execution / 可见路径
+        - Evidence — reviewable basis / 可审核依据
+        - Anchor — safe rollback / 安全回退
+        - Productivity — code and artifacts / 代码与产物
+        - Extensibility — models, MCP, skills / 模型、MCP 与 Skills
+        - Other / 其他
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / 替代方案
+      description: How do you solve this today? / 你目前如何解决？
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 检查项
+      options:
+        - label: I searched existing issues and discussions. / 我已搜索现有 Issue 与 Discussion。
+          required: true
