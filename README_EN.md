@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v0.3.0"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?include_prereleases&color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Setup-0.3.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Setup-0.3.4-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -30,7 +30,7 @@ evidence, changes, and deliverables visible instead of reducing the work to a
 chat response.
 
 > [!IMPORTANT]
-> AporiaX `v0.3.0` is still a preview and currently ships for Windows x64.
+> AporiaX `v0.3.4` is still a preview and currently ships for Windows x64.
 > `run_command` runs automatically in a temporary local workspace copy and
 > conflict-checks project changes before synchronizing them back. Docker is
 > entirely optional; enabling it upgrades execution to an offline,
@@ -64,8 +64,17 @@ yet. Image delivery depends on the vision capability of the selected model.
 
 | Windows x64 | Use case |
 | --- | --- |
-| [Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Setup-0.3.0-x64.exe) | Standard installation, desktop shortcut, and Start menu |
-| [Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Portable-0.3.0-x64.exe) | Run and evaluate without installation |
+| [Installer 0.3.4](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Setup-0.3.4-x64.exe) | Standard installation, desktop shortcut, and Start menu |
+| [Portable 0.3.4](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Portable-0.3.4-x64.exe) | Run and evaluate without installation |
+
+### What's new in 0.3.4
+
+- Introduces the new AporiaX app icon and a unified visual identity.
+- Runs commands automatically in the local sandbox, with Docker as optional stronger isolation.
+- Adds durable run records, cross-turn recovery, live steering, and safe rollback anchors.
+- Refines Settings, New Task, Route, Workspace, and code review interfaces.
+
+[Read the complete 0.3.4 release notes](docs/RELEASE_NOTES_v0.3.4.md)
 
 After the first launch:
 
@@ -177,7 +186,7 @@ build/      Application icons and build resources
 
 See [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) for current Harness
 architecture and plans. See
-[docs/RELEASE_NOTES_v0.3.0.md](docs/RELEASE_NOTES_v0.3.0.md) for this release.
+[docs/RELEASE_NOTES_v0.3.4.md](docs/RELEASE_NOTES_v0.3.4.md) for this release.
 
 ## Contributing
 

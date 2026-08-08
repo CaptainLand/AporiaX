@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v0.3.0"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?include_prereleases&color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Setup-0.3.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Setup-0.3.4-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -28,7 +28,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX `v0.3.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
+> AporiaX `v0.3.4` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
 > `run_command` 默认在本地临时工作区副本中自动执行，结束后通过冲突检查同步项目变更，
 > 不需要逐条批准。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
 > 本地沙箱主要隔离工作区改动，仍使用当前用户的本机网络与进程权限。
@@ -60,8 +60,17 @@ Provider 模型的视觉能力决定。
 
 | Windows x64 | 适合场景 |
 | --- | --- |
-| [下载安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Setup-0.3.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
-| [下载便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.0/AporiaX-Portable-0.3.0-x64.exe) | 不安装，直接运行和试用 |
+| [下载安装版 0.3.4](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Setup-0.3.4-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
+| [下载便携版 0.3.4](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Portable-0.3.4-x64.exe) | 不安装，直接运行和试用 |
+
+### 0.3.4 更新
+
+- 启用全新的 AporiaX 应用图标与统一视觉识别。
+- 本地沙箱支持自动执行，Docker 作为可选的加强隔离层。
+- 加入持久化运行记录、跨轮恢复、任务纠偏与安全回退锚点。
+- 优化设置、新建任务、Route、Workspace 与代码审核界面。
+
+[查看完整的 0.3.4 发布说明](docs/RELEASE_NOTES_v0.3.4.md)
 
 首次启动后：
 
@@ -162,7 +171,7 @@ build/      应用图标等构建资源
 
 Harness 现状和后续计划见
 [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md)。本版本说明见
-[docs/RELEASE_NOTES_v0.3.0.md](docs/RELEASE_NOTES_v0.3.0.md)。
+[docs/RELEASE_NOTES_v0.3.4.md](docs/RELEASE_NOTES_v0.3.4.md)。
 
 ## 参与贡献
 
