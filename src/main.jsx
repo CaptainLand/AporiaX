@@ -77,6 +77,7 @@ const FILES_PANEL_WIDTH_KEY = "aporiax.files-panel-width.v1";
 const THEME_STORAGE_KEY = "aporiax.theme.v1";
 const DEFAULT_SETTINGS_PANEL_WIDTH = 320;
 const DEFAULT_FILES_PANEL_WIDTH = 520;
+const APP_ICON_URL = `${import.meta.env.BASE_URL}aporiax-icon.png`;
 
 function mergeRecoverableRuns(tasks, records, tr) {
   if (!Array.isArray(records) || records.length === 0) return tasks;
@@ -325,10 +326,9 @@ function AppTitlebar({ onOpenSettings }) {
         aria-label={tr("打开 AporiaX 设置", "Open AporiaX settings")}
         title={tr("打开设置", "Open settings")}
       >
-        <div className="brand-mark">
-          <span>A</span>
-          <i>X</i>
-        </div>
+        <span className="brand-mark">
+          <img src={APP_ICON_URL} alt="" aria-hidden="true" />
+        </span>
         <span>AporiaX</span>
       </button>
       <div className="titlebar-drag" />
@@ -2413,7 +2413,16 @@ function RouteView({
                   </span>
                   <span className="route-step-copy">
                     <strong>{entryTitle}</strong>
-                    <span title={detail}>{detail}</span>
+                    {entry.command ? (
+                      <code
+                        className="route-command-preview"
+                        title={entry.command}
+                      >
+                        {entry.command}
+                      </code>
+                    ) : (
+                      <span title={detail}>{detail}</span>
+                    )}
                   </span>
                   <em>{statusText}</em>
                   <ChevronDown size={15} />
@@ -4079,8 +4088,7 @@ function ApplicationSettingsModal({
         <header className="application-settings-header">
           <div>
             <span className="application-settings-mark">
-              <span>A</span>
-              <i>X</i>
+              <img src={APP_ICON_URL} alt="" aria-hidden="true" />
             </span>
             <div>
               <h2 id="application-settings-title">
@@ -4271,8 +4279,7 @@ function ApplicationSettingsModal({
             ) : (
               <section className="application-about">
                 <span className="application-about-mark">
-                  <span>A</span>
-                  <i>X</i>
+                  <img src={APP_ICON_URL} alt="" aria-hidden="true" />
                 </span>
                 <span className="application-about-kicker">AporiaX</span>
                 <h3>Every problem begins with an aporia.</h3>

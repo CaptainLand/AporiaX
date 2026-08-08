@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="build/icon.svg" width="88" alt="AporiaX" />
+  <img src="build/icon.png" width="88" alt="AporiaX" />
 </p>
 
 <h1 align="center">AporiaX</h1>
