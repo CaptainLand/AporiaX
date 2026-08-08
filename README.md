@@ -9,11 +9,6 @@
 </p>
 
 <p align="center">
-  <strong>从一个疑问开始。</strong><br>
-  写代码、制作文档、演示文稿与表格。告诉 AporiaX，你想抵达哪里。
-</p>
-
-<p align="center">
   <em>Every problem begins with an aporia.</em>
 </p>
 
@@ -37,13 +32,10 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 > 不需要逐条批准。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
 > 本地沙箱主要隔离工作区改动，仍使用当前用户的本机网络与进程权限。
 
-## 为什么是 AporiaX
-
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
 - **Evidence**：保留工具调用、文件修改、验证结果和失败原因。
 - **Anchor**：为文件修改建立检查点，支持逐行审核和安全回退。
 
-## 看见行动如何发生
 
 <table>
   <tr>
@@ -64,7 +56,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
   </tr>
 </table>
 
-## 现在可以做什么
+## 现在的一些功能
 
 | 能力 | 当前实现 |
 | --- | --- |
