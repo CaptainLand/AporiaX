@@ -110,13 +110,12 @@ upsertRelevantContextMessage(conversation, {
   ],
   memoryFacts,
 });
-assert.equal(
-  conversation.filter((message) =>
-    String(message.content || "").startsWith(
-      "AporiaX relevant durable context:",
-    ),
-  ).length,
-  1,
+const afterCompactionMessages = conversation.filter((message) =>
+  String(message.content || "").startsWith(
+    "AporiaX relevant durable context:",
+  ),
 );
+assert.equal(afterCompactionMessages.length, 1);
+assert.equal(afterCompactionMessages[0].content, stableContent);
 
 console.log("deepseek cache smoke: PASS");
