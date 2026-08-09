@@ -149,6 +149,11 @@ export function normalizeProviderModels(models, vendor) {
         typeof source.supportsTools === "boolean"
           ? source.supportsTools
           : true,
+      contextWindow:
+        Number.isFinite(Number(source.contextWindow)) &&
+        Number(source.contextWindow) >= 32_000
+          ? Math.min(2_000_000, Math.floor(Number(source.contextWindow)))
+          : undefined,
     });
   }
   return normalized;

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -38,6 +39,22 @@ import {
   getSandboxStatus,
   runCommandWithFallback,
 } from "./sandbox-runtime.js";
+import {
+  compactConversationForRequest as compactManagedConversation,
+  createProjectMemoryStore,
+  createTokenAccounting,
+  estimateConversationTokens as estimateManagedConversationTokens,
+  loadProjectInstructionContext,
+  mergeTokenUsage,
+  recordProviderUsage,
+  resolveScopedInstructions,
+  upsertRelevantContextMessage,
+} from "./agent-context.js";
+import { createWitnessMonitor } from "./witness-monitor.js";
+import {
+  createProjectUnderstandingStore,
+  normalizeProjectUnderstandingCandidate,
+} from "./project-understanding.js";
 
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_FILE_READ_CHARS = 120_000;
@@ -49,7 +66,6 @@ const MAX_SEARCH_RESULTS = 200;
 const MAX_SEARCH_FILE_BYTES = 2_000_000;
 const MAX_PATCH_TEXT_CHARS = 120_000;
 const MAX_TREE_ENTRIES = 700;
-const MAX_TREE_DEPTH = 6;
 const MAX_GIT_DIFF_CHARS = 120_000;
 const MAX_ANCHOR_FILES = 1_200;
 const MAX_ANCHOR_TOTAL_BYTES = 8_000_000;
@@ -57,14 +73,14 @@ const MAX_ANCHOR_TEXT_FILE_BYTES = 1_000_000;
 const MAX_ANCHOR_BINARY_FILE_BYTES = 2_000_000;
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
-const COMPACTED_TOOL_CONTENT_CHARS = 2_000;
-const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
-const MIN_CONTEXT_RESERVE_TOKENS = 12_000;
-const PROJECT_INSTRUCTION_FILES = [
-  "AGENTS.md",
-  "APORIAX.md",
-  "DEEPAGENT.md",
-];
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+const MAX_PARALLEL_TOOL_CALLS = 4;
+const DEFAULT_SUBAGENT_ROUNDS = 8;
+const MAX_SUBAGENT_ROUNDS = 20;
+const MAX_SUBAGENT_TASK_CHARS = 4_000;
+const MAX_SUBAGENT_RESULT_CHARS = 24_000;
+const MAX_SUBAGENT_EVIDENCE_CHARS = 24_000;
+const PROGRESSIVE_REVIEW_FILE_THRESHOLD = 3;
 const PROJECT_CONFIG_FILES = [
   ".aporiax.json",
   "aporiax.json",
@@ -98,6 +114,112 @@ const ANCHOR_IGNORES = new Set([
 ]);
 
 const TOOL_DEFINITIONS = [
+  {
+    type: "function",
+    function: {
+      name: "delegate_subagent",
+      description:
+        "Delegate an independent exploration, code review, or verification task to a restricted subagent with its own context. Issue multiple delegate_subagent calls in one response when the tasks are independent; AporiaX runs them concurrently. Use background=true for a long verification while the main agent continues other work.",
+      parameters: {
+        type: "object",
+        properties: {
+          role: {
+            type: "string",
+            enum: ["explore", "review", "verify", "curator"],
+            description:
+              "explore searches and explains, review inspects correctness without editing, verify may run project checks, and curator extracts durable project understanding with evidence.",
+          },
+          task: {
+            type: "string",
+            description:
+              "A self-contained task with the question, expected evidence, and completion criteria.",
+          },
+          scope: {
+            type: "array",
+            maxItems: 12,
+            items: { type: "string" },
+            description:
+              "Optional workspace-relative paths the subagent may inspect. Defaults to the whole workspace.",
+          },
+          background: {
+            type: "boolean",
+            description:
+              "Run without blocking the main agent. Background results are collected before final delivery.",
+          },
+          max_rounds: {
+            type: "integer",
+            minimum: 2,
+            maximum: MAX_SUBAGENT_ROUNDS,
+            description:
+              "Maximum isolated model rounds. Defaults to 8 and is a safety budget, not the parent task limit.",
+          },
+        },
+        required: ["role", "task"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "collect_subagents",
+      description:
+        "Collect completed or running background subagent results. Wait for them when their evidence is needed before continuing or answering.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_ids: {
+            type: "array",
+            maxItems: 12,
+            items: { type: "string" },
+            description:
+              "Optional agent ids to collect. Omit to collect every uncollected background subagent.",
+          },
+          wait: {
+            type: "boolean",
+            description:
+              "Wait for running agents to finish. Defaults to true.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember_project_fact",
+      description:
+        "Propose a durable, non-secret Project Understanding candidate for future tasks. The proposal is not committed immediately: the Curator subagent and Harness validate its evidence before creating a revision. Use only for reusable architecture, commands, conventions, decisions, debugging knowledge, or explicit user preferences; never submit credentials or one-off task details.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            enum: [
+              "architecture",
+              "module",
+              "command",
+              "convention",
+              "decision",
+              "debugging",
+              "known_issue",
+              "preference",
+              "verification",
+            ],
+          },
+          content: { type: "string" },
+          evidence: {
+            type: "string",
+            description:
+              "Optional file, command, or user statement supporting the fact.",
+          },
+        },
+        required: ["category", "content"],
+        additionalProperties: false,
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -395,6 +517,9 @@ const TOOL_DEFINITIONS = [
 ];
 
 const TOOL_RISKS = {
+  delegate_subagent: "control",
+  collect_subagents: "control",
+  remember_project_fact: "control",
   update_plan: "control",
   list_directory: "read",
   read_file: "read",
@@ -1639,33 +1764,6 @@ export function sanitizeConversation(
     });
 }
 
-async function loadProjectInstructions(workspaceRoot) {
-  if (!workspaceRoot) return { content: "", files: [] };
-  const sections = [];
-  const files = [];
-
-  for (const fileName of PROJECT_INSTRUCTION_FILES) {
-    try {
-      const filePath = await verifyExistingTarget(workspaceRoot, fileName);
-      const stats = await lstat(filePath);
-      if (!stats.isFile()) continue;
-      const content = (await readFile(filePath, "utf8")).slice(0, 32_000);
-      if (!content.trim()) continue;
-      files.push(fileName);
-      sections.push(`## ${fileName}\n${content}`);
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        // A missing optional project instruction file is expected.
-      }
-    }
-  }
-
-  return {
-    files,
-    content: sections.join("\n\n"),
-  };
-}
-
 async function loadProjectConfig(workspaceRoot) {
   if (!workspaceRoot) {
     return { file: null, permissions: {} };
@@ -1714,123 +1812,6 @@ function appendToolCallDelta(toolCalls, incomingCall) {
     current.function.arguments += incomingCall.function.arguments;
   }
   toolCalls[index] = current;
-}
-
-function estimateConversationTokens(conversation) {
-  return Math.ceil(JSON.stringify(conversation).length / 4);
-}
-
-function messageTextForCheckpoint(message) {
-  if (typeof message?.content === "string") return message.content;
-  if (!Array.isArray(message?.content)) return "";
-  return message.content
-    .filter((item) => item?.type === "text")
-    .map((item) => item.text || "")
-    .join("\n");
-}
-
-function buildStructuredContextCheckpoint(messages) {
-  const goals = [];
-  const decisions = [];
-  const toolEvidence = [];
-  const seenEvidence = new Set();
-
-  for (const message of messages) {
-    const text = messageTextForCheckpoint(message).replace(/\s+/g, " ").trim();
-    if (message?.role === "user" && text) {
-      goals.push(text.slice(0, 700));
-      continue;
-    }
-    if (message?.role === "assistant" && text) {
-      decisions.push(text.slice(0, 700));
-      continue;
-    }
-    if (message?.role !== "tool" || typeof message.content !== "string") {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(message.content);
-      const evidence = {
-        path: parsed?.path || null,
-        command: parsed?.command || null,
-        query: parsed?.query || null,
-        exitCode:
-          typeof parsed?.exitCode === "number" ? parsed.exitCode : null,
-        error: parsed?.error ? String(parsed.error).slice(0, 300) : null,
-      };
-      const key = JSON.stringify(evidence);
-      if (key !== "{}" && !seenEvidence.has(key)) {
-        seenEvidence.add(key);
-        toolEvidence.push(evidence);
-      }
-    } catch {
-      const preview = message.content
-        .slice(0, COMPACTED_TOOL_CONTENT_CHARS)
-        .replace(/\s+/g, " ");
-      if (preview && !seenEvidence.has(preview)) {
-        seenEvidence.add(preview);
-        toolEvidence.push({ preview });
-      }
-    }
-  }
-
-  return {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    goals: goals.slice(-8),
-    decisions: decisions.slice(-8),
-    evidence: toolEvidence.slice(-30),
-    compactedMessages: messages.length,
-    recoveryInstruction:
-      "Re-read files or rerun tools when exact older output is required.",
-  };
-}
-
-function compactConversationForRequest(
-  conversation,
-  onEvent,
-  contextCheckpoints,
-  contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
-) {
-  const reserveTokens = Math.max(
-    MIN_CONTEXT_RESERVE_TOKENS,
-    Math.floor(contextWindowTokens * 0.12),
-  );
-  const compactAtTokens = Math.max(
-    20_000,
-    contextWindowTokens - reserveTokens,
-  );
-  const estimatedTokensBefore = estimateConversationTokens(conversation);
-  if (estimatedTokensBefore <= compactAtTokens) return null;
-
-  let keepRecentFrom = Math.max(2, conversation.length - 12);
-  while (
-    keepRecentFrom < conversation.length &&
-    conversation[keepRecentFrom]?.role === "tool"
-  ) {
-    keepRecentFrom += 1;
-  }
-  const olderMessages = conversation.slice(1, keepRecentFrom);
-  if (olderMessages.length < 4) return null;
-
-  const checkpoint = buildStructuredContextCheckpoint(olderMessages);
-  conversation.splice(1, olderMessages.length, {
-    role: "system",
-    content: `AporiaX durable context checkpoint:\n${JSON.stringify(
-      checkpoint,
-    )}`,
-  });
-  contextCheckpoints.push(checkpoint);
-  const estimatedTokensAfter = estimateConversationTokens(conversation);
-  onEvent?.({
-    type: "context.compacted",
-    checkpoint,
-    compactedMessages: olderMessages.length,
-    estimatedTokensBefore,
-    estimatedTokensAfter,
-    contextWindowTokens,
-  });
-  return checkpoint;
 }
 
 async function callModelProvider({
@@ -1886,12 +1867,15 @@ function createOpenAICompatibleProvider({
     supportsThinking: Boolean(model.supportsThinking),
     thinkingMode: model.thinkingMode || "none",
     supportsModel: (modelId) => model.id === modelId,
-    complete: ({ body, signal }) =>
+    complete: ({ body, signal, onStreamEvent }) =>
       callModelProvider({
         provider: config,
         body,
         signal,
-        onEvent,
+        onEvent:
+          typeof onStreamEvent === "function"
+            ? onStreamEvent
+            : onEvent,
       }),
   });
 }
@@ -2059,6 +2043,145 @@ function buildChanges(changeMap) {
   );
 }
 
+function reviewableChanges(changeMap) {
+  return buildChanges(changeMap).filter(
+    (change) =>
+      (!change.binary || isOfficePath(change.path)),
+  );
+}
+
+function createChangeVersionSignature(changes) {
+  const digest = createHash("sha256");
+  for (const change of [...changes].sort((left, right) =>
+    left.path.localeCompare(right.path),
+  )) {
+    digest.update(change.path);
+    digest.update("\0");
+    digest.update(String(change.afterContent ?? ""));
+    digest.update("\0");
+  }
+  return digest.digest("hex");
+}
+
+function parseProgressiveReviewReport(summary, kind) {
+  const source = String(summary || "").trim();
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fenced || source.slice(
+    Math.max(0, source.indexOf("{")),
+    source.lastIndexOf("}") + 1,
+  );
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    return {
+      verdict: "uncertain",
+      checks: [],
+      findings: [],
+      commands: [],
+      remainingRisks: ["子 Agent 未返回可解析的结构化自检报告。"],
+      parseError: true,
+    };
+  }
+  const allowedVerdicts = kind === "verify"
+    ? new Set(["pass", "fail", "not_run", "uncertain"])
+    : new Set(["pass", "needs_changes", "uncertain"]);
+  const verdict = allowedVerdicts.has(parsed?.verdict)
+    ? parsed.verdict
+    : "uncertain";
+  return {
+    verdict,
+    checks: Array.isArray(parsed?.checks)
+      ? parsed.checks.map(String).filter(Boolean).slice(0, 20)
+      : [],
+    findings: Array.isArray(parsed?.findings)
+      ? parsed.findings
+          .map((finding) => ({
+            severity: String(finding?.severity || "medium").toLowerCase(),
+            path: String(finding?.path || ""),
+            message: String(finding?.message || "").trim(),
+          }))
+          .filter((finding) => finding.message)
+          .slice(0, 20)
+      : [],
+    commands: Array.isArray(parsed?.commands)
+      ? parsed.commands
+          .map((command) => ({
+            command: String(command?.command || ""),
+            cwd: String(command?.cwd || "."),
+            exitCode: Number.isInteger(command?.exit_code)
+              ? command.exit_code
+              : null,
+            passed: command?.passed === true,
+          }))
+          .filter((command) => command.command)
+          .slice(0, 8)
+      : [],
+    remainingRisks: Array.isArray(parsed?.remaining_risks)
+      ? parsed.remaining_risks.map(String).filter(Boolean).slice(0, 20)
+      : [],
+    parseError: verdict === "uncertain",
+  };
+}
+
+function createProgressiveReviewTask(changes, reason, language) {
+  const paths = changes.map((change) => change.path);
+  const fileList = changes
+    .map(
+      (change) =>
+        `- ${change.path}${change.afterMissing ? " (deleted)" : ""}`,
+    )
+    .join("\n");
+  const outputSchema = [
+    "Return only one JSON object with this exact shape:",
+    '{"verdict":"pass|needs_changes|uncertain","checks":["..."],"findings":[{"severity":"critical|high|medium|low","path":"...","message":"..."}],"remaining_risks":["..."]}',
+  ].join("\n");
+  if (language === "en") {
+    return [
+      `Perform an automated staged review (${reason}).`,
+      "Read every delegated file after its latest write. Use inspect_office_file for Office artifacts.",
+      "For a deleted path, confirm the deletion with read_file and inspect git_diff when available.",
+      "Review correctness, completeness, security, regressions, maintainability, and obvious edge cases.",
+      "Do not edit files. A pass verdict means there are no unresolved critical, high, or medium findings.",
+      fileList,
+      outputSchema,
+    ].join("\n");
+  }
+  return [
+    `执行自动分段自检（${reason}）。`,
+    "逐一读取下列文件的最新版本；Office 文件必须使用 inspect_office_file。",
+    "对于已删除路径，使用 read_file 确认其不存在，并在可用时检查 git_diff。",
+    "检查正确性、完整性、安全性、回归风险、可维护性和明显边界条件。",
+    "禁止修改文件。只有不存在尚未解决的严重、高级或中级问题时才能返回 pass。",
+    fileList,
+    outputSchema,
+  ].join("\n");
+}
+
+function createProgressiveVerifyTask(candidates, reason, language) {
+  const candidateList = candidates
+    .map((candidate) => `- ${candidate.command} (cwd: ${candidate.cwd})`)
+    .join("\n");
+  const outputSchema = [
+    "Return only one JSON object with this exact shape:",
+    '{"verdict":"pass|fail|not_run|uncertain","commands":[{"command":"...","cwd":".","exit_code":0,"passed":true}],"checks":["..."],"remaining_risks":["..."]}',
+  ].join("\n");
+  if (language === "en") {
+    return [
+      `Perform staged verification (${reason}).`,
+      "Run the single most relevant command below. Do not edit source files. Report the exact observed exit code.",
+      candidateList,
+      outputSchema,
+    ].join("\n");
+  }
+  return [
+    `执行分段验证（${reason}）。`,
+    "从下列候选中运行一条最相关的命令。禁止修改源文件，并如实记录命令和退出码。",
+    candidateList,
+    outputSchema,
+  ].join("\n");
+}
+
 function buildSelfCheckResult(selfCheck, changeMap) {
   const changedPaths = buildChanges(changeMap).map((change) => change.path);
   if (changedPaths.length === 0) {
@@ -2077,6 +2200,9 @@ function buildSelfCheckResult(selfCheck, changeMap) {
         candidates: [],
         results: [],
       },
+      mode: selfCheck.mode || "progressive",
+      segments: [],
+      seal: selfCheck.seal || null,
     };
   }
   return {
@@ -2091,6 +2217,23 @@ function buildSelfCheckResult(selfCheck, changeMap) {
     checks: selfCheck.report?.checks || [],
     improvements: selfCheck.report?.improvements || [],
     remainingRisks: selfCheck.report?.remainingRisks || [],
+    mode: selfCheck.mode || "legacy",
+    segments: (selfCheck.segments || []).map((segment) => ({
+      id: segment.id,
+      reason: segment.reason,
+      planStepId: segment.planStepId || null,
+      paths: segment.paths,
+      status: segment.status,
+      verdict: segment.verdict,
+      startedAt: segment.startedAt,
+      completedAt: segment.completedAt || null,
+      reviewAgentId: segment.reviewAgentId || null,
+      verifyAgentId: segment.verifyAgentId || null,
+      findings: segment.findings || [],
+      checks: segment.checks || [],
+      remainingRisks: segment.remainingRisks || [],
+    })),
+    seal: selfCheck.seal || null,
     verification: {
       required: selfCheck.verificationCandidates.length > 0,
       attempted: selfCheck.verificationAttempted,
@@ -2274,8 +2417,839 @@ function formatToolStepDetail(
   return error;
 }
 
+const SUBAGENT_ROLE_CONFIG = Object.freeze({
+  explore: {
+    description:
+      "Search and understand the codebase. Return concise findings with exact file and line evidence. Do not edit files.",
+    tools: new Set([
+      "list_directory",
+      "read_file",
+      "search_text",
+      "git_status",
+      "git_diff",
+      "inspect_office_file",
+    ]),
+  },
+  review: {
+    description:
+      "Review existing code or artifacts for correctness, security, completeness, maintainability, and regressions. Report actionable findings with evidence. Do not edit files.",
+    tools: new Set([
+      "list_directory",
+      "read_file",
+      "search_text",
+      "git_status",
+      "git_diff",
+      "inspect_office_file",
+    ]),
+  },
+  verify: {
+    description:
+      "Verify a focused claim using repository inspection and relevant project commands. Do not edit source files. Report the exact command, exit code, evidence, and remaining uncertainty.",
+    tools: new Set([
+      "list_directory",
+      "read_file",
+      "search_text",
+      "git_status",
+      "git_diff",
+      "inspect_office_file",
+      "run_command",
+    ]),
+  },
+  curator: {
+    description:
+      "Extract durable, reusable project understanding from verified task changes. Read the supporting files and return only the requested JSON proposal. Do not edit files or invent unsupported facts.",
+    tools: new Set([
+      "list_directory",
+      "read_file",
+      "search_text",
+      "git_status",
+      "git_diff",
+      "inspect_office_file",
+    ]),
+  },
+});
+
+const PARALLEL_MAIN_TOOLS = new Set([
+  "list_directory",
+  "read_file",
+  "search_text",
+  "git_status",
+  "git_diff",
+  "inspect_office_file",
+  "delegate_subagent",
+]);
+
+const MUTATING_TOOLS = new Set([
+  "write_file",
+  "apply_patch",
+  "run_command",
+  ...OFFICE_CREATE_TOOL_NAMES,
+]);
+
+function normalizeWorkspaceScope(values) {
+  const input = Array.isArray(values) && values.length ? values : ["."];
+  const normalized = [];
+  for (const item of input.slice(0, 12)) {
+    const value = String(item || ".")
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .replace(/\/{2,}/g, "/")
+      .replace(/\/$/, "") || ".";
+    if (
+      value.startsWith("/") ||
+      /^[a-zA-Z]:\//.test(value) ||
+      value.split("/").includes("..") ||
+      value.includes("\0")
+    ) {
+      throw new Error("Subagent scope must stay inside the workspace.");
+    }
+    if (!normalized.includes(value)) normalized.push(value);
+  }
+  return normalized.length ? normalized : ["."];
+}
+
+function normalizeSubagentInput(input) {
+  const role = String(input?.role || "").trim();
+  if (!SUBAGENT_ROLE_CONFIG[role]) {
+    throw new Error("Subagent role must be explore, review, verify, or curator.");
+  }
+  const task = String(input?.task || "").trim();
+  if (!task || task.length > MAX_SUBAGENT_TASK_CHARS) {
+    throw new Error(
+      `Subagent task must be between 1 and ${MAX_SUBAGENT_TASK_CHARS} characters.`,
+    );
+  }
+  const requestedRounds = Number(input?.max_rounds);
+  const maxRounds = Number.isInteger(requestedRounds)
+    ? Math.min(MAX_SUBAGENT_ROUNDS, Math.max(2, requestedRounds))
+    : DEFAULT_SUBAGENT_ROUNDS;
+  return {
+    role,
+    task,
+    scope: normalizeWorkspaceScope(input?.scope),
+    background: Boolean(input?.background),
+    maxRounds,
+  };
+}
+
+function normalizeUnderstandingCategory(category) {
+  if (category === "debugging") return "known_issue";
+  return [
+    "architecture",
+    "module",
+    "command",
+    "convention",
+    "decision",
+    "verification",
+    "known_issue",
+    "preference",
+  ].includes(category)
+    ? category
+    : "convention";
+}
+
+function createUnderstandingCuratorTask({
+  request,
+  finalAnswer,
+  changes,
+  currentFacts,
+  selfCheck,
+  taskSteps,
+  candidates,
+  language,
+}) {
+  const changedFiles = changes.map((change) => ({
+    path: change.path,
+    created: Boolean(change.created),
+    deleted: Boolean(change.deleted),
+    binary: Boolean(change.binary),
+    additions: change.additions || 0,
+    deletions: change.deletions || 0,
+  }));
+  return [
+    "Curate the durable Project Understanding produced by this completed AporiaX task.",
+    "Inspect the changed files before proposing facts. Preserve only reusable project knowledge: architecture, modules, commands, conventions, decisions, verification facts, known issues, or explicit durable preferences.",
+    "Do not store one-off progress, final-answer prose, credentials, secrets, timestamps, or guesses.",
+    "Every proposed fact must cite evidence you personally inspected during this subagent run. Prefer exact workspace-relative file paths. A verification command may be cited only when the supplied self-check says it passed.",
+    "The parent agent may have staged candidates through remember_project_fact. Re-check each candidate, keep only durable claims, and copy candidateId when accepting or refining it. An explicit user preference or decision may cite type=user evidence when it came from a staged candidate.",
+    "Return JSON only, without Markdown fences, using this schema:",
+    JSON.stringify({
+      summary: "short revision summary",
+      changes: [
+        {
+          operation: "upsert",
+          candidateId: "optional staged candidate id",
+          factId: "optional existing fact id when refining it",
+          category: "architecture|command|convention|decision|module|verification|known_issue|preference",
+          content: "durable fact",
+          confidence: 0.85,
+          evidence: [
+            { type: "file|command|test", reference: "src/example.js", detail: "brief support" },
+          ],
+        },
+      ],
+    }),
+    `Response language: ${language === "en" ? "English" : "Simplified Chinese"}.`,
+    `Task request:\n${String(request || "").slice(0, 6_000)}`,
+    `Final result summary:\n${String(finalAnswer || "").slice(0, 4_000)}`,
+    `Changed files:\n${JSON.stringify(changedFiles)}`,
+    `Observed task actions:\n${JSON.stringify(
+      (taskSteps || []).slice(-80).map((step) => ({
+        tool: step.name,
+        success: step.success,
+        path: step.path || null,
+        command: step.command || null,
+        exitCode: step.exitCode,
+      })),
+    ).slice(0, 12_000)}`,
+    `Staged Understanding candidates:\n${JSON.stringify(
+      (candidates || []).map((candidate) => ({
+        id: candidate.id,
+        category: candidate.category,
+        content: candidate.content,
+        evidence: candidate.evidence,
+        source: candidate.source,
+      })),
+    ).slice(0, 12_000)}`,
+    `Self-check evidence:\n${JSON.stringify({
+      mode: selfCheck?.mode,
+      seal: selfCheck?.seal,
+      verificationResults: selfCheck?.verificationResults || [],
+    }).slice(0, 8_000)}`,
+    `Current Understanding facts (reuse factId when refining):\n${JSON.stringify(
+      (currentFacts || []).slice(0, 60).map((fact) => ({
+        id: fact.id,
+        category: fact.category,
+        content: fact.content,
+      })),
+    ).slice(0, 16_000)}`,
+  ].join("\n\n");
+}
+
+function parseJsonObject(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const unfenced = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    const start = unfenced.indexOf("{");
+    const end = unfenced.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(unfenced.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function normalizeUnderstandingProposal({
+  summary,
+  evidence,
+  changedPaths,
+  passedVerifications,
+  candidates,
+}) {
+  const parsed = parseJsonObject(summary);
+  if (!parsed || !Array.isArray(parsed.changes)) {
+    throw new Error("Understanding curator did not return a valid JSON proposal.");
+  }
+  const inspectedPaths = new Set(
+    (evidence || [])
+      .filter((item) =>
+        ["read_file", "git_diff", "inspect_office_file"].includes(item?.tool),
+      )
+      .map((item) => String(item.path || "").replace(/\\/g, "/"))
+      .filter(Boolean),
+  );
+  const changed = new Set(
+    (changedPaths || []).map((path) => String(path).replace(/\\/g, "/")),
+  );
+  const commands = new Set(
+    (passedVerifications || [])
+      .filter((item) => item?.passed)
+      .map((item) => String(item.command || "").trim())
+      .filter(Boolean),
+  );
+  const stagedCandidates = Array.isArray(candidates) ? candidates : [];
+  const candidateById = new Map(
+    stagedCandidates.map((candidate) => [candidate.id, candidate]),
+  );
+  const changes = [];
+  for (const raw of parsed.changes.slice(0, 16)) {
+    if (raw?.operation === "remove") continue;
+    const content = String(raw?.content || "").replace(/\s+/g, " ").trim();
+    const category = normalizeUnderstandingCategory(raw?.category);
+    const confidence = Number(raw?.confidence);
+    if (!content || content.length > 1_600 || !Number.isFinite(confidence) || confidence < 0.65) {
+      continue;
+    }
+    const stagedCandidate =
+      candidateById.get(String(raw?.candidateId || "")) ||
+      stagedCandidates.find(
+        (candidate) =>
+          normalizeUnderstandingCategory(candidate.category) === category &&
+          String(candidate.content || "").toLowerCase() === content.toLowerCase(),
+      );
+    const validatedEvidence = [];
+    for (const item of (Array.isArray(raw?.evidence) ? raw.evidence : []).slice(0, 12)) {
+      const type = ["file", "command", "test", "user"].includes(item?.type)
+        ? item.type
+        : "file";
+      const reference = String(
+        item?.reference || item?.path || item?.command || "",
+      ).trim();
+      if (!reference) continue;
+      const normalizedReference = reference.replace(/\\/g, "/");
+      const fileVerified =
+        inspectedPaths.has(normalizedReference) ||
+        [...inspectedPaths].some(
+          (path) => path === normalizedReference || path.endsWith(`/${normalizedReference}`),
+        );
+      const commandVerified = commands.has(reference);
+      const userVerified =
+        type === "user" &&
+        stagedCandidate &&
+        (stagedCandidate.evidence || []).some(
+          (candidateEvidence) => candidateEvidence.type === "user",
+        );
+      if (type === "file" && !fileVerified) continue;
+      if (["command", "test"].includes(type) && !commandVerified) continue;
+      if (type === "user" && !userVerified) continue;
+      validatedEvidence.push({
+        type,
+        reference: normalizedReference,
+        detail: String(item?.detail || "").replace(/\s+/g, " ").trim().slice(0, 600),
+      });
+    }
+    if (!validatedEvidence.length) {
+      const fallbackPath = [...inspectedPaths].find((path) => changed.has(path));
+      if (fallbackPath) {
+        validatedEvidence.push({
+          type: "file",
+          reference: fallbackPath,
+          detail: "Inspected by the Understanding curator after the task completed.",
+        });
+      }
+    }
+    if (!validatedEvidence.length) continue;
+    changes.push({
+      operation: "upsert",
+      factId: raw?.factId ? String(raw.factId) : undefined,
+      category,
+      content,
+      confidence,
+      evidence: validatedEvidence,
+    });
+  }
+  return {
+    summary: String(parsed.summary || "Updated Project Understanding")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1_200),
+    changes,
+  };
+}
+
+function subagentToolPaths(toolName, input) {
+  if (toolName === "run_command") return [input.cwd || "."];
+  if (toolName === "git_diff") return input.path ? [input.path] : ["."];
+  if ([
+    "list_directory",
+    "read_file",
+    "search_text",
+    "inspect_office_file",
+  ].includes(toolName)) {
+    return [input.path || "."];
+  }
+  return ["."];
+}
+
+function requestedPathsForToolCall(toolCall) {
+  const toolName = toolCall?.function?.name || "";
+  let input;
+  try {
+    input = parseToolArguments(toolCall);
+  } catch {
+    return [];
+  }
+  if (toolName === "delegate_subagent") {
+    try {
+      return normalizeWorkspaceScope(input.scope);
+    } catch {
+      return [];
+    }
+  }
+  if (typeof input.path === "string") return [input.path];
+  if (toolName === "run_command") return [input.cwd || "."];
+  return [];
+}
+
+function pathIsInsideScope(path, scope) {
+  const normalized = String(path || ".")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/\/$/, "") || ".";
+  return scope.some(
+    (allowed) =>
+      allowed === "." ||
+      normalized === allowed ||
+      normalized.startsWith(`${allowed}/`),
+  );
+}
+
+function assertSubagentScope(toolName, input, scope) {
+  if (toolName === "run_command" && !scope.includes(".")) {
+    throw new Error(
+      "run_command requires repository-wide scope (\".\") because an arbitrary command cannot be reliably confined to a narrower path scope.",
+    );
+  }
+  if (
+    (toolName === "git_status" && scope.includes(".")) ||
+    (toolName === "git_diff" && !input.path && scope.includes("."))
+  ) {
+    return;
+  }
+  if (toolName === "git_status") {
+    throw new Error(
+      "git_status requires repository-wide scope (\".\") because it exposes the whole workspace.",
+    );
+  }
+  for (const path of subagentToolPaths(toolName, input)) {
+    if (!pathIsInsideScope(path, scope)) {
+      throw new Error(
+        `Subagent path is outside its delegated scope: ${path}`,
+      );
+    }
+  }
+}
+
+function createSubagentPermissionPolicy(parentPolicy, role) {
+  const allowed = SUBAGENT_ROLE_CONFIG[role].tools;
+  const policy = { "*": "deny" };
+  for (const toolName of allowed) {
+    policy[toolName] = getToolPermission(parentPolicy, toolName);
+  }
+  return Object.freeze(policy);
+}
+
+function compactSubagentModelResult(modelResult) {
+  const result = modelResult && typeof modelResult === "object"
+    ? { ...modelResult }
+    : { value: modelResult };
+  if (typeof result.content === "string" && result.content.length > 16_000) {
+    result.content = `${result.content.slice(0, 16_000)}\n[truncated]`;
+    result.truncated = true;
+  }
+  if (typeof result.diff === "string" && result.diff.length > 16_000) {
+    result.diff = `${result.diff.slice(0, 16_000)}\n[truncated]`;
+    result.truncated = true;
+  }
+  if (typeof result.stdout === "string" && result.stdout.length > 12_000) {
+    result.stdout = `${result.stdout.slice(0, 12_000)}\n[truncated]`;
+    result.truncated = true;
+  }
+  if (typeof result.stderr === "string" && result.stderr.length > 8_000) {
+    result.stderr = `${result.stderr.slice(0, 8_000)}\n[truncated]`;
+    result.truncated = true;
+  }
+  return result;
+}
+
+function subagentEvidence(toolName, result) {
+  const value = compactSubagentModelResult(result);
+  return {
+    tool: toolName,
+    path: value.path || null,
+    command: value.command || null,
+    cwd: value.cwd || null,
+    query: value.query || null,
+    exitCode:
+      typeof value.exitCode === "number" ? value.exitCode : null,
+    error: value.error ? String(value.error).slice(0, 500) : null,
+    preview: String(
+      value.content ||
+        value.diff ||
+        value.stdout ||
+        value.reason ||
+        "",
+    )
+      .replace(/\s+/g, " ")
+      .slice(0, 1_200),
+  };
+}
+
+function compactSubagentEvidence(items) {
+  const output = [];
+  let characters = 0;
+  for (const item of (items || []).slice(-40).reverse()) {
+    const compact = {
+      ...item,
+      preview: String(item?.preview || "").slice(0, 800),
+    };
+    const size = JSON.stringify(compact).length;
+    if (output.length && characters + size > MAX_SUBAGENT_EVIDENCE_CHARS) {
+      break;
+    }
+    output.unshift(compact);
+    characters += size;
+  }
+  return output;
+}
+
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from(
+    { length: Math.min(Math.max(1, limit), items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await worker(items[index], index);
+      }
+    },
+  );
+  await Promise.all(runners);
+  return results;
+}
+
+function subagentToolsAreParallel(toolCalls) {
+  return (
+    toolCalls.length > 1 &&
+    toolCalls.every((call) =>
+      [
+        "list_directory",
+        "read_file",
+        "search_text",
+        "git_status",
+        "git_diff",
+        "inspect_office_file",
+      ].includes(call?.function?.name),
+    )
+  );
+}
+
+async function runSubagentTask({
+  agentId,
+  input,
+  provider,
+  modelId,
+  modelConfig,
+  thinking,
+  effort,
+  workspaceRoot,
+  parentPermissionPolicy,
+  approvalMode,
+  requestApproval,
+  signal,
+  sandboxExecutor,
+  sandboxStatus,
+  language,
+  memoryFacts,
+  emit,
+}) {
+  const roleConfig = SUBAGENT_ROLE_CONFIG[input.role];
+  const permissionPolicy = createSubagentPermissionPolicy(
+    parentPermissionPolicy,
+    input.role,
+  );
+  const enabledTools = TOOL_REGISTRY
+    .definitions(permissionPolicy)
+    .filter((definition) => roleConfig.tools.has(definition.function.name));
+  const instructionContext = await loadProjectInstructionContext(
+    workspaceRoot,
+  );
+  const contextCheckpoints = [];
+  const tokenAccounting = createTokenAccounting();
+  tokenAccounting.providerOverheadTokens =
+    estimateManagedConversationTokens([
+      {
+        role: "system",
+        content: JSON.stringify(enabledTools),
+      },
+    ]);
+  let usageTotal = null;
+  const evidence = [];
+  const toolSteps = [];
+  const conversation = [
+    {
+      role: "system",
+      content: [
+        `You are the AporiaX ${input.role} subagent.`,
+        roleConfig.description,
+        `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
+        "Work independently and return a concise evidence-backed report to the parent agent.",
+        "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
+        "Do not expose hidden reasoning. Report conclusions, evidence, commands, and uncertainty only.",
+        instructionContext.root.content
+          ? `Project instructions:\n${instructionContext.root.content}`
+          : "",
+        memoryFacts?.length
+          ? `Relevant project memory:\n${JSON.stringify(memoryFacts.slice(0, 10))}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    },
+    { role: "user", content: input.task },
+  ];
+  const contextWindowTokens = Math.max(
+    32_000,
+    Number(modelConfig.contextWindow || DEFAULT_CONTEXT_WINDOW_TOKENS),
+  );
+
+  emit({
+    type: "subagent.started",
+    agentId,
+    role: input.role,
+    task: input.task,
+    scope: input.scope,
+    background: input.background,
+  });
+
+  try {
+    for (let round = 1; round <= input.maxRounds; round += 1) {
+      throwIfAborted(signal);
+      const relevant = upsertRelevantContextMessage(conversation, {
+        checkpoints: contextCheckpoints,
+        memoryFacts,
+      });
+      compactManagedConversation({
+        conversation,
+        onEvent: (event) =>
+          emit({ ...event, type: "subagent.context.compacted", agentId }),
+        contextCheckpoints,
+        contextWindowTokens,
+        accounting: tokenAccounting,
+        relevantMemory: relevant,
+      });
+      const requestConversation = conversation;
+      const { message, usage } = await provider.complete({
+        signal,
+        onStreamEvent: () => undefined,
+        body: {
+          model: modelId,
+          messages: requestConversation,
+          ...(provider.supportsTools && enabledTools.length
+            ? { tools: enabledTools, tool_choice: "auto" }
+            : {}),
+          ...(provider.supportsThinking &&
+          provider.thinkingMode === "deepseek"
+            ? {
+                thinking: { type: thinking ? "enabled" : "disabled" },
+                reasoning_effort: effort === "max" ? "max" : "high",
+              }
+            : {}),
+          ...(provider.supportsThinking &&
+          provider.thinkingMode === "reasoning-effort" &&
+          thinking
+            ? { reasoning_effort: effort === "max" ? "high" : "medium" }
+            : {}),
+        },
+      });
+      recordProviderUsage(tokenAccounting, usage, requestConversation);
+      usageTotal = mergeTokenUsage(usageTotal, usage);
+      if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
+        const summary = String(message.content || "")
+          .trim()
+          .slice(0, MAX_SUBAGENT_RESULT_CHARS);
+        const result = {
+          agentId,
+          role: input.role,
+          status: "completed",
+          summary:
+            summary ||
+            (language === "en"
+              ? "The subagent completed without a textual report."
+              : "子 Agent 已完成，但没有返回文本报告。"),
+          evidence: compactSubagentEvidence(evidence),
+          steps: toolSteps.slice(-60),
+          usage: usageTotal,
+          rounds: round,
+          instructionFiles: [...instructionContext.loadedFiles],
+        };
+        emit({
+          type: "subagent.completed",
+          agentId,
+          role: input.role,
+          status: result.status,
+          rounds: round,
+          toolSteps: toolSteps.length,
+          summary: result.summary.slice(0, 500),
+        });
+        return result;
+      }
+
+      conversation.push({
+        role: "assistant",
+        content: message.content ?? null,
+        tool_calls: message.tool_calls,
+      });
+      const parallelBatch = subagentToolsAreParallel(message.tool_calls);
+      const executeCall = async (toolCall) => {
+        const toolName = toolCall.function.name;
+        let modelResult;
+        let success = true;
+        emit({
+          type: "subagent.tool.started",
+          agentId,
+          callId: toolCall.id,
+          role: input.role,
+          tool: toolName,
+          parallel: parallelBatch,
+          ...describeToolActivity(toolCall),
+        });
+        try {
+          if (!roleConfig.tools.has(toolName)) {
+            throw new Error(`Tool is not available to ${input.role}: ${toolName}`);
+          }
+          const parsedInput = parseToolArguments(toolCall);
+          assertSubagentScope(toolName, parsedInput, input.scope);
+          const scoped = await resolveScopedInstructions(
+            instructionContext,
+            subagentToolPaths(toolName, parsedInput),
+          );
+          if (scoped.content) {
+            conversation.splice(1, 0, {
+              role: "system",
+              content: `Scoped project instructions for this subagent:\n${scoped.content}`,
+            });
+            emit({
+              type: "subagent.instructions.loaded",
+              agentId,
+              files: scoped.files,
+            });
+            if (toolName === "run_command") {
+              throw new Error(
+                `Scoped project instructions were loaded from ${scoped.files.join(", ")}. Review them, then retry the verification command if it remains appropriate.`,
+              );
+            }
+          }
+          const executed = await executeTool({
+            toolCall,
+            workspaceRoot,
+            permissionPolicy,
+            approvalMode,
+            requestApproval,
+            signal,
+            sandboxExecutor,
+            sandboxStatus,
+          });
+          modelResult = compactSubagentModelResult(executed.modelResult);
+        } catch (error) {
+          if (error?.name === "AbortError") throw error;
+          success = false;
+          modelResult = { error: error.message };
+        }
+        const item = subagentEvidence(toolName, modelResult);
+        evidence.push(item);
+        toolSteps.push({
+          name: toolName,
+          success,
+          path: item.path,
+          command: item.command,
+          exitCode: item.exitCode,
+          detail: item.error || null,
+        });
+        emit({
+          type: "subagent.tool.completed",
+          agentId,
+          callId: toolCall.id,
+          role: input.role,
+          tool: toolName,
+          parallel: parallelBatch,
+          success,
+          path: item.path,
+          command: item.command,
+          exitCode: item.exitCode,
+          detail: item.error || item.preview,
+        });
+        return { toolCall, modelResult };
+      };
+      const results = parallelBatch
+        ? await mapWithConcurrency(
+            message.tool_calls,
+            MAX_PARALLEL_TOOL_CALLS,
+            executeCall,
+          )
+        : await mapWithConcurrency(message.tool_calls, 1, executeCall);
+      for (const { toolCall, modelResult } of results) {
+        conversation.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(modelResult),
+        });
+      }
+    }
+
+    const result = {
+      agentId,
+      role: input.role,
+      status: "budget_exhausted",
+      summary:
+        language === "en"
+          ? `The subagent reached its ${input.maxRounds}-round safety budget. Use its evidence as partial results or delegate a narrower follow-up.`
+          : `子 Agent 已达到 ${input.maxRounds} 轮安全预算。请把现有证据视为部分结果，或委派一个范围更小的后续任务。`,
+      evidence: compactSubagentEvidence(evidence),
+      steps: toolSteps.slice(-60),
+      usage: usageTotal,
+      rounds: input.maxRounds,
+      instructionFiles: [...instructionContext.loadedFiles],
+    };
+    emit({
+      type: "subagent.completed",
+      agentId,
+      role: input.role,
+      status: result.status,
+      rounds: result.rounds,
+      toolSteps: toolSteps.length,
+      summary: result.summary,
+    });
+    return result;
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    const result = {
+      agentId,
+      role: input.role,
+      status: "failed",
+      summary: error.message,
+      evidence: compactSubagentEvidence(evidence),
+      steps: toolSteps.slice(-60),
+      usage: usageTotal,
+    };
+    emit({
+      type: "subagent.failed",
+      agentId,
+      role: input.role,
+      error: error.message,
+    });
+    return result;
+  }
+}
+
+function mainToolBatchCanRunInParallel(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length < 2) return false;
+  return toolCalls.every((toolCall) => {
+    if (!PARALLEL_MAIN_TOOLS.has(toolCall?.function?.name)) return false;
+    if (toolCall.function.name !== "delegate_subagent") return true;
+    try {
+      const input = normalizeSubagentInput(parseToolArguments(toolCall));
+      return input.role !== "verify" || input.background;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function runHarness({
   runId = "",
+  taskId = "",
   provider: providerConfig,
   workspacePath,
   modelId,
@@ -2291,6 +3265,8 @@ export async function runHarness({
   requestApproval = async () => ({ approved: false }),
   sandboxExecutor = runCommandWithFallback,
   sandboxStatusResolver = getSandboxStatus,
+  memoryDirectory = null,
+  understandingDirectory = null,
 }) {
   if (
     !providerConfig ||
@@ -2301,7 +3277,12 @@ export async function runHarness({
   ) {
     throw new Error("A valid model Provider is required.");
   }
-  const emit = createEventEmitter(onEvent);
+  const forwardEvent = createEventEmitter(onEvent);
+  let witness = null;
+  const emit = (event) => {
+    forwardEvent(event);
+    witness?.observe(event);
+  };
   const isEnglish = language === "en";
   const responseLanguage =
     isEnglish ? "English" : "Simplified Chinese";
@@ -2330,8 +3311,65 @@ export async function runHarness({
   const workspaceRoot = hasWorkspace
     ? await getVerifiedWorkspaceRoot(workspacePath)
     : null;
-  const projectInstructions = await loadProjectInstructions(workspaceRoot);
+  const instructionContext = await loadProjectInstructionContext(
+    workspaceRoot,
+  );
+  const projectInstructions = instructionContext.root;
   const projectConfig = await loadProjectConfig(workspaceRoot);
+  const initialMemoryQuery = (messages || [])
+    .slice(-8)
+    .map((message) => String(message?.content || ""))
+    .filter(Boolean)
+    .join("\n")
+    .slice(-24_000);
+  const projectMemory = await createProjectMemoryStore({
+    baseDirectory: memoryDirectory,
+    workspaceRoot,
+  });
+  const projectUnderstanding = await createProjectUnderstandingStore({
+    baseDirectory: understandingDirectory,
+    workspaceRoot,
+  });
+  let legacyUnderstandingImport = null;
+  if (
+    understandingDirectory &&
+    workspaceRoot &&
+    projectUnderstanding.snapshot().facts.length === 0 &&
+    projectMemory.facts.length > 0
+  ) {
+    legacyUnderstandingImport = await projectUnderstanding
+      .commit({
+        taskId: "legacy-project-memory",
+        runId,
+        source: "legacy-memory-import",
+        summary: `Imported ${projectMemory.facts.length} legacy Project Memory facts without modifying the legacy store`,
+        changes: projectMemory.facts.map((fact) => ({
+          operation: "upsert",
+          category: normalizeUnderstandingCategory(fact.category),
+          content: fact.content,
+          confidence: Math.min(
+            0.78,
+            0.62 + Math.log2((fact.occurrences || 1) + 1) * 0.025,
+          ),
+          evidence: [
+            {
+              type: "note",
+              reference: fact.evidence || "Legacy Project Memory",
+              detail:
+                "Compatibility import. Reconfirm against current project evidence when reused.",
+            },
+          ],
+        })),
+      })
+      .catch(() => null);
+  }
+  const initialMemoryFacts = projectUnderstanding.snapshot().facts.length
+    ? []
+    : projectMemory.retrieve(initialMemoryQuery, 10);
+  const initialUnderstandingFacts = projectUnderstanding.retrieve(
+    initialMemoryQuery,
+    14,
+  );
   const effectiveApprovalMode =
     approvalMode === "sandbox-auto" ? "sandbox-auto" : "manual";
   const permissionPolicy = createPermissionPolicy(
@@ -2399,6 +3437,7 @@ export async function runHarness({
             commandToolAvailable),
       )
     : [];
+  witness = createWitnessMonitor({ emit: forwardEvent });
   emit({
     type: "turn.started",
     provider: provider.id,
@@ -2411,6 +3450,17 @@ export async function runHarness({
     tools: toolCatalog,
     sandbox: sandboxStatus,
   });
+  if (legacyUnderstandingImport?.committed) {
+    emit({
+      type: "understanding.updated",
+      source: "legacy-memory-import",
+      revision: legacyUnderstandingImport.revision.number,
+      revisionId: legacyUnderstandingImport.revision.id,
+      summary: legacyUnderstandingImport.revision.summary,
+      factCount: legacyUnderstandingImport.state.facts.length,
+      changes: legacyUnderstandingImport.revision.changeCount,
+    });
+  }
   const conversation = [
     {
       role: "system",
@@ -2428,6 +3478,11 @@ export async function runHarness({
         "Do not generate SVG markup or SVG files unless the user explicitly asks for SVG output.",
         "Use git_status and git_diff to inspect repository changes when the workspace is a Git repository.",
         "For work that needs more than one meaningful action, call update_plan before changing files. Keep one step in_progress at a time and update the plan whenever the route changes.",
+        "Delegate independent codebase exploration, review, and verification to delegate_subagent. Give each subagent a focused task and path scope. Issue multiple delegate_subagent calls in one response when they do not depend on each other; AporiaX can run them concurrently.",
+        "Use background subagents for long verification while continuing independent work. Collect their results before relying on them or delivering the final answer.",
+        "Subagents are read-only by design. The parent agent remains responsible for every file edit and for fixing review findings. Harness automatically delegates version-matched staged review and verification, then performs a lightweight final evidence seal. A full parent self-check is used only as a safety fallback.",
+        "Project Understanding is the shared, versioned context for every task in this workspace. Relevant facts are injected automatically at the start of a task.",
+        "When you discover a reusable, non-secret project fact such as a build command, architecture, convention, decision, debugging insight, or explicit user preference, call remember_project_fact to stage a candidate. This does not write immediately: Harness automatically asks the Curator subagent to verify the candidate and creates an Understanding revision only when evidence is sufficient. Never claim a candidate was committed before Harness confirms it. Never submit credentials, tokens, or one-off task content.",
         "Use create_word_document, create_presentation, and create_spreadsheet for real Office files. Do not try to write Office binaries with write_file.",
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
         "After creating or replacing an Office file, use inspect_office_file during mandatory self-check. Treat structural inspection as distinct from final visual rendering.",
@@ -2438,7 +3493,7 @@ export async function runHarness({
             : commandToolAvailable
               ? "Use run_command only when it materially verifies the result. No sandbox backend is available, so commands require explicit user approval. Keep commands scoped to the authorized workspace and never claim isolation."
             : "Command execution is disabled for this task. Never claim that a build or test was run.",
-        "When the Harness starts the mandatory self-check phase, re-read every changed file, fix issues you find, re-read files after fixes, and call complete_self_check before answering.",
+        "When Harness reports staged review findings, fix them before finishing. If Harness explicitly starts the fallback mandatory self-check, re-read the listed current file versions and call complete_self_check before answering.",
         "The desktop UI already presents changed files, verification, Route history, and deliverables. Do not repeat them as Markdown inventory tables or tool-call logs in the final answer.",
         !hasWorkspace
           ? "No workspace is attached. Answer without file tools and ask the user to attach a workspace when file access is required."
@@ -2462,6 +3517,12 @@ export async function runHarness({
         projectInstructions.content
           ? `Follow these project instructions:\n${projectInstructions.content}`
           : "",
+        initialMemoryFacts.length
+          ? `Relevant durable project memory from earlier tasks:\n${JSON.stringify(initialMemoryFacts)}`
+          : "",
+        initialUnderstandingFacts.length
+          ? `Shared Project Understanding from other tasks in this workspace. Treat it as versioned context, verify it against current files before relying on details that may have changed:\n${JSON.stringify(initialUnderstandingFacts)}`
+          : "",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -2476,8 +3537,22 @@ export async function runHarness({
   }
 
   const steps = [];
+  const understandingCandidates = [];
   const changeMap = new Map();
   const contextCheckpoints = [];
+  const tokenAccounting = createTokenAccounting();
+  tokenAccounting.providerOverheadTokens =
+    estimateManagedConversationTokens([
+      {
+        role: "system",
+        content: JSON.stringify(enabledToolDefinitions),
+      },
+    ]);
+  const subagents = new Map();
+  const subagentController = new AbortController();
+  const abortSubagents = () => subagentController.abort();
+  signal?.addEventListener("abort", abortSubagents, { once: true });
+  let subagentCounter = 0;
   let plan = null;
   const anchorStartedAt = new Date().toISOString();
   let anchorBaseline = null;
@@ -2486,8 +3561,15 @@ export async function runHarness({
   const selfCheck = {
     started: false,
     completed: false,
+    mode: "progressive",
     reviewedVersions: new Map(),
     report: null,
+    segments: [],
+    seal: null,
+    segmentCounter: 0,
+    lastBlockedSignature: "",
+    repeatedBlockedAttempts: 0,
+    legacyFallback: false,
     verificationCandidates: [],
     verificationAttempted: false,
     verificationPassed: false,
@@ -2509,6 +3591,682 @@ export async function runHarness({
       messageIds: steeringMessages.map((message) => message.id),
       count: steeringMessages.length,
     });
+  };
+
+  const loadScopedContextForToolCalls = async (toolCalls) => {
+    const retryAfterInstructions = new Set();
+    for (const toolCall of toolCalls || []) {
+      const paths = requestedPathsForToolCall(toolCall);
+      if (!paths.length) continue;
+      const scoped = await resolveScopedInstructions(
+        instructionContext,
+        paths,
+      );
+      if (!scoped.content) continue;
+      let insertAt = 0;
+      while (conversation[insertAt]?.role === "system") insertAt += 1;
+      conversation.splice(insertAt, 0, {
+        role: "system",
+        content: `Scoped project instructions loaded for ${paths.join(", ")}:\n${scoped.content}`,
+      });
+      emit({
+        type: "instructions.loaded",
+        files: scoped.files,
+        paths,
+      });
+      if (MUTATING_TOOLS.has(toolCall.function.name)) {
+        retryAfterInstructions.add(toolCall.id);
+      }
+    }
+    return retryAfterInstructions;
+  };
+
+  const stageUnderstandingCandidate = (
+    rawInput,
+    { source = "parent-agent", evidenceType = null } = {},
+  ) => {
+    const category = normalizeUnderstandingCategory(rawInput?.category);
+    const rawEvidence = String(rawInput?.evidence || "").trim();
+    const inferredEvidenceType =
+      evidenceType ||
+      (["preference", "decision"].includes(category)
+        ? "user"
+        : ["command", "verification"].includes(category)
+          ? "command"
+          : /(?:^|[\\/])[\w.-]+\.[a-z0-9]{1,8}(?::\d+)?$/i.test(rawEvidence)
+            ? "file"
+            : "note");
+    const normalized = normalizeProjectUnderstandingCandidate({
+      category,
+      content: rawInput?.content,
+      confidence: Number(rawInput?.confidence) || 0.78,
+      evidence: rawEvidence
+        ? [
+            {
+              type: inferredEvidenceType,
+              reference: rawEvidence,
+              detail:
+                source === "parent-agent"
+                  ? "Staged by the parent agent for Curator review."
+                  : "Observed by Harness and staged for Curator review.",
+            },
+          ]
+        : inferredEvidenceType === "user"
+          ? [
+              {
+                type: "user",
+                reference: "Current user request",
+                detail: "Explicit durable preference or decision proposed by the parent agent.",
+              },
+            ]
+          : [],
+    });
+    const key = `${normalized.category}:${normalized.content.toLowerCase()}`;
+    const existing = understandingCandidates.find(
+      (candidate) =>
+        `${candidate.category}:${candidate.content.toLowerCase()}` === key,
+    );
+    if (existing) return existing;
+    const candidate = {
+      id: `candidate-${createHash("sha256")
+        .update(`${runId}:${key}`)
+        .digest("hex")
+        .slice(0, 12)}`,
+      ...normalized,
+      source,
+      stagedAt: new Date().toISOString(),
+    };
+    understandingCandidates.push(candidate);
+    emit({
+      type: "understanding.candidate.staged",
+      candidate: {
+        id: candidate.id,
+        category: candidate.category,
+        content: candidate.content,
+      },
+      pending: understandingCandidates.length,
+    });
+    return candidate;
+  };
+
+  const startSubagent = async (rawInput, callId = "") => {
+    const input = normalizeSubagentInput(rawInput);
+    subagentCounter += 1;
+    const agentId = `${runId || "run"}-sub-${subagentCounter}`;
+    const relevantMemory = [
+      ...projectUnderstanding.retrieve(input.task, 12),
+      ...(projectUnderstanding.snapshot().facts.length
+        ? []
+        : projectMemory.retrieve(input.task, 8)),
+    ].slice(0, 18);
+    const record = {
+      agentId,
+      callId,
+      role: input.role,
+      task: input.task,
+      background: input.background,
+      status: "running",
+      collected: false,
+      result: null,
+      promise: null,
+    };
+    record.promise = runSubagentTask({
+      agentId,
+      input,
+      provider,
+      modelId,
+      modelConfig,
+      thinking,
+      effort,
+      workspaceRoot,
+      parentPermissionPolicy: permissionPolicy,
+      approvalMode: effectiveApprovalMode,
+      requestApproval,
+      signal: subagentController.signal,
+      sandboxExecutor,
+      sandboxStatus,
+      language,
+      memoryFacts: relevantMemory,
+      emit,
+    })
+      .catch((error) => ({
+        agentId,
+        role: input.role,
+        status:
+          error?.name === "AbortError" || subagentController.signal.aborted
+            ? "interrupted"
+            : "failed",
+        summary: error?.message || "Subagent failed.",
+        evidence: [],
+        steps: [],
+        usage: null,
+      }))
+      .then((result) => {
+        record.status = result.status;
+        record.result = result;
+        totalUsage = mergeTokenUsage(totalUsage, result.usage);
+        return result;
+      });
+    subagents.set(agentId, record);
+    if (input.background) {
+      emit({
+        type: "subagent.backgrounded",
+        agentId,
+        role: input.role,
+        task: input.task,
+      });
+      return {
+        agentId,
+        role: input.role,
+        status: "running",
+        background: true,
+        message:
+          language === "en"
+            ? "The subagent is running in the background. Continue independent work and collect it before final delivery."
+            : "子 Agent 正在后台运行。可以继续处理独立工作，但最终交付前需要收集结果。",
+      };
+    }
+    const result = await record.promise;
+    record.collected = true;
+    return result;
+  };
+
+  const curateProjectUnderstanding = async ({ finalAnswer, changes }) => {
+    const evidenceSteps = steps.filter(
+      (step) =>
+        step.success &&
+        [
+          "read_file",
+          "search_text",
+          "git_status",
+          "git_diff",
+          "inspect_office_file",
+          "run_command",
+        ].includes(step.name),
+    );
+    if (
+      !understandingDirectory ||
+      !workspaceRoot ||
+      ((!Array.isArray(changes) || changes.length === 0) &&
+        evidenceSteps.length === 0 &&
+        understandingCandidates.length === 0)
+    ) {
+      return null;
+    }
+    emit({
+      type: "understanding.curating",
+      changedFiles: changes.length,
+      candidates: understandingCandidates.length,
+    });
+    try {
+      const currentState = projectUnderstanding.snapshot();
+      const request = (messages || [])
+        .filter((message) => message?.role === "user")
+        .slice(-3)
+        .map((message) => String(message?.content || ""))
+        .join("\n")
+        .slice(-8_000);
+      const curatorResult = await startSubagent(
+        {
+          role: "curator",
+          task: createUnderstandingCuratorTask({
+            request,
+            finalAnswer,
+            changes,
+            currentFacts: currentState.facts,
+            selfCheck,
+            taskSteps: evidenceSteps,
+            candidates: understandingCandidates,
+            language,
+          }),
+          scope: ["."],
+          background: false,
+          max_rounds: 7,
+        },
+        "understanding-curator",
+      );
+      if (curatorResult?.status !== "completed") {
+        throw new Error(
+          curatorResult?.summary || "Understanding curator did not complete.",
+        );
+      }
+      const proposal = normalizeUnderstandingProposal({
+        summary: curatorResult.summary,
+        evidence: curatorResult.evidence,
+        changedPaths: changes.map((change) => change.path),
+        passedVerifications: selfCheck.verificationResults,
+        candidates: understandingCandidates,
+      });
+      if (!proposal.changes.length) {
+        emit({
+          type: "understanding.skipped",
+          reason: "no-evidence-backed-delta",
+        });
+        return {
+          committed: false,
+          currentRevision: currentState.currentRevision,
+        };
+      }
+      const committed = await projectUnderstanding.commit({
+        taskId,
+        runId,
+        summary: proposal.summary,
+        changes: proposal.changes,
+      });
+      if (committed.committed) {
+        emit({
+          type: "understanding.updated",
+          revision: committed.revision.number,
+          revisionId: committed.revision.id,
+          summary: committed.revision.summary,
+          factCount: committed.state.facts.length,
+          changes: committed.revision.changes.length,
+        });
+      }
+      return {
+        committed: committed.committed,
+        currentRevision: committed.state.currentRevision,
+        revisionId: committed.revision?.id || null,
+        summary: committed.revision?.summary || proposal.summary,
+        factCount: committed.state.facts.length,
+      };
+    } catch (error) {
+      emit({
+        type: "understanding.failed",
+        error: String(error?.message || error).slice(0, 800),
+      });
+      return {
+        committed: false,
+        error: String(error?.message || error).slice(0, 800),
+      };
+    }
+  };
+
+  const runProgressiveSelfCheckSegment = async ({
+    reason,
+    planStepId = null,
+    runVerification = false,
+  }) => {
+    const pendingChanges = reviewableChanges(changeMap).filter(
+      (change) =>
+        selfCheck.reviewedVersions.get(change.path) !==
+        change.afterContent,
+    );
+    if (
+      runVerification &&
+      commandToolAvailable &&
+      selfCheck.verificationCandidates.length === 0
+    ) {
+      selfCheck.verificationCandidates =
+        await discoverVerificationCommands(workspaceRoot, changeMap);
+    }
+    const verificationCandidates = runVerification
+      ? selfCheck.verificationCandidates.slice(0, 4)
+      : [];
+    if (!pendingChanges.length && !verificationCandidates.length) {
+      return null;
+    }
+
+    selfCheck.segmentCounter += 1;
+    const segmentId = `segment-${selfCheck.segmentCounter}`;
+    const versions = new Map(
+      pendingChanges.map((change) => [change.path, change.afterContent]),
+    );
+    const segment = {
+      id: segmentId,
+      reason,
+      planStepId,
+      paths: pendingChanges.map((change) => change.path),
+      versions,
+      versionSignature: createChangeVersionSignature(pendingChanges),
+      status: "running",
+      verdict: "uncertain",
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      reviewAgentId: null,
+      verifyAgentId: null,
+      findings: [],
+      checks: [],
+      remainingRisks: [],
+    };
+    selfCheck.segments.push(segment);
+    emit({
+      type: "self_check.segment.started",
+      segmentId,
+      reason,
+      planStepId,
+      paths: segment.paths,
+      verificationCandidates,
+    });
+
+    const reviewPromise = pendingChanges.length
+      ? startSubagent(
+          {
+            role: "review",
+            task: createProgressiveReviewTask(
+              pendingChanges,
+              reason,
+              language,
+            ),
+            scope:
+              pendingChanges.length <= 12
+                ? pendingChanges.map((change) => change.path)
+                : ["."],
+            background: false,
+            max_rounds: 8,
+          },
+          `${segmentId}-review`,
+        )
+      : Promise.resolve(null);
+    const verifyPromise = verificationCandidates.length
+      ? startSubagent(
+          {
+            role: "verify",
+            task: createProgressiveVerifyTask(
+              verificationCandidates,
+              reason,
+              language,
+            ),
+            scope: ["."],
+            background: false,
+            max_rounds: 8,
+          },
+          `${segmentId}-verify`,
+        )
+      : Promise.resolve(null);
+    const [reviewResult, verifyResult] = await Promise.all([
+      reviewPromise,
+      verifyPromise,
+    ]);
+
+    const reviewReport = pendingChanges.length
+      ? parseProgressiveReviewReport(reviewResult?.summary, "review")
+      : {
+          verdict: "pass",
+          checks: [],
+          findings: [],
+          remainingRisks: [],
+          parseError: false,
+        };
+    const reviewEvidence = reviewResult?.evidence || [];
+    const missingReviewEvidence = pendingChanges
+      .filter((change) =>
+        !reviewEvidence.some((item) => {
+          if (item?.path !== change.path) return false;
+          if (change.afterMissing) {
+            return ["read_file", "git_diff"].includes(item.tool);
+          }
+          return change.binary
+            ? item.tool === "inspect_office_file"
+            : item.tool === "read_file";
+        }),
+      )
+      .map((change) => change.path);
+    if (reviewResult?.status !== "completed" || missingReviewEvidence.length) {
+      reviewReport.verdict = "uncertain";
+      reviewReport.parseError = true;
+      reviewReport.remainingRisks.push(
+        missingReviewEvidence.length
+          ? `缺少文件读取证据：${missingReviewEvidence.join(", ")}`
+          : "审查子 Agent 未正常完成。",
+      );
+    }
+    if (
+      reviewReport.findings.some((finding) =>
+        ["critical", "high", "medium"].includes(finding.severity),
+      )
+    ) {
+      reviewReport.verdict = "needs_changes";
+    }
+
+    const verifyReport = verificationCandidates.length
+      ? parseProgressiveReviewReport(verifyResult?.summary, "verify")
+      : {
+          verdict: "not_run",
+          checks: [],
+          commands: [],
+          remainingRisks: [],
+          parseError: false,
+        };
+    const observedCommands = (verifyResult?.evidence || [])
+      .filter(
+        (item) =>
+          item?.tool === "run_command" &&
+          item.command &&
+          findVerificationCandidate(verificationCandidates, {
+            command: item.command,
+            cwd: item.cwd || ".",
+          }),
+      )
+      .map((item) => ({
+        command: item.command,
+        cwd: item.cwd || ".",
+        passed: item.exitCode === 0,
+        exitCode: item.exitCode,
+        error: item.error || null,
+      }));
+    if (verificationCandidates.length) {
+      if (verifyResult?.status !== "completed" || !observedCommands.length) {
+        verifyReport.verdict = "uncertain";
+        verifyReport.parseError = true;
+        verifyReport.remainingRisks.push(
+          "验证子 Agent 没有留下可核验的命令执行证据。",
+        );
+      } else {
+        verifyReport.commands = observedCommands;
+        verifyReport.verdict = observedCommands.some(
+          (command) => command.passed,
+        )
+          ? "pass"
+          : "fail";
+        selfCheck.verificationAttempted = true;
+        selfCheck.verificationPassed =
+          selfCheck.verificationPassed ||
+          observedCommands.some((command) => command.passed);
+        for (const command of observedCommands) {
+          selfCheck.verificationResults.push(command);
+        }
+      }
+    }
+
+    if (reviewReport.verdict === "pass") {
+      for (const [path, version] of versions) {
+        if (changeMap.get(path)?.afterContent === version) {
+          selfCheck.reviewedVersions.set(path, version);
+        }
+      }
+    }
+    segment.reviewAgentId = reviewResult?.agentId || null;
+    segment.verifyAgentId = verifyResult?.agentId || null;
+    segment.findings = reviewReport.findings;
+    segment.checks = [
+      ...reviewReport.checks,
+      ...verifyReport.checks,
+    ];
+    segment.remainingRisks = [
+      ...reviewReport.remainingRisks,
+      ...verifyReport.remainingRisks,
+      ...(verifyReport.verdict === "fail"
+        ? ["项目验证命令未通过，失败证据已保留。"]
+        : []),
+    ];
+    segment.verdict = reviewReport.verdict === "pass" &&
+      verifyReport.verdict !== "uncertain"
+      ? "pass"
+      : reviewReport.verdict;
+    segment.status = "completed";
+    segment.completedAt = new Date().toISOString();
+    emit({
+      type: "self_check.segment.completed",
+      segmentId,
+      reason,
+      planStepId,
+      verdict: segment.verdict,
+      paths: segment.paths,
+      findings: segment.findings,
+      checks: segment.checks,
+      remainingRisks: segment.remainingRisks,
+      reviewAgentId: segment.reviewAgentId,
+      verifyAgentId: segment.verifyAgentId,
+    });
+    return segment;
+  };
+
+  const sealProgressiveSelfCheck = async () => {
+    const pendingPaths = reviewableChanges(changeMap)
+      .filter(
+        (change) =>
+          selfCheck.reviewedVersions.get(change.path) !==
+          change.afterContent,
+      )
+      .map((change) => change.path);
+    if (pendingPaths.length) return null;
+    if (
+      selfCheck.verificationCandidates.length > 0 &&
+      !selfCheck.verificationAttempted
+    ) {
+      return null;
+    }
+    const currentChanges = reviewableChanges(changeMap);
+    const currentSignature = createChangeVersionSignature(currentChanges);
+    const remainingRisks = [
+      ...new Set(
+        selfCheck.segments.flatMap(
+          (segment) => segment.remainingRisks || [],
+        ),
+      ),
+    ];
+    if (
+      selfCheck.verificationCandidates.length &&
+      !selfCheck.verificationPassed &&
+      !remainingRisks.some((risk) => /验证|verification|command/i.test(risk))
+    ) {
+      remainingRisks.push("项目验证命令未通过，仍需人工确认运行结果。");
+    }
+    if (!selfCheck.verificationCandidates.length) {
+      remainingRisks.push("未发现可执行的项目验证脚本，已完成分段静态复核。");
+    }
+    const unreviewableBinaryPaths = buildChanges(changeMap)
+      .filter(
+        (change) =>
+          change.binary &&
+          !change.afterMissing &&
+          !isOfficePath(change.path),
+      )
+      .map((change) => change.path);
+    if (unreviewableBinaryPaths.length) {
+      remainingRisks.push(
+        `以下二进制产物未进行内容级复核：${unreviewableBinaryPaths.join(", ")}`,
+      );
+    }
+    if (
+      buildChanges(changeMap).some(
+        (change) =>
+          change.binary &&
+          isOfficePath(change.path) &&
+          change.artifact?.visualQa !== "rendered",
+      )
+    ) {
+      remainingRisks.push(
+        "Office 文件已通过结构检查，最终视觉版式仍需在对应 Office 应用中确认。",
+      );
+    }
+    selfCheck.mode = "progressive";
+    selfCheck.started = true;
+    selfCheck.completed = true;
+    selfCheck.seal = {
+      id: `seal-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      versionSignature: currentSignature,
+      reviewedFiles: currentChanges.map((change) => change.path),
+      segmentCount: selfCheck.segments.length,
+      verificationAttempted: selfCheck.verificationAttempted,
+      verificationPassed: selfCheck.verificationPassed,
+    };
+    selfCheck.report = {
+      summary:
+        language === "en"
+          ? `${selfCheck.segments.length} staged subagent review segment(s) cover every current changed file version; the final evidence seal is complete.`
+          : `${selfCheck.segments.length} 个分段子 Agent 自检已覆盖全部当前文件版本，最终证据封印完成。`,
+      checks: [
+        ...new Set(
+          selfCheck.segments.flatMap((segment) => segment.checks || []),
+        ),
+      ].slice(0, 20),
+      improvements: [
+        ...new Set(
+          selfCheck.segments.flatMap((segment) =>
+            (segment.findings || []).map(
+              (finding) => `${finding.path || "任务"}: ${finding.message}`,
+            ),
+          ),
+        ),
+      ].slice(0, 20),
+      remainingRisks: [...new Set(remainingRisks)].slice(0, 20),
+    };
+    emit({
+      type: "self_check.sealed",
+      seal: selfCheck.seal,
+    });
+    emit({
+      type: "self_check.completed",
+      report: buildSelfCheckResult(selfCheck, changeMap),
+    });
+    return selfCheck.seal;
+  };
+
+  const collectSubagents = async (rawInput = {}) => {
+    const requestedIds = Array.isArray(rawInput.agent_ids)
+      ? rawInput.agent_ids.map(String)
+      : [];
+    const wait = rawInput.wait !== false;
+    const records = requestedIds.length
+      ? requestedIds.map((id) => subagents.get(id)).filter(Boolean)
+      : [...subagents.values()].filter((record) => !record.collected);
+    if (!records.length) {
+      return { results: [], running: [], message: "No matching subagents." };
+    }
+    const results = [];
+    const running = [];
+    for (const record of records) {
+      if (!wait && record.status === "running") {
+        running.push({
+          agentId: record.agentId,
+          role: record.role,
+          task: record.task,
+          status: record.status,
+        });
+        continue;
+      }
+      const result = await record.promise;
+      record.collected = true;
+      results.push(result);
+    }
+    emit({
+      type: "subagent.collected",
+      agentIds: results.map((result) => result.agentId),
+      running: running.map((record) => record.agentId),
+    });
+    return { results, running };
+  };
+
+  const collectOutstandingSubagents = async () => {
+    const records = [...subagents.values()].filter(
+      (record) => !record.collected,
+    );
+    if (!records.length) return [];
+    const results = [];
+    for (const record of records) {
+      const result = await record.promise;
+      record.collected = true;
+      results.push(result);
+    }
+    emit({
+      type: "subagent.collected",
+      agentIds: results.map((result) => result.agentId),
+      automatic: true,
+    });
+    return results;
   };
 
   const refreshAnchorSnapshot = async ({
@@ -2605,17 +4363,29 @@ export async function runHarness({
         round: step + 1,
         phase: selfCheck.started ? "self-check" : "work",
       });
-      compactConversationForRequest(
+      const relevantDurableContext = upsertRelevantContextMessage(
         conversation,
-        emit,
+        {
+          checkpoints: contextCheckpoints,
+          memoryFacts: projectMemory.facts,
+          plan,
+        },
+      );
+      compactManagedConversation({
+        conversation,
+        onEvent: emit,
         contextCheckpoints,
         contextWindowTokens,
-      );
+        accounting: tokenAccounting,
+        plan,
+        relevantMemory: relevantDurableContext,
+      });
+      const requestConversation = conversation;
       const { message, usage } = await provider.complete({
         signal,
         body: {
           model: modelId,
-          messages: conversation,
+          messages: requestConversation,
           ...(hasWorkspace && provider.supportsTools
             ? {
                 tools: enabledToolDefinitions,
@@ -2640,15 +4410,160 @@ export async function runHarness({
             : {}),
         },
       });
-      totalUsage = usage || totalUsage;
+      recordProviderUsage(
+        tokenAccounting,
+        usage,
+        requestConversation,
+      );
+      totalUsage = mergeTokenUsage(totalUsage, usage);
+      emit({
+        type: "context.usage",
+        round: step + 1,
+        usage,
+        totalUsage,
+        estimatedPromptTokens: estimateManagedConversationTokens(
+          conversation,
+          tokenAccounting,
+        ),
+        estimator: tokenAccounting.source,
+        contextWindowTokens,
+      });
 
       if (
         !Array.isArray(message.tool_calls) ||
         message.tool_calls.length === 0
       ) {
+        const outstandingSubagentResults =
+          await collectOutstandingSubagents();
+        if (outstandingSubagentResults.length) {
+          conversation.push({
+            role: "assistant",
+            content:
+              message.content ||
+              (isEnglish
+                ? "I finished the independent work while the background subagents were running."
+                : "后台子 Agent 运行期间，我已完成其余独立工作。"),
+          });
+          conversation.push({
+            role: "user",
+            content: [
+              "AporiaX Harness automatically collected the remaining background subagents.",
+              "Integrate their evidence, resolve conflicts, and continue the task before giving the final answer:",
+              JSON.stringify(outstandingSubagentResults),
+            ].join("\n"),
+          });
+          continue;
+        }
         const changes = buildChanges(changeMap);
-        if (changes.length > 0 && !selfCheck.started) {
+        const progressiveEligible =
+          !selfCheck.legacyFallback &&
+          (Boolean(plan) ||
+            reviewableChanges(changeMap).length >=
+              PROGRESSIVE_REVIEW_FILE_THRESHOLD ||
+            selfCheck.segments.length > 0);
+        if (
+          changes.length > 0 &&
+          !selfCheck.completed &&
+          progressiveEligible
+        ) {
+          if (!selfCheck.started) {
+            selfCheck.started = true;
+            selfCheck.mode = "progressive";
+            emit({
+              type: "self_check.started",
+              mode: "progressive",
+              paths: changes.map((change) => change.path),
+              verificationCandidates:
+                selfCheck.verificationCandidates,
+            });
+          }
+          const finalSegment = await runProgressiveSelfCheckSegment({
+            reason: "final-seal",
+            runVerification: true,
+          });
+          const currentSignature = createChangeVersionSignature(
+            reviewableChanges(changeMap),
+          );
+          if (finalSegment?.verdict === "needs_changes") {
+            if (selfCheck.lastBlockedSignature === currentSignature) {
+              selfCheck.repeatedBlockedAttempts += 1;
+            } else {
+              selfCheck.lastBlockedSignature = currentSignature;
+              selfCheck.repeatedBlockedAttempts = 1;
+            }
+            if (selfCheck.repeatedBlockedAttempts < 2) {
+              conversation.push({
+                role: "assistant",
+                content:
+                  message.content ||
+                  (isEnglish
+                    ? "The implementation reached its staged review checkpoint."
+                    : "当前实现已到达分段自检检查点。"),
+              });
+              conversation.push({
+                role: "user",
+                content: [
+                  "AporiaX staged Review subagent blocked the final seal.",
+                  "Fix the findings below, then continue the task. Do not merely restate them:",
+                  JSON.stringify(finalSegment.findings),
+                ].join("\n"),
+              });
+              continue;
+            }
+          }
+          const seal = !finalSegment || finalSegment.verdict === "pass"
+            ? await sealProgressiveSelfCheck()
+            : null;
+          if (!seal) {
+            selfCheck.mode = "legacy";
+            selfCheck.legacyFallback = true;
+            selfCheck.completed = false;
+            selfCheck.report = null;
+            selfCheck.seal = null;
+            selfCheck.reviewedVersions.clear();
+            if (!selfCheck.verificationCandidates.length) {
+              selfCheck.verificationCandidates =
+                !commandToolAvailable
+                  ? []
+                  : await discoverVerificationCommands(
+                      workspaceRoot,
+                      changeMap,
+                    );
+            }
+            emit({
+              type: "self_check.fallback",
+              reason:
+                finalSegment?.verdict || "incomplete-evidence",
+              paths: changes.map((change) => change.path),
+            });
+            conversation.push({
+              role: "assistant",
+              content:
+                message.content ||
+                (isEnglish
+                  ? "The staged review could not produce a complete evidence seal."
+                  : "分段自检未能生成完整的证据封印。"),
+            });
+            conversation.push({
+              role: "user",
+              content: [
+                createSelfCheckPrompt(
+                  changeMap,
+                  selfCheck.verificationCandidates,
+                  language,
+                ),
+                finalSegment?.findings?.length
+                  ? `Staged review findings:\n${JSON.stringify(finalSegment.findings)}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            });
+            continue;
+          }
+        } else if (changes.length > 0 && !selfCheck.started) {
           selfCheck.started = true;
+          selfCheck.mode = "legacy";
           selfCheck.completed = false;
           selfCheck.report = null;
           selfCheck.verificationCandidates =
@@ -2660,6 +4575,7 @@ export async function runHarness({
                 );
           emit({
             type: "self_check.started",
+            mode: "legacy",
             paths: changes.map((change) => change.path),
             verificationCandidates:
               selfCheck.verificationCandidates,
@@ -2722,6 +4638,44 @@ export async function runHarness({
         }
 
         const finalizedAnchor = await finalizeAnchor("completed");
+        for (const verification of selfCheck.verificationResults) {
+          if (!verification.passed) continue;
+          stageUnderstandingCandidate(
+            {
+              category: "verification",
+              content: `Verified command: ${verification.command} (cwd: ${verification.cwd || "."})`,
+              confidence: 0.96,
+              evidence: verification.command,
+            },
+            {
+              source: "harness-verification",
+              evidenceType: "command",
+            },
+          );
+        }
+        const finalContent =
+          typeof message.content === "string" && message.content.trim()
+            ? sanitizeFinalAnswer(message.content)
+            : isEnglish
+              ? "The task completed, but the model returned no text."
+              : "任务已完成，但模型没有返回文本结果。";
+        const curatedUnderstanding = await curateProjectUnderstanding({
+          finalAnswer: finalContent,
+          changes: finalizedAnchor.changes,
+        });
+        const understanding =
+          curatedUnderstanding ||
+          (legacyUnderstandingImport?.committed
+            ? {
+                committed: true,
+                currentRevision:
+                  legacyUnderstandingImport.state.currentRevision,
+                revisionId: legacyUnderstandingImport.revision.id,
+                summary: legacyUnderstandingImport.revision.summary,
+                factCount: legacyUnderstandingImport.state.facts.length,
+                source: "legacy-memory-import",
+              }
+            : null);
         const completedResult = {
           status: "completed",
           content:
@@ -2734,7 +4688,7 @@ export async function runHarness({
           changes: finalizedAnchor.changes,
           anchor: finalizedAnchor.anchor,
           usage: totalUsage,
-          instructionFiles: projectInstructions.files,
+          instructionFiles: [...instructionContext.loadedFiles],
           permissionConfigFile: projectConfig.file,
           provider: provider.id,
           providerName: provider.name,
@@ -2742,15 +4696,36 @@ export async function runHarness({
           sandbox: sandboxStatus,
           tools: toolCatalog,
           selfCheck: buildSelfCheckResult(selfCheck, changeMap),
+          understanding,
           plan,
           contextCheckpoints,
+          contextStats: {
+            estimator: tokenAccounting.source,
+            requests: tokenAccounting.requests,
+            estimatedPromptTokens: estimateManagedConversationTokens(
+              conversation,
+              tokenAccounting,
+            ),
+            contextWindowTokens,
+          },
+          subagents: [...subagents.values()].map((record) => ({
+            agentId: record.agentId,
+            role: record.role,
+            task: record.task,
+            status: record.status,
+            background: record.background,
+          })),
         };
+        completedResult.content = finalContent;
         emit({
           type: "turn.completed",
           status: completedResult.status,
           changedFiles: completedResult.changes.length,
           toolSteps: steps.length,
         });
+        completedResult.witness = witness.snapshot();
+        subagentController.abort();
+        signal?.removeEventListener("abort", abortSubagents);
         return completedResult;
       }
 
@@ -2764,6 +4739,134 @@ export async function runHarness({
           message.reasoning_content;
       }
       conversation.push(assistantToolMessage);
+
+      const retryAfterScopedInstructions =
+        await loadScopedContextForToolCalls(message.tool_calls);
+
+      if (mainToolBatchCanRunInParallel(message.tool_calls)) {
+        emit({
+          type: "parallel_batch.started",
+          count: message.tool_calls.length,
+          tools: message.tool_calls.map((call) => call.function.name),
+        });
+        const parallelResults = await mapWithConcurrency(
+          message.tool_calls,
+          MAX_PARALLEL_TOOL_CALLS,
+          async (toolCall) => {
+            throwIfAborted(signal);
+            await control?.waitIfPaused?.(signal);
+            const toolName = toolCall.function.name;
+            const activity = describeToolActivity(toolCall);
+            emit({
+              type: "tool.requested",
+              callId: toolCall.id,
+              tool: toolName,
+              phase: selfCheck.started ? "self-check" : "work",
+              parallel: true,
+            });
+            emit({
+              type: "tool.started",
+              callId: toolCall.id,
+              tool: toolName,
+              phase: selfCheck.started ? "self-check" : "work",
+              planStepId:
+                plan?.steps.find((step) => step.status === "in_progress")
+                  ?.id || null,
+              parallel: true,
+              ...activity,
+            });
+            let result;
+            let success = true;
+            try {
+              if (toolName === "delegate_subagent") {
+                result = {
+                  modelResult: await startSubagent(
+                    parseToolArguments(toolCall),
+                    toolCall.id,
+                  ),
+                };
+              } else {
+                result = await executeTool({
+                  toolCall,
+                  workspaceRoot,
+                  permissionPolicy,
+                  approvalMode: effectiveApprovalMode,
+                  requestApproval,
+                  signal,
+                  sandboxExecutor,
+                  sandboxStatus,
+                });
+              }
+            } catch (error) {
+              if (error?.name === "AbortError") throw error;
+              success = false;
+              result = { modelResult: { error: error.message } };
+            }
+            const modelResult = result.modelResult;
+            const detail = formatToolStepDetail(
+              toolName,
+              modelResult,
+              language,
+            );
+            emit({
+              type: "tool.completed",
+              callId: toolCall.id,
+              tool: toolName,
+              success,
+              detail,
+              phase: selfCheck.started ? "self-check" : "work",
+              parallel: true,
+            });
+            return { toolCall, result, success, detail };
+          },
+        );
+        for (const outcome of parallelResults) {
+          const { toolCall, result, success, detail } = outcome;
+          const modelResult = result.modelResult;
+          if (
+            selfCheck.started &&
+            changeMap.has(modelResult?.path) &&
+            ((changeMap.get(modelResult.path).binary &&
+              toolCall.function.name === "inspect_office_file") ||
+              (!changeMap.get(modelResult.path).binary &&
+                toolCall.function.name === "read_file"))
+          ) {
+            selfCheck.reviewedVersions.set(
+              modelResult.path,
+              changeMap.get(modelResult.path).afterContent,
+            );
+          }
+          steps.push({
+            name: toolCall.function.name,
+            planStepId:
+              plan?.steps.find((step) => step.status === "in_progress")
+                ?.id || null,
+            success,
+            skipped: Boolean(modelResult?.skipped),
+            retry: false,
+            parallel: true,
+            detail,
+            path: modelResult?.path || null,
+            command: modelResult?.command || null,
+            exitCode:
+              typeof modelResult?.exitCode === "number"
+                ? modelResult.exitCode
+                : null,
+            agentId: modelResult?.agentId || null,
+          });
+          conversation.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(modelResult),
+          });
+        }
+        emit({
+          type: "parallel_batch.completed",
+          count: parallelResults.length,
+          succeeded: parallelResults.filter((item) => item.success).length,
+        });
+        continue;
+      }
 
       for (const toolCall of message.tool_calls) {
         throwIfAborted(signal);
@@ -2780,6 +4883,7 @@ export async function runHarness({
         });
         emit({
           type: "tool.started",
+          callId: toolCall.id,
           tool: toolCall.function.name,
           phase: selfCheck.started ? "self-check" : "work",
           planStepId:
@@ -2788,11 +4892,53 @@ export async function runHarness({
           ...activity,
         });
         try {
-          if (toolCall.function.name === "update_plan") {
-            plan = normalizeExecutionPlan(
+          if (retryAfterScopedInstructions.has(toolCall.id)) {
+            throw new Error(
+              "Scoped project instructions were loaded for this path. Review them and retry the file mutation with compliant content.",
+            );
+          }
+          if (toolCall.function.name === "delegate_subagent") {
+            result = {
+              modelResult: await startSubagent(
+                parseToolArguments(toolCall),
+                toolCall.id,
+              ),
+            };
+          } else if (toolCall.function.name === "collect_subagents") {
+            result = {
+              modelResult: await collectSubagents(
+                parseToolArguments(toolCall),
+              ),
+            };
+          } else if (toolCall.function.name === "remember_project_fact") {
+            const candidate = stageUnderstandingCandidate(
+              parseToolArguments(toolCall),
+            );
+            result = {
+              modelResult: {
+                proposed: true,
+                committed: false,
+                candidate: {
+                  id: candidate.id,
+                  category: candidate.category,
+                  content: candidate.content,
+                },
+                next: "Curator review and Harness evidence validation",
+              },
+            };
+          } else if (toolCall.function.name === "update_plan") {
+            const previousPlan = plan;
+            const nextPlan = normalizeExecutionPlan(
               parseToolArguments(toolCall),
               plan,
             );
+            const newlyCompletedSteps = nextPlan.steps.filter((step) => {
+              if (step.status !== "completed") return false;
+              return previousPlan?.steps?.find(
+                (previousStep) => previousStep.id === step.id,
+              )?.status !== "completed";
+            });
+            plan = nextPlan;
             result = {
               modelResult: {
                 updated: true,
@@ -2804,6 +4950,32 @@ export async function runHarness({
               type: "plan.updated",
               plan,
             });
+            if (
+              newlyCompletedSteps.length &&
+              reviewableChanges(changeMap).some(
+                (change) =>
+                  selfCheck.reviewedVersions.get(change.path) !==
+                  change.afterContent,
+              )
+            ) {
+              const completedStep = newlyCompletedSteps.at(-1);
+              const stagedReview =
+                await runProgressiveSelfCheckSegment({
+                  reason: `plan-step:${completedStep.title}`,
+                  planStepId: completedStep.id,
+                  runVerification: /test|verify|build|lint|check|测试|验证|构建|检查/i.test(
+                    `${completedStep.title} ${completedStep.detail || ""}`,
+                  ),
+                });
+              result.modelResult.stagedReview = stagedReview
+                ? {
+                    segmentId: stagedReview.id,
+                    verdict: stagedReview.verdict,
+                    findings: stagedReview.findings,
+                    remainingRisks: stagedReview.remainingRisks,
+                  }
+                : null;
+            }
           } else if (toolCall.function.name === "complete_self_check") {
             if (!selfCheck.started) {
               const changes = buildChanges(changeMap);
@@ -2880,6 +5052,21 @@ export async function runHarness({
               );
             }
             selfCheck.completed = true;
+            selfCheck.mode = "legacy";
+            selfCheck.seal = {
+              id: `legacy-seal-${Date.now()}`,
+              createdAt: new Date().toISOString(),
+              versionSignature: createChangeVersionSignature(
+                reviewableChanges(changeMap),
+              ),
+              reviewedFiles: reviewableChanges(changeMap).map(
+                (change) => change.path,
+              ),
+              segmentCount: selfCheck.segments.length,
+              verificationAttempted: selfCheck.verificationAttempted,
+              verificationPassed: selfCheck.verificationPassed,
+              fallback: true,
+            };
             selfCheck.report = report;
             result = {
               modelResult: {
@@ -2932,6 +5119,7 @@ export async function runHarness({
               if (selfCheck.started) {
                 selfCheck.completed = false;
                 selfCheck.report = null;
+                selfCheck.seal = null;
               }
             }
             if (toolCall.function.name === "run_command") {
@@ -2962,6 +5150,7 @@ export async function runHarness({
                 if (selfCheck.started) {
                   selfCheck.completed = false;
                   selfCheck.report = null;
+                  selfCheck.seal = null;
                 }
               }
             }
@@ -3073,6 +5262,7 @@ export async function runHarness({
         });
         emit({
           type: "tool.completed",
+          callId: toolCall.id,
           tool: toolCall.function.name,
           success,
           skipped: Boolean(modelResult?.skipped),
@@ -3086,9 +5276,50 @@ export async function runHarness({
           content: JSON.stringify(modelResult),
         });
       }
+      if (!selfCheck.started) {
+        const pendingStagePaths = reviewableChanges(changeMap)
+          .filter(
+            (change) =>
+              selfCheck.reviewedVersions.get(change.path) !==
+              change.afterContent,
+          )
+          .map((change) => change.path);
+        if (
+          pendingStagePaths.length >=
+          PROGRESSIVE_REVIEW_FILE_THRESHOLD
+        ) {
+          const stagedReview = await runProgressiveSelfCheckSegment({
+            reason: "change-batch",
+            planStepId:
+              plan?.steps.find((step) => step.status === "in_progress")
+                ?.id || null,
+            runVerification: false,
+          });
+          if (
+            stagedReview &&
+            stagedReview.verdict !== "pass"
+          ) {
+            conversation.push({
+              role: "user",
+              content: [
+                "AporiaX staged Review subagent found issues in the latest change batch.",
+                "Address these findings before continuing:",
+                JSON.stringify(stagedReview.findings),
+                stagedReview.remainingRisks.length
+                  ? `Uncertainty: ${JSON.stringify(stagedReview.remainingRisks)}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            });
+          }
+        }
+      }
     }
 
   } catch (error) {
+    subagentController.abort();
+    signal?.removeEventListener("abort", abortSubagents);
     if (error?.name === "AbortError" || signal?.aborted) {
       const finalizedAnchor = await finalizeAnchor("interrupted");
       const interruptedResult = {
@@ -3100,7 +5331,7 @@ export async function runHarness({
         changes: finalizedAnchor.changes,
         anchor: finalizedAnchor.anchor,
         usage: totalUsage,
-        instructionFiles: projectInstructions.files,
+        instructionFiles: [...instructionContext.loadedFiles],
         permissionConfigFile: projectConfig.file,
         provider: provider.id,
         providerName: provider.name,
@@ -3110,6 +5341,18 @@ export async function runHarness({
         selfCheck: buildSelfCheckResult(selfCheck, changeMap),
         plan,
         contextCheckpoints,
+        contextStats: {
+          estimator: tokenAccounting.source,
+          requests: tokenAccounting.requests,
+          contextWindowTokens,
+        },
+        subagents: [...subagents.values()].map((record) => ({
+          agentId: record.agentId,
+          role: record.role,
+          task: record.task,
+          status: record.status,
+          background: record.background,
+        })),
       };
       emit({
         type: "turn.cancelled",
@@ -3117,6 +5360,7 @@ export async function runHarness({
         changedFiles: interruptedResult.changes.length,
         toolSteps: steps.length,
       });
+      interruptedResult.witness = witness.snapshot();
       return interruptedResult;
     }
     const finalizedAnchor = await finalizeAnchor("failed");
@@ -3130,7 +5374,7 @@ export async function runHarness({
       changes: finalizedAnchor.changes,
       anchor: finalizedAnchor.anchor,
       usage: totalUsage,
-      instructionFiles: projectInstructions.files,
+      instructionFiles: [...instructionContext.loadedFiles],
       permissionConfigFile: projectConfig.file,
       provider: provider.id,
       providerName: provider.name,
@@ -3140,6 +5384,18 @@ export async function runHarness({
       selfCheck: buildSelfCheckResult(selfCheck, changeMap),
       plan,
       contextCheckpoints,
+      contextStats: {
+        estimator: tokenAccounting.source,
+        requests: tokenAccounting.requests,
+        contextWindowTokens,
+      },
+      subagents: [...subagents.values()].map((record) => ({
+        agentId: record.agentId,
+        role: record.role,
+        task: record.task,
+        status: record.status,
+        background: record.background,
+      })),
     };
     emit({
       type: "turn.failed",
@@ -3148,56 +5404,56 @@ export async function runHarness({
       changedFiles: failedResult.changes.length,
       toolSteps: steps.length,
     });
+    failedResult.witness = witness.snapshot();
     return failedResult;
+  } finally {
+    witness?.dispose();
   }
 }
 
-export async function listWorkspaceTree(workspacePath) {
+export async function listWorkspaceTree(
+  workspacePath,
+  requestedDirectory = ".",
+) {
   const workspaceRoot = await getVerifiedWorkspaceRoot(workspacePath);
-  const entries = [];
-
-  async function visit(relativeDirectory, depth) {
-    if (entries.length >= MAX_TREE_ENTRIES || depth > MAX_TREE_DEPTH) return;
-    const directoryPath = await verifyExistingTarget(
-      workspaceRoot,
-      relativeDirectory || ".",
-    );
-    const children = await readdir(directoryPath, { withFileTypes: true });
-    children.sort((left, right) => {
-      if (left.isDirectory() !== right.isDirectory()) {
-        return left.isDirectory() ? -1 : 1;
-      }
-      return left.name.localeCompare(right.name);
-    });
-
-    for (const child of children) {
-      if (entries.length >= MAX_TREE_ENTRIES) break;
-      if (TREE_IGNORES.has(child.name) || child.isSymbolicLink()) continue;
-      const childRelative = relativeDirectory && relativeDirectory !== "."
-        ? `${relativeDirectory.replace(/\\/g, "/")}/${child.name}`
-        : child.name;
-      if (child.isDirectory()) {
-        entries.push({
-          path: childRelative,
-          name: child.name,
-          type: "directory",
-          depth,
-        });
-        await visit(childRelative, depth + 1);
-      } else if (child.isFile()) {
-        entries.push({
-          path: childRelative,
-          name: child.name,
-          type: "file",
-          depth,
-          extension: extname(child.name).slice(1).toLowerCase(),
-        });
-      }
-    }
+  const normalizedDirectory = String(requestedDirectory || ".")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/\/$/, "") || ".";
+  const directoryPath = await verifyExistingTarget(
+    workspaceRoot,
+    normalizedDirectory,
+  );
+  const stats = await lstat(directoryPath);
+  if (!stats.isDirectory()) {
+    throw new Error("The selected workspace path is not a directory.");
   }
-
-  await visit(".", 0);
+  const children = await readdir(directoryPath, { withFileTypes: true });
+  children.sort((left, right) => {
+    if (left.isDirectory() !== right.isDirectory()) {
+      return left.isDirectory() ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+  const entries = [];
+  for (const child of children) {
+    if (entries.length >= MAX_TREE_ENTRIES) break;
+    if (TREE_IGNORES.has(child.name) || child.isSymbolicLink()) continue;
+    const childRelative = normalizedDirectory !== "."
+      ? `${normalizedDirectory}/${child.name}`
+      : child.name;
+    entries.push({
+      path: childRelative,
+      name: child.name,
+      type: child.isDirectory() ? "directory" : "file",
+      parentPath: normalizedDirectory,
+      extension: child.isFile()
+        ? extname(child.name).slice(1).toLowerCase()
+        : "",
+    });
+  }
   return {
+    directory: normalizedDirectory,
     entries,
     truncated: entries.length >= MAX_TREE_ENTRIES,
   };

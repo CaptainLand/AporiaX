@@ -10,8 +10,10 @@ import {
   Brain,
   Check,
   ChevronDown,
+  ChevronRight,
   Copy,
   Ellipsis,
+  Eye,
   FileCode2,
   FileText,
   Files,
@@ -53,11 +55,10 @@ import {
   UserAttachments,
 } from "./agent-components";
 import {
+  buildWitnessRouteBlocks,
   closeRunningRouteEntries,
   collectTaskRouteRuns,
   enrichRouteEntries,
-  formatRouteDuration,
-  getDeliverableType,
   getRouteToolMeta,
   summarizeRoutePrompt,
   updateRunAssistant,
@@ -193,7 +194,7 @@ const DEFAULT_TASK_OPTIONS = {
 function readSavedTasks() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(saved) ? saved : [];
+    return normalizeTaskProjects(Array.isArray(saved) ? saved : []);
   } catch {
     return [];
   }
@@ -251,6 +252,50 @@ function getFolderName(folderPath) {
   if (!folderPath) return "";
   const parts = folderPath.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts.at(-1) || folderPath;
+}
+
+function normalizeWorkspacePath(folderPath) {
+  return String(folderPath || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+function projectIdForWorkspace(workspacePath) {
+  const normalized = normalizeWorkspacePath(workspacePath);
+  return normalized ? `workspace:${normalized}` : "workspace:unbound";
+}
+
+function normalizeTaskProjects(tasks) {
+  return (tasks || []).map((task) => ({
+    ...task,
+    workspaceName:
+      task.workspaceName ||
+      getFolderName(task.workspacePath) ||
+      "No workspace",
+    projectId:
+      task.projectId || projectIdForWorkspace(task.workspacePath),
+  }));
+}
+
+function buildWorkspaceProjects(tasks) {
+  const projects = new Map();
+  for (const task of tasks || []) {
+    const projectId = task.projectId || projectIdForWorkspace(task.workspacePath);
+    const current = projects.get(projectId) || {
+      id: projectId,
+      name:
+        task.workspaceName ||
+        getFolderName(task.workspacePath) ||
+        "No workspace",
+      path: task.workspacePath || null,
+      tasks: [],
+    };
+    current.tasks.push(task);
+    projects.set(projectId, current);
+  }
+  return [...projects.values()];
 }
 
 function getAvailableModels(providers) {
@@ -386,6 +431,9 @@ function Sidebar({
   const [contextMenu, setContextMenu] = useState(null);
   const [renameTask, setRenameTask] = useState(null);
   const [deleteTask, setDeleteTask] = useState(null);
+  const [collapsedProjects, setCollapsedProjects] = useState(
+    () => new Set(),
+  );
   const searchRef = useRef(null);
   const contextMenuRef = useRef(null);
   const filteredTasks = useMemo(() => {
@@ -395,6 +443,10 @@ function Sidebar({
       `${task.title} ${task.workspaceName}`.toLowerCase().includes(keyword),
     );
   }, [query, tasks]);
+  const projects = useMemo(
+    () => buildWorkspaceProjects(filteredTasks),
+    [filteredTasks],
+  );
 
   useEffect(() => {
     if (searchOpen) searchRef.current?.focus();
@@ -457,13 +509,13 @@ function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-top">
         <div className="sidebar-heading">
-          <span>{tr("任务", "Tasks")}</span>
-          <IconButton label={tr("搜索任务", "Search tasks")} onClick={onToggleSearch}>
+          <span>{tr("项目", "Projects")}</span>
+          <IconButton label={tr("搜索项目或任务", "Search projects or tasks")} onClick={onToggleSearch}>
             <Search size={16} />
           </IconButton>
         </div>
 
-        <button className="new-task-button" onClick={onNewTask}>
+        <button className="new-task-button" onClick={() => onNewTask()}>
           <SquarePen size={17} />
           <span>{tr("新建任务", "New task")}</span>
           <span className="new-task-shortcut">Ctrl N</span>
@@ -476,8 +528,8 @@ function Sidebar({
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={tr("搜索任务", "Search tasks")}
-              aria-label={tr("搜索任务", "Search tasks")}
+              placeholder={tr("搜索项目或任务", "Search projects or tasks")}
+              aria-label={tr("搜索项目或任务", "Search projects or tasks")}
             />
             {query && (
               <button aria-label={tr("清空搜索", "Clear search")} onClick={() => setQuery("")}>
@@ -489,39 +541,97 @@ function Sidebar({
       </div>
 
       <div className="task-list">
-        <div className="section-label">{tr("最近任务", "Recent tasks")}</div>
-        {filteredTasks.length ? (
-          filteredTasks.map((task) => (
-            <button
-              key={task.id}
-              className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
-              onClick={() => {
-                setContextMenu(null);
-                onSelectTask(task.id);
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                onSelectTask(task.id);
-                setContextMenu({
-                  taskId: task.id,
-                  x: Math.min(
-                    event.clientX,
-                    Math.max(10, window.innerWidth - 218),
-                  ),
-                  y: Math.min(
-                    event.clientY,
-                    Math.max(10, window.innerHeight - 230),
-                  ),
-                });
-              }}
-            >
-              <MessageSquare size={15} />
-              <span className="task-item-copy">
-                <span className="task-item-title">{task.title}</span>
-                <span className="task-item-workspace">{task.workspaceName}</span>
-              </span>
-            </button>
-          ))
+        <div className="section-label">{tr("项目", "Projects")}</div>
+        {projects.length ? (
+          projects.map((project) => {
+            const collapsed = collapsedProjects.has(project.id) && !query;
+            return (
+              <section className="sidebar-project" key={project.id}>
+                <div className="sidebar-project-row">
+                  <button
+                    className="sidebar-project-toggle"
+                    type="button"
+                    onClick={() =>
+                      setCollapsedProjects((current) => {
+                        const next = new Set(current);
+                        if (next.has(project.id)) next.delete(project.id);
+                        else next.add(project.id);
+                        return next;
+                      })
+                    }
+                    title={project.path || project.name}
+                  >
+                    {collapsed ? (
+                      <ChevronRight size={13} />
+                    ) : (
+                      <ChevronDown size={13} />
+                    )}
+                    {collapsed ? (
+                      <Folder size={15} />
+                    ) : (
+                      <FolderOpen size={15} />
+                    )}
+                    <span>
+                      {project.path
+                        ? project.name
+                        : tr("无工作区", "No workspace")}
+                    </span>
+                    <small>{project.tasks.length}</small>
+                  </button>
+                  <button
+                    className="sidebar-project-add"
+                    type="button"
+                    aria-label={tr(
+                      "在 {name} 中新建任务",
+                      "New task in {name}",
+                      { name: project.name },
+                    )}
+                    title={tr("在此项目中新建任务", "New task in this project")}
+                    onClick={() => onNewTask(project.id)}
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+                {!collapsed && (
+                  <div className="sidebar-project-tasks">
+                    {project.tasks.map((task) => (
+                      <button
+                        key={task.id}
+                        className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
+                        onClick={() => {
+                          setContextMenu(null);
+                          onSelectTask(task.id);
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          onSelectTask(task.id);
+                          setContextMenu({
+                            taskId: task.id,
+                            x: Math.min(
+                              event.clientX,
+                              Math.max(10, window.innerWidth - 218),
+                            ),
+                            y: Math.min(
+                              event.clientY,
+                              Math.max(10, window.innerHeight - 230),
+                            ),
+                          });
+                        }}
+                      >
+                        <MessageSquare size={14} />
+                        <span className="task-item-copy">
+                          <span className="task-item-title">{task.title}</span>
+                        </span>
+                        {runningTaskId === task.id && (
+                          <LoaderCircle className="spin task-running" size={13} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })
         ) : (
           <div className="sidebar-empty">
             {tasks.length
@@ -669,13 +779,23 @@ function SegmentedControl({ value, onChange, options, ariaLabel }) {
 
 function NewTaskModal({
   providers,
+  projects = [],
+  initialProjectId = "",
   onClose,
   onCreate,
   onNotice,
 }) {
   const { tr } = useI18n();
-  const [workspacePath, setWorkspacePath] = useState("");
-  const [workspaceName, setWorkspaceName] = useState("");
+  const initialProject = projects.find(
+    (project) => project.id === initialProjectId && project.path,
+  );
+  const [projectId, setProjectId] = useState(initialProject?.id || "");
+  const [workspacePath, setWorkspacePath] = useState(
+    initialProject?.path || "",
+  );
+  const [workspaceName, setWorkspaceName] = useState(
+    initialProject?.name || "",
+  );
   const [title, setTitle] = useState("");
   const [config, setConfig] = useState(() =>
     getDefaultTaskConfig(providers),
@@ -700,6 +820,7 @@ function NewTaskModal({
         const selectedPath =
           typeof result === "string" ? result : result?.path;
         if (selectedPath) {
+          setProjectId("");
           setWorkspacePath(selectedPath);
           setWorkspaceName(result?.name || getFolderName(selectedPath));
           setTimeout(() => titleRef.current?.focus(), 0);
@@ -709,6 +830,7 @@ function NewTaskModal({
 
       if (window.showDirectoryPicker) {
         const handle = await window.showDirectoryPicker();
+        setProjectId("");
         setWorkspacePath(handle.name);
         setWorkspaceName(handle.name);
         setTimeout(() => titleRef.current?.focus(), 0);
@@ -738,6 +860,8 @@ function NewTaskModal({
           : tr("新任务", "New task")),
       workspacePath: workspacePath || null,
       workspaceName: workspaceName || tr("无工作区", "No workspace"),
+      projectId:
+        projectId || projectIdForWorkspace(workspacePath),
       permission: workspacePath ? config.permission : "read-only",
     });
   };
@@ -759,8 +883,47 @@ function NewTaskModal({
         </div>
 
         <div className="modal-body">
+          {projects.length > 0 && (
+            <section className="form-section">
+              <label className="field-label" htmlFor="task-project">
+                {tr("所属项目", "Project")}
+              </label>
+              <select
+                id="task-project"
+                className="text-field project-select"
+                value={projectId}
+                onChange={(event) => {
+                  const nextProject = projects.find(
+                    (project) => project.id === event.target.value,
+                  );
+                  setProjectId(nextProject?.id || "");
+                  setWorkspacePath(nextProject?.path || "");
+                  setWorkspaceName(nextProject?.name || "");
+                }}
+              >
+                <option value="">
+                  {tr("选择新的工作区…", "Choose a new workspace…")}
+                </option>
+                {projects
+                  .filter((project) => project.path)
+                  .map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name} · {project.tasks.length} {tr("个任务", "tasks")}
+                    </option>
+                  ))}
+              </select>
+              <p className="field-hint">
+                {tr(
+                  "一个工作区对应一个项目，同一项目可以包含多个独立任务。",
+                  "One workspace is one project, and each project can contain multiple tasks.",
+                )}
+              </p>
+            </section>
+          )}
           <section className="form-section">
-            <label className="field-label">{tr("工作目录", "Workspace")}</label>
+            <label className="field-label">
+              {tr("项目工作区", "Project workspace")}
+            </label>
             <button
               className={`workspace-picker ${workspacePath ? "has-value" : ""}`}
               type="button"
@@ -1807,6 +1970,8 @@ function SelfCheckCard({ selfCheck }) {
   const improvementCount = selfCheck.improvements?.length || 0;
   const remainingRisks = selfCheck.remainingRisks || [];
   const verification = selfCheck.verification;
+  const progressive = selfCheck.mode === "progressive";
+  const segmentCount = selfCheck.segments?.length || 0;
 
   return (
     <section className="self-check-card">
@@ -1815,9 +1980,19 @@ function SelfCheckCard({ selfCheck }) {
           <Check size={14} />
         </span>
         <div>
-          <strong>{tr("强制自检已完成", "Mandatory self-check completed")}</strong>
+          <strong>
+            {progressive
+              ? tr("分段自检与最终封印已完成", "Staged review and final seal completed")
+              : tr("强制自检已完成", "Mandatory self-check completed")}
+          </strong>
           <span>
-            {tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: reviewedCount })}
+            {progressive
+              ? tr(
+                  "{segments} 个子 Agent 阶段已覆盖 {count} 个当前文件版本",
+                  "{segments} subagent stage(s) cover {count} current file version(s)",
+                  { segments: segmentCount, count: reviewedCount },
+                )
+              : tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: reviewedCount })}
             {improvementCount > 0
               ? tr("，自检中完成 {count} 项改进", "; completed {count} improvement(s)", { count: improvementCount })
               : tr("，未发现必须继续修改的问题", "; no blocking issues found")}
@@ -1868,10 +2043,338 @@ function SelfCheckCard({ selfCheck }) {
   );
 }
 
-function AssistantMessage({ message, onRetry }) {
+function buildTurnAnchorDiffRows(beforeContent, afterContent) {
+  const rows = [];
+  let beforeLine = 1;
+  let afterLine = 1;
+
+  for (const part of diffLines(
+    String(beforeContent || ""),
+    String(afterContent || ""),
+  )) {
+    const rawLines = part.value.split("\n");
+    if (rawLines.at(-1) === "") rawLines.pop();
+    for (const line of rawLines) {
+      if (part.added) {
+        rows.push({
+          type: "added",
+          before: "",
+          after: afterLine,
+          content: line,
+        });
+        afterLine += 1;
+      } else if (part.removed) {
+        rows.push({
+          type: "removed",
+          before: beforeLine,
+          after: "",
+          content: line,
+        });
+        beforeLine += 1;
+      } else {
+        rows.push({
+          type: "context",
+          before: beforeLine,
+          after: afterLine,
+          content: line,
+        });
+        beforeLine += 1;
+        afterLine += 1;
+      }
+    }
+  }
+
+  return rows;
+}
+
+function TurnAnchorReview({
+  message,
+  isRunning,
+  onClose,
+  onRestore,
+}) {
+  const { tr } = useI18n();
+  const activeChanges = (message?.changes || []).filter(
+    (change) => !change.reverted,
+  );
+  const [selectedPath, setSelectedPath] = useState(
+    activeChanges[0]?.path || "",
+  );
+  const [confirming, setConfirming] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [conflicts, setConflicts] = useState([]);
+  const selected =
+    activeChanges.find((change) => change.path === selectedPath) ||
+    activeChanges[0] ||
+    null;
+  const rows = useMemo(
+    () =>
+      selected && !selected.binary
+        ? buildTurnAnchorDiffRows(
+            selected.beforeContent,
+            selected.afterContent,
+          )
+        : [],
+    [selected],
+  );
+  const additions = activeChanges.reduce(
+    (sum, change) => sum + (Number(change.additions) || 0),
+    0,
+  );
+  const deletions = activeChanges.reduce(
+    (sum, change) => sum + (Number(change.deletions) || 0),
+    0,
+  );
+
+  const restore = async () => {
+    if (!confirming) {
+      setConfirming(true);
+      setConflicts([]);
+      return;
+    }
+    setRestoring(true);
+    setConflicts([]);
+    try {
+      const result = await onRestore(message.id);
+      if (result?.success) {
+        onClose();
+        return;
+      }
+      setConflicts(result?.conflicts || []);
+      setConfirming(false);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  return (
+    <div
+      className="review-backdrop turn-anchor-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !restoring) onClose();
+      }}
+    >
+      <section
+        className="review-panel turn-anchor-review"
+        role="dialog"
+        aria-modal="true"
+        aria-label={tr("回退本轮 Anchor", "Restore this turn's Anchor")}
+      >
+        <header className="review-panel-header">
+          <div>
+            <Undo2 size={17} />
+            <div>
+              <strong>{tr("回退这一轮", "Restore this turn")}</strong>
+              <span>
+                {tr(
+                  "{count} 个文件 · +{additions} -{deletions} · 先预览，确认后才会执行",
+                  "{count} file(s) · +{additions} -{deletions} · review before restoring",
+                  {
+                    count: activeChanges.length,
+                    additions,
+                    deletions,
+                  },
+                )}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label={tr("关闭 Anchor 预览", "Close Anchor preview")}
+            disabled={restoring}
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="review-panel-body">
+          <aside className="review-file-list">
+            {activeChanges.map((change) => (
+              <button
+                className={change.path === selected?.path ? "active" : ""}
+                key={change.path}
+                type="button"
+                onClick={() => setSelectedPath(change.path)}
+              >
+                {change.binary ? (
+                  <Files size={15} />
+                ) : change.path.match(/\.(js|jsx|ts|tsx|css|html|json|py|vue)$/i) ? (
+                  <FileCode2 size={15} />
+                ) : (
+                  <FileText size={15} />
+                )}
+                <span>{change.path}</span>
+                {change.deleted || change.afterMissing ? (
+                  <em className="deleted-change-kind">
+                    {tr("删除", "Deleted")}
+                  </em>
+                ) : change.created ? (
+                  <em className="anchor-created-kind">
+                    {tr("新增", "New")}
+                  </em>
+                ) : change.binary ? (
+                  <em className="office-change-kind">
+                    {change.artifact?.label || tr("二进制", "Binary")}
+                  </em>
+                ) : (
+                  <em>
+                    <b>+{change.additions || 0}</b>
+                    <i>-{change.deletions || 0}</i>
+                  </em>
+                )}
+              </button>
+            ))}
+          </aside>
+
+          <main className="diff-preview">
+            {selected ? (
+              <>
+                <div className="diff-preview-header">
+                  <div>
+                    {selected.binary ? (
+                      <Files size={15} />
+                    ) : (
+                      <FileCode2 size={15} />
+                    )}
+                    <strong>{selected.path}</strong>
+                    {selected.created && <span>{tr("新增", "New")}</span>}
+                    {(selected.deleted || selected.afterMissing) && (
+                      <span className="deleted">
+                        {tr("已删除", "Deleted")}
+                      </span>
+                    )}
+                  </div>
+                  {!selected.binary && (
+                    <span className="turn-anchor-diff-totals">
+                      <b>+{selected.additions || 0}</b>
+                      <i>-{selected.deletions || 0}</i>
+                    </span>
+                  )}
+                </div>
+                {selected.binary ? (
+                  <div className="turn-anchor-binary-preview">
+                    <Files size={28} />
+                    <strong>
+                      {selected.artifact?.label ||
+                        tr("二进制文件检查点", "Binary file checkpoint")}
+                    </strong>
+                    <span>
+                      {tr(
+                        "二进制内容不会以文本展开；确认后会恢复该文件在本轮之前的完整版本。",
+                        "Binary content is not rendered as text. Confirming restores the complete version from before this turn.",
+                      )}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="diff-lines">
+                    {rows.length ? (
+                      rows.map((row, index) => (
+                        <div
+                          className={`diff-line ${row.type}`}
+                          key={`${index}-${row.before}-${row.after}`}
+                        >
+                          <span>{row.before}</span>
+                          <span>{row.after}</span>
+                          <b>
+                            {row.type === "added"
+                              ? "+"
+                              : row.type === "removed"
+                                ? "-"
+                                : " "}
+                          </b>
+                          <code>{row.content || " "}</code>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="diff-empty">
+                        {tr("文件内容没有文本差异。", "No text diff is available for this file.")}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="diff-empty">
+                {tr("这一轮没有可恢复的文件。", "This turn has no restorable files.")}
+              </div>
+            )}
+          </main>
+        </div>
+
+        <footer className="review-panel-footer turn-anchor-footer">
+          <div className="turn-anchor-restore-copy">
+            {conflicts.length > 0 ? (
+              <span className="turn-anchor-conflict">
+                <AlertTriangle size={14} />
+                {tr(
+                  "未执行回退：{path} 在本轮之后又发生了修改。工作区保持不变。",
+                  "Restore was not applied: {path} changed after this turn. The workspace is unchanged.",
+                  { path: conflicts[0]?.path || tr("某个文件", "a file") },
+                )}
+              </span>
+            ) : confirming ? (
+              <span className="turn-anchor-warning">
+                <AlertTriangle size={14} />
+                {tr(
+                  "确定回退吗？文件将恢复到本轮之前；本轮输出会从有效对话中收起，但仍保留为审计记录。",
+                  "Restore now? Files return to their pre-turn state. This output is folded out of the active dialogue but retained as an audit record.",
+                )}
+              </span>
+            ) : (
+              <span>
+                {tr(
+                  "Anchor 会先做完整冲突检查；任何文件不匹配时，本轮不会回退任何内容。",
+                  "Anchor runs a full conflict check first. If any file no longer matches, nothing in this turn is restored.",
+                )}
+              </span>
+            )}
+          </div>
+          <div>
+            <button
+              type="button"
+              disabled={restoring}
+              onClick={() => {
+                if (confirming) {
+                  setConfirming(false);
+                  return;
+                }
+                onClose();
+              }}
+            >
+              {confirming ? tr("再检查一下", "Review again") : tr("取消", "Cancel")}
+            </button>
+            <button
+              className={confirming ? "turn-anchor-confirm" : ""}
+              type="button"
+              disabled={isRunning || restoring || !activeChanges.length}
+              onClick={() => void restore()}
+            >
+              {restoring ? (
+                <LoaderCircle className="spin" size={14} />
+              ) : (
+                <Undo2 size={14} />
+              )}
+              {isRunning
+                ? tr("任务运行中", "Task is running")
+                : confirming
+                  ? tr("确认回退这一轮", "Confirm turn restore")
+                  : tr("准备回退", "Prepare restore")}
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function AssistantMessage({ message, onRetry, onOpenAnchor }) {
   const { tr } = useI18n();
   const failed = message.error || message.status === "failed";
   const interrupted = message.status === "interrupted";
+  const hasAnchor = Boolean(message.anchor && message.changes?.length);
+  const restored = Boolean(message.anchorRestoredAt);
 
   return (
     <article
@@ -1885,9 +2388,48 @@ function AssistantMessage({ message, onRetry }) {
               ? tr("任务已停止", "Task stopped")
               : "AporiaX"}
         </strong>
+        {hasAnchor && (
+          <button
+            className={`turn-anchor-button ${restored ? "restored" : ""}`}
+            type="button"
+            disabled={restored || message.status === "running"}
+            title={
+              restored
+                ? tr("这一轮已经回退", "This turn has been restored")
+                : tr("预览并回退这一轮", "Preview and restore this turn")
+            }
+            aria-label={
+              restored
+                ? tr("这一轮已经回退", "This turn has been restored")
+                : tr("预览并回退这一轮", "Preview and restore this turn")
+            }
+            onClick={() => onOpenAnchor(message)}
+          >
+            {restored ? <Check size={13} /> : <Undo2 size={13} />}
+            <span>Anchor</span>
+          </button>
+        )}
       </div>
       <div className="assistant-message-content">
-        {message.content ? (
+        {restored ? (
+          <div className="restored-turn-output">
+            <div>
+              <Check size={14} />
+              <span>
+                {tr(
+                  "这一轮的文件改动和有效输出已回退",
+                  "This turn's file changes and active output were restored",
+                )}
+              </span>
+            </div>
+            {message.content && (
+              <details>
+                <summary>{tr("查看原始输出", "View original output")}</summary>
+                <MarkdownMessage content={message.content} />
+              </details>
+            )}
+          </div>
+        ) : message.content ? (
           failed ? (
             message.content
           ) : (
@@ -1982,24 +2524,219 @@ function getLiveRunProgress(message) {
   };
 }
 
+function formatWitnessElapsed(milliseconds) {
+  const value = Math.max(0, Number(milliseconds) || 0);
+  if (value < 1_000) return `${Math.round(value)}ms`;
+  if (value < 60_000) return `${Math.round(value / 1_000)}s`;
+  return `${Math.floor(value / 60_000)}m ${Math.round((value % 60_000) / 1_000)}s`;
+}
+
+function describeWitnessRecord(record, tr, language) {
+  if (!record) {
+    return {
+      title: tr("正在理解任务", "Understanding the task"),
+      detail: tr("等待第一个可观察动作", "Waiting for the first observable action"),
+    };
+  }
+  if (record.kind === "tool") {
+    const meta = getRouteToolMeta(record.tool, "work", language);
+    const actor =
+      record.actor === "subagent"
+        ? record.role === "review"
+          ? tr("审查 Agent", "Review agent")
+          : record.role === "verify"
+            ? tr("验证 Agent", "Verify agent")
+            : tr("探索 Agent", "Explore agent")
+        : tr("主 Agent", "Main agent");
+    return {
+      title: `${actor} · ${meta.title}`,
+      detail: record.path || record.command || record.detail || "",
+    };
+  }
+  const descriptions = {
+    "turn.started": [tr("Witness 开始记录", "Witness started recording"), tr("正在建立任务进度账本", "Creating the task progress ledger")],
+    "response.reset": [tr("主 Agent 正在思考", "Main agent is thinking"), tr("正在整理证据并决定下一步", "Reviewing evidence and deciding the next step")],
+    "plan.updated": [tr("行动路径已更新", "Action route updated"), record.detail],
+    "parallel_batch.started": [tr("正在并行处理独立工作", "Running independent work in parallel"), tr("并发执行 {count} 个动作", "Running {count} actions concurrently", { count: record.detail || 0 })],
+    "subagent.started": [tr("子 Agent 已开始工作", "Subagent started working"), record.detail],
+    "subagent.completed": [tr("子 Agent 已返回记录", "Subagent returned its record"), record.detail],
+    "subagent.failed": [tr("子 Agent 未能完成", "Subagent did not complete"), record.detail],
+    "self_check.started": [tr("进入强制自检", "Mandatory self-check started"), tr("正在复核修改和验证结果", "Reviewing changes and verification evidence")],
+    "self_check.segment.started": [tr("分段子 Agent 自检", "Staged subagent review"), tr("正在复核 {count} 个当前文件版本", "Reviewing {count} current file version(s)", { count: record.detail || 0 })],
+    "self_check.segment.completed": [tr("分段自检已记录", "Staged review recorded"), record.detail],
+    "self_check.fallback": [tr("切换到完整自检", "Switching to full self-check"), tr("分段证据不完整，启用安全兜底", "Staged evidence was incomplete; safety fallback enabled")],
+    "self_check.sealed": [tr("最终证据已封印", "Final evidence sealed"), tr("当前文件版本均已有匹配的审查依据", "Every current file version has matching review evidence")],
+    "self_check.completed": [tr("强制自检完成", "Mandatory self-check completed"), tr("正在整理最终结果", "Preparing the final result")],
+    "instructions.loaded": [tr("已加载目录规则", "Scoped project rules loaded"), record.detail],
+    "context.compacted": [tr("已整理长任务上下文", "Long-task context compacted"), tr("关键约束与证据已保留", "Key constraints and evidence were preserved")],
+    "memory.updated": [tr("项目记忆已更新", "Project memory updated"), record.detail],
+    "approval.required": [tr("等待用户确认", "Waiting for approval"), record.command],
+    "control.paused": [tr("任务已暂停", "Task paused"), tr("Witness 将继续保留当前进度", "Witness will preserve the current progress")],
+    "control.resumed": [tr("任务继续运行", "Task resumed"), tr("从安全边界继续执行", "Continuing from the safe boundary")],
+    "turn.completed": [tr("任务执行完成", "Task execution completed"), tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
+    "turn.cancelled": [tr("任务已停止", "Task stopped"), tr("已保留停止前的行动记录", "The action record before interruption was preserved")],
+    "turn.failed": [tr("任务运行失败", "Task run failed"), record.detail],
+  };
+  const [title, detail] = descriptions[record.eventType] ||
+    (record.kind === "warning"
+      ? [tr("Witness 发现需要注意的情况", "Witness detected an issue"), record.detail]
+      : [tr("任务状态已更新", "Task status updated"), record.detail]);
+  return { title, detail: detail || "" };
+}
+
+function WitnessPanel({ witness, liveProgress }) {
+  const { tr, language } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const records = witness?.records || [];
+  const visibleRecords = expanded ? records : records.slice(-3);
+  const currentDescription = describeWitnessRecord(
+    witness?.current,
+    tr,
+    language,
+  );
+  const activeAgents = witness?.counters?.activeAgents || 0;
+  const alerts = witness?.alerts || [];
+  const witnessFinished = ["completed", "failed", "interrupted"].includes(
+    witness?.status,
+  );
+  const witnessStateLabel =
+    witness?.status === "completed"
+      ? tr("已完成", "Done")
+      : witness?.status === "failed"
+        ? tr("失败", "Failed")
+        : witness?.status === "interrupted"
+          ? tr("已停止", "Stopped")
+          : witness?.current?.longRunning
+            ? tr("耗时较长", "Long running")
+            : tr("正在做", "Now");
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [witness?.startedAt]);
+
+  return (
+    <section className="witness-panel" aria-label={tr("Witness 任务监控", "Witness task monitor")}>
+      <header className="witness-heading">
+        <span className="witness-mark">
+          <Eye size={15} />
+        </span>
+        <div>
+          <strong>Witness</strong>
+          <span>
+            {witnessFinished
+              ? tr(
+                  "本轮行动记录已保留，可随时展开回看",
+                  "This run's action record is retained and available below",
+                )
+              : activeAgents
+              ? tr("正在监控主 Agent 与 {count} 个子 Agent", "Monitoring the main agent and {count} subagent(s)", { count: activeAgents })
+              : tr("正在记录主 Agent 的可观察行动", "Recording the main agent's observable actions")}
+          </span>
+        </div>
+        <b>
+          {witness?.status === "completed"
+            ? 100
+            : liveProgress.progress}%
+        </b>
+      </header>
+
+      <div className="harness-progress-track" aria-hidden="true">
+        <span
+          style={{
+            width: `${witness?.status === "completed" ? 100 : liveProgress.progress}%`,
+          }}
+        />
+      </div>
+
+      <div className="witness-current">
+        <span className={witness?.current?.longRunning ? "long-running" : ""}>
+          {witnessStateLabel}
+        </span>
+        <div>
+          <strong>
+            {currentDescription.title ||
+              liveProgress.currentEntry?.title}
+          </strong>
+          <p>
+            {currentDescription.detail ||
+              liveProgress.currentEntry?.path ||
+              liveProgress.currentEntry?.detail}
+          </p>
+        </div>
+      </div>
+
+      {alerts.length > 0 && (
+        <div className="witness-alert">
+          <AlertTriangle size={13} />
+          <span>{alerts.at(-1).detail}</span>
+        </div>
+      )}
+
+      {visibleRecords.length > 0 && (
+        <div className="witness-ledger">
+          {visibleRecords.map((record) => {
+            const description = describeWitnessRecord(record, tr, language);
+            return (
+              <div className={`witness-record ${record.status}`} key={record.id}>
+                <span className="witness-record-state">
+                  {record.status === "running" || record.status === "waiting" ? (
+                    <LoaderCircle className="spin" size={12} />
+                  ) : record.status === "failed" ? (
+                    <AlertTriangle size={12} />
+                  ) : (
+                    <Check size={12} />
+                  )}
+                </span>
+                <div>
+                  <strong>{description.title}</strong>
+                  {description.detail && <span>{description.detail}</span>}
+                </div>
+                <time>{formatWitnessElapsed(record.elapsedMs)}</time>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {records.length > 3 && (
+        <button
+          className="witness-toggle"
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded
+            ? tr("收起记录", "Collapse records")
+            : tr("查看全部 {count} 条记录", "View all {count} records", { count: records.length })}
+          <ChevronDown size={13} />
+        </button>
+      )}
+    </section>
+  );
+}
+
 function Conversation({
   task,
   isRunning,
-  runStatus,
   approval,
   approvalResponding,
   onRespondApproval,
   onRetry,
   onRevert,
+  onRestoreTurnAnchor,
   onConfirmChanges,
   onSaveChanges,
   onNotice,
 }) {
   const { tr } = useI18n();
   const [reviewRequest, setReviewRequest] = useState(null);
+  const [anchorRequest, setAnchorRequest] = useState(null);
   const [reverting, setReverting] = useState(false);
   const reviewMessage = task.messages.find(
     (message) => message.id === reviewRequest?.messageId,
+  );
+  const anchorMessage = task.messages.find(
+    (message) => message.id === anchorRequest?.messageId,
   );
   const activeRunMessage = [...task.messages]
     .reverse()
@@ -2007,7 +2744,15 @@ function Conversation({
       (message) =>
         message.role === "assistant" && message.status === "running",
     );
-  const liveProgress = getLiveRunProgress(activeRunMessage);
+  const witnessMessage =
+    activeRunMessage ||
+    [...task.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" && Boolean(message.witness),
+      );
+  const liveProgress = getLiveRunProgress(witnessMessage);
 
   const revertChanges = async (paths) => {
     if (!reviewMessage) return;
@@ -2078,10 +2823,17 @@ function Conversation({
           message.content,
           message.changes,
         );
+        const restored = Boolean(message.anchorRestoredAt);
         return (
           <React.Fragment key={message.id}>
-            <AssistantMessage message={message} onRetry={onRetry} />
-            {files.length > 0 && (
+            <AssistantMessage
+              message={message}
+              onRetry={onRetry}
+              onOpenAnchor={(anchorTarget) =>
+                setAnchorRequest({ messageId: anchorTarget.id })
+              }
+            />
+            {!restored && files.length > 0 && (
               <EditedFilesCard
                 files={files}
                 hasSnapshots={Boolean(message.changes?.length)}
@@ -2095,7 +2847,7 @@ function Conversation({
                 }
               />
             )}
-            <SelfCheckCard selfCheck={message.selfCheck} />
+            {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}
           </React.Fragment>
         );
       })}
@@ -2104,49 +2856,11 @@ function Conversation({
         responding={approvalResponding}
         onRespond={onRespondApproval}
       />
-      {isRunning && (
-        <div className="harness-running">
-          <div className="harness-running-heading">
-            <span className="harness-running-icon">
-              <LoaderCircle className="spin" size={15} />
-            </span>
-            <div>
-              <strong>{runStatus?.title || tr("Harness 正在运行", "Harness is running")}</strong>
-              <span>
-                {tr(
-                  "约 {progress}% · 已完成 {count} 个动作",
-                  "About {progress}% · {count} action(s) complete",
-                  {
-                    progress: liveProgress.progress,
-                    count: liveProgress.completedCount,
-                  },
-                )}
-              </span>
-            </div>
-            <b>{liveProgress.progress}%</b>
-          </div>
-          <div className="harness-progress-track" aria-hidden="true">
-            <span style={{ width: `${liveProgress.progress}%` }} />
-          </div>
-          <div className="harness-current-action">
-            <span>{tr("正在做", "Now")}</span>
-            <div>
-              <strong>
-                {liveProgress.currentEntry?.title ||
-                  tr("理解任务并规划下一步", "Understanding the task and planning next steps")}
-              </strong>
-              <p>
-                {liveProgress.currentEntry?.path ||
-                  liveProgress.currentEntry?.detail ||
-                  runStatus?.detail ||
-                  tr(
-                    "模型正在检查授权工作区并规划下一步。",
-                    "The model is inspecting the authorized workspace and planning its next step.",
-                  )}
-              </p>
-            </div>
-          </div>
-        </div>
+      {(isRunning || witnessMessage?.witness) && (
+        <WitnessPanel
+          witness={witnessMessage?.witness}
+          liveProgress={liveProgress}
+        />
       )}
       {reviewMessage?.changes?.length > 0 && (
         <DiffReviewPanel
@@ -2165,6 +2879,14 @@ function Conversation({
           onRevert={revertChanges}
         />
       )}
+      {anchorMessage?.anchor && anchorMessage?.changes?.length > 0 && (
+        <TurnAnchorReview
+          message={anchorMessage}
+          isRunning={isRunning}
+          onClose={() => setAnchorRequest(null)}
+          onRestore={onRestoreTurnAnchor}
+        />
+      )}
     </div>
   );
 }
@@ -2172,7 +2894,6 @@ function Conversation({
 function RouteView({
   task,
   isRunning,
-  runStatus,
   approval,
   approvalResponding,
   onRespondApproval,
@@ -2188,16 +2909,11 @@ function RouteView({
   const [reverting, setReverting] = useState(false);
   const selectedRun =
     runs.find((run) => run.id === selectedRunId) || runs.at(-1);
-  const entries = selectedRun?.entries || [];
-  const planSteps = selectedRun?.plan?.steps || [];
-  const completedCount = planSteps.length
-    ? planSteps.filter((step) => step.status === "completed").length
-    : entries.filter((entry) =>
-        ["completed", "skipped", "retry", "recovered"].includes(
-          entry.status,
-        ),
-      ).length;
-  const totalCount = planSteps.length || entries.length;
+  const routeBlocks = buildWitnessRouteBlocks(selectedRun, language);
+  const completedCount = routeBlocks.filter(
+    (block) => block.status === "completed",
+  ).length;
+  const totalCount = routeBlocks.length;
   const selectedRunIndex = Math.max(
     0,
     runs.findIndex((run) => run.id === selectedRun?.id),
@@ -2206,6 +2922,27 @@ function RouteView({
   const reviewChanges = (reviewRun?.changes || []).filter(
     (change) => !review?.paths?.length || review.paths.includes(change.path),
   );
+  const witnessDescription = describeWitnessRecord(
+    selectedRun?.witness?.current,
+    tr,
+    language,
+  );
+
+  const blockIcon = (block) => {
+    if (block.status === "running") {
+      return <LoaderCircle className="spin" size={18} />;
+    }
+    if (block.status === "attention" || block.status === "interrupted") {
+      return <AlertTriangle size={18} />;
+    }
+    if (block.kind === "understand") return <Brain size={18} />;
+    if (block.kind === "explore") return <Search size={18} />;
+    if (block.kind === "plan") return <History size={18} />;
+    if (block.kind === "execute") return <Files size={18} />;
+    if (block.kind === "verify") return <ShieldCheck size={18} />;
+    if (block.kind === "coordinate") return <Pause size={18} />;
+    return <Check size={18} />;
+  };
 
   useEffect(() => {
     setSelectedRunId(latestRunId);
@@ -2265,7 +3002,7 @@ function RouteView({
                 >
                   {runs.map((run, index) => (
                     <option value={run.id} key={run.id}>
-                      {String(index + 1).padStart(2, "0")} ·{" "}
+                      {tr("第 {count} 轮", "Run {count}", { count: index + 1 })} ·{" "}
                       {run.summary || summarizeRoutePrompt(run.prompt)}
                     </option>
                   ))}
@@ -2280,7 +3017,7 @@ function RouteView({
               <span />
               {selectedRun?.status === "running"
                   ? tr("执行中", "Running")
-                  : tr("{done}/{total} 步完成", "{done}/{total} steps complete", {
+                  : tr("{done}/{total} 个阶段完成", "{done}/{total} sections complete", {
                     done: completedCount,
                     total: totalCount,
                   })}
@@ -2288,219 +3025,181 @@ function RouteView({
           </div>
         </header>
 
-        {planSteps.length > 0 && (
-          <section className="route-plan" aria-label={tr("执行计划", "Execution plan")}>
-            <header>
-              <div>
-                <span>{tr("执行计划", "Execution plan")}</span>
-                <strong>
-                  {tr(
-                    "{done}/{total} 个目标已完成",
-                    "{done}/{total} objectives complete",
-                    { done: completedCount, total: planSteps.length },
-                  )}
-                </strong>
-              </div>
-              <em>{tr("修订 {revision}", "Revision {revision}", { revision: selectedRun.plan.revision || 1 })}</em>
-            </header>
-            <ol>
-              {planSteps.map((step, index) => {
-                const evidence = entries.filter(
-                  (entry) => entry.planStepId === step.id,
-                );
-                return (
-                  <li className={step.status} key={step.id}>
-                    <span className="route-plan-index">
-                      {step.status === "completed" ? (
-                        <Check size={14} />
-                      ) : step.status === "in_progress" ? (
-                        <LoaderCircle className="spin" size={14} />
-                      ) : step.status === "blocked" ? (
-                        <AlertTriangle size={14} />
-                      ) : (
-                        String(index + 1).padStart(2, "0")
-                      )}
-                    </span>
-                    <div>
-                      <strong>{step.title}</strong>
-                      {step.detail && <p>{step.detail}</p>}
-                      {evidence.length > 0 && (
-                        <small>
-                          {tr(
-                            "{count} 条行动证据",
-                            "{count} action record(s)",
-                            { count: evidence.length },
-                          )}
-                        </small>
-                      )}
-                    </div>
-                    <em>
-                      {step.status === "completed"
-                        ? tr("完成", "Done")
-                        : step.status === "in_progress"
-                          ? tr("进行中", "In progress")
-                          : step.status === "blocked"
-                            ? tr("受阻", "Blocked")
-                            : tr("待处理", "Pending")}
-                    </em>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
+        {selectedRun?.status === "running" && selectedRun?.witness && (
+          <div className="route-live-status">
+            <Eye size={15} />
+            <div>
+              <strong>{witnessDescription.title}</strong>
+              <span>{witnessDescription.detail}</span>
+            </div>
+            <em>
+              {tr(
+                "Witness 已保留 {count} 条记录",
+                "Witness retained {count} records",
+                { count: selectedRun.witness.records?.length || 0 },
+              )}
+            </em>
+          </div>
         )}
 
-        <div className="route-evidence-heading">
-          <span>{tr("行动证据", "Action evidence")}</span>
-          <em>{tr("{count} 条记录", "{count} records", { count: entries.length })}</em>
-        </div>
-        <div className="route-step-list">
-          {entries.map((entry, index) => {
-            const entryTitle = entry.tool
-              ? getRouteToolMeta(entry.tool, entry.phase, language).title
-              : entry.kind === "self-check-start"
-                ? tr("进入强制自检", "Begin mandatory self-check")
-                : entry.kind === "self-check-complete"
-                  ? tr("强制自检已完成", "Mandatory self-check completed")
-                  : entry.stage === "deliver"
-                    ? tr("整理最终产物", "Prepare final deliverables")
-                    : entry.title;
-            const duration = formatRouteDuration(entry);
-            const normalizedPath = entry.path
-              ?.replaceAll("\\", "/")
-              .toLowerCase();
-            const relatedChanges = (selectedRun?.changes || []).filter(
-              (change) =>
-                normalizedPath &&
-                change.path.replaceAll("\\", "/").toLowerCase() ===
-                  normalizedPath,
-            );
-            const artifact = entry.artifact || relatedChanges[0]?.artifact;
-            const detail =
-              entry.path ||
-              entry.command ||
-              entry.detail ||
-              (entry.exitCode === 0
-                ? tr("命令执行成功", "Command completed successfully")
-                : tr("Harness 行动记录", "Harness action record"));
+        <div className="route-block-list">
+          {routeBlocks.map((block) => {
             const statusText =
-              entry.status === "running"
-                ? tr("正在执行", "Running")
-                : entry.status === "waiting"
-                  ? tr("等待批准", "Awaiting approval")
-                  : entry.status === "skipped"
-                    ? tr("不适用", "Not applicable")
-                    : entry.status === "retry"
-                      ? entry.tool === "complete_self_check"
-                        ? tr("已转入补检", "Additional checks queued")
-                        : tr("等待重试", "Awaiting retry")
-                      : entry.status === "recovered"
-                        ? tr("已重试成功", "Recovered")
-                        : entry.status === "failed"
-                          ? tr("未完成", "Incomplete")
-                          : duration || tr("完成", "Complete");
+              block.status === "running"
+                ? tr("正在进行", "In progress")
+                : block.status === "attention"
+                  ? tr("包含需注意项", "Needs attention")
+                  : block.status === "interrupted"
+                    ? tr("已停止", "Stopped")
+                    : tr("已完成", "Complete");
             return (
               <details
-                className={`route-step ${entry.status || "completed"}`}
-                key={entry.id}
-                open={
-                  entry.status === "running" || index === entries.length - 1
-                }
+                className={`route-block ${block.kind} ${block.status}`}
+                key={block.id}
+                defaultOpen={block.status === "running"}
               >
                 <summary>
-                  <span className="route-step-index">
-                    {String(index + 1).padStart(2, "0")}
+                  <span className="route-block-icon">{blockIcon(block)}</span>
+                  <span className="route-block-copy">
+                    <b>{block.label}</b>
+                    <strong>{block.title}</strong>
+                    <span>{block.summary}</span>
                   </span>
-                  <span className="route-step-copy">
-                    <strong>{entryTitle}</strong>
-                    {entry.command ? (
-                      <code
-                        className="route-command-preview"
-                        title={entry.command}
-                      >
-                        {entry.command}
-                      </code>
-                    ) : (
-                      <span title={detail}>{detail}</span>
-                    )}
-                  </span>
-                  <em>{statusText}</em>
-                  <ChevronDown size={15} />
+                  <span className="route-block-status">{statusText}</span>
+                  <ChevronDown size={16} />
                 </summary>
-                <div className="route-step-detail">
-                  {entry.tool && (
-                    <div>
-                      <span>{tr("工具", "Tool")}</span>
-                      <code>{entry.tool}</code>
+
+                <div className="route-block-body">
+                  {block.planSteps.length > 0 && (
+                    <div className="route-block-plan">
+                      {block.planSteps.map((step) => (
+                        <div className={step.status || "pending"} key={step.id}>
+                          <span>
+                            {step.status === "completed" ? (
+                              <Check size={13} />
+                            ) : step.status === "in_progress" ? (
+                              <LoaderCircle className="spin" size={13} />
+                            ) : step.status === "blocked" ? (
+                              <AlertTriangle size={13} />
+                            ) : (
+                              <span />
+                            )}
+                          </span>
+                          <div>
+                            <strong>{step.title}</strong>
+                            {step.detail && <p>{step.detail}</p>}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
-                  {entry.path && (
-                    <div>
-                      <span>{tr("文件", "File")}</span>
-                      <code>{entry.path}</code>
+
+                  {block.paths.length > 0 && (
+                    <div className="route-block-section">
+                      <span>{tr("涉及位置", "Files and locations")}</span>
+                      <div className="route-block-paths">
+                        {block.paths.map((path) => (
+                          <code key={path}>{path}</code>
+                        ))}
+                      </div>
                     </div>
                   )}
-                  {entry.command && (
-                    <div>
-                      <span>{tr("命令", "Command")}</span>
-                      <code>{entry.command}</code>
+
+                  {block.commands.length > 0 && (
+                    <div className="route-block-section">
+                      <span>{tr("执行命令", "Commands")}</span>
+                      <div className="route-block-commands">
+                        {block.commands.map((command) => (
+                          <code key={command}>{command}</code>
+                        ))}
+                      </div>
                     </div>
                   )}
-                  {(entry.additions > 0 || entry.deletions > 0) && (
-                    <div>
-                      <span>{tr("修改", "Changes")}</span>
-                      <p className="route-change-count">
-                        <b>+{entry.additions || 0}</b>
-                        <i>-{entry.deletions || 0}</i>
-                      </p>
+
+                  {block.changes.length > 0 && (
+                    <div className="route-block-section">
+                      <span>{tr("产生修改", "Changes")}</span>
+                      <div className="route-block-changes">
+                        {block.changes.map((change) => (
+                          <button
+                            type="button"
+                            key={change.path}
+                            onClick={() =>
+                              setReview({
+                                runId: selectedRun.id,
+                                paths: [change.path],
+                                path: change.path,
+                              })
+                            }
+                          >
+                            <code>{change.path}</code>
+                            <span>
+                              <b>+{change.additions || 0}</b>
+                              <i>-{change.deletions || 0}</i>
+                            </span>
+                            <ArrowRight size={13} />
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
-                  {artifact && (
-                    <div>
-                      <span>{tr("产物", "Artifact")}</span>
-                      <p>
-                        {artifact.label || getDeliverableType({ path: entry.path || "" })}
-                      </p>
-                    </div>
-                  )}
-                  {entry.detail && (
-                    <div>
-                      <span>{tr("结果", "Result")}</span>
-                      <p>{entry.detail}</p>
-                    </div>
-                  )}
-                  {relatedChanges.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setReview({
-                          runId: selectedRun.id,
-                          paths: relatedChanges.map((change) => change.path),
-                          path: relatedChanges[0]?.path || "",
-                        })
-                      }
-                    >
-                      {tr("查看具体修改", "View changes")}
-                      <ArrowRight size={13} />
-                    </button>
+
+                  {block.records.length > 0 && (
+                    <details className="route-block-records">
+                      <summary>
+                        <span>
+                          {tr(
+                            "查看 {count} 条具体行动",
+                            "View {count} individual actions",
+                            { count: block.records.length },
+                          )}
+                        </span>
+                        <ChevronDown size={14} />
+                      </summary>
+                      <div>
+                        {block.records.map((record) => {
+                          const description = record.legacyEntry?.title
+                            ? {
+                                title: record.legacyEntry.title,
+                                detail:
+                                  record.path ||
+                                  record.command ||
+                                  record.detail ||
+                                  "",
+                              }
+                            : describeWitnessRecord(record, tr, language);
+                          return (
+                            <div
+                              className={`route-block-record ${record.status || "completed"}`}
+                              key={record.id}
+                            >
+                              <span>
+                                {["running", "waiting"].includes(record.status) ? (
+                                  <LoaderCircle className="spin" size={12} />
+                                ) : record.status === "failed" ? (
+                                  <AlertTriangle size={12} />
+                                ) : (
+                                  <Check size={12} />
+                                )}
+                              </span>
+                              <div>
+                                <strong>{description.title}</strong>
+                                {description.detail && (
+                                  <code>{description.detail}</code>
+                                )}
+                              </div>
+                              <time>{formatWitnessElapsed(record.elapsedMs)}</time>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
                   )}
                 </div>
               </details>
             );
           })}
         </div>
-
-        {isRunning &&
-          selectedRun?.status === "running" &&
-          runStatus && (
-            <div className="route-live-status">
-              <LoaderCircle className="spin" size={15} />
-              <div>
-                <strong>{runStatus.title}</strong>
-                <span>{runStatus.detail}</span>
-              </div>
-            </div>
-          )}
 
         <ApprovalCard
           approval={approval}
@@ -3097,6 +3796,261 @@ function AnchorHistory({
   );
 }
 
+function ProjectUnderstandingPanel({
+  task,
+  refreshToken,
+  onOpenFile,
+  onNotice,
+}) {
+  const { tr } = useI18n();
+  const [state, setState] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmRevision, setConfirmRevision] = useState("");
+  const [reverting, setReverting] = useState("");
+
+  const loadUnderstanding = async () => {
+    if (!task.workspacePath || !window.desktop?.understanding?.get) return;
+    setLoading(true);
+    setError("");
+    try {
+      setState(await window.desktop.understanding.get(task.workspacePath));
+    } catch (loadError) {
+      setError(
+        loadError?.message ||
+          tr("无法加载项目理解", "Unable to load Project Understanding"),
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setState(null);
+    setConfirmRevision("");
+    void loadUnderstanding();
+  }, [task.workspacePath, refreshToken]);
+
+  const revertTo = async (revision) => {
+    if (confirmRevision !== revision.id) {
+      setConfirmRevision(revision.id);
+      return;
+    }
+    setReverting(revision.id);
+    try {
+      const result = await window.desktop.understanding.revert({
+        workspacePath: task.workspacePath,
+        taskId: task.id,
+        revisionId: revision.id,
+      });
+      setState(result.state);
+      setConfirmRevision("");
+      onNotice(
+        tr(
+          "项目理解已恢复到修订 {revision}，并保留了新的回退记录",
+          "Project Understanding was restored from revision {revision} with a new revert record",
+          { revision: revision.number },
+        ),
+      );
+    } catch (revertError) {
+      onNotice(
+        revertError?.message ||
+          tr("项目理解恢复失败", "Failed to restore Project Understanding"),
+      );
+    } finally {
+      setReverting("");
+    }
+  };
+
+  const categoryLabels = {
+    architecture: tr("架构", "Architecture"),
+    module: tr("模块", "Modules"),
+    command: tr("命令", "Commands"),
+    convention: tr("约定", "Conventions"),
+    decision: tr("决策", "Decisions"),
+    verification: tr("验证", "Verification"),
+    known_issue: tr("已知问题", "Known issues"),
+    preference: tr("偏好", "Preferences"),
+  };
+  const groupedFacts = Object.entries(
+    (state?.facts || []).reduce((groups, fact) => {
+      const key = fact.category || "convention";
+      groups[key] = [...(groups[key] || []), fact];
+      return groups;
+    }, {}),
+  );
+
+  return (
+    <section className="understanding-view">
+      <header className="understanding-hero">
+        <div className="understanding-mark">
+          <Brain size={21} />
+        </div>
+        <div>
+          <span>{tr("项目共享上下文", "Shared project context")}</span>
+          <h2>Project Understanding</h2>
+          <p>
+            {tr(
+              "由同一工作区的任务共同维护。每条理解都带有证据，并通过 revision 保留完整演进路径。",
+              "Maintained across every task in this workspace. Each fact carries evidence and every change is preserved as a revision.",
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="understanding-refresh"
+          disabled={loading}
+          onClick={() => void loadUnderstanding()}
+        >
+          <RotateCcw className={loading ? "spin" : ""} size={15} />
+          {tr("刷新", "Refresh")}
+        </button>
+      </header>
+
+      {error ? (
+        <div className="understanding-error">
+          <AlertTriangle size={17} />
+          <span>{error}</span>
+        </div>
+      ) : loading && !state ? (
+        <div className="understanding-loading">
+          <LoaderCircle className="spin" size={20} />
+          {tr("正在读取项目理解…", "Loading Project Understanding…")}
+        </div>
+      ) : (
+        <div className="understanding-layout">
+          <main className="understanding-facts">
+            <div className="understanding-summary">
+              <div>
+                <strong>{state?.facts?.length || 0}</strong>
+                <span>{tr("条已验证理解", "verified facts")}</span>
+              </div>
+              <div>
+                <strong>{state?.currentRevision || 0}</strong>
+                <span>revision</span>
+              </div>
+              <div>
+                <strong>{groupedFacts.length}</strong>
+                <span>{tr("个知识维度", "knowledge areas")}</span>
+              </div>
+            </div>
+
+            {!groupedFacts.length ? (
+              <div className="understanding-empty">
+                <Brain size={28} />
+                <h3>{tr("这个项目还没有形成共享理解", "This project has no shared Understanding yet")}</h3>
+                <p>
+                  {tr(
+                    "完成一次包含实际修改和验证的任务后，Curator 子 Agent 会提炼第一条带证据的 revision。",
+                    "Complete a task with verified workspace changes and the Curator subagent will create the first evidence-backed revision.",
+                  )}
+                </p>
+              </div>
+            ) : (
+              groupedFacts.map(([category, facts]) => (
+                <section className="understanding-group" key={category}>
+                  <div className="understanding-group-title">
+                    <span>{categoryLabels[category] || category}</span>
+                    <small>{facts.length}</small>
+                  </div>
+                  <div className="understanding-fact-list">
+                    {facts.map((fact) => (
+                      <article className="understanding-fact" key={fact.id}>
+                        <p>{fact.content}</p>
+                        <div className="understanding-fact-meta">
+                          <span>
+                            {tr("置信度", "Confidence")} {Math.round((fact.confidence || 0) * 100)}%
+                          </span>
+                          {(fact.evidence || []).slice(0, 4).map((evidence, index) => (
+                            <button
+                              type="button"
+                              key={`${fact.id}-evidence-${index}`}
+                              disabled={evidence.type !== "file"}
+                              onClick={() =>
+                                evidence.type === "file" &&
+                                onOpenFile(evidence.reference)
+                              }
+                            >
+                              <FileText size={12} />
+                              {evidence.reference || evidence.detail}
+                            </button>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))
+            )}
+          </main>
+
+          <aside className="understanding-history">
+            <div className="understanding-history-title">
+              <History size={16} />
+              <div>
+                <strong>{tr("修订历史", "Revision history")}</strong>
+                <span>{tr("可追踪，也可安全回退", "Traceable and safely reversible")}</span>
+              </div>
+            </div>
+            <div className="understanding-revisions">
+              {(state?.revisions || []).length ? (
+                state.revisions.map((revision) => {
+                  const current = revision.number === state.currentRevision;
+                  const confirming = confirmRevision === revision.id;
+                  return (
+                    <article
+                      className={`understanding-revision ${current ? "current" : ""}`}
+                      key={revision.id}
+                    >
+                      <div className="understanding-revision-head">
+                        <span>r{revision.number}</span>
+                        {current && <small>{tr("当前", "Current")}</small>}
+                      </div>
+                      <p>{revision.summary}</p>
+                      <div className="understanding-revision-meta">
+                        <span>{revision.factCount} facts</span>
+                        <span>{new Date(revision.createdAt).toLocaleString()}</span>
+                      </div>
+                      {!current && (
+                        <div className="understanding-revision-actions">
+                          {confirming && (
+                            <button type="button" onClick={() => setConfirmRevision("")}>
+                              {tr("取消", "Cancel")}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={confirming ? "confirm" : ""}
+                            disabled={Boolean(reverting)}
+                            onClick={() => void revertTo(revision)}
+                          >
+                            {reverting === revision.id ? (
+                              <LoaderCircle className="spin" size={13} />
+                            ) : (
+                              <Undo2 size={13} />
+                            )}
+                            {confirming
+                              ? tr("确认恢复", "Confirm restore")
+                              : tr("恢复此版本", "Restore")}
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })
+              ) : (
+                <p className="understanding-no-history">
+                  {tr("完成任务后会在这里形成第一条 revision。", "The first revision will appear here after a completed task.")}
+                </p>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TaskWorkspace({
   task,
   providers,
@@ -3111,9 +4065,9 @@ function TaskWorkspace({
   onRetry,
   onRevert,
   onRestoreAnchor,
+  onRestoreTurnAnchor,
   onConfirmChanges,
   onSaveChanges,
-  runStatus,
   approval,
   approvalResponding,
   onRespondApproval,
@@ -3157,6 +4111,10 @@ function TaskWorkspace({
   const latestMessageContentLength =
     latestMessage?.role === "assistant"
       ? latestMessage.content?.length || 0
+      : 0;
+  const latestWitnessRevision =
+    latestMessage?.role === "assistant"
+      ? latestMessage.witness?.revision || 0
       : 0;
 
   useEffect(() => {
@@ -3210,6 +4168,7 @@ function TaskWorkspace({
     activeView,
     isRunning,
     latestMessageContentLength,
+    latestWitnessRevision,
     task.messages.length,
   ]);
 
@@ -3428,13 +4387,17 @@ function TaskWorkspace({
             { id: "dialogue", label: "Dialogue" },
             { id: "route", label: "Route" },
             { id: "workspace", label: "Workspace" },
+            { id: "understanding", label: "Understanding" },
           ].map((view) => (
             <button
               className={activeView === view.id ? "active" : ""}
               type="button"
               key={view.id}
               onClick={() => {
-                if (view.id === "workspace" && !task.workspacePath) {
+                if (
+                  ["workspace", "understanding"].includes(view.id) &&
+                  !task.workspacePath
+                ) {
                   onSelectWorkspace();
                   return;
                 }
@@ -3466,12 +4429,12 @@ function TaskWorkspace({
             <Conversation
               task={task}
               isRunning={isRunning}
-              runStatus={runStatus}
               approval={approval}
               approvalResponding={approvalResponding}
               onRespondApproval={onRespondApproval}
               onRetry={onRetry}
               onRevert={onRevert}
+              onRestoreTurnAnchor={onRestoreTurnAnchor}
               onConfirmChanges={onConfirmChanges}
               onSaveChanges={onSaveChanges}
               onNotice={onNotice}
@@ -3487,7 +4450,6 @@ function TaskWorkspace({
               key={task.id}
               task={task}
               isRunning={isRunning}
-              runStatus={runStatus}
               approval={approval}
               approvalResponding={approvalResponding}
               onRespondApproval={onRespondApproval}
@@ -3515,6 +4477,22 @@ function TaskWorkspace({
                 onNotice={onNotice}
               />
             </div>
+          </div>
+          <div
+            className={`thread-view-panel understanding-panel ${
+              activeView === "understanding" ? "active" : ""
+            }`}
+            aria-hidden={activeView !== "understanding"}
+          >
+            <ProjectUnderstandingPanel
+              task={task}
+              refreshToken={task.understandingRevision || 0}
+              onNotice={onNotice}
+              onOpenFile={(path) => {
+                setWorkspaceFocusPath(path);
+                switchView("workspace");
+              }}
+            />
           </div>
         </div>
 
@@ -4325,6 +5303,7 @@ function App() {
     () => readSavedTasks()[0]?.id || null,
   );
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1",
@@ -4345,7 +5324,9 @@ function App() {
   const [runningTaskId, setRunningTaskId] = useState(null);
   const [activeRunId, setActiveRunId] = useState(null);
   const [runPaused, setRunPaused] = useState(false);
-  const [runStatus, setRunStatus] = useState(null);
+  // Witness is now the visible, append-only run monitor. Keep the legacy
+  // event branches inert until they are removed from the renderer protocol.
+  const setRunStatus = () => {};
   const [approval, setApproval] = useState(null);
   const [approvalResponding, setApprovalResponding] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
@@ -4355,13 +5336,21 @@ function App() {
   const tasksRef = useRef(tasks);
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
+  const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
 
   const openApplicationSettings = (section = "general") => {
     setApplicationSettingsSection(section);
     setApplicationSettingsOpen(true);
   };
 
-  const requestNewTask = () => {
+  const requestNewTask = (projectId = "") => {
+    const requestedProjectId =
+      typeof projectId === "string"
+        ? projectId
+        : activeTask?.projectId || "";
+    setNewTaskProjectId(
+      requestedProjectId || activeTask?.projectId || "",
+    );
     if (!providersReady) {
       setNotice(tr("正在加载模型配置，请稍候", "Loading model configuration"));
       return;
@@ -4462,11 +5451,11 @@ function App() {
         }
         const recoverableRuns =
           (await window.desktop.harness?.recoverableRuns?.()) || [];
-        hydratedTasks = mergeRecoverableRuns(
+        hydratedTasks = normalizeTaskProjects(mergeRecoverableRuns(
           hydratedTasks || [],
           recoverableRuns,
           tr,
-        );
+        ));
         if (!active) return;
         setTasks(hydratedTasks);
         setActiveTaskId(hydratedTasks[0]?.id || null);
@@ -4545,6 +5534,9 @@ function App() {
   useEffect(() => {
     if (!window.desktop?.harness?.onEvent) return undefined;
     const toolLabels = {
+      delegate_subagent: tr("正在委派子 Agent", "Delegating to a subagent"),
+      collect_subagents: tr("正在收集子 Agent 结果", "Collecting subagent results"),
+      remember_project_fact: tr("正在提交项目理解候选", "Proposing Project Understanding"),
       list_directory: tr("正在浏览工作区", "Browsing workspace"),
       read_file: tr("正在读取文件", "Reading file"),
       search_text: tr("正在搜索代码", "Searching code"),
@@ -4660,6 +5652,16 @@ function App() {
         return;
       }
 
+      if (event.type === "witness.updated") {
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => ({
+            ...message,
+            witness: event.witness || message.witness || null,
+          })),
+        );
+        return;
+      }
+
       if (event.type === "response.reset") {
         setTasks((current) =>
           current.map((task) =>
@@ -4749,35 +5751,217 @@ function App() {
         return;
       }
 
-      if (event.type === "tool.started") {
-        const meta = getRouteToolMeta(event.tool, event.phase, language);
+      if (event.type === "subagent.started") {
+        setRunStatus({
+          title: tr(
+            "子 Agent 正在独立处理任务",
+            "A subagent is working independently",
+          ),
+          detail:
+            event.task ||
+            tr("探索、审查或验证正在独立上下文中进行", "Exploration, review, or verification is running in an isolated context"),
+        });
+        return;
+      }
+
+      if (event.type === "subagent.tool.started") {
+        const meta = getRouteToolMeta(event.tool, "work", language);
+        const roleLabel =
+          event.role === "review"
+            ? tr("审查", "Review")
+            : event.role === "verify"
+              ? tr("验证", "Verify")
+              : tr("探索", "Explore");
         const now = new Date().toISOString();
         run.routeCounter = (run.routeCounter || 0) + 1;
         setTasks((current) =>
           updateRunAssistant(current, run, (message) => ({
             ...message,
             route: [
-              ...(message.route || []).map((entry) =>
-                entry.tool === "complete_self_check" &&
-                entry.status === "running"
-                  ? entry
-                  : closeRunningRouteEntries([entry], now)[0],
-              ),
+              ...(message.route || []),
               {
-                id: `${event.runId}-tool-${run.routeCounter}`,
+                id: `${event.runId}-subagent-tool-${run.routeCounter}`,
+                callId: `${event.agentId}:${event.callId || run.routeCounter}`,
+                agentId: event.agentId,
                 stage: meta.stage,
-                title: meta.title,
+                title: `${roleLabel} · ${meta.title}`,
                 tool: event.tool,
-                phase: event.phase,
                 path: event.path || "",
                 command: event.command || "",
                 detail: event.detail || "",
-                planStepId: event.planStepId || null,
                 status: "running",
+                parallel: Boolean(event.parallel),
                 startedAt: now,
               },
             ],
           })),
+        );
+        setRunStatus({
+          title: tr(
+            "子 Agent 正在收集证据",
+            "Subagent is collecting evidence",
+          ),
+          detail:
+            event.path ||
+            event.command ||
+            toolLabels[event.tool] ||
+            event.tool,
+        });
+        return;
+      }
+
+      if (event.type === "subagent.tool.completed") {
+        const now = new Date().toISOString();
+        const callId = `${event.agentId}:${event.callId || ""}`;
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => {
+            const route = [...(message.route || [])];
+            const routeIndex = route.findLastIndex(
+              (entry) =>
+                entry.agentId === event.agentId &&
+                (event.callId
+                  ? entry.callId === callId
+                  : entry.tool === event.tool) &&
+                entry.status === "running",
+            );
+            if (routeIndex < 0) return message;
+            route[routeIndex] = {
+              ...route[routeIndex],
+              status: event.success ? "completed" : "failed",
+              detail: event.detail || route[routeIndex].detail,
+              path: event.path || route[routeIndex].path,
+              command: event.command || route[routeIndex].command,
+              exitCode: event.exitCode,
+              completedAt: now,
+            };
+            return { ...message, route };
+          }),
+        );
+        return;
+      }
+
+      if (
+        event.type === "subagent.completed" ||
+        event.type === "subagent.failed"
+      ) {
+        setRunStatus({
+          title:
+            event.type === "subagent.completed"
+              ? tr("子 Agent 已返回结果", "Subagent returned its result")
+              : tr("子 Agent 未能完成", "Subagent did not complete"),
+          detail:
+            event.summary ||
+            event.error ||
+            tr("主 Agent 将整理证据并继续任务", "The parent agent will integrate the evidence and continue"),
+        });
+        return;
+      }
+
+      if (event.type === "understanding.candidate.staged") {
+        setRunStatus({
+          title: tr("项目理解候选已暂存", "Understanding candidate staged"),
+          detail:
+            event.candidate?.content ||
+            tr(
+              "任务结束前将由 Curator 子 Agent 复核，不会直接写入",
+              "The Curator subagent will review it before the task ends; it has not been committed yet",
+            ),
+        });
+        return;
+      }
+
+      if (event.type === "understanding.curating") {
+        setRunStatus({
+          title: tr("正在整理项目理解", "Curating Project Understanding"),
+          detail: tr(
+            "Curator 子 Agent 正在核对本轮证据并提炼可跨任务复用的理解",
+            "The Curator subagent is validating evidence and extracting reusable cross-task understanding",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "understanding.updated") {
+        setTasks((current) => {
+          const sourceTask = current.find((task) => task.id === run.taskId);
+          const workspaceKey = normalizeWorkspacePath(sourceTask?.workspacePath);
+          return current.map((task) =>
+            workspaceKey && normalizeWorkspacePath(task.workspacePath) === workspaceKey
+              ? { ...task, understandingRevision: event.revision }
+              : task,
+          );
+        });
+        setRunStatus({
+          title: tr("项目理解已形成新修订", "Project Understanding revision created"),
+          detail:
+            event.summary ||
+            tr(
+              "同一工作区的后续任务将读取这份带证据的理解",
+              "Future tasks in this workspace will read this evidence-backed understanding",
+            ),
+        });
+        return;
+      }
+
+      if (event.type === "understanding.failed") {
+        setRunStatus({
+          title: tr("项目理解未更新", "Project Understanding was not updated"),
+          detail:
+            event.error ||
+            tr(
+              "主任务已完成；本次自动整理没有形成可靠的理解增量",
+              "The main task completed, but automatic curation produced no reliable delta",
+            ),
+        });
+        return;
+      }
+
+      if (event.type === "memory.updated") {
+        setRunStatus({
+          title: tr("项目记忆已更新", "Project memory updated"),
+          detail:
+            event.fact?.content ||
+            tr("可复用的项目知识会用于后续任务", "Reusable project knowledge will be available to future tasks"),
+        });
+        return;
+      }
+
+      if (event.type === "tool.started") {
+        const meta = getRouteToolMeta(event.tool, event.phase, language);
+        const now = new Date().toISOString();
+        run.routeCounter = (run.routeCounter || 0) + 1;
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => {
+            const previousRoute = event.parallel
+              ? [...(message.route || [])]
+              : (message.route || []).map((entry) =>
+                  entry.tool === "complete_self_check" &&
+                  entry.status === "running"
+                    ? entry
+                    : closeRunningRouteEntries([entry], now)[0],
+                );
+            return {
+              ...message,
+              route: [
+                ...previousRoute,
+                {
+                  id: `${event.runId}-tool-${run.routeCounter}`,
+                  callId: event.callId || null,
+                  stage: meta.stage,
+                  title: meta.title,
+                  tool: event.tool,
+                  phase: event.phase,
+                  path: event.path || "",
+                  command: event.command || "",
+                  detail: event.detail || "",
+                  planStepId: event.planStepId || null,
+                  status: "running",
+                  parallel: Boolean(event.parallel),
+                  startedAt: now,
+                },
+              ],
+            };
+          }),
         );
         setRunStatus({
           title: toolLabels[event.tool] || tr("Harness 正在运行", "Harness is running"),
@@ -4813,7 +5997,9 @@ function App() {
             const route = [...(message.route || [])];
             const routeIndex = route.findLastIndex(
               (entry) =>
-                entry.tool === event.tool &&
+                (event.callId
+                  ? entry.callId === event.callId
+                  : entry.tool === event.tool) &&
                 ["running", "waiting"].includes(entry.status),
             );
             if (routeIndex >= 0) {
@@ -4892,7 +6078,105 @@ function App() {
         return;
       }
 
+      if (event.type === "self_check.segment.started") {
+        const now = new Date().toISOString();
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => ({
+            ...message,
+            route: [
+              ...(message.route || []),
+              {
+                id: `${event.runId}-${event.segmentId}`,
+                kind: "self-check-segment",
+                stage: "trial",
+                title: tr("分段子 Agent 自检", "Staged subagent review"),
+                detail: tr(
+                  "复核 {count} 个当前文件版本",
+                  "Reviewing {count} current file version(s)",
+                  { count: event.paths?.length || 0 },
+                ),
+                status: "running",
+                startedAt: now,
+                planStepId: event.planStepId || null,
+              },
+            ],
+          })),
+        );
+        setRunStatus({
+          title: tr("分段自检进行中", "Staged review in progress"),
+          detail: tr(
+            "审查与验证子 Agent 正在检查最新改动",
+            "Review and verify subagents are checking the latest changes",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "self_check.segment.completed") {
+        const now = new Date().toISOString();
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => ({
+            ...message,
+            route: (message.route || []).map((entry) =>
+              entry.id === `${event.runId}-${event.segmentId}`
+                ? {
+                    ...entry,
+                    status: event.verdict === "pass" ? "completed" : "failed",
+                    detail: event.findings?.[0]?.message ||
+                      tr(
+                        "已保存这一阶段的审查证据",
+                        "Review evidence for this stage was saved",
+                      ),
+                    finishedAt: now,
+                  }
+                : entry,
+            ),
+          })),
+        );
+        setRunStatus({
+          title: event.verdict === "pass"
+            ? tr("本阶段自检通过", "Stage review passed")
+            : tr("本阶段需要修正", "Stage needs corrections"),
+          detail: event.findings?.[0]?.message ||
+            tr("审查证据已写入版本账本", "Review evidence was written to the version ledger"),
+        });
+        return;
+      }
+
+      if (event.type === "self_check.fallback") {
+        setRunStatus({
+          title: tr("启用完整自检兜底", "Full self-check fallback enabled"),
+          detail: tr(
+            "分段证据不完整，将由主 Agent 完成全量复核",
+            "Staged evidence was incomplete; the main agent will perform a full review",
+          ),
+        });
+        return;
+      }
+
+      if (event.type === "self_check.sealed") {
+        setRunStatus({
+          title: tr("最终证据已封印", "Final evidence sealed"),
+          detail: tr(
+            "{count} 个当前文件版本均已有匹配审查记录",
+            "All {count} current file version(s) have matching review records",
+            { count: event.seal?.reviewedFiles?.length || 0 },
+          ),
+        });
+        return;
+      }
+
       if (event.type === "self_check.started") {
+        if (event.mode === "progressive") {
+          setRunStatus({
+            title: tr("准备最终证据封印", "Preparing the final evidence seal"),
+            detail: tr(
+              "正在核对分段审查账本与当前文件版本",
+              "Checking staged review records against current file versions",
+            ),
+          });
+          return;
+        }
         const now = new Date().toISOString();
         setTasks((current) =>
           updateRunAssistant(current, run, (message) => ({
@@ -4932,7 +6216,9 @@ function App() {
                 id: `${event.runId}-self-check-complete`,
                 kind: "self-check-complete",
                 stage: "trial",
-                title: tr("强制自检已完成", "Mandatory self-check completed"),
+                title: event.report?.mode === "progressive"
+                  ? tr("最终证据封印完成", "Final evidence seal completed")
+                  : tr("强制自检已完成", "Mandatory self-check completed"),
                 detail: event.report?.verification?.passed
                   ? tr("项目验证已通过", "Project verification passed")
                   : tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: event.report?.reviewedFiles?.length || 0 }),
@@ -5054,12 +6340,25 @@ function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [providers, providersReady, tr]);
+  }, [activeTask?.projectId, providers, providersReady, tr]);
 
   const updateActiveTask = (patch) => {
+    const normalizedPatch =
+      Object.prototype.hasOwnProperty.call(patch, "workspacePath")
+        ? {
+            ...patch,
+            workspaceName:
+              patch.workspaceName ||
+              getFolderName(patch.workspacePath) ||
+              tr("无工作区", "No workspace"),
+            projectId: projectIdForWorkspace(patch.workspacePath),
+          }
+        : patch;
     setTasks((current) =>
       current.map((task) =>
-        task.id === activeTaskId ? { ...task, ...patch } : task,
+        task.id === activeTaskId
+          ? { ...task, ...normalizedPatch }
+          : task,
       ),
     );
   };
@@ -5082,6 +6381,8 @@ function App() {
       createdAt: new Date().toISOString(),
       messages: [],
       ...input,
+      projectId:
+        input.projectId || projectIdForWorkspace(input.workspacePath),
     };
     setTasks((current) => [task, ...current]);
     setActiveTaskId(task.id);
@@ -5269,6 +6570,7 @@ function App() {
           startedAt: new Date().toISOString(),
         },
       ],
+      witness: null,
       createdAt: new Date().toISOString(),
     };
     setTasks((current) =>
@@ -5344,6 +6646,10 @@ function App() {
             task.id === targetTask.id
               ? {
                   ...task,
+                  understandingRevision:
+                    result.understanding?.currentRevision ||
+                    task.understandingRevision ||
+                    0,
                   messages: task.messages.map((message) =>
                     message.id === assistantId
                       ? {
@@ -5375,11 +6681,14 @@ function App() {
                           sandbox: result.sandbox || null,
                           tools: result.tools || [],
                           selfCheck: result.selfCheck || null,
+                          understanding: result.understanding || null,
                           plan: result.plan || message.plan || null,
                           contextCheckpoints:
                             result.contextCheckpoints ||
                             message.contextCheckpoints ||
                             [],
+                          witness:
+                            result.witness || message.witness || null,
                           completedAt: new Date().toISOString(),
                         }
                       : message,
@@ -5687,7 +6996,11 @@ function App() {
     }
   };
 
-  const restoreTaskToAnchor = async (taskId, anchorMessageId) => {
+  const restoreTaskToAnchor = async (
+    taskId,
+    anchorMessageId,
+    restoreMode = "history",
+  ) => {
     if (!window.desktop?.workspace?.restoreAnchor) {
       setNotice(
         tr(
@@ -5729,8 +7042,10 @@ function App() {
       return { success: false, reason: "anchor-not-found" };
     }
 
-    const targets = anchorMessages
-      .slice(selectedIndex)
+    const targets = (restoreMode === "turn"
+      ? anchorMessages.slice(selectedIndex, selectedIndex + 1)
+      : anchorMessages.slice(selectedIndex)
+    )
       .filter((message) =>
         message.changes.some((change) => !change.reverted),
       );
@@ -5777,6 +7092,7 @@ function App() {
                   {
                     id: crypto.randomUUID(),
                     anchorMessageId,
+                    mode: restoreMode,
                     restoredAt,
                     restoredFiles: result.restoredFiles || 0,
                   },
@@ -5959,9 +7275,11 @@ function App() {
               onRestoreAnchor={(messageId) =>
                 restoreTaskToAnchor(activeTask.id, messageId)
               }
+              onRestoreTurnAnchor={(messageId) =>
+                restoreTaskToAnchor(activeTask.id, messageId, "turn")
+              }
               onConfirmChanges={confirmMessageChanges}
               onSaveChanges={saveReviewedMessageChange}
-              runStatus={runStatus}
               approval={
                 approval?.taskId === activeTask.id ? approval : null
               }
@@ -5995,6 +7313,8 @@ function App() {
       {newTaskOpen && (
         <NewTaskModal
           providers={providers}
+          projects={projects}
+          initialProjectId={newTaskProjectId}
           onClose={() => setNewTaskOpen(false)}
           onCreate={createTask}
           onNotice={setNotice}

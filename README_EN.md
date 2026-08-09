@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Setup-0.3.4-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.4.1/AporiaX-Setup-0.4.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -34,7 +34,7 @@ evidence, changes, and deliverables visible instead of reducing the work to a
 chat response.
 
 > [!IMPORTANT]
-> AporiaX `v0.3.4` is still a preview and currently ships for Windows x64.
+> AporiaX `v0.4.1` is still a preview and currently ships for Windows x64.
 > `run_command` runs automatically in a temporary local workspace copy and
 > conflict-checks project changes before synchronizing them back. Docker is
 > entirely optional; enabling it upgrades execution to an offline,
@@ -45,7 +45,8 @@ chat response.
 
 - **Route** shows the steps that actually occurred during every task.
 - **Evidence** preserves tool calls, file changes, verification, and failures.
-- **Anchor** creates file checkpoints for line-by-line review and safe rollback.
+- **Anchor** brings restorable checkpoints beside each turn, with diff preview,
+  conflict detection, and safe rollback.
 
 ## See the work happen
 
@@ -74,9 +75,11 @@ chat response.
 | --- | --- |
 | Code and workspace | File tree, search, preview, editing, `Ctrl+S`, precise patches, Git status and diff |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
-| Observable execution | Dialogue, Route, and Workspace views with step-by-step actions and changes |
-| Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-file or per-turn revert |
-| Mandatory self-check | Re-reads changed files, attempts tests or builds, fixes findings, and records remaining risks |
+| Observable execution | Witness reports the current main/subagent action, duration, failures, and self-check phase in Dialogue; Route preserves the full trace |
+| Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and atomic conflict checks |
+| Mandatory self-check | Review/Verify subagents inspect current file versions in stages, followed by a lightweight final seal over tests, risks, and deliverables |
+| Subagents and context | Parallel reads and search; isolated Explore, Review, and Verify subagents; scoped rules, structured compaction, and relevant-history recall |
+| Project understanding | One workspace forms one project; versioned Understanding shares architecture, conventions, commands, preferences, and debugging knowledge across its tasks |
 | Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, task-level model selection |
 | Bilingual interface | Switch Chinese and English from the welcome screen or settings; new replies follow the interface language |
 | Attachments | PDF, Office, Markdown, code, and image attachments with local PDF text extraction |
@@ -89,17 +92,19 @@ yet. Image delivery depends on the vision capability of the selected model.
 
 | Windows x64 | Use case |
 | --- | --- |
-| [Installer 0.3.4](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Setup-0.3.4-x64.exe) | Standard installation, desktop shortcut, and Start menu |
-| [Portable 0.3.4](https://github.com/CaptainLand/AporiaX/releases/download/v0.3.4/AporiaX-Portable-0.3.4-x64.exe) | Run and evaluate without installation |
+| [Installer 0.4.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.4.1/AporiaX-Setup-0.4.1-x64.exe) | Standard installation, desktop shortcut, and Start menu |
+| [Portable 0.4.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.4.1/AporiaX-Portable-0.4.1-x64.exe) | Run and evaluate without installation |
 
-### What's new in 0.3.4
+### What's new in 0.4.1: from a single tool loop to a project-level agent system
 
-- Introduces the new AporiaX app icon and a unified visual identity.
-- Runs commands automatically in the local sandbox, with Docker as optional stronger isolation.
-- Adds durable run records, cross-turn recovery, live steering, and safe rollback anchors.
-- Refines Settings, New Task, Route, Workspace, and code review interfaces.
+- **Parallel subagents** — Explore, Review, and Verify work with isolated context and permissions, reducing main-context pollution and long-task blocking.
+- **Witness and Route** — Dialogue keeps the current main/subagent work visible, while Route groups evidence into expandable understanding, exploration, execution, and verification phases.
+- **Staged self-check** — changed file versions are reviewed as work progresses, followed by a lightweight final seal instead of a full mechanical reread.
+- **Project Understanding** — architecture, conventions, commands, preferences, and debugging knowledge become versioned project context shared across tasks in the same workspace.
+- **Projects and tasks** — one workspace maps to one project containing multiple tasks; Workspace now opens as a collapsible tree rooted at the project directory.
+- **Per-turn Anchor** — preview affected files and exact diffs beside a reply, then atomically restore after explicit confirmation; later edits stop the restore safely.
 
-[Read the complete 0.3.4 release notes](docs/RELEASE_NOTES_v0.3.4.md)
+[Read the complete 0.4.1 release notes](docs/RELEASE_NOTES_v0.4.1.md)
 
 After the first launch:
 
@@ -179,6 +184,41 @@ Harness uses structured Office tools, then re-parses document blocks, slides,
 worksheets, and formulas. Structural inspection does not replace a final visual
 review in Word, PowerPoint, or Excel.
 
+## Subagents and project context
+
+AporiaX runs independent read tools concurrently and delegates larger
+exploration, review, and verification work to isolated Explore, Review, and
+Verify subagents with their own context and path scope. Explore and Review are
+read-only. Verify may run project checks when the task policy permits it.
+Background subagents are collected before final delivery, and their internal
+steps appear in Route without flooding the parent context with raw logs.
+
+Harness recognizes these project rules:
+
+- `AGENTS.md`, `APORIAX.md`, and `DEEPAGENT.md` at the workspace root or in nested directories.
+- Path-scoped Markdown files under `.aporiax/rules/`, with optional `paths` globs in frontmatter.
+- App-local project memory for verified commands, architecture conventions, and explicit preferences; credentials are rejected.
+
+```markdown
+---
+paths:
+  - src/**/*.js
+---
+Run the project syntax check after changing JavaScript.
+```
+
+Near the model context limit, Harness preserves system and scoped rules,
+compacts older content into a structured checkpoint, and retrieves relevant
+constraints, evidence, and project memory for the current work. When a
+provider reports actual token usage, the estimator calibrates itself. Model
+configuration may also provide `contextWindow`.
+
+While a task is running, **Witness** at the bottom of Dialogue subscribes to
+the Harness event stream and reports what the main agent and subagents are
+doing. Witness is observation-only and never edits files. It surfaces
+long-running actions and repeated tool failures while Route retains the full
+tool evidence.
+
 ## Project-level permissions
 
 Add `.aporiax.json` to the workspace root:
@@ -191,6 +231,8 @@ Add `.aporiax.json` to the workspace root:
     "create_word_document": "ask",
     "create_presentation": "ask",
     "create_spreadsheet": "ask",
+    "delegate_subagent": "allow",
+    "remember_project_fact": "allow",
     "run_command": "deny"
   }
 }
@@ -211,7 +253,7 @@ build/      Application icons and build resources
 
 See [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) for current Harness
 architecture and plans. See
-[docs/RELEASE_NOTES_v0.3.4.md](docs/RELEASE_NOTES_v0.3.4.md) for this release.
+[docs/RELEASE_NOTES_v0.4.1.md](docs/RELEASE_NOTES_v0.4.1.md) for this release.
 
 ## Contributing
 

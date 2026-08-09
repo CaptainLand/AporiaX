@@ -50,6 +50,18 @@ import {
   listRecoverableRuns,
   updateRunJournalMetadata,
 } from "../electron/run-store.js";
+import {
+  compactConversationForRequest,
+  createProjectMemoryStore,
+  createTokenAccounting,
+  estimateConversationTokens,
+  loadProjectInstructionContext,
+  mergeTokenUsage,
+  recordProviderUsage,
+  resolveScopedInstructions,
+} from "../electron/agent-context.js";
+import { createWitnessMonitor } from "../electron/witness-monitor.js";
+import { createProjectUnderstandingStore } from "../electron/project-understanding.js";
 
 const testRoot = await mkdtemp(join(resolve("."), ".runtime-smoke-"));
 const originalFetch = globalThis.fetch;
@@ -136,6 +148,20 @@ function createToolDelta(id, name, input) {
   };
 }
 
+function createToolCallsDelta(calls) {
+  return {
+    tool_calls: calls.map((call, index) => ({
+      index,
+      id: call.id,
+      type: "function",
+      function: {
+        name: call.name,
+        arguments: JSON.stringify(call.input),
+      },
+    })),
+  };
+}
+
 function createPdfFixture(text = "Hello from PDF") {
   const escaped = text.replace(/([\\()])/g, "\\$1");
   const stream = `BT /F1 16 Tf 72 720 Td (${escaped}) Tj ET`;
@@ -163,6 +189,329 @@ function createPdfFixture(text = "Hello from PDF") {
 }
 
 try {
+  let witnessNow = 1_000;
+  const witnessEvents = [];
+  const witnessMonitor = createWitnessMonitor({
+    emit: (event) => witnessEvents.push(event),
+    heartbeatMs: 0,
+    now: () => witnessNow,
+  });
+  witnessMonitor.observe({ type: "turn.started" });
+  witnessMonitor.observe({ type: "response.reset", round: 1, phase: "work" });
+  witnessMonitor.observe({
+    type: "tool.started",
+    callId: "witness-read-1",
+    tool: "read_file",
+    path: "src/main.js",
+  });
+  witnessNow += 46_000;
+  witnessMonitor.heartbeat();
+  assert.equal(witnessMonitor.snapshot().current?.longRunning, true);
+  witnessMonitor.observe({
+    type: "tool.completed",
+    callId: "witness-read-1",
+    tool: "read_file",
+    success: true,
+    path: "src/main.js",
+  });
+  for (let index = 0; index < 3; index += 1) {
+    witnessNow += 1_000;
+    witnessMonitor.observe({
+      type: "tool.started",
+      callId: `witness-failure-${index}`,
+      tool: "run_command",
+      command: "npm test",
+    });
+    witnessMonitor.observe({
+      type: "tool.completed",
+      callId: `witness-failure-${index}`,
+      tool: "run_command",
+      success: false,
+      detail: "test failed",
+    });
+  }
+  witnessMonitor.observe({
+    type: "subagent.started",
+    agentId: "witness-agent-1",
+    role: "review",
+    task: "Review the changed files.",
+  });
+  assert.equal(witnessMonitor.snapshot().counters.activeAgents, 1);
+  witnessMonitor.observe({
+    type: "subagent.completed",
+    agentId: "witness-agent-1",
+    role: "review",
+    status: "completed",
+    summary: "No blocking findings.",
+  });
+  witnessMonitor.observe({ type: "turn.completed" });
+  const witnessSnapshot = witnessMonitor.snapshot();
+  assert.equal(witnessSnapshot.status, "completed");
+  assert.equal(witnessSnapshot.counters.activeAgents, 0);
+  assert.equal(witnessSnapshot.records[0].eventType, "turn.started");
+  assert.equal(witnessSnapshot.records.at(-1).eventType, "turn.completed");
+  assert(
+    witnessSnapshot.alerts.some((alert) =>
+      alert.code.startsWith("repeated-failure:run_command"),
+    ),
+  );
+  assert(
+    witnessEvents.some((event) => event.type === "witness.updated"),
+  );
+  witnessMonitor.dispose();
+
+  const contextFixtureRoot = join(testRoot, "context-fixture");
+  const contextFeatureRoot = join(contextFixtureRoot, "src", "feature");
+  await mkdir(contextFeatureRoot, { recursive: true });
+  await mkdir(join(contextFixtureRoot, ".aporiax", "rules"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(contextFixtureRoot, "AGENTS.md"),
+    "Use project-wide verification commands.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(contextFixtureRoot, "src", "APORIAX.md"),
+    "Files under src must use named exports.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(contextFixtureRoot, ".aporiax", "rules", "javascript.md"),
+    [
+      "---",
+      "paths:",
+      "  - src/**/*.js",
+      "---",
+      "JavaScript changes must include a focused syntax check.",
+    ].join("\n"),
+    "utf8",
+  );
+  const instructionContext = await loadProjectInstructionContext(
+    contextFixtureRoot,
+  );
+  assert.deepEqual(instructionContext.root.files, ["AGENTS.md"]);
+  const scopedInstructions = await resolveScopedInstructions(
+    instructionContext,
+    ["src/feature/example.js"],
+  );
+  assert(scopedInstructions.files.includes("src/APORIAX.md"));
+  assert(scopedInstructions.files.includes(".aporiax/rules/javascript.md"));
+  assert.match(scopedInstructions.content, /named exports/);
+  assert.match(scopedInstructions.content, /syntax check/);
+
+  const directScopedContext = await loadProjectInstructionContext(
+    contextFixtureRoot,
+  );
+  const directScopedInstructions = await resolveScopedInstructions(
+    directScopedContext,
+    ["src/example.js"],
+  );
+  assert(
+    directScopedInstructions.files.includes("src/APORIAX.md"),
+    "a directory-level instruction file should apply to direct child files",
+  );
+  assert(
+    directScopedInstructions.files.includes(
+      ".aporiax/rules/javascript.md",
+    ),
+    "a **/ path rule should also match files directly below its prefix",
+  );
+
+  const directoryScopedContext = await loadProjectInstructionContext(
+    contextFixtureRoot,
+  );
+  const directoryScopedInstructions = await resolveScopedInstructions(
+    directoryScopedContext,
+    ["src"],
+  );
+  assert(
+    directoryScopedInstructions.files.includes("src/APORIAX.md"),
+    "directory operations should load instructions located in that directory",
+  );
+
+  const memoryStore = await createProjectMemoryStore({
+    baseDirectory: join(testRoot, "memory"),
+    workspaceRoot: contextFixtureRoot,
+  });
+  await memoryStore.remember({
+    category: "command",
+    content: "Use npm run test:runtime for the Harness regression suite.",
+    evidence: "package.json",
+  });
+  assert.equal(
+    memoryStore.retrieve("Harness regression command", 4)[0]?.category,
+    "command",
+  );
+  await assert.rejects(
+    () =>
+      memoryStore.remember({
+        category: "preference",
+        content: "API key sk-1234567890abcdefghijklmnop",
+      }),
+    /Secrets and credentials/,
+  );
+
+  const understandingStore = await createProjectUnderstandingStore({
+    baseDirectory: join(testRoot, "understanding"),
+    workspaceRoot: contextFixtureRoot,
+  });
+  const firstUnderstandingCommit = await understandingStore.commit({
+    taskId: "task-understanding-1",
+    runId: "run-understanding-1",
+    summary: "Record the project test architecture",
+    changes: [
+      {
+        operation: "upsert",
+        category: "architecture",
+        content: "Runtime smoke tests live in tests/runtime-smoke.mjs.",
+        confidence: 0.92,
+        evidence: [
+          {
+            type: "file",
+            reference: "tests/runtime-smoke.mjs",
+            detail: "Verified by the curator fixture.",
+          },
+        ],
+      },
+    ],
+  });
+  assert(firstUnderstandingCommit.committed);
+  assert.equal(firstUnderstandingCommit.state.currentRevision, 1);
+  assert.equal(
+    understandingStore.retrieve("runtime smoke tests", 4)[0]?.category,
+    "architecture",
+  );
+
+  const repeatedUnderstandingCommit = await understandingStore.commit({
+    taskId: "task-understanding-2",
+    summary: "Confirm the same project test architecture",
+    changes: [
+      {
+        operation: "upsert",
+        category: "architecture",
+        content: "Runtime smoke tests live in tests/runtime-smoke.mjs.",
+        confidence: 0.95,
+        evidence: [
+          {
+            type: "file",
+            reference: "tests/runtime-smoke.mjs",
+            detail: "Confirmed by a later task.",
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(repeatedUnderstandingCommit.state.facts.length, 1);
+  assert.equal(repeatedUnderstandingCommit.state.facts[0].occurrences, 2);
+
+  await understandingStore.commit({
+    taskId: "task-understanding-3",
+    summary: "Record a temporary decision",
+    changes: [
+      {
+        category: "decision",
+        content: "A temporary decision used only to test revision rollback.",
+        confidence: 0.8,
+        evidence: ["tests/runtime-smoke.mjs"],
+      },
+    ],
+  });
+  const revertedUnderstanding = await understandingStore.revertTo(
+    firstUnderstandingCommit.revision.id,
+    { taskId: "task-understanding-revert" },
+  );
+  assert.equal(revertedUnderstanding.state.currentRevision, 4);
+  assert.equal(revertedUnderstanding.state.facts.length, 1);
+  assert.equal(
+    revertedUnderstanding.revision.revertedFrom,
+    firstUnderstandingCommit.revision.id,
+  );
+  const reloadedUnderstanding = await createProjectUnderstandingStore({
+    baseDirectory: join(testRoot, "understanding"),
+    workspaceRoot: contextFixtureRoot,
+  });
+  assert.equal(reloadedUnderstanding.snapshot().currentRevision, 4);
+  await assert.rejects(
+    () =>
+      understandingStore.commit({
+        summary: "Reject secrets",
+        changes: [
+          {
+            category: "preference",
+            content: "Use API key sk-1234567890abcdefghijklmnop",
+            confidence: 0.9,
+            evidence: ["user input"],
+          },
+        ],
+      }),
+    /Secrets and credentials/,
+  );
+  await assert.rejects(
+    () =>
+      memoryStore.remember({
+        category: "command",
+        content: "Use the configured release command.",
+        evidence: "authorization: bearer test-token-that-must-not-persist",
+      }),
+    /Secrets and credentials/,
+  );
+
+  const tokenAccounting = createTokenAccounting();
+  const shortConversation = [
+    { role: "system", content: "You are a coding agent." },
+    { role: "user", content: "检查 src/example.js 并运行 npm test" },
+  ];
+  const heuristicTokens = estimateConversationTokens(
+    shortConversation,
+    tokenAccounting,
+  );
+  recordProviderUsage(
+    tokenAccounting,
+    { prompt_tokens: 900, completion_tokens: 100, total_tokens: 1_000 },
+    shortConversation,
+  );
+  assert.equal(tokenAccounting.source, "provider-usage-calibrated");
+  assert(
+    estimateConversationTokens(shortConversation, tokenAccounting) >= 900,
+  );
+  assert.deepEqual(
+    mergeTokenUsage(
+      { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+      { input_tokens: 80, output_tokens: 10 },
+    ),
+    { prompt_tokens: 180, completion_tokens: 30, total_tokens: 210 },
+  );
+  assert(heuristicTokens > 0);
+
+  const compactConversation = [
+    { role: "system", content: "Stable system instructions" },
+  ];
+  for (let index = 0; index < 70; index += 1) {
+    compactConversation.push({
+      role: index % 2 ? "assistant" : "user",
+      content: `${index} ${"long context requirement ".repeat(80)}`,
+    });
+  }
+  const compactEvents = [];
+  const checkpoints = [];
+  const checkpoint = compactConversationForRequest({
+    conversation: compactConversation,
+    onEvent: (event) => compactEvents.push(event),
+    contextCheckpoints: checkpoints,
+    contextWindowTokens: 32_000,
+    accounting: createTokenAccounting(),
+    plan: {
+      revision: 2,
+      steps: [{ id: "verify", title: "Verify result", status: "in_progress" }],
+    },
+    relevantMemory: memoryStore.facts,
+  });
+  assert.equal(checkpoint?.version, 2);
+  assert.equal(checkpoints.length, 1);
+  assert.equal(compactEvents[0]?.type, "context.compacted");
+  assert.equal(compactConversation[0].content, "Stable system instructions");
+
   const journalRoot = join(testRoot, "run-journal");
   await beginRunJournal(journalRoot, {
     runId: "runtime-resume-1",
@@ -349,6 +698,23 @@ try {
   );
   assert.equal(
     getToolPermission(restrictedWritePolicy, "run_command"),
+    "deny",
+  );
+  const noDelegationPolicy = createPermissionPolicy(
+    "workspace-write",
+    {
+      delegate_subagent: "deny",
+      collect_subagents: "deny",
+      remember_project_fact: "deny",
+    },
+  );
+  assert.equal(
+    getToolPermission(noDelegationPolicy, "delegate_subagent"),
+    "deny",
+    "repository config may restrict optional Harness capabilities",
+  );
+  assert.equal(
+    getToolPermission(noDelegationPolicy, "remember_project_fact"),
     "deny",
   );
   assert.equal(
@@ -546,6 +912,194 @@ try {
     "the Harness must describe local workspace isolation accurately",
   );
 
+  const parallelRoot = join(testRoot, "parallel-tools");
+  await mkdir(parallelRoot, { recursive: true });
+  await writeFile(join(parallelRoot, "one.txt"), "first\n", "utf8");
+  await writeFile(join(parallelRoot, "two.txt"), "second\n", "utf8");
+  const parallelResponses = [
+    createToolCallsDelta([
+      { id: "parallel-read-1", name: "read_file", input: { path: "one.txt" } },
+      { id: "parallel-read-2", name: "read_file", input: { path: "two.txt" } },
+    ]),
+    { content: "Both independent files were inspected." },
+  ];
+  let parallelResponseIndex = 0;
+  const parallelEvents = [];
+  globalThis.fetch = async () => {
+    const delta = parallelResponses[parallelResponseIndex];
+    parallelResponseIndex += 1;
+    if (!delta) throw new Error("Unexpected extra parallel model request.");
+    return createSseResponse(delta);
+  };
+  const parallelResult = await runTestHarness({
+    workspacePath: parallelRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: false,
+    effort: "high",
+    permission: "read-only",
+    messages: [{ role: "user", content: "Inspect both independent files." }],
+    onEvent: (event) => parallelEvents.push(event),
+  });
+  assert.equal(parallelResult.status, "completed");
+  assert.equal(parallelResult.steps.filter((step) => step.parallel).length, 2);
+  assert.equal(
+    parallelEvents.some((event) => event.type === "parallel_batch.started"),
+    true,
+  );
+  assert.equal(
+    parallelEvents.filter((event) => event.type === "tool.started").length,
+    2,
+  );
+
+  const subagentRoot = join(testRoot, "subagent-tools");
+  await mkdir(subagentRoot, { recursive: true });
+  await writeFile(
+    join(subagentRoot, "architecture.txt"),
+    "The runtime uses an event journal.\n",
+    "utf8",
+  );
+  const subagentResponses = [
+    createToolDelta("delegate-1", "delegate_subagent", {
+      role: "explore",
+      task: "Read architecture.txt and report the runtime persistence mechanism.",
+      scope: ["architecture.txt"],
+      background: false,
+      max_rounds: 4,
+    }),
+    createToolDelta("sub-read-1", "read_file", {
+      path: "architecture.txt",
+    }),
+    { content: "The runtime persists progress through an event journal." },
+    { content: "The explore subagent confirmed that persistence uses an event journal." },
+  ];
+  let subagentResponseIndex = 0;
+  const subagentEvents = [];
+  globalThis.fetch = async () => {
+    const delta = subagentResponses[subagentResponseIndex];
+    subagentResponseIndex += 1;
+    if (!delta) throw new Error("Unexpected extra subagent model request.");
+    return createSseResponse(delta);
+  };
+  const subagentResult = await runTestHarness({
+    runId: "subagent-runtime-smoke",
+    workspacePath: subagentRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: false,
+    effort: "high",
+    permission: "read-only",
+    messages: [
+      {
+        role: "user",
+        content: "Delegate a focused exploration of the persistence mechanism.",
+      },
+    ],
+    onEvent: (event) => subagentEvents.push(event),
+  });
+  assert.equal(subagentResult.status, "completed");
+  assert.equal(subagentResult.witness?.status, "completed");
+  assert.equal(subagentResult.subagents.length, 1);
+  assert.equal(subagentResult.subagents[0].status, "completed");
+  assert.equal(
+    subagentResult.steps.some(
+      (step) => step.name === "delegate_subagent" && step.success,
+    ),
+    true,
+  );
+  assert.equal(
+    subagentEvents.some((event) => event.type === "subagent.started"),
+    true,
+  );
+  assert.equal(
+    subagentEvents.some((event) => event.type === "subagent.completed"),
+    true,
+  );
+
+  let backgroundParentRequests = 0;
+  let backgroundChildRequests = 0;
+  const backgroundEvents = [];
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    const requestMessages = body.messages || [];
+    const systemText = String(requestMessages[0]?.content || "");
+    if (/explore subagent/i.test(systemText)) {
+      backgroundChildRequests += 1;
+      const hasToolResult = requestMessages.some(
+        (message) => message.role === "tool",
+      );
+      return createSseResponse(
+        hasToolResult
+          ? { content: "Background exploration found the event journal." }
+          : createToolDelta("background-read-1", "read_file", {
+              path: "architecture.txt",
+            }),
+      );
+    }
+    backgroundParentRequests += 1;
+    const hasCollectedResults = requestMessages.some(
+      (message) =>
+        message.role === "user" &&
+        /automatically collected the remaining background subagents/.test(
+          String(message.content || ""),
+        ),
+    );
+    const hasDelegationResult = requestMessages.some(
+      (message) =>
+        message.role === "tool" &&
+        /"background":true/.test(String(message.content || "")),
+    );
+    if (hasCollectedResults) {
+      return createSseResponse({
+        content: "The background evidence was collected before delivery.",
+      });
+    }
+    if (hasDelegationResult) {
+      return createSseResponse({
+        content: "The parent completed independent work.",
+      });
+    }
+    return createSseResponse(
+      createToolDelta("delegate-background-1", "delegate_subagent", {
+        role: "explore",
+        task: "Inspect architecture.txt in the background.",
+        scope: ["architecture.txt"],
+        background: true,
+        max_rounds: 4,
+      }),
+    );
+  };
+  const backgroundSubagentResult = await runTestHarness({
+    runId: "background-subagent-runtime-smoke",
+    workspacePath: subagentRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: false,
+    effort: "high",
+    permission: "read-only",
+    messages: [
+      {
+        role: "user",
+        content: "Explore persistence in the background, then report it.",
+      },
+    ],
+    onEvent: (event) => backgroundEvents.push(event),
+  });
+  assert.equal(backgroundSubagentResult.status, "completed");
+  assert.equal(backgroundSubagentResult.subagents.length, 1);
+  assert.equal(backgroundSubagentResult.subagents[0].status, "completed");
+  assert.equal(backgroundParentRequests, 3);
+  assert.equal(backgroundChildRequests, 2);
+  assert.equal(
+    backgroundEvents.some(
+      (event) => event.type === "subagent.backgrounded",
+    ),
+    true,
+  );
+  assert.equal(
+    backgroundEvents.some(
+      (event) => event.type === "subagent.collected" && event.automatic,
+    ),
+    true,
+  );
+
   const reviewedVersions = new Map();
   const selfCheckChanges = new Map([
     [
@@ -606,6 +1160,23 @@ try {
       path: "checked.js",
       content: "export const checked = true;\n",
     }),
+    createToolDelta("plan-2", "update_plan", {
+      explanation: "实现阶段完成，进入验证。",
+      steps: [
+        {
+          id: "implement",
+          title: "实现并检查模块",
+          status: "completed",
+          detail: "创建文件并完成所需修改",
+        },
+        {
+          id: "verify",
+          title: "运行验证与强制自检",
+          status: "in_progress",
+          detail: "重新读取修改并运行项目测试",
+        },
+      ],
+    }),
     createToolDelta("search-1", "search_text", {
       path: ".",
       query: "checked = true",
@@ -616,39 +1187,89 @@ try {
       old_text: "checked = true",
       new_text: "checked = 'reviewed'",
     }),
-    { content: "初步完成。" },
-    createToolDelta("check-too-early", "complete_self_check", {
-      summary: "尚未复读。",
-      checks: ["语法"],
-      improvements: [],
-      remaining_risks: [],
-    }),
-    createToolDelta("read-1", "read_file", {
-      path: "checked.js",
-    }),
-    createToolDelta("check-before-verification", "complete_self_check", {
-      summary: "已复读，但尚未运行验证。",
-      checks: ["检查语法"],
-      improvements: [],
-      remaining_risks: [],
-    }),
-    createToolDelta("verify-1", "run_command", {
-      command: "npm run test",
-      cwd: ".",
-      reason: "执行项目提供的语法验证脚本。",
-    }),
-    createToolDelta("check-1", "complete_self_check", {
-      summary: "已重新读取并检查本轮修改。",
-      checks: ["检查语法与导出结构"],
-      improvements: [],
-      remaining_risks: [],
-    }),
-    { content: "实现与强制自检均已完成。" },
+    { content: "实现与分段自检均已完成。" },
   ];
   let scriptedResponseIndex = 0;
   let transientFailureInjected = false;
+  let stagedReviewRound = 0;
+  let stagedVerifyRound = 0;
+  let understandingCuratorRound = 0;
   const harnessEvents = [];
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (_url, options = {}) => {
+    const requestBody = JSON.parse(options.body || "{}");
+    const systemPrompt = String(requestBody.messages?.[0]?.content || "");
+    if (/AporiaX review subagent/.test(systemPrompt)) {
+      stagedReviewRound += 1;
+      return createSseResponse(
+        stagedReviewRound % 2 === 1
+          ? createToolDelta("staged-review-read", "read_file", {
+              path: "checked.js",
+            })
+          : {
+              content: JSON.stringify({
+                verdict: "pass",
+                checks: ["检查语法与导出结构"],
+                findings: [],
+                remaining_risks: [],
+              }),
+            },
+      );
+    }
+    if (/AporiaX verify subagent/.test(systemPrompt)) {
+      stagedVerifyRound += 1;
+      return createSseResponse(
+        stagedVerifyRound === 1
+          ? createToolDelta("staged-verify-command", "run_command", {
+              command: "npm run test",
+              cwd: ".",
+              reason: "执行项目提供的语法验证脚本。",
+            })
+          : {
+              content: JSON.stringify({
+                verdict: "pass",
+                commands: [
+                  {
+                    command: "npm run test",
+                    cwd: ".",
+                    exit_code: 0,
+                    passed: true,
+                  },
+                ],
+                checks: ["项目测试通过"],
+                remaining_risks: [],
+              }),
+            },
+      );
+    }
+    if (/AporiaX curator subagent/.test(systemPrompt)) {
+      understandingCuratorRound += 1;
+      return createSseResponse(
+        understandingCuratorRound === 1
+          ? createToolDelta("understanding-read", "read_file", {
+              path: "checked.js",
+            })
+          : {
+              content: JSON.stringify({
+                summary: "Record the verified checked module",
+                changes: [
+                  {
+                    operation: "upsert",
+                    category: "module",
+                    content: "checked.js exports the reviewed marker used by the runtime fixture.",
+                    confidence: 0.91,
+                    evidence: [
+                      {
+                        type: "file",
+                        reference: "checked.js",
+                        detail: "Read after the progressive self-check passed.",
+                      },
+                    ],
+                  },
+                ],
+              }),
+            },
+      );
+    }
     if (!transientFailureInjected) {
       transientFailureInjected = true;
       return new Response(
@@ -667,12 +1288,15 @@ try {
     return createSseResponse(delta);
   };
   const harnessResult = await runTestHarness({
+    runId: "runtime-understanding-run",
+    taskId: "runtime-understanding-task",
     workspacePath: testRoot,
     modelId: "deepseek-v4-pro",
     thinking: false,
     effort: "high",
     permission: "workspace-write",
     approvalMode: "sandbox-auto",
+    understandingDirectory: join(testRoot, "understanding-integration"),
     messages: [
       {
         role: "user",
@@ -687,6 +1311,13 @@ try {
     onEvent: (event) => harnessEvents.push(event),
   });
   assert.equal(harnessResult.status, "completed");
+  assert.equal(harnessResult.understanding?.committed, true);
+  assert.equal(harnessResult.understanding?.currentRevision, 1);
+  assert.equal(
+    harnessEvents.some((event) => event.type === "understanding.updated"),
+    true,
+    "verified task changes should create a shared Understanding revision",
+  );
   assert.equal(harnessResult.plan?.steps?.length, 2);
   assert.equal(
     harnessEvents.some((event) => event.type === "plan.updated"),
@@ -694,6 +1325,15 @@ try {
     "structured plans should be projected as first-class runtime events",
   );
   assert.equal(harnessResult.selfCheck?.completed, true);
+  assert.equal(harnessResult.selfCheck?.mode, "progressive");
+  assert.equal(harnessResult.selfCheck?.seal?.segmentCount, 2);
+  assert.equal(
+    harnessResult.selfCheck?.segments?.every(
+      (segment) => segment.verdict === "pass",
+    ),
+    true,
+    "a changed file version must be reviewed again after a later patch",
+  );
   assert.deepEqual(harnessResult.selfCheck?.reviewedFiles, [
     "checked.js",
   ]);
@@ -713,8 +1353,8 @@ try {
       (step) =>
         step.name === "complete_self_check" && step.success === false,
     ).length,
-    2,
-    "self-check completion must be rejected before re-read and verification",
+    0,
+    "progressive self-check should not require the parent agent to re-read every file",
   );
   assert.equal(
     harnessResult.steps.some(
@@ -749,7 +1389,7 @@ try {
   assert.equal(
     harnessEvents.some(
       (event) =>
-        event.type === "tool.started" &&
+        event.type === "subagent.tool.started" &&
         event.tool === "run_command" &&
         event.command === "npm run test",
     ),
@@ -760,6 +1400,122 @@ try {
     harnessEvents.map((event) => event.sequence),
     harnessEvents.map((_event, index) => index + 1),
     "Harness events should have a stable monotonic sequence",
+  );
+
+  const unifiedMemoryRoot = join(testRoot, "unified-understanding");
+  const untouchedLegacyMemoryDirectory = join(
+    testRoot,
+    "untouched-legacy-memory",
+  );
+  const unifiedUnderstandingDirectory = join(
+    testRoot,
+    "unified-understanding-store",
+  );
+  await mkdir(unifiedMemoryRoot, { recursive: true });
+  const legacyCompatibilityStore = await createProjectMemoryStore({
+    baseDirectory: untouchedLegacyMemoryDirectory,
+    workspaceRoot: unifiedMemoryRoot,
+  });
+  await legacyCompatibilityStore.remember({
+    category: "architecture",
+    content: "Legacy architecture facts remain available during migration.",
+    evidence: "Legacy Project Memory fixture",
+  });
+  const legacyMemoryBeforeRun = await readFile(
+    legacyCompatibilityStore.path,
+    "utf8",
+  );
+  let unifiedParentRound = 0;
+  const unifiedMemoryEvents = [];
+  globalThis.fetch = async (_url, options = {}) => {
+    const body = JSON.parse(options.body || "{}");
+    const systemPrompt = String(body.messages?.[0]?.content || "");
+    if (/AporiaX curator subagent/.test(systemPrompt)) {
+      return createSseResponse({
+        content: JSON.stringify({
+          summary: "Remember the explicit response preference",
+          changes: [
+            {
+              operation: "upsert",
+              category: "preference",
+              content: "Use concise Simplified Chinese responses for this project.",
+              confidence: 0.93,
+              evidence: [
+                {
+                  type: "user",
+                  reference: "Current user request",
+                  detail: "The user explicitly requested this durable preference.",
+                },
+              ],
+            },
+          ],
+        }),
+      });
+    }
+    unifiedParentRound += 1;
+    return createSseResponse(
+      unifiedParentRound === 1
+        ? createToolDelta("stage-preference", "remember_project_fact", {
+            category: "preference",
+            content: "Use concise Simplified Chinese responses for this project.",
+            evidence: "Current user request",
+          })
+        : {
+            content:
+              "The preference was proposed and will be committed only after Curator review.",
+          },
+    );
+  };
+  const unifiedMemoryResult = await runTestHarness({
+    runId: "unified-understanding-run",
+    taskId: "unified-understanding-task",
+    workspacePath: unifiedMemoryRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: false,
+    effort: "high",
+    permission: "workspace-write",
+    memoryDirectory: untouchedLegacyMemoryDirectory,
+    understandingDirectory: unifiedUnderstandingDirectory,
+    messages: [
+      {
+        role: "user",
+        content:
+          "Remember that this project should use concise Simplified Chinese responses.",
+      },
+    ],
+    onEvent: (event) => unifiedMemoryEvents.push(event),
+  });
+  assert.equal(unifiedMemoryResult.status, "completed");
+  assert.equal(unifiedMemoryResult.understanding?.committed, true);
+  assert.equal(
+    unifiedMemoryEvents.some(
+      (event) => event.type === "understanding.candidate.staged",
+    ),
+    true,
+    "the compatibility memory tool should stage an Understanding candidate",
+  );
+  assert.equal(
+    unifiedMemoryEvents.some(
+      (event) => event.type === "understanding.updated",
+    ),
+    true,
+    "a user-backed candidate should be committed by the automated Curator flow",
+  );
+  assert.equal(
+    await readFile(legacyCompatibilityStore.path, "utf8"),
+    legacyMemoryBeforeRun,
+    "legacy Project Memory must be imported without modifying its original file",
+  );
+  const unifiedUnderstanding = await createProjectUnderstandingStore({
+    baseDirectory: unifiedUnderstandingDirectory,
+    workspaceRoot: unifiedMemoryRoot,
+  });
+  assert.equal(unifiedUnderstanding.snapshot().facts.length, 2);
+  assert.deepEqual(
+    new Set(
+      unifiedUnderstanding.snapshot().facts.map((fact) => fact.category),
+    ),
+    new Set(["architecture", "preference"]),
   );
 
   const autoSelfCheckRoot = join(testRoot, "auto-self-check");
@@ -1185,8 +1941,22 @@ try {
 
   const tree = await listWorkspaceTree(testRoot);
   assert(
+    tree.entries.some(
+      (entry) => entry.path === "src" && entry.type === "directory",
+    ),
+    "workspace root should expose only its immediate files and folders",
+  );
+  assert.equal(
     tree.entries.some((entry) => entry.path === "src/example.js"),
-    "workspace tree should include nested files",
+    false,
+    "workspace listing should not eagerly flatten nested directories",
+  );
+  const sourceDirectory = await listWorkspaceTree(testRoot, "src");
+  assert(
+    sourceDirectory.entries.some(
+      (entry) => entry.path === "src/example.js",
+    ),
+    "opening a directory should load its immediate children",
   );
 
   const preview = await readWorkspacePreview(

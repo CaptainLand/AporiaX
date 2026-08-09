@@ -45,6 +45,7 @@ import {
   listRecoverableRuns,
   updateRunJournalMetadata,
 } from "./run-store.js";
+import { createProjectUnderstandingStore } from "./project-understanding.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -157,6 +158,29 @@ function getTasksPath() {
 
 function getLegacyTasksPath() {
   return join(app.getPath("userData"), "deepagent-tasks.json");
+}
+
+function getProjectUnderstandingDirectory() {
+  return join(app.getPath("userData"), "project-understanding");
+}
+
+async function openProjectUnderstanding(workspacePath) {
+  if (
+    typeof workspacePath !== "string" ||
+    !workspacePath.trim() ||
+    workspacePath.includes("\0")
+  ) {
+    throw new Error("A valid workspace directory is required.");
+  }
+  const workspaceRoot = await realpath(resolve(workspacePath));
+  const stats = await lstat(workspaceRoot);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error("The workspace must be a real directory.");
+  }
+  return createProjectUnderstandingStore({
+    baseDirectory: getProjectUnderstandingDirectory(),
+    workspaceRoot,
+  });
 }
 
 async function readStoredProviders() {
@@ -623,10 +647,13 @@ ipcMain.handle("tasks:save", async (event, tasks) => {
   return true;
 });
 
-ipcMain.handle("workspace:list-tree", async (event, workspacePath) => {
-  assertTrustedSender(event);
-  return listWorkspaceTree(workspacePath);
-});
+ipcMain.handle(
+  "workspace:list-tree",
+  async (event, workspacePath, requestedDirectory = ".") => {
+    assertTrustedSender(event);
+    return listWorkspaceTree(workspacePath, requestedDirectory);
+  },
+);
 
 ipcMain.handle(
   "workspace:read-preview",
@@ -649,6 +676,19 @@ ipcMain.handle("workspace:revert", async (event, request) => {
 ipcMain.handle("workspace:restore-anchor", async (event, request) => {
   assertTrustedSender(event);
   return restoreWorkspaceAnchor(request);
+});
+
+ipcMain.handle("understanding:get", async (event, workspacePath) => {
+  assertTrustedSender(event);
+  return (await openProjectUnderstanding(workspacePath)).snapshot();
+});
+
+ipcMain.handle("understanding:revert", async (event, request) => {
+  assertTrustedSender(event);
+  const store = await openProjectUnderstanding(request?.workspacePath);
+  return store.revertTo(request?.revisionId, {
+    taskId: request?.taskId,
+  });
 });
 
 ipcMain.handle("attachments:parse", async (event, request) => {
@@ -753,6 +793,8 @@ ipcMain.handle("harness:run", async (event, request) => {
     const result = await runHarness({
       ...request,
       provider,
+      memoryDirectory: join(app.getPath("userData"), "project-memory"),
+      understandingDirectory: getProjectUnderstandingDirectory(),
       signal: controller.signal,
       control,
       onEvent: (payload) => {

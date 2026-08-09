@@ -3,10 +3,12 @@ import { diffLines } from "diff";
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronRight,
   FileCode2,
   FileText,
   Folder,
+  FolderOpen,
   GitCompare,
   LoaderCircle,
   LockKeyhole,
@@ -783,11 +785,16 @@ export function FileExplorerPanel({
   initialPath = "",
 }) {
   const { tr } = useI18n();
-  const [entries, setEntries] = useState([]);
+  const [entriesByDirectory, setEntriesByDirectory] = useState({});
+  const [expandedDirectories, setExpandedDirectories] = useState(
+    () => new Set(),
+  );
+  const [loadingDirectories, setLoadingDirectories] = useState(
+    () => new Set(),
+  );
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [preview, setPreview] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [editorContent, setEditorContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
@@ -800,38 +807,109 @@ export function FileExplorerPanel({
   );
   const dirty = editable && editorContent !== savedContent;
 
-  const loadTree = async () => {
+  const loadDirectory = async (directory = ".", { reset = false } = {}) => {
     if (!workspacePath || !window.desktop?.workspace) {
-      setEntries([]);
-      setLoading(false);
-      return;
+      setEntriesByDirectory({});
+      return [];
     }
-    setLoading(true);
+    if (reset) {
+      setEntriesByDirectory({});
+      setExpandedDirectories(new Set());
+    }
+    setLoadingDirectories((current) => {
+      const next = new Set(current);
+      next.add(directory);
+      return next;
+    });
     try {
-      const result = await window.desktop.workspace.listTree(workspacePath);
-      setEntries(result.entries || []);
+      const result = await window.desktop.workspace.listTree(
+        workspacePath,
+        directory,
+      );
+      const nextEntries = result.entries || [];
+      setEntriesByDirectory((current) => ({
+        ...current,
+        [directory]: nextEntries,
+      }));
+      return nextEntries;
     } catch (error) {
       onNotice(error?.message || tr("无法读取工作区文件", "Unable to read workspace files"));
+      return [];
     } finally {
-      setLoading(false);
+      setLoadingDirectories((current) => {
+        const next = new Set(current);
+        next.delete(directory);
+        return next;
+      });
     }
   };
+
+  const loadTree = () => loadDirectory(".", { reset: true });
 
   useEffect(() => {
     setSelectedPath("");
     setPreview(null);
     setEditorContent("");
     setSavedContent("");
+    setEntriesByDirectory({});
+    setExpandedDirectories(new Set());
     void loadTree();
   }, [workspacePath]);
 
+  const visibleEntries = useMemo(() => {
+    const output = [];
+    const appendDirectory = (directory, depth) => {
+      for (const entry of entriesByDirectory[directory] || []) {
+        output.push({ ...entry, depth });
+        if (
+          entry.type === "directory" &&
+          expandedDirectories.has(entry.path)
+        ) {
+          appendDirectory(entry.path, depth + 1);
+        }
+      }
+    };
+    appendDirectory(".", 0);
+    return output;
+  }, [entriesByDirectory, expandedDirectories]);
+
   const filteredEntries = useMemo(() => {
     const keyword = query.trim().toLowerCase();
-    if (!keyword) return entries;
-    return entries.filter((entry) =>
-      entry.path.toLowerCase().includes(keyword),
-    );
-  }, [entries, query]);
+    if (!keyword) return visibleEntries;
+    const seen = new Set();
+    return Object.values(entriesByDirectory)
+      .flat()
+      .filter((entry) => {
+        if (
+          seen.has(entry.path) ||
+          !entry.path.toLowerCase().includes(keyword)
+        ) {
+          return false;
+        }
+        seen.add(entry.path);
+        return true;
+      })
+      .map((entry) => ({ ...entry, depth: 0 }));
+  }, [entriesByDirectory, query, visibleEntries]);
+
+  const toggleDirectory = async (entry) => {
+    if (expandedDirectories.has(entry.path)) {
+      setExpandedDirectories((current) => {
+        const next = new Set(current);
+        next.delete(entry.path);
+        return next;
+      });
+      return;
+    }
+    if (!entriesByDirectory[entry.path]) {
+      await loadDirectory(entry.path);
+    }
+    setExpandedDirectories((current) => {
+      const next = new Set(current);
+      next.add(entry.path);
+      return next;
+    });
+  };
 
   const openFile = async (entry) => {
     if (entry.type !== "file") return;
@@ -864,13 +942,36 @@ export function FileExplorerPanel({
   };
 
   useEffect(() => {
-    if (!initialPath || loading || initialPath === selectedPath) return;
-    const entry = entries.find(
-      (candidate) =>
-        candidate.type === "file" && candidate.path === initialPath,
-    );
-    if (entry) void openFile(entry);
-  }, [entries, initialPath, loading, selectedPath]);
+    if (!initialPath || initialPath === selectedPath) return;
+    let cancelled = false;
+    const revealFile = async () => {
+      const parts = initialPath.replace(/\\/g, "/").split("/");
+      const directories = parts.slice(0, -1);
+      let currentPath = "";
+      for (const part of directories) {
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+        const directoryPath = currentPath;
+        await loadDirectory(directoryPath);
+        if (cancelled) return;
+        setExpandedDirectories((current) => {
+          const next = new Set(current);
+          next.add(directoryPath);
+          return next;
+        });
+      }
+      if (!cancelled) {
+        await openFile({
+          path: initialPath,
+          name: parts.at(-1),
+          type: "file",
+        });
+      }
+    };
+    void revealFile();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialPath, selectedPath, workspacePath]);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -949,13 +1050,13 @@ export function FileExplorerPanel({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={tr("搜索文件", "Search files")}
-          aria-label={tr("搜索工作区文件", "Search workspace files")}
+          placeholder={tr("搜索已打开的文件", "Search opened files")}
+          aria-label={tr("搜索已加载的工作区文件", "Search loaded workspace files")}
         />
       </div>
       <div className="file-explorer-body">
         <div className="workspace-tree">
-          {loading ? (
+          {loadingDirectories.has(".") && !entriesByDirectory["."] ? (
             <div className="workspace-tree-state">
               <LoaderCircle className="spin" size={15} />
               {tr("正在读取工作区", "Reading workspace")}
@@ -967,15 +1068,35 @@ export function FileExplorerPanel({
                 key={entry.path}
                 style={{ paddingLeft: `${12 + entry.depth * 13}px` }}
                 type="button"
-                onClick={() => openFile(entry)}
+                onClick={() =>
+                  entry.type === "directory"
+                    ? void toggleDirectory(entry)
+                    : void openFile(entry)
+                }
               >
                 {entry.type === "directory" ? (
-                  <Folder size={14} />
+                  <>
+                    {loadingDirectories.has(entry.path) ? (
+                      <LoaderCircle className="spin" size={12} />
+                    ) : expandedDirectories.has(entry.path) ? (
+                      <ChevronDown size={12} />
+                    ) : (
+                      <ChevronRight size={12} />
+                    )}
+                    {expandedDirectories.has(entry.path) ? (
+                      <FolderOpen size={14} />
+                    ) : (
+                      <Folder size={14} />
+                    )}
+                  </>
                 ) : (
-                  <FileGlyph path={entry.path} size={14} />
+                  <>
+                    <span className="workspace-tree-indent" />
+                    <FileGlyph path={entry.path} size={14} />
+                  </>
                 )}
-                <span>{entry.name}</span>
-                {entry.type === "file" && <ChevronRight size={12} />}
+                <span className="workspace-tree-name">{entry.name}</span>
+                {entry.type === "file" && <ChevronRight className="workspace-tree-open-file" size={12} />}
               </button>
             ))
           ) : (
