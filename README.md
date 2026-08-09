@@ -43,7 +43,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
     <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>从一个疑问开始</strong><br><sub>克制的粒子海开屏与中英双语入口</sub></td>
+    <td align="center"><strong>从一个疑问开始</strong><br><sub>开屏与中英双语入口</sub></td>
     <td align="center"><strong>Route · Evidence · Anchor</strong><br><sub>看见路径，保留依据，随时安全回退</sub></td>
   </tr>
   <tr>
