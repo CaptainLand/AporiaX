@@ -116,13 +116,16 @@ export function upsertRelevantContextMessage(
   // DeepSeek KV cache reuse is prefix-sensitive. Keep the injected durable
   // context byte-for-byte stable during ordinary model rounds. Rebuild only
   // when explicitly requested or after a compaction checkpoint changed.
-  if (existingIndex >= 0 && !refresh && !checkpointChanged) {
-    const items = state?.items || parseRelevantContextMessage(conversation[existingIndex]);
-    relevantContextState.set(conversation, {
-      checkpointCount,
-      items,
-    });
-    return items;
+  if (!refresh && !checkpointChanged) {
+    if (state) return state.items;
+    if (existingIndex >= 0) {
+      const items = parseRelevantContextMessage(conversation[existingIndex]);
+      relevantContextState.set(conversation, {
+        checkpointCount,
+        items,
+      });
+      return items;
+    }
   }
 
   if (existingIndex >= 0) {
