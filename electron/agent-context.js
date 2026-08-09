@@ -106,24 +106,18 @@ export function upsertRelevantContextMessage(
   conversation,
   { checkpoints = [], memoryFacts = [], plan = null, refresh = false } = {},
 ) {
-  const checkpointCount = Array.isArray(checkpoints) ? checkpoints.length : 0;
   const existingIndex = conversation.findIndex(isRelevantContextMessage);
   const state = relevantContextState.get(conversation);
-  const checkpointChanged = Boolean(
-    state && state.checkpointCount !== checkpointCount,
-  );
 
-  // DeepSeek KV cache reuse is prefix-sensitive. Keep the injected durable
-  // context byte-for-byte stable during ordinary model rounds. Rebuild only
-  // when explicitly requested or after a compaction checkpoint changed.
-  if (!refresh && !checkpointChanged) {
+  // DeepSeek KV cache reuse is prefix-sensitive. Freeze this injected prefix
+  // for the lifetime of the conversation. Compaction already writes its own
+  // checkpoint into history, so refreshing this earlier system message after
+  // compaction would cause a second, avoidable cache-prefix reset.
+  if (!refresh) {
     if (state) return state.items;
     if (existingIndex >= 0) {
       const items = parseRelevantContextMessage(conversation[existingIndex]);
-      relevantContextState.set(conversation, {
-        checkpointCount,
-        items,
-      });
+      relevantContextState.set(conversation, { items });
       return items;
     }
   }
@@ -152,9 +146,6 @@ export function upsertRelevantContextMessage(
       content: `${RELEVANT_CONTEXT_PREFIX}\n${JSON.stringify(relevant)}`,
     });
   }
-  relevantContextState.set(conversation, {
-    checkpointCount,
-    items: relevant,
-  });
+  relevantContextState.set(conversation, { items: relevant });
   return relevant;
 }
