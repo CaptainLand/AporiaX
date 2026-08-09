@@ -74,9 +74,10 @@ chat response.
 | --- | --- |
 | Code and workspace | File tree, search, preview, editing, `Ctrl+S`, precise patches, Git status and diff |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
-| Observable execution | Dialogue, Route, and Workspace views with step-by-step actions and changes |
+| Observable execution | Witness reports the current main/subagent action, duration, failures, and self-check phase in Dialogue; Route preserves the full trace |
 | Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-file or per-turn revert |
 | Mandatory self-check | Re-reads changed files, attempts tests or builds, fixes findings, and records remaining risks |
+| Subagents and context | Parallel reads and search; isolated Explore, Review, and Verify subagents; scoped rules, structured compaction, and cross-task project memory |
 | Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, task-level model selection |
 | Bilingual interface | Switch Chinese and English from the welcome screen or settings; new replies follow the interface language |
 | Attachments | PDF, Office, Markdown, code, and image attachments with local PDF text extraction |
@@ -179,6 +180,41 @@ Harness uses structured Office tools, then re-parses document blocks, slides,
 worksheets, and formulas. Structural inspection does not replace a final visual
 review in Word, PowerPoint, or Excel.
 
+## Subagents and project context
+
+AporiaX runs independent read tools concurrently and delegates larger
+exploration, review, and verification work to isolated Explore, Review, and
+Verify subagents with their own context and path scope. Explore and Review are
+read-only. Verify may run project checks when the task policy permits it.
+Background subagents are collected before final delivery, and their internal
+steps appear in Route without flooding the parent context with raw logs.
+
+Harness recognizes these project rules:
+
+- `AGENTS.md`, `APORIAX.md`, and `DEEPAGENT.md` at the workspace root or in nested directories.
+- Path-scoped Markdown files under `.aporiax/rules/`, with optional `paths` globs in frontmatter.
+- App-local project memory for verified commands, architecture conventions, and explicit preferences; credentials are rejected.
+
+```markdown
+---
+paths:
+  - src/**/*.js
+---
+Run the project syntax check after changing JavaScript.
+```
+
+Near the model context limit, Harness preserves system and scoped rules,
+compacts older content into a structured checkpoint, and retrieves relevant
+constraints, evidence, and project memory for the current work. When a
+provider reports actual token usage, the estimator calibrates itself. Model
+configuration may also provide `contextWindow`.
+
+While a task is running, **Witness** at the bottom of Dialogue subscribes to
+the Harness event stream and reports what the main agent and subagents are
+doing. Witness is observation-only and never edits files. It surfaces
+long-running actions and repeated tool failures while Route retains the full
+tool evidence.
+
 ## Project-level permissions
 
 Add `.aporiax.json` to the workspace root:
@@ -191,6 +227,8 @@ Add `.aporiax.json` to the workspace root:
     "create_word_document": "ask",
     "create_presentation": "ask",
     "create_spreadsheet": "ask",
+    "delegate_subagent": "allow",
+    "remember_project_fact": "allow",
     "run_command": "deny"
   }
 }

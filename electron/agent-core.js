@@ -3,6 +3,9 @@ const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 const DEFAULT_PERMISSION_POLICIES = {
   "read-only": {
     "*": "deny",
+    delegate_subagent: "allow",
+    collect_subagents: "allow",
+    remember_project_fact: "allow",
     list_directory: "allow",
     read_file: "allow",
     search_text: "allow",
@@ -13,6 +16,9 @@ const DEFAULT_PERMISSION_POLICIES = {
   },
   "workspace-write": {
     "*": "deny",
+    delegate_subagent: "allow",
+    collect_subagents: "allow",
+    remember_project_fact: "allow",
     list_directory: "allow",
     read_file: "allow",
     search_text: "allow",
@@ -34,7 +40,9 @@ const ACTION_RESTRICTIVENESS = {
   ask: 1,
   deny: 2,
 };
-const HARNESS_CONTROL_TOOLS = new Set(["complete_self_check"]);
+const HARNESS_CONTROL_TOOLS = new Set([
+  "complete_self_check",
+]);
 
 function normalizeAction(value, fallback = "deny") {
   return VALID_PERMISSION_ACTIONS.has(value) ? value : fallback;

@@ -13,8 +13,12 @@ contextBridge.exposeInMainWorld("desktop", {
     save: (tasks) => ipcRenderer.invoke("tasks:save", tasks),
   },
   workspace: {
-    listTree: (workspacePath) =>
-      ipcRenderer.invoke("workspace:list-tree", workspacePath),
+    listTree: (workspacePath, requestedDirectory = ".") =>
+      ipcRenderer.invoke(
+        "workspace:list-tree",
+        workspacePath,
+        requestedDirectory,
+      ),
     readPreview: (workspacePath, requestedPath) =>
       ipcRenderer.invoke(
         "workspace:read-preview",
@@ -26,6 +30,12 @@ contextBridge.exposeInMainWorld("desktop", {
     revert: (request) => ipcRenderer.invoke("workspace:revert", request),
     restoreAnchor: (request) =>
       ipcRenderer.invoke("workspace:restore-anchor", request),
+  },
+  understanding: {
+    get: (workspacePath) =>
+      ipcRenderer.invoke("understanding:get", workspacePath),
+    revert: (request) =>
+      ipcRenderer.invoke("understanding:revert", request),
   },
   attachments: {
     parse: (request) => ipcRenderer.invoke("attachments:parse", request),

@@ -30,6 +30,13 @@ export const ROUTE_STAGE_META = {
 };
 
 const ROUTE_TOOL_META = {
+  delegate_subagent: { stage: "lens", zh: "委派子 Agent", en: "Delegate subagent" },
+  collect_subagents: { stage: "lens", zh: "收集子 Agent 结果", en: "Collect subagent results" },
+  remember_project_fact: {
+    stage: "route",
+    zh: "提交项目理解候选",
+    en: "Propose Project Understanding",
+  },
   list_directory: { stage: "lens", zh: "浏览工作区", en: "Browse workspace" },
   read_file: { stage: "lens", zh: "读取文件", en: "Read file" },
   search_text: { stage: "lens", zh: "定位相关内容", en: "Locate relevant content" },
@@ -59,6 +66,341 @@ export function getRouteToolMeta(tool, phase, language = "zh-CN") {
         : meta.stage,
     title: language === "en" ? meta.en : meta.zh,
   };
+}
+
+const WITNESS_BLOCK_META = {
+  understand: {
+    label: "Context",
+    zh: "理解任务与加载上下文",
+    en: "Understand the task and load context",
+  },
+  explore: {
+    label: "Explore",
+    zh: "观察工作区并定位内容",
+    en: "Inspect the workspace and locate relevant content",
+  },
+  plan: {
+    label: "Route",
+    zh: "确定行动路径",
+    en: "Decide the action route",
+  },
+  execute: {
+    label: "Build",
+    zh: "创建与修改",
+    en: "Create and modify",
+  },
+  verify: {
+    label: "Evidence",
+    zh: "检查与验证结果",
+    en: "Inspect and verify the result",
+  },
+  coordinate: {
+    label: "Control",
+    zh: "等待确认并安全衔接",
+    en: "Coordinate approval and safe continuation",
+  },
+  deliver: {
+    label: "Result",
+    zh: "整理本轮结果",
+    en: "Prepare the result of this run",
+  },
+};
+
+function witnessRecordBlockKind(record) {
+  if (record?.kind === "tool" || record?.tool) {
+    const stage = getRouteToolMeta(record.tool, record.phase).stage;
+    if (stage === "lens") return "explore";
+    if (stage === "forge") return "execute";
+    if (stage === "trial") return "verify";
+    if (stage === "deliver") return "deliver";
+    return "plan";
+  }
+  if (record?.kind === "warning") return "coordinate";
+  if (
+    record?.actor === "subagent" &&
+    ["review", "verify"].includes(record?.role)
+  ) {
+    return "verify";
+  }
+  if (record?.actor === "subagent") return "explore";
+
+  const type = record?.eventType || "";
+  if (["response.reset", "parallel_batch.started"].includes(type)) {
+    return "thinking";
+  }
+  if (
+    ["turn.started", "instructions.loaded", "context.compacted"].includes(
+      type,
+    )
+  ) {
+    return "understand";
+  }
+  if (["plan.updated", "memory.updated"].includes(type)) return "plan";
+  if (type.startsWith("self_check.")) return "verify";
+  if (
+    ["approval.required", "control.paused", "control.resumed"].includes(type)
+  ) {
+    return "coordinate";
+  }
+  if (["turn.completed", "turn.cancelled", "turn.failed"].includes(type)) {
+    return "deliver";
+  }
+  return "understand";
+}
+
+function legacyEntryBlockKind(entry) {
+  if (entry.stage === "lens") return "explore";
+  if (entry.stage === "forge") return "execute";
+  if (entry.stage === "trial") return "verify";
+  if (entry.stage === "deliver") return "deliver";
+  return "plan";
+}
+
+function uniqueNonEmpty(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function normalizedRoutePath(value) {
+  return String(value || "").replaceAll("\\", "/").toLowerCase();
+}
+
+function witnessBlockTitle(block, run, language) {
+  const english = language === "en";
+  const count = block.records.length;
+  if (block.kind === "explore" && block.paths.length) {
+    return english
+      ? `Inspect ${block.paths.length} relevant location${block.paths.length === 1 ? "" : "s"}`
+      : `定位并检查 ${block.paths.length} 个相关位置`;
+  }
+  if (block.kind === "plan" && block.planSteps.length) {
+    return english
+      ? `Shape ${block.planSteps.length} execution objective${block.planSteps.length === 1 ? "" : "s"}`
+      : `整理 ${block.planSteps.length} 个执行目标`;
+  }
+  if (block.kind === "execute" && block.changes.length) {
+    return english
+      ? `Change ${block.changes.length} file${block.changes.length === 1 ? "" : "s"}`
+      : `修改 ${block.changes.length} 个文件`;
+  }
+  if (block.kind === "execute") {
+    return english
+      ? `Complete ${count} creation or editing action${count === 1 ? "" : "s"}`
+      : `完成 ${count} 项创建与修改`;
+  }
+  if (block.kind === "verify" && block.commands.length) {
+    return english
+      ? `Run ${block.commands.length} verification command${block.commands.length === 1 ? "" : "s"}`
+      : `运行 ${block.commands.length} 项验证命令`;
+  }
+  if (block.kind === "verify") {
+    return english
+      ? `Review ${count} item${count === 1 ? "" : "s"} of evidence`
+      : `复核 ${count} 项结果证据`;
+  }
+  if (block.kind === "deliver") {
+    if (run?.status === "failed") {
+      return english ? "Preserve completed work and report the failure" : "保留已完成工作并说明失败";
+    }
+    if (run?.status === "interrupted") {
+      return english ? "Preserve the route before the run stopped" : "保留任务停止前的行动路径";
+    }
+    return english ? "Finish the run and prepare the result" : "完成任务并整理结果";
+  }
+  return english ? WITNESS_BLOCK_META[block.kind].en : WITNESS_BLOCK_META[block.kind].zh;
+}
+
+function witnessBlockSummary(block, language) {
+  const english = language === "en";
+  const pieces = [];
+  if (block.paths.length) {
+    pieces.push(
+      english
+        ? `${block.paths.length} file/location${block.paths.length === 1 ? "" : "s"}`
+        : `${block.paths.length} 个文件或位置`,
+    );
+  }
+  if (block.commands.length) {
+    pieces.push(
+      english
+        ? `${block.commands.length} command${block.commands.length === 1 ? "" : "s"}`
+        : `${block.commands.length} 条命令`,
+    );
+  }
+  if (block.agents.length) {
+    pieces.push(
+      english
+        ? `${block.agents.length} subagent${block.agents.length === 1 ? "" : "s"}`
+        : `${block.agents.length} 个子 Agent`,
+    );
+  }
+  if (block.changes.length) {
+    pieces.push(
+      english
+        ? `${block.changes.length} changed file${block.changes.length === 1 ? "" : "s"}`
+        : `${block.changes.length} 个修改文件`,
+    );
+  }
+  if (!pieces.length) {
+    pieces.push(
+      english
+        ? `${block.records.length} observable action${block.records.length === 1 ? "" : "s"}`
+        : `${block.records.length} 条可观察行动`,
+    );
+  }
+  return english ? pieces.join(" · ") : pieces.join(" · ");
+}
+
+export function buildWitnessRouteBlocks(run, language = "zh-CN") {
+  if (!run) return [];
+  const witnessRecords = Array.isArray(run.witness?.records)
+    ? run.witness.records
+    : [];
+  const records = witnessRecords.length
+    ? witnessRecords
+    : (run.entries || []).map((entry, index) => ({
+        ...entry,
+        id: entry.id || `legacy-route-${index}`,
+        kind: entry.tool ? "tool" : "status",
+        eventType: "legacy.route",
+        elapsedMs:
+          entry.startedAt && entry.finishedAt
+            ? Math.max(0, new Date(entry.finishedAt) - new Date(entry.startedAt))
+            : 0,
+        legacyEntry: entry,
+      }));
+  const blocks = [];
+
+  for (const record of records) {
+    let kind = witnessRecords.length
+      ? witnessRecordBlockKind(record)
+      : legacyEntryBlockKind(record);
+    if (kind === "thinking") {
+      const current = blocks.at(-1);
+      if (current) {
+        current.records.push(record);
+        continue;
+      }
+      kind = "understand";
+    }
+    let block = blocks.at(-1);
+    if (!block || block.kind !== kind) {
+      block = {
+        id: `witness-block-${blocks.length}-${record.id || kind}`,
+        kind,
+        label: WITNESS_BLOCK_META[kind]?.label || "Route",
+        records: [],
+        paths: [],
+        commands: [],
+        agents: [],
+        changes: [],
+        planSteps: [],
+      };
+      blocks.push(block);
+    }
+    block.records.push(record);
+  }
+
+  if (run.plan?.steps?.length) {
+    let planBlock = blocks.find((block) => block.kind === "plan");
+    if (!planBlock) {
+      const firstActionIndex = blocks.findIndex((block) =>
+        ["execute", "verify", "deliver"].includes(block.kind),
+      );
+      const insertionIndex =
+        firstActionIndex >= 0 ? firstActionIndex : blocks.length;
+      planBlock = {
+        id: `witness-block-plan-${run.id || "run"}`,
+        kind: "plan",
+        label: WITNESS_BLOCK_META.plan.label,
+        records: [],
+        paths: [],
+        commands: [],
+        agents: [],
+        changes: [],
+        planSteps: [],
+      };
+      blocks.splice(insertionIndex, 0, planBlock);
+    }
+    planBlock.planSteps = run.plan.steps;
+  }
+
+  for (const block of blocks) {
+    block.paths = uniqueNonEmpty(block.records.map((record) => record.path));
+    block.commands = uniqueNonEmpty(
+      block.records.map((record) => record.command),
+    );
+    block.agents = uniqueNonEmpty(
+      block.records.map((record) => record.agentId),
+    );
+    block.changes = [];
+  }
+
+  for (const change of run.changes || []) {
+    const normalizedChangePath = normalizedRoutePath(change.path);
+    let executeBlock = [...blocks].reverse().find(
+      (block) =>
+        block.kind === "execute" &&
+        block.paths.some(
+          (path) => normalizedRoutePath(path) === normalizedChangePath,
+        ),
+    );
+    executeBlock ||= [...blocks]
+      .reverse()
+      .find((block) => block.kind === "execute");
+    if (!executeBlock) {
+      executeBlock = {
+        id: `witness-block-execute-${run.id || "run"}`,
+        kind: "execute",
+        label: WITNESS_BLOCK_META.execute.label,
+        records: [],
+        paths: [],
+        commands: [],
+        agents: [],
+        changes: [],
+        planSteps: [],
+      };
+      const deliveryIndex = blocks.findIndex((block) => block.kind === "deliver");
+      blocks.splice(deliveryIndex >= 0 ? deliveryIndex : blocks.length, 0, executeBlock);
+    }
+    executeBlock.changes.push(change);
+    executeBlock.paths = uniqueNonEmpty([
+      ...executeBlock.paths,
+      change.path,
+    ]);
+  }
+
+  return blocks.map((block) => {
+    const statuses = block.records.map((record) => record.status);
+    const hasActive = statuses.some((status) =>
+      ["running", "waiting"].includes(status),
+    );
+    const hasInterrupted = statuses.includes("interrupted");
+    const failedCount = statuses.filter((status) => status === "failed").length;
+    const status = hasActive
+      ? "running"
+      : hasInterrupted
+        ? "interrupted"
+        : failedCount
+          ? "attention"
+          : "completed";
+    const additions = block.changes.reduce(
+      (total, change) => total + (change.additions || 0),
+      0,
+    );
+    const deletions = block.changes.reduce(
+      (total, change) => total + (change.deletions || 0),
+      0,
+    );
+    return {
+      ...block,
+      status,
+      failedCount,
+      additions,
+      deletions,
+      title: witnessBlockTitle(block, run, language),
+      summary: witnessBlockSummary(block, language),
+    };
+  });
 }
 
 export function updateRunAssistant(tasks, run, updater) {
@@ -310,6 +652,7 @@ export function collectTaskRouteRuns(task) {
         changes: message.changes || [],
         selfCheck: message.selfCheck || null,
         plan: message.plan || null,
+        witness: message.witness || null,
         contextCheckpoints: message.contextCheckpoints || [],
       };
     })

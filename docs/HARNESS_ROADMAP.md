@@ -14,9 +14,12 @@
 - 文件前后快照、逐行 Diff、冲突检测和安全撤销
 - Office 二进制检查点、工件摘要审核、结构自检与安全撤销
 - Harness 强制自检状态机、改动文件复读、项目验证命令与自检报告
-- 长任务工具输出上下文压缩
+- 独立只读 Explore / Review / Verify 子 Agent、后台执行、自动收集与最多四路安全并发
+- Witness 事件监督层与 Dialogue 实时进度账本，记录主/子 Agent、耗时、停滞和重复失败
+- Provider usage 校准的 token 估算、结构化 checkpoint、相关上下文检索与子 Agent 上下文隔离
 - Electron 用户目录中的任务与检查点持久化
-- `AGENTS.md` / `DEEPAGENT.md` 项目指令
+- 根目录及目录级 `AGENTS.md` / `APORIAX.md` / `DEEPAGENT.md`、`.aporiax/rules` 路径规则
+- Electron 用户目录中的跨任务项目记忆，并拒绝保存疑似凭据
 - 图片附件 UI、文本模型能力拦截与历史消息净化
 - 文件树、搜索和代码预览
 
@@ -27,6 +30,7 @@
 - Git 提交、分支/Worktree 管理和结构化补丁
 - 视觉模型 Provider 与 OCR 降级链路
 - Office 页面/幻灯片/工作表的无头渲染与像素级视觉 QA
+- 基于 embedding 的大规模历史语义索引；当前使用本地轻量相关度检索
 - 真实任务 Eval、崩溃注入测试和打包签名
 
 ## 目标架构
@@ -216,7 +220,7 @@ SQLite 建议表：
 - Provider/模型路由
 - MCP
 - Skills
-- 多 Agent
+- 更完整的多 Agent 调度、资源配额与可插拔角色
 - 打包、签名与自动更新
 
-多 Agent、浏览器控制和插件系统应放在单 Agent 的工具循环、权限与恢复机制稳定之后。
+当前已经具备受限子 Agent 基线；浏览器控制、插件系统和跨机器调度仍应建立在权限、恢复与 Eval 机制之上。

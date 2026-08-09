@@ -70,9 +70,10 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 | --- | --- |
 | 代码与工作区 | 文件树、搜索、预览、编辑、`Ctrl+S`、精确 Patch、Git 状态与 Diff |
 | 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
-| 可观察执行 | Dialogue、Route、Workspace 三种视图；逐步展示工具调用与修改 |
+| 可观察执行 | Witness 在 Dialogue 实时记录主/子 Agent、当前动作、耗时、失败与自检阶段；Route 保留完整路径 |
 | 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、单文件或整轮撤销 |
 | 强制自检 | 复读本轮修改，尝试测试或构建，发现问题后继续修复并报告剩余风险 |
+| 子 Agent 与上下文 | 并行读取与检索；独立 Explore、Review、Verify 子 Agent；目录级规则、结构化压缩和跨任务项目记忆 |
 | 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
 | 中英双语 | 开屏与设置页即时切换；界面和新回复跟随语言，历史消息与文件保持原样 |
 | 附件与解析 | PDF、Office、Markdown、代码和图片附件；PDF 本地文本提取 |
@@ -165,6 +166,35 @@ npm run dist:win
 Harness 会使用结构化 Office 工具生成文件，再重新解析文档块、幻灯片、工作表和公式。
 当前结构复核不能替代 Word、PowerPoint 或 Excel 中的最终视觉检查。
 
+## 子 Agent 与项目上下文
+
+AporiaX 会并行执行互不依赖的只读工具，并把较大的探索、审查和验证任务委派给拥有
+独立上下文与路径范围的 Explore、Review、Verify 子 Agent。Explore 与 Review 只读；
+Verify 可在任务权限允许时运行验证命令。后台子 Agent 会在最终交付前自动收集，内部步骤
+也会进入 Route，而不会把完整检索日志全部塞进主 Agent 上下文。
+
+Harness 支持以下项目规则：
+
+- 工作区根目录和子目录中的 `AGENTS.md`、`APORIAX.md`、`DEEPAGENT.md`。
+- `.aporiax/rules/*.md` 路径规则；可在 frontmatter 中使用 `paths` glob。
+- 应用用户目录中的项目记忆，用于保存已验证命令、架构约定和明确偏好；凭据会被拒绝。
+
+```markdown
+---
+paths:
+  - src/**/*.js
+---
+修改 JavaScript 后运行项目的语法检查。
+```
+
+上下文接近模型窗口时，Harness 会保留系统与目录规则，将旧内容压缩成结构化 checkpoint，
+再按当前任务检索相关约束、证据和项目记忆。若 Provider 返回实际 token usage，估算器会
+自动校准；模型配置也可以提供 `contextWindow`。
+
+运行任务时，Dialogue 底部的 **Witness** 会订阅 Harness 事件流，实时展示主 Agent 与
+子 Agent 正在处理的动作。Witness 本身只观察和记录，不修改文件；操作耗时超过阈值或
+同一工具连续失败时会显示提醒，完整工具证据仍保留在 Route。
+
 ## 项目级权限
 
 工作区根目录可以添加 `.aporiax.json`：
@@ -177,6 +207,8 @@ Harness 会使用结构化 Office 工具生成文件，再重新解析文档块�
     "create_word_document": "ask",
     "create_presentation": "ask",
     "create_spreadsheet": "ask",
+    "delegate_subagent": "allow",
+    "remember_project_fact": "allow",
     "run_command": "deny"
   }
 }

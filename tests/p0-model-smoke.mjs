@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  buildWitnessRouteBlocks,
   closeRunningRouteEntries,
   collectLatestDeliverables,
   collectTaskDeliverables,
@@ -267,5 +268,94 @@ const recoveredRun = collectTaskRouteRuns({
 })[0];
 assert.equal(recoveredRun.entries[0].status, "recovered");
 assert.match(recoveredRun.entries[0].detail, /参数格式无效/);
+
+const witnessBlocks = buildWitnessRouteBlocks(
+  {
+    id: "witness-run",
+    status: "completed",
+    plan: {
+      revision: 1,
+      steps: [
+        { id: "inspect", title: "检查现状", status: "completed" },
+        { id: "change", title: "完成修改", status: "completed" },
+      ],
+    },
+    changes: [
+      { path: "src/main.jsx", additions: 12, deletions: 4 },
+    ],
+    witness: {
+      records: [
+        {
+          id: "start",
+          kind: "status",
+          eventType: "turn.started",
+          status: "completed",
+        },
+        {
+          id: "read",
+          kind: "tool",
+          eventType: "tool.completed",
+          tool: "read_file",
+          path: "src/main.jsx",
+          status: "completed",
+        },
+        {
+          id: "write",
+          kind: "tool",
+          eventType: "tool.completed",
+          tool: "apply_patch",
+          path: "src/main.jsx",
+          status: "completed",
+        },
+        {
+          id: "verify-failed",
+          kind: "tool",
+          eventType: "tool.completed",
+          tool: "run_command",
+          command: "npm test",
+          status: "failed",
+        },
+        {
+          id: "think-again",
+          kind: "thinking",
+          eventType: "response.reset",
+          status: "completed",
+        },
+        {
+          id: "fix",
+          kind: "tool",
+          eventType: "tool.completed",
+          tool: "apply_patch",
+          path: "src/main.jsx",
+          status: "completed",
+        },
+        {
+          id: "verify-success",
+          kind: "tool",
+          eventType: "tool.completed",
+          tool: "run_command",
+          command: "npm test",
+          status: "completed",
+        },
+        {
+          id: "done",
+          kind: "status",
+          eventType: "turn.completed",
+          status: "completed",
+        },
+      ],
+    },
+  },
+  "zh-CN",
+);
+assert.deepEqual(
+  witnessBlocks.map((block) => block.kind),
+  ["understand", "explore", "plan", "execute", "verify", "execute", "verify", "deliver"],
+);
+assert.equal(witnessBlocks[3].changes.length, 0);
+assert.equal(witnessBlocks[5].changes.length, 1);
+assert.equal(witnessBlocks[4].status, "attention");
+assert.match(witnessBlocks[5].title, /修改 1 个文件/);
+assert.equal(witnessBlocks[6].commands[0], "npm test");
 
 console.log("P0 model smoke test passed.");
