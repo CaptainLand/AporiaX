@@ -25,6 +25,7 @@
     "preview": "vite preview",
     "start": "electron .",
     "test:runtime": "node tests/runtime-smoke.mjs",
+    "test:cache": "node tests/deepseek-cache-smoke.mjs",
     "test:p0": "node tests/p0-model-smoke.mjs"
   },
   "dependencies": {

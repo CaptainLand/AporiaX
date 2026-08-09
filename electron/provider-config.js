@@ -15,6 +15,7 @@ export const DEFAULT_DEEPSEEK_PROVIDER = Object.freeze({
       supportsThinking: true,
       thinkingMode: "deepseek",
       supportsTools: true,
+      contextWindow: 1_000_000,
     },
     {
       id: "deepseek-v4-flash",
@@ -24,6 +25,7 @@ export const DEFAULT_DEEPSEEK_PROVIDER = Object.freeze({
       supportsThinking: true,
       thinkingMode: "deepseek",
       supportsTools: true,
+      contextWindow: 1_000_000,
     },
   ],
 });
@@ -83,6 +85,17 @@ export function inferProviderIdentity(baseUrl) {
 function shortModelName(modelId) {
   const tail = String(modelId).split("/").at(-1) || modelId;
   return tail.length > 24 ? `${tail.slice(0, 21)}…` : tail;
+}
+
+export function inferModelContextWindow(modelId, vendor) {
+  const value = String(modelId || "").toLowerCase();
+  if (
+    vendor === "deepseek" &&
+    /^deepseek-v4-(?:pro|flash)(?:[-_.:]|$)/.test(value)
+  ) {
+    return 1_000_000;
+  }
+  return undefined;
 }
 
 export function inferModelCapabilities(modelId, vendor) {
@@ -153,7 +166,7 @@ export function normalizeProviderModels(models, vendor) {
         Number.isFinite(Number(source.contextWindow)) &&
         Number(source.contextWindow) >= 32_000
           ? Math.min(2_000_000, Math.floor(Number(source.contextWindow)))
-          : undefined,
+          : inferModelContextWindow(modelId, vendor),
     });
   }
   return normalized;
@@ -256,13 +269,15 @@ export async function discoverProviderModels({
 }
 
 export function publicProviderSummary(record) {
+  const vendor =
+    record.vendor || inferProviderIdentity(record.baseUrl).vendor;
   return {
     id: record.id,
     name: record.name,
     kind: record.kind,
-    vendor: record.vendor,
+    vendor,
     baseUrl: record.baseUrl,
-    models: record.models,
+    models: normalizeProviderModels(record.models, vendor),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     hasApiKey: Boolean(record.encryptedKey || record.environmentKey),
