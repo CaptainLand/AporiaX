@@ -2228,6 +2228,7 @@ function buildSelfCheckResult(selfCheck, changeMap) {
       startedAt: segment.startedAt,
       completedAt: segment.completedAt || null,
       reviewAgentId: segment.reviewAgentId || null,
+      reviewAgentIds: segment.reviewAgentIds || [],
       verifyAgentId: segment.verifyAgentId || null,
       findings: segment.findings || [],
       checks: segment.checks || [],
@@ -3575,6 +3576,7 @@ export async function runHarness({
     verificationPassed: false,
     verificationResults: [],
   };
+  let progressiveReviewJob = null;
   let totalUsage = null;
 
   const applyRuntimeControlBoundary = async () => {
@@ -3924,6 +3926,7 @@ export async function runHarness({
       startedAt: new Date().toISOString(),
       completedAt: null,
       reviewAgentId: null,
+      reviewAgentIds: [],
       verifyAgentId: null,
       findings: [],
       checks: [],
@@ -3939,25 +3942,35 @@ export async function runHarness({
       verificationCandidates,
     });
 
-    const reviewPromise = pendingChanges.length
-      ? startSubagent(
-          {
-            role: "review",
-            task: createProgressiveReviewTask(
-              pendingChanges,
-              reason,
-              language,
-            ),
-            scope:
-              pendingChanges.length <= 12
-                ? pendingChanges.map((change) => change.path)
-                : ["."],
-            background: false,
-            max_rounds: 8,
-          },
-          `${segmentId}-review`,
-        )
-      : Promise.resolve(null);
+    const reviewGroupCount = Math.min(
+      verificationCandidates.length ? 1 : 2,
+      pendingChanges.length,
+    );
+    const reviewGroups = Array.from(
+      { length: reviewGroupCount },
+      () => [],
+    );
+    pendingChanges.forEach((change, index) => {
+      reviewGroups[index % reviewGroupCount]?.push(change);
+    });
+    const reviewPromises = reviewGroups.map((changes, index) =>
+      startSubagent(
+        {
+          role: "review",
+          task: createProgressiveReviewTask(changes, reason, language),
+          scope:
+            changes.length <= 12
+              ? changes.map((change) => change.path)
+              : ["."],
+          background: false,
+          max_rounds: Math.min(
+            6,
+            Math.max(3, Math.ceil(changes.length / 6) + 2),
+          ),
+        },
+        `${segmentId}-review-${index + 1}`,
+      ),
+    );
     const verifyPromise = verificationCandidates.length
       ? startSubagent(
           {
@@ -3969,26 +3982,35 @@ export async function runHarness({
             ),
             scope: ["."],
             background: false,
-            max_rounds: 8,
+            max_rounds: 4,
           },
           `${segmentId}-verify`,
         )
       : Promise.resolve(null);
-    const [reviewResult, verifyResult] = await Promise.all([
-      reviewPromise,
+    const [reviewResults, verifyResult] = await Promise.all([
+      Promise.all(reviewPromises),
       verifyPromise,
     ]);
 
-    const reviewReport = pendingChanges.length
-      ? parseProgressiveReviewReport(reviewResult?.summary, "review")
-      : {
-          verdict: "pass",
-          checks: [],
-          findings: [],
-          remainingRisks: [],
-          parseError: false,
-        };
-    const reviewEvidence = reviewResult?.evidence || [];
+    const reviewReports = reviewResults.map((result) =>
+      parseProgressiveReviewReport(result?.summary, "review"),
+    );
+    const reviewReport = {
+      verdict: reviewReports.every((report) => report.verdict === "pass")
+        ? "pass"
+        : reviewReports.some((report) => report.verdict === "needs_changes")
+          ? "needs_changes"
+          : "uncertain",
+      checks: reviewReports.flatMap((report) => report.checks || []),
+      findings: reviewReports.flatMap((report) => report.findings || []),
+      remainingRisks: reviewReports.flatMap(
+        (report) => report.remainingRisks || [],
+      ),
+      parseError: reviewReports.some((report) => report.parseError),
+    };
+    const reviewEvidence = reviewResults.flatMap(
+      (result) => result?.evidence || [],
+    );
     const missingReviewEvidence = pendingChanges
       .filter((change) =>
         !reviewEvidence.some((item) => {
@@ -4002,7 +4024,10 @@ export async function runHarness({
         }),
       )
       .map((change) => change.path);
-    if (reviewResult?.status !== "completed" || missingReviewEvidence.length) {
+    if (
+      reviewResults.some((result) => result?.status !== "completed") ||
+      missingReviewEvidence.length
+    ) {
       reviewReport.verdict = "uncertain";
       reviewReport.parseError = true;
       reviewReport.remainingRisks.push(
@@ -4076,7 +4101,10 @@ export async function runHarness({
         }
       }
     }
-    segment.reviewAgentId = reviewResult?.agentId || null;
+    segment.reviewAgentIds = reviewResults
+      .map((result) => result?.agentId)
+      .filter(Boolean);
+    segment.reviewAgentId = segment.reviewAgentIds[0] || null;
     segment.verifyAgentId = verifyResult?.agentId || null;
     segment.findings = reviewReport.findings;
     segment.checks = [
@@ -4107,9 +4135,99 @@ export async function runHarness({
       checks: segment.checks,
       remainingRisks: segment.remainingRisks,
       reviewAgentId: segment.reviewAgentId,
+      reviewAgentIds: segment.reviewAgentIds,
       verifyAgentId: segment.verifyAgentId,
     });
     return segment;
+  };
+
+  const progressiveSegmentMatchesCurrentVersions = (segment) =>
+    Boolean(
+      segment?.versions &&
+        [...segment.versions.entries()].every(
+          ([path, version]) => changeMap.get(path)?.afterContent === version,
+        ),
+    );
+
+  const buildProgressiveReviewFeedback = (segment) => {
+    if (
+      !segment ||
+      segment.feedbackDelivered ||
+      segment.verdict !== "needs_changes"
+    ) {
+      return "";
+    }
+    segment.feedbackDelivered = true;
+    if (!progressiveSegmentMatchesCurrentVersions(segment)) return "";
+    const findings = Array.isArray(segment.findings)
+      ? segment.findings
+      : [];
+    if (!findings.length) return "";
+    return [
+      "AporiaX background Review subagent found issues in the latest unchanged file versions.",
+      "Address these findings before continuing. Do not merely restate them:",
+      JSON.stringify(findings),
+      segment.remainingRisks?.length
+        ? `Uncertainty: ${JSON.stringify(segment.remainingRisks)}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
+  const describeProgressiveReviewJob = (job) => ({
+    scheduled: true,
+    status: job?.status || "running",
+    segmentId: job?.result?.id || null,
+    paths: job?.paths || [],
+  });
+
+  const scheduleProgressiveSelfCheckSegment = (options) => {
+    if (progressiveReviewJob && !progressiveReviewJob.consumed) {
+      return describeProgressiveReviewJob(progressiveReviewJob);
+    }
+    const paths = reviewableChanges(changeMap)
+      .filter(
+        (change) =>
+          selfCheck.reviewedVersions.get(change.path) !==
+          change.afterContent,
+      )
+      .map((change) => change.path);
+    if (!paths.length && !options.runVerification) return null;
+    const job = {
+      status: "running",
+      consumed: false,
+      paths,
+      result: null,
+      promise: null,
+    };
+    job.promise = runProgressiveSelfCheckSegment(options)
+      .then((segment) => {
+        job.status = "completed";
+        job.result = segment;
+        return segment;
+      })
+      .catch((error) => {
+        job.status = "failed";
+        job.error = String(error?.message || error).slice(0, 800);
+        emit({
+          type: "self_check.segment.failed",
+          error: job.error,
+          paths: job.paths,
+        });
+        return null;
+      });
+    progressiveReviewJob = job;
+    return describeProgressiveReviewJob(job);
+  };
+
+  const consumeProgressiveReviewJob = async ({ wait = false } = {}) => {
+    const job = progressiveReviewJob;
+    if (!job || job.consumed) return "";
+    if (wait) await job.promise;
+    if (job.status === "running") return "";
+    job.consumed = true;
+    return buildProgressiveReviewFeedback(job.result);
   };
 
   const sealProgressiveSelfCheck = async () => {
@@ -4358,6 +4476,13 @@ export async function runHarness({
     for (let step = 0; ; step += 1) {
       throwIfAborted(signal);
       await applyRuntimeControlBoundary();
+      const completedReviewFeedback = await consumeProgressiveReviewJob();
+      if (completedReviewFeedback) {
+        conversation.push({
+          role: "user",
+          content: completedReviewFeedback,
+        });
+      }
       emit({
         type: "response.reset",
         round: step + 1,
@@ -4433,6 +4558,23 @@ export async function runHarness({
         !Array.isArray(message.tool_calls) ||
         message.tool_calls.length === 0
       ) {
+        const finalBackgroundReviewFeedback =
+          await consumeProgressiveReviewJob({ wait: true });
+        if (finalBackgroundReviewFeedback) {
+          conversation.push({
+            role: "assistant",
+            content:
+              message.content ||
+              (isEnglish
+                ? "The independent work is complete; I am incorporating the background review findings."
+                : "独立工作已完成，正在吸收后台审查结果。"),
+          });
+          conversation.push({
+            role: "user",
+            content: finalBackgroundReviewFeedback,
+          });
+          continue;
+        }
         const outstandingSubagentResults =
           await collectOutstandingSubagents();
         if (outstandingSubagentResults.length) {
@@ -4960,7 +5102,7 @@ export async function runHarness({
             ) {
               const completedStep = newlyCompletedSteps.at(-1);
               const stagedReview =
-                await runProgressiveSelfCheckSegment({
+                scheduleProgressiveSelfCheckSegment({
                   reason: `plan-step:${completedStep.title}`,
                   planStepId: completedStep.id,
                   runVerification: /test|verify|build|lint|check|测试|验证|构建|检查/i.test(
@@ -4969,10 +5111,9 @@ export async function runHarness({
                 });
               result.modelResult.stagedReview = stagedReview
                 ? {
-                    segmentId: stagedReview.id,
-                    verdict: stagedReview.verdict,
-                    findings: stagedReview.findings,
-                    remainingRisks: stagedReview.remainingRisks,
+                    segmentId: stagedReview.segmentId,
+                    status: stagedReview.status,
+                    paths: stagedReview.paths,
                   }
                 : null;
             }
@@ -5288,31 +5429,13 @@ export async function runHarness({
           pendingStagePaths.length >=
           PROGRESSIVE_REVIEW_FILE_THRESHOLD
         ) {
-          const stagedReview = await runProgressiveSelfCheckSegment({
+          scheduleProgressiveSelfCheckSegment({
             reason: "change-batch",
             planStepId:
               plan?.steps.find((step) => step.status === "in_progress")
                 ?.id || null,
             runVerification: false,
           });
-          if (
-            stagedReview &&
-            stagedReview.verdict !== "pass"
-          ) {
-            conversation.push({
-              role: "user",
-              content: [
-                "AporiaX staged Review subagent found issues in the latest change batch.",
-                "Address these findings before continuing:",
-                JSON.stringify(stagedReview.findings),
-                stagedReview.remainingRisks.length
-                  ? `Uncertainty: ${JSON.stringify(stagedReview.remainingRisks)}`
-                  : "",
-              ]
-                .filter(Boolean)
-                .join("\n"),
-            });
-          }
         }
       }
     }
