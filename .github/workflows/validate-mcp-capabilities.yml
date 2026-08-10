@@ -1,0 +1,39 @@
+name: Validate MCP capabilities
+
+on:
+  pull_request:
+    branches:
+      - agent/v0.6-capability-registry
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-mcp-capabilities' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.6-mcp-capabilities
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: node scripts/apply-mcp-capability-refactor.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run test:mcp-capabilities
+      - run: npm run test:mcp
+      - run: npm run test:capabilities
+      - run: npm run test:runtime
+      - run: npm run test:harness-v2
+      - run: npm run build
+      - name: Commit validated MCP capability bridge
+        run: |
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: register scoped MCP capabilities [mcp-capabilities-validated]"
+          git push origin HEAD:agent/v0.6-mcp-capabilities
