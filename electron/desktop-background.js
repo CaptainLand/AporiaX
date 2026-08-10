@@ -15,9 +15,10 @@ export function installDesktopBackground() {
   let mainWindow = null;
   let isQuitting = false;
   let disposed = false;
-  const activeRunIds = new Set();
+  const activeRunRefs = new Map();
 
-  const status = () => desktopBackgroundStatus(activeRunIds);
+  const activeRunIds = () => activeRunRefs.keys();
+  const status = () => desktopBackgroundStatus(activeRunIds());
 
   const showMainWindow = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -110,12 +111,15 @@ export function installDesktopBackground() {
     runStarted(runId) {
       const id = String(runId || "").trim();
       if (!id) return status();
-      activeRunIds.add(id);
+      activeRunRefs.set(id, (activeRunRefs.get(id) || 0) + 1);
       updateTray();
       return status();
     },
     runFinished(runId) {
-      activeRunIds.delete(String(runId || "").trim());
+      const id = String(runId || "").trim();
+      const references = activeRunRefs.get(id) || 0;
+      if (references <= 1) activeRunRefs.delete(id);
+      else activeRunRefs.set(id, references - 1);
       updateTray();
       return status();
     },
