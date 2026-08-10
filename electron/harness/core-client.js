@@ -15,6 +15,7 @@ export function createHarnessCoreClient({ baseUrl, token, fetchImpl = fetch } = 
     snapshot: () => request("/v1/snapshot"),
     agents: () => request("/v1/agents"),
     plugins: () => request("/v1/plugins"),
+    skills: () => request("/v1/skills"),
     sessions: () => request("/v1/sessions"),
     events: ({ since = 0, type = "*", limit = 200 } = {}) =>
       request(`/v1/events?since=${encodeURIComponent(since)}&type=${encodeURIComponent(type)}&limit=${encodeURIComponent(limit)}`),
