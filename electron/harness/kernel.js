@@ -58,6 +58,13 @@ export function createHarnessKernel({
         builderExecution: true,
         builderScopeLeases: true,
         builderConflictCheckedMerge: true,
+        sharedCollaborationContract: true,
+        builderPlanApproval: true,
+        structuredBuilderHandoff: true,
+        boundedCollaborationMailbox: true,
+        contractAwareReviewVerify: true,
+        collaborationWitnessAudit: true,
+        livePeerInterrupts: false,
         taskRpc: false,
       };
     },
