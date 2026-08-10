@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   buildVisionMessages,
+  exposeVisionProxyCapabilities,
   hasImageAttachments,
   imageAttachments,
   mergeVisionObservation,
@@ -35,11 +36,13 @@ const providers = [
   {
     id: "deepseek",
     name: "DeepSeek",
+    hasApiKey: true,
     models: [{ id: "deepseek-v4-pro", supportsImages: false }],
   },
   {
     id: "qwen",
     name: "Qwen",
+    hasApiKey: true,
     models: [
       { id: "qwen3.7-flash", supportsImages: false },
       { id: "qwen3.6-flash", supportsImages: false },
@@ -54,6 +57,32 @@ const candidate = selectVisionCandidate(providers, {
 });
 assert.equal(candidate.provider.id, "qwen");
 assert.equal(candidate.model.id, "qwen3.5-flash");
+
+const exposedProviders = exposeVisionProxyCapabilities(providers);
+const exposedDeepSeek = exposedProviders
+  .find((provider) => provider.id === "deepseek")
+  .models.find((model) => model.id === "deepseek-v4-pro");
+const exposedQwen = exposedProviders
+  .find((provider) => provider.id === "qwen")
+  .models.find((model) => model.id === "qwen3.5-flash");
+assert.equal(exposedDeepSeek.supportsImages, true);
+assert.equal(exposedDeepSeek.nativeSupportsImages, false);
+assert.equal(exposedDeepSeek.supportsImageProxy, true);
+assert.equal(exposedQwen.supportsImages, true);
+
+const noKeyProviders = exposeVisionProxyCapabilities([
+  {
+    id: "deepseek",
+    hasApiKey: true,
+    models: [{ id: "deepseek-v4-pro", supportsImages: false }],
+  },
+  {
+    id: "qwen",
+    hasApiKey: false,
+    models: [{ id: "qwen3.5-flash", supportsImages: false }],
+  },
+]);
+assert.equal(noKeyProviders[0].models[0].supportsImages, false);
 
 const explicitCandidate = selectVisionCandidate(providers, {
   mainProviderId: "deepseek",
