@@ -1,3 +1,5 @@
+import { createHarnessEventBus } from "./harness/event-bus.js";
+
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 
 const DEFAULT_PERMISSION_POLICIES = {
@@ -145,15 +147,20 @@ export class ToolRegistry {
   }
 }
 
-export function createEventEmitter(onEvent) {
-  let sequence = 0;
-  return (event) => {
-    if (!event || typeof event.type !== "string") return;
-    sequence += 1;
-    onEvent?.({
-      sequence,
-      timestamp: new Date().toISOString(),
-      ...event,
-    });
-  };
+export function createEventEmitter(onEvent, options = {}) {
+  const bus = createHarnessEventBus({
+    onEvent,
+    now: options.now,
+    maxHistory: options.maxHistory ?? 1_000,
+  });
+  const emit = (event) => bus.emit(event);
+  Object.assign(emit, {
+    bus,
+    on: bus.on.bind(bus),
+    once: bus.once.bind(bus),
+    hook: bus.hook.bind(bus),
+    history: bus.history.bind(bus),
+    snapshot: bus.snapshot.bind(bus),
+  });
+  return emit;
 }
