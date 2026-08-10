@@ -9,12 +9,16 @@ import {
 } from "./harness/agent-budget.js";
 import { prepareVisionProxyRequest } from "./vision-proxy.js";
 import { exposeVisionProxyCapabilities } from "./vision-proxy-core.js";
-import { prepareWorkspaceMentionRequest } from "./workspace-mentions.js";
+import {
+  prepareWorkspaceMentionMessage,
+  prepareWorkspaceMentionRequest,
+} from "./workspace-mentions.js";
 
 // Install desktop background behavior before the compatibility main process
 // creates its BrowserWindow. The close event is intercepted and hidden to the
 // tray, so the renderer and active Harness IPC calls stay alive in background.
 const desktopBackground = installDesktopBackground();
+const activeRunWorkspaces = new Map();
 
 // Install the per-run budget boundary before the legacy desktop main process
 // registers harness:run. This keeps the migration incremental while making the
@@ -30,11 +34,28 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       exposeVisionProxyCapabilities(await listener(...args)),
     );
   }
+  if (channel === "harness:steer") {
+    return nativeHandle(channel, async (event, request = {}) => {
+      const workspacePath = activeRunWorkspaces.get(
+        String(request?.runId || "").trim(),
+      );
+      if (!workspacePath || !request?.message) {
+        return listener(event, request);
+      }
+      const message = await prepareWorkspaceMentionMessage(
+        request.message,
+        workspacePath,
+      );
+      return listener(event, { ...request, message });
+    });
+  }
   if (channel !== "harness:run") return nativeHandle(channel, listener);
   return nativeHandle(channel, async (event, request) => {
     const budget = planAgentBudget(request || {});
     const runId = String(request?.runId || "").trim();
+    const workspacePath = String(request?.workspacePath || "").trim();
     desktopBackground.runStarted(runId);
+    if (runId && workspacePath) activeRunWorkspaces.set(runId, workspacePath);
     try {
       // Vision preprocessing runs first so a visual Provider receives only the
       // user's original prompt + image, rather than potentially large @file
@@ -47,6 +68,7 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
         listener(event, preparedRequest),
       );
     } finally {
+      activeRunWorkspaces.delete(runId);
       desktopBackground.runFinished(runId);
     }
   });
