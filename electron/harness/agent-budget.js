@@ -34,6 +34,7 @@ const MUTATION_PATTERN = /(?:\b(?:add|build|create|edit|fix|implement|migrate|mo
 const INVESTIGATION_PATTERN = /(?:\b(?:analy[sz]e|debug|explain|explore|exploration|find|inspect|investigate|review|search|trace|understand)\b|分析|解释|探索|查找|检查|排查|调试|搜索|理解|看看|研究)/i;
 const EXPLICIT_DELEGATION_PATTERN = /(?:\b(?:delegate|delegation|subagent)\b|\bin\s+the\s+background\b|委派|交给子 ?agent|调用子 ?agent|后台(?:探索|调查|检查|运行|执行))/i;
 const EXPLICIT_EXPLORATION_PATTERN = /(?:\b(?:explore|exploration)\b|探索)/i;
+const DURABLE_MEMORY_PATTERN = /(?:\b(?:remember|memorize)\b|记住|记忆(?:这个|此|该)?(?:偏好|约定|决定|规则|信息)?)/i;
 const LARGE_PATTERN = /(?:\b(?:architecture|cross[- ]module|end[- ]to[- ]end|multi[- ]module|platform|plugin|runtime|server|migration|worktree|scheduler)\b|架构|跨模块|全链路|多模块|平台|插件|运行时|服务端|调度|工作树|大规模|整体重构)/i;
 const SIMPLE_PATTERN = /(?:\b(?:tiny|trivial|quick|one[- ]file|rename|typo)\b|简单|小改|只改|改个|单文件|文案|重命名|错别字)/i;
 const AGENT_PATTERN = /(?:\b(?:agent|subagent|parallel|builder|worker)\b|子 ?agent|多 ?agent|并行|builder|worker)/i;
@@ -82,6 +83,7 @@ function classifyRequest(options = {}) {
   const investigating = INVESTIGATION_PATTERN.test(text);
   const explicitDelegation = EXPLICIT_DELEGATION_PATTERN.test(text);
   const explicitExploration = EXPLICIT_EXPLORATION_PATTERN.test(text);
+  const durableMemory = DURABLE_MEMORY_PATTERN.test(text);
   const explicitLarge = LARGE_PATTERN.test(text);
   const explicitSimple = SIMPLE_PATTERN.test(text);
   const mentionsAgents = AGENT_PATTERN.test(text);
@@ -90,6 +92,14 @@ function classifyRequest(options = {}) {
 
   if (!hasWorkspace) {
     return { profile: "direct", score: 0, reason: "no-workspace", text };
+  }
+  if (durableMemory) {
+    return {
+      profile: "standard",
+      score: 3,
+      reason: "durable-understanding",
+      text,
+    };
   }
   if (!mutating) {
     if (
