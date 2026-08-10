@@ -75,6 +75,8 @@ import {
   LiveAgentStatus,
   RunDurationChip,
 } from "./conversation/RuntimeMessageUI";
+import { serializeTaskCache } from "./state/task-store-core.js";
+import { useTaskStore } from "./state/useTaskStore.js";
 import "./styles.css";
 
 const STORAGE_KEY = "aporiax.tasks.v1";
@@ -206,50 +208,21 @@ function readSavedTasks() {
   }
 }
 
-function createLightweightTaskCache(tasks) {
-  return (tasks || []).map((task) => ({
-    ...task,
-    anchorRestores: (task.anchorRestores || []).slice(-10),
-    messages: (task.messages || []).slice(-50).map((message) => ({
-      ...message,
-      content: String(message.content || "").slice(-60_000),
-      changes: [],
-      anchor: message.anchor
-        ? {
-            ...message.anchor,
-            warning:
-              "Snapshot payload is stored in the desktop task history.",
-          }
-        : null,
-      attachments: (message.attachments || []).map((attachment) => ({
-        ...attachment,
-        dataUrl: undefined,
-        data: undefined,
-        content: String(attachment.content || "").slice(0, 20_000),
-      })),
-    })),
-  }));
-}
-
 function cacheTasksLocally(tasks) {
-  const serialized = JSON.stringify(tasks);
   try {
-    if (new Blob([serialized]).size <= 3_500_000) {
-      localStorage.setItem(STORAGE_KEY, serialized);
-      return;
-    }
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(createLightweightTaskCache(tasks)),
-    );
+    const snapshot = serializeTaskCache(tasks, {
+      maxTasks: Number.MAX_SAFE_INTEGER,
+    });
+    localStorage.setItem(STORAGE_KEY, snapshot.json);
   } catch {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(createLightweightTaskCache(tasks).slice(0, 20)),
-      );
+      const fallback = serializeTaskCache(tasks, {
+        maxBytes: 0,
+        maxTasks: 20,
+      });
+      localStorage.setItem(STORAGE_KEY, fallback.json);
     } catch {
-      // The desktop JSON store remains authoritative when browser quota is full.
+      // Desktop persistence remains authoritative when browser quota is full.
     }
   }
 }
@@ -5307,9 +5280,9 @@ function ApplicationSettingsModal({
 
 function App() {
   const { language, tr } = useI18n();
-  const [tasks, setTasks] = useState(readSavedTasks);
+  const [tasks, setTasks] = useTaskStore(readSavedTasks);
   const [activeTaskId, setActiveTaskId] = useState(
-    () => readSavedTasks()[0]?.id || null,
+    () => tasks[0]?.id || null,
   );
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
@@ -5447,15 +5420,13 @@ function App() {
       try {
         const storedTasks = await window.desktop.tasks.load();
         if (!active) return;
+        // The desktop JSON store is the durable authority once it exists.
+        // Only a missing desktop file (null) may migrate the legacy startup
+        // cache. An intentional durable [] must never resurrect stale cached
+        // tasks.
         let hydratedTasks =
-          storedTasks === null ||
-          (storedTasks.length === 0 && tasksRef.current.length > 0)
-            ? tasksRef.current
-            : storedTasks;
-        if (
-          storedTasks === null ||
-          (storedTasks.length === 0 && tasksRef.current.length > 0)
-        ) {
+          storedTasks === null ? tasksRef.current : storedTasks;
+        if (storedTasks === null && tasksRef.current.length > 0) {
           await window.desktop.tasks.save(tasksRef.current);
         }
         const recoverableRuns =
