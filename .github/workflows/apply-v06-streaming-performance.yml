@@ -1,0 +1,44 @@
+name: Apply v0.6 streaming performance
+
+on:
+  pull_request:
+    branches:
+      - agent/v0.6-runtime-provider-stream
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  optimize-and-validate:
+    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-streaming-performance' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.repository }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply streaming performance migration
+        run: node scripts/apply-v06-streaming-performance.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run test:streaming-performance
+      - run: npm run test:task-store
+      - run: npm run test:renderer-architecture
+      - run: npm run test:renderer-modules
+      - run: npm run test:harness-events-ui
+      - run: npm run test:provider-stream
+      - run: npm run test:runtime
+      - run: npm run build
+      - name: Commit validated optimization
+        run: |
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "perf: batch streamed deltas and defer startup cache writes [v06-stream-perf]"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
