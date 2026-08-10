@@ -1,0 +1,38 @@
+name: Validate MCP v1
+
+on:
+  push:
+    branches:
+      - agent/mcp-v1
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: ${{ !contains(github.event.head_commit.message, '[mcp-validated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/mcp-v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Refresh lockfile
+        run: npm install --package-lock-only --ignore-scripts
+      - run: npm ci --ignore-scripts
+      - run: npm run test:mcp
+      - run: npm run test:browser
+      - run: npm run test:architecture
+      - run: npm run build
+      - name: Remove one-shot validation workflow and commit lockfile
+        run: |
+          rm -f .github/workflows/validate-mcp-v1.yml
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "test: validate MCP v1 [mcp-validated]"
+          git push origin HEAD:agent/mcp-v1
