@@ -147,8 +147,11 @@ export async function prepareWorkspaceMentionMessage(
   message = {},
   workspacePath = "",
 ) {
+  const currentContent = String(message?.content || "");
   const originalContent = String(
-    message?.workspaceMentionOriginalContent || message?.content || "",
+    message?.workspaceMentionOriginalContent ||
+      message?.skillOriginalContent ||
+      currentContent,
   );
   const records = await resolveWorkspaceMentionRecords(
     String(workspacePath || "").trim(),
@@ -160,7 +163,7 @@ export async function prepareWorkspaceMentionMessage(
   return {
     ...message,
     workspaceMentionOriginalContent: originalContent,
-    content: [originalContent.trim(), context].filter(Boolean).join("\n\n"),
+    content: [currentContent.trim(), context].filter(Boolean).join("\n\n"),
     workspaceMentions: records.map(({ content, ...record }) => record),
   };
 }
