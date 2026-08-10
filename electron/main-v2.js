@@ -9,6 +9,7 @@ import {
 } from "./harness/agent-budget.js";
 import { prepareVisionProxyRequest } from "./vision-proxy.js";
 import { exposeVisionProxyCapabilities } from "./vision-proxy-core.js";
+import { prepareWorkspaceMentionRequest } from "./workspace-mentions.js";
 
 // Install desktop background behavior before the compatibility main process
 // creates its BrowserWindow. The close event is intercepted and hidden to the
@@ -35,7 +36,13 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
     const runId = String(request?.runId || "").trim();
     desktopBackground.runStarted(runId);
     try {
-      const preparedRequest = await prepareVisionProxyRequest(request);
+      // Vision preprocessing runs first so a visual Provider receives only the
+      // user's original prompt + image, rather than potentially large @file
+      // contents. Workspace mentions are then inlined for the main Agent.
+      const visionPreparedRequest = await prepareVisionProxyRequest(request);
+      const preparedRequest = await prepareWorkspaceMentionRequest(
+        visionPreparedRequest,
+      );
       return await runWithAgentBudget(budget, {}, () =>
         listener(event, preparedRequest),
       );
