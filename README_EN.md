@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.4.1/AporiaX-Setup-0.4.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -34,7 +34,7 @@ evidence, changes, and deliverables visible instead of reducing the work to a
 chat response.
 
 > [!IMPORTANT]
-> AporiaX `v0.4.1` is still a preview and currently ships for Windows x64.
+> AporiaX `v0.5.0` is still a preview and currently ships for Windows x64.
 > `run_command` runs automatically in a temporary local workspace copy and
 > conflict-checks project changes before synchronizing them back. Docker is
 > entirely optional; enabling it upgrades execution to an offline,
@@ -83,10 +83,14 @@ chat response.
 | --- | --- |
 | Code and workspace | File tree, search, preview, editing, `Ctrl+S`, precise patches, Git status and diff |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
+| Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents only when task complexity needs them |
+| Builder orchestration | Eligible large write tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and conflict-safe merge |
+| Agent collaboration | Shared Contracts, deterministic Plan Approval, structured handoffs, semantic disagreement checks, and a bounded mailbox; Main remains final integration authority |
 | Observable execution | Witness reports the current main/subagent action, duration, failures, and self-check phase in Dialogue; Route preserves the full trace |
 | Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and atomic conflict checks |
 | Mandatory self-check | Review/Verify subagents inspect current file versions in stages, followed by a lightweight final seal over tests, risks, and deliverables |
-| Subagents and context | Parallel reads and search; isolated Explore, Review, and Verify subagents; scoped rules, structured compaction, and relevant-history recall |
+| Subagents and context | Parallel reads and search; isolated Explore, Review, Verify, Curator, and scope-bounded Builder roles; scoped rules, structured compaction, and relevant-history recall |
+| Desktop background lifecycle | Closing the main window can keep tasks running in the system tray, with tray restore/exit, Windows completion notifications, and live task runtime display |
 | Project understanding | One workspace forms one project; versioned Understanding shares architecture, conventions, commands, preferences, and debugging knowledge across its tasks |
 | Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, task-level model selection |
 | Bilingual interface | Switch Chinese and English from the welcome screen or settings; new replies follow the interface language |
@@ -100,19 +104,19 @@ yet. Image delivery depends on the vision capability of the selected model.
 
 | Windows x64 | Use case |
 | --- | --- |
-| [Installer 0.4.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.4.1/AporiaX-Setup-0.4.1-x64.exe) | Standard installation, desktop shortcut, and Start menu |
-| [Portable 0.4.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.4.1/AporiaX-Portable-0.4.1-x64.exe) | Run and evaluate without installation |
+| [Installer 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe) | Standard installation, desktop shortcut, and Start menu |
+| [Portable 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Portable-0.5.0-x64.exe) | Run and evaluate without installation |
 
-### What's new in 0.4.1: from a single tool loop to a project-level agent system
+### What's new in 0.5.0: from a project-level agent system to an adaptive multi-agent Harness
 
-- **Parallel subagents** — Explore, Review, and Verify work with isolated context and permissions, reducing main-context pollution and long-task blocking.
-- **Witness and Route** — Dialogue keeps the current main/subagent work visible, while Route groups evidence into expandable understanding, exploration, execution, and verification phases.
-- **Staged self-check** — changed file versions are reviewed as work progresses, followed by a lightweight final seal instead of a full mechanical reread.
-- **Project Understanding** — architecture, conventions, commands, preferences, and debugging knowledge become versioned project context shared across tasks in the same workspace.
-- **Projects and tasks** — one workspace maps to one project containing multiple tasks; Workspace now opens as a collapsible tree rooted at the project directory.
-- **Per-turn Anchor** — preview affected files and exact diffs beside a reply, then atomically restore after explicit confirmation; later edits stop the restore safely.
+- **Adaptive Agent Budget** — simple requests stay Main-only, while complex tasks can receive bounded Explore, Review, Verify, Curator, or Builder capacity instead of paying a fixed multi-agent cost.
+- **Builder orchestration** — eligible large write tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and pre-merge conflict checks.
+- **Collaboration v1** — Shared Contracts, deterministic Plan Approval, structured Builder handoffs, semantic disagreement detection, and a bounded mailbox keep parallel work aligned without unrestricted peer interruption.
+- **Main / Review / Verify / Witness** — Main keeps final integration authority; Review and Verify provide version-matched quality checks; Witness remains observation-only.
+- **Desktop background experience** — closing the main window can hide AporiaX to the system tray while work continues, with tray restore/exit, Windows completion notifications, elapsed task time, and live tray runtime.
+- **Harness Architecture** — added Event Bus / Hook API, declarative Agent definitions, Plugin API, Core Server foundations, and clearer Session, Scheduler, Context, Tool, and Review boundaries.
 
-[Read the complete 0.4.1 release notes](docs/RELEASE_NOTES_v0.4.1.md)
+[Read the 0.5.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.5.0) · [Read the complete changelog](CHANGELOG.md)
 
 After the first launch:
 
@@ -166,6 +170,12 @@ npm run dev
 npm run test:runtime
 npm run test:p0
 
+# Harness / Collaboration / Desktop smoke tests
+npm run test:architecture
+npm run test:collaboration
+npm run test:harness-v2
+npm run test:desktop-background
+
 # Production web build
 npm run build
 
@@ -196,10 +206,17 @@ review in Word, PowerPoint, or Excel.
 
 AporiaX runs independent read tools concurrently and delegates larger
 exploration, review, and verification work to isolated Explore, Review, and
-Verify subagents with their own context and path scope. Explore and Review are
-read-only. Verify may run project checks when the task policy permits it.
-Background subagents are collected before final delivery, and their internal
-steps appear in Route without flooding the parent context with raw logs.
+Verify subagents with their own context and path scope. Curator handles explicit
+durable project understanding. For eligible large writable Git tasks, Harness
+can plan up to two Builders that work inside isolated Git worktrees under Scope
+Leases before Main integrates their changes after conflict checks. Builders
+cannot broaden write scope, run arbitrary commands, or recursively delegate agents.
+
+Parallel Builders must pass a Shared Contract and Plan Approval first, sharing
+cross-module invariants, acceptance criteria, and Main-owned shared-file
+boundaries. They report results through structured handoffs and a bounded
+mailbox. Main keeps final integration authority, while Witness only observes
+and records.
 
 Harness recognizes these project rules:
 
@@ -260,8 +277,7 @@ build/      Application icons and build resources
 ```
 
 See [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) for current Harness
-architecture and plans. See
-[docs/RELEASE_NOTES_v0.4.1.md](docs/RELEASE_NOTES_v0.4.1.md) for this release.
+architecture and plans. See [CHANGELOG.md](CHANGELOG.md) for this release.
 
 ## Contributing
 
