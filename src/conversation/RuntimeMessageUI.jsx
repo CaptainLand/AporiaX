@@ -15,6 +15,7 @@ import {
 } from "../agent-process-model.js";
 import { formatTaskDuration } from "../runtime-ui-core.js";
 import { useI18n } from "../i18n";
+import "../agent-process-mentions.css";
 import "../runtime-ui-enhancements.css";
 import "../live-agent-status.css";
 import "../prompt-folding.css";
