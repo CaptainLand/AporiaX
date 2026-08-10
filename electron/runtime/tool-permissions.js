@@ -16,12 +16,15 @@ export function resolveToolExecutionPermission({
     approvalMode === "sandbox-auto" &&
     sandboxSafe;
 
+  const commandNeedsManualBoundary =
+    toolName === "run_command" &&
+    !sandboxAutoApproved &&
+    (approvalMode === "manual" || !sandboxSafe);
+
   const requiresApproval =
     !denied &&
     ((permissionAction === "ask" && !sandboxAutoApproved) ||
-      (toolName === "run_command" &&
-        approvalMode === "manual" &&
-        !sandboxAutoApproved));
+      commandNeedsManualBoundary);
 
   let executionMode = "direct";
   if (toolName === "run_command") {
@@ -33,9 +36,7 @@ export function resolveToolExecutionPermission({
         ? sandboxSafe
           ? "sandbox-manual-approval"
           : "host-manual-approval"
-        : sandboxSafe
-          ? "sandbox-permitted"
-          : "host-permitted";
+        : "sandbox-permitted";
   } else if (requiresApproval) {
     executionMode = "manual-approval";
   }
