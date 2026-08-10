@@ -88,6 +88,13 @@ export function LiveAgentStatus({ message }) {
   const skills = Array.isArray(message?.activatedSkills)
     ? message.activatedSkills
     : [];
+
+  // Once a run finishes successfully the answer itself is the useful result.
+  // A generic "Run completed / N observable actions" banner adds visual noise
+  // and was easy to mistake for a meaningful Agent step. Failed/interrupted
+  // runs remain visible because they still require user attention.
+  if (status.state === "completed") return null;
+
   const progress = status.totalSteps
     ? `${status.completedSteps}/${status.totalSteps}`
     : "";
@@ -102,7 +109,7 @@ export function LiveAgentStatus({ message }) {
       </span>
       <div className="aporiax-live-agent-status-copy">
         <strong>{status.title}</strong>
-        <span title={status.detail}>{status.detail}</span>
+        {status.detail && <span title={status.detail}>{status.detail}</span>}
       </div>
       <div className="aporiax-live-agent-status-meta">
         {skills.length > 0 && (
@@ -116,11 +123,7 @@ export function LiveAgentStatus({ message }) {
               : tr(`${skills.length} Skills`, `${skills.length} Skills`)}
           </small>
         )}
-        <em>
-          {status.state === "running"
-            ? tr("进行中", "Live")
-            : tr("已保留", "Saved")}
-        </em>
+        {status.state === "running" && <em>{tr("进行中", "Live")}</em>}
         {progress && <small>{progress}</small>}
         {status.changeCount > 0 && (
           <small>
@@ -153,20 +156,18 @@ export function AgentProcessTrace({ message }) {
           )}
         </span>
         <div>
-          <strong>{tr("Agent 过程", "Agent process")}</strong>
+          <strong>{running ? tr("当前操作", "Current work") : tr("本轮操作", "Work performed")}</strong>
           <span>
-            {current?.title ||
-              tr("正在整理执行过程", "Preparing the execution trace")}
+            {running
+              ? current?.title || tr("正在执行", "Working")
+              : tr(
+                  `${steps.length} 项有实际结果的操作`,
+                  `${steps.length} meaningful action${steps.length === 1 ? "" : "s"}`,
+                )}
           </span>
         </div>
-        <em>{running ? tr("进行中", "Live") : tr("已保留", "Saved")}</em>
+        {running && <em>{tr("进行中", "Live")}</em>}
       </div>
-      <p className="aporiax-agent-process-note">
-        {tr(
-          "展示可观察的行动与过程摘要，不显示模型私有思维链。任务结束后仍会保留。",
-          "Shows observable actions and concise process summaries, not private chain-of-thought. The trace remains after completion.",
-        )}
-      </p>
       <div className="aporiax-agent-process-steps">
         {steps.map((step) => (
           <details
@@ -180,7 +181,7 @@ export function AgentProcessTrace({ message }) {
               </span>
               <span className="aporiax-agent-process-step-copy">
                 <strong>{step.title}</strong>
-                <small>{step.summary}</small>
+                {step.summary && <small>{step.summary}</small>}
               </span>
               <span className="aporiax-agent-process-step-state">
                 {step.status === "running"
