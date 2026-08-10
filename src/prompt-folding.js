@@ -24,14 +24,21 @@ function promptNeedsFolding(bubble) {
 
 function updateToggle(article, button) {
   const expanded = article.classList.contains("prompt-expanded");
-  button.setAttribute("aria-expanded", String(expanded));
-  button.textContent = expanded
+  const expandedValue = String(expanded);
+  const label = expanded
     ? isEnglish()
       ? "Collapse prompt"
       : "收起提示词"
     : isEnglish()
       ? "Expand full prompt"
       : "展开完整提示词";
+
+  if (button.getAttribute("aria-expanded") !== expandedValue) {
+    button.setAttribute("aria-expanded", expandedValue);
+  }
+  if (button.textContent !== label) {
+    button.textContent = label;
+  }
 }
 
 function removeFolding(article) {
@@ -92,7 +99,8 @@ const observer = new MutationObserver(scheduleSync);
 observer.observe(document.documentElement, {
   childList: true,
   subtree: true,
-  characterData: true,
+  attributes: true,
+  attributeFilter: ["lang"],
 });
 
 window.addEventListener("resize", scheduleSync);
