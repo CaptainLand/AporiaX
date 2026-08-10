@@ -2,30 +2,23 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowRight,
-  Check,
   Eye,
   FileText,
   ImagePlus,
   LoaderCircle,
-  Terminal,
 } from "lucide-react";
 import {
-  buildAgentProcessSummary,
-  currentProcessSummary,
   extractWorkspaceMentionQuery,
   rankWorkspaceFiles,
   replaceWorkspaceMentionQuery,
 } from "./agent-process-model.js";
 import {
-  formatTaskDuration,
   readTaskListFromStorage,
   resolveVisionCapability,
   selectVisibleTask,
 } from "./runtime-ui-core.js";
 import "./runtime-ui-enhancements.css";
 
-const durationRoots = new Map();
-const processRoots = new Map();
 const workspaceFileIndexes = new Map();
 let visionHost = null;
 let visionRoot = null;
@@ -119,236 +112,6 @@ async function refreshProvidersFromDesktop({ force = false } = {}) {
       providerRefreshPromise = null;
     });
   return providerRefreshPromise;
-}
-
-function RunDurationChip({ message, now }) {
-  const startedAt = Date.parse(
-    message?.createdAt || message?.anchor?.startedAt || "",
-  );
-  const completedAt = Date.parse(
-    message?.completedAt || message?.anchor?.completedAt || "",
-  );
-  if (!Number.isFinite(startedAt)) return null;
-
-  const running =
-    message?.status === "running" && !Number.isFinite(completedAt);
-  if (!running && !Number.isFinite(completedAt)) return null;
-
-  const end = running ? now : completedAt;
-  const label = formatTaskDuration(Math.max(0, end - startedAt));
-  return (
-    <span
-      className={`aporiax-run-duration ${running ? "running" : ""}`}
-      title={tr(
-        `本次任务运行时间 · ${label}`,
-        `Task elapsed time · ${label}`,
-      )}
-    >
-      {running && (
-        <span className="aporiax-run-duration-dot" aria-hidden="true" />
-      )}
-      <span>{label}</span>
-    </span>
-  );
-}
-
-function cleanupRoot(map, host) {
-  const root = map.get(host);
-  if (root) {
-    try {
-      root.unmount();
-    } catch {
-      // Presentation-only enhancement cleanup must not affect the task UI.
-    }
-    map.delete(host);
-  }
-  host?.remove();
-}
-
-function syncDurationChips() {
-  const task = currentVisibleTask();
-  const headings = [
-    ...document.querySelectorAll(
-      ".message-list .assistant-message .assistant-message-heading",
-    ),
-  ];
-  const messages = (Array.isArray(task?.messages) ? task.messages : []).filter(
-    (message) => message?.role === "assistant",
-  );
-  const activeHosts = new Set();
-  const now = Date.now();
-
-  headings.forEach((heading, index) => {
-    const message = messages[index];
-    let host = heading.querySelector(
-      ":scope > .aporiax-run-duration-host",
-    );
-    if (!message) {
-      if (host) cleanupRoot(durationRoots, host);
-      return;
-    }
-    if (!host) {
-      host = document.createElement("span");
-      host.className = "aporiax-run-duration-host";
-      heading.appendChild(host);
-    }
-    activeHosts.add(host);
-    let root = durationRoots.get(host);
-    if (!root) {
-      root = createRoot(host);
-      durationRoots.set(host, root);
-    }
-    root.render(<RunDurationChip message={message} now={now} />);
-  });
-
-  for (const host of [...durationRoots.keys()]) {
-    if (!host.isConnected || !activeHosts.has(host)) {
-      cleanupRoot(durationRoots, host);
-    }
-  }
-}
-
-function ProcessStepIcon({ status }) {
-  if (status === "running") {
-    return <LoaderCircle className="spin" size={13} />;
-  }
-  return <Check size={13} />;
-}
-
-function AgentProcessTrace({ message }) {
-  const steps = buildAgentProcessSummary(message, languageCode());
-  if (!steps.length) return null;
-  const current = currentProcessSummary(steps);
-  const running = message?.status === "running";
-
-  return (
-    <section className={`aporiax-agent-process ${running ? "running" : "done"}`}>
-      <div className="aporiax-agent-process-heading">
-        <span className="aporiax-agent-process-mark">
-          {running ? (
-            <LoaderCircle className="spin" size={14} />
-          ) : (
-            <Check size={14} />
-          )}
-        </span>
-        <div>
-          <strong>{tr("Agent 过程", "Agent process")}</strong>
-          <span>
-            {current?.title ||
-              tr("正在整理执行过程", "Preparing the execution trace")}
-          </span>
-        </div>
-        <em>
-          {running ? tr("进行中", "Live") : tr("已保留", "Saved")}
-        </em>
-      </div>
-      <p className="aporiax-agent-process-note">
-        {tr(
-          "展示可观察的行动与过程摘要，不显示模型私有思维链。任务结束后仍会保留。",
-          "Shows observable actions and concise process summaries, not private chain-of-thought. The trace remains after completion.",
-        )}
-      </p>
-      <div className="aporiax-agent-process-steps">
-        {steps.map((step) => (
-          <details
-            className={`aporiax-agent-process-step ${step.status}`}
-            key={step.id}
-            open={step.status === "running" ? true : undefined}
-          >
-            <summary>
-              <span className="aporiax-agent-process-step-icon">
-                <ProcessStepIcon status={step.status} />
-              </span>
-              <span className="aporiax-agent-process-step-copy">
-                <strong>{step.title}</strong>
-                <small>{step.summary}</small>
-              </span>
-              <span className="aporiax-agent-process-step-state">
-                {step.status === "running"
-                  ? tr("正在做", "Working")
-                  : step.status === "attention"
-                    ? tr("需注意", "Attention")
-                    : step.status === "interrupted"
-                      ? tr("已停止", "Stopped")
-                      : tr("完成", "Done")}
-              </span>
-            </summary>
-            {(step.paths.length > 0 ||
-              step.commands.length > 0 ||
-              step.planSteps.length > 0) && (
-              <div className="aporiax-agent-process-detail">
-                {step.planSteps.map((planStep) => (
-                  <div className="aporiax-agent-process-plan" key={planStep.id}>
-                    <span>{planStep.status === "completed" ? "✓" : "·"}</span>
-                    <div>
-                      <strong>{planStep.title}</strong>
-                      {planStep.detail && <small>{planStep.detail}</small>}
-                    </div>
-                  </div>
-                ))}
-                {step.paths.map((path) => (
-                  <code key={`path-${path}`}>
-                    <FileText size={11} />
-                    {path}
-                  </code>
-                ))}
-                {step.commands.map((command) => (
-                  <code key={`command-${command}`}>
-                    <Terminal size={11} />
-                    {command}
-                  </code>
-                ))}
-              </div>
-            )}
-          </details>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function syncProcessTraces() {
-  const task = currentVisibleTask();
-  const articles = [
-    ...document.querySelectorAll(".message-list .assistant-message"),
-  ];
-  const messages = (Array.isArray(task?.messages) ? task.messages : []).filter(
-    (message) => message?.role === "assistant",
-  );
-  const activeHosts = new Set();
-
-  articles.forEach((article, index) => {
-    const message = messages[index];
-    const content = article.querySelector(":scope > .assistant-message-content");
-    let host = article.querySelector(":scope > .aporiax-agent-process-host");
-    if (!message || !content) {
-      if (host) cleanupRoot(processRoots, host);
-      return;
-    }
-    const steps = buildAgentProcessSummary(message, languageCode());
-    if (!steps.length) {
-      if (host) cleanupRoot(processRoots, host);
-      return;
-    }
-    if (!host) {
-      host = document.createElement("div");
-      host.className = "aporiax-agent-process-host";
-      content.insertAdjacentElement("afterend", host);
-    }
-    activeHosts.add(host);
-    let root = processRoots.get(host);
-    if (!root) {
-      root = createRoot(host);
-      processRoots.set(host, root);
-    }
-    root.render(<AgentProcessTrace message={message} />);
-  });
-
-  for (const host of [...processRoots.keys()]) {
-    if (!host.isConnected || !activeHosts.has(host)) {
-      cleanupRoot(processRoots, host);
-    }
-  }
 }
 
 function capabilityStatusText(capability) {
@@ -755,8 +518,6 @@ function syncComposerMentionBinding() {
 }
 
 function refreshPresentation() {
-  syncDurationChips();
-  syncProcessTraces();
   syncVisionCapability();
   syncComposerMentionBinding();
 }

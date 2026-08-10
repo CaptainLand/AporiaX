@@ -69,6 +69,12 @@ import {
   LanguageSwitch,
   useI18n,
 } from "./i18n";
+import {
+  AgentProcessTrace,
+  FoldableUserPrompt,
+  LiveAgentStatus,
+  RunDurationChip,
+} from "./conversation/RuntimeMessageUI";
 import "./styles.css";
 
 const STORAGE_KEY = "aporiax.tasks.v1";
@@ -2388,6 +2394,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
               ? tr("任务已停止", "Task stopped")
               : "AporiaX"}
         </strong>
+        <RunDurationChip message={message} />
         {hasAnchor && (
           <button
             className={`turn-anchor-button ${restored ? "restored" : ""}`}
@@ -2410,6 +2417,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           </button>
         )}
       </div>
+      <LiveAgentStatus message={message} />
       <div className="assistant-message-content">
         {restored ? (
           <div className="restored-turn-output">
@@ -2435,10 +2443,11 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           ) : (
             <MarkdownMessage content={message.content} />
           )
-        ) : (
-          <span className="stream-placeholder">{tr("正在生成回复…", "Generating a response…")}</span>
+        ) : message.status === "running" ? null : (
+          <span className="stream-placeholder">{tr("暂无回复内容", "No response content")}</span>
         )}
       </div>
+      <AgentProcessTrace message={message} />
       {(failed || interrupted) && message.prompt && (
         <button
           className="retry-message-button"
@@ -2788,7 +2797,7 @@ function Conversation({
             key={message.id}
           >
             {message.content && (
-              <div className="message-bubble">{message.content}</div>
+              <FoldableUserPrompt content={message.content} />
             )}
             <UserAttachments attachments={message.attachments} />
             {message.queued && (
