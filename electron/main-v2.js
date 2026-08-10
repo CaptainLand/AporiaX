@@ -8,6 +8,10 @@ import {
   planAgentBudget,
   runWithAgentBudget,
 } from "./harness/agent-budget.js";
+import {
+  TOOL_DEFINITIONS,
+  TOOL_RISKS,
+} from "./runtime/native-tool-catalog.js";
 import { prepareVisionProxyRequest } from "./vision-proxy.js";
 import { exposeVisionProxyCapabilities } from "./vision-proxy-core.js";
 import {
@@ -27,6 +31,17 @@ import {
 const desktopBackground = installDesktopBackground();
 const activeRunMetadata = new Map();
 let kernel = null;
+
+function nativeToolDescriptors() {
+  return TOOL_DEFINITIONS.map((definition) => {
+    const name = definition.function.name;
+    return {
+      definition,
+      risk: TOOL_RISKS[name],
+      source: name.startsWith("browser_") ? "browser" : "native",
+    };
+  });
+}
 
 function skillRuntimeOptions(workspacePath = "") {
   return {
@@ -168,6 +183,7 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
         ...skillPreparedRequest,
         mcpServers: mcpConfiguration.servers,
         mcpConfigErrors: mcpConfiguration.errors,
+        capabilityRegistry: kernel?.capabilitiesRegistry || null,
       };
       return await runWithAgentBudget(budget, {}, () =>
         listener(event, preparedRequest),
@@ -182,7 +198,7 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
 await import("./main.js");
 ipcMain.handle = originalHandle;
 
-kernel = createHarnessKernel();
+kernel = createHarnessKernel({ toolDescriptors: nativeToolDescriptors() });
 setDefaultHarnessEventBus(kernel.events);
 const coreServer = createHarnessCoreServer({ kernel });
 
@@ -190,6 +206,15 @@ ipcMain.handle("core:status", () => ({
   running: Boolean(coreServer.url),
   url: coreServer.url,
   capabilities: kernel.capabilities(),
+  capabilitySummary: kernel.capabilitiesRegistry.summary(),
+}));
+ipcMain.handle("core:capabilities", (_event, request = {}) => ({
+  capabilities: kernel.capabilitiesRegistry.list({
+    kind: request?.kind || "",
+    source: request?.source || "",
+    scopeId: request?.scopeId || "",
+  }),
+  summary: kernel.capabilitiesRegistry.summary(),
 }));
 ipcMain.handle("core:agents", () => ({ agents: kernel.agents.list() }));
 ipcMain.handle("core:plugins", () => ({ plugins: kernel.plugins.list() }));
@@ -203,6 +228,24 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
     workspacePath,
     userSkillsDirectory,
   });
+  const scopeId = `skills:${workspacePath || "global"}`;
+  kernel.capabilitiesRegistry.unregisterScope(scopeId);
+  for (const skill of skills) {
+    kernel.capabilitiesRegistry.upsert({
+      kind: "skill",
+      source: "skill",
+      name: skill.name,
+      title: skill.title || skill.name,
+      description: skill.description || "",
+      risk: "none",
+      scopeId,
+      tags: [skill.source || "skill", skill.auto ? "auto" : "manual"],
+      metadata: {
+        auto: Boolean(skill.auto),
+        tools: [...(skill.tools || [])],
+      },
+    });
+  }
   return {
     skills,
     userSkillsDirectory,
