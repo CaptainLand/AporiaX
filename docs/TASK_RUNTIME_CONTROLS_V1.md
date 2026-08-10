@@ -98,6 +98,13 @@ Two Builders remains the hard maximum. The existing Builder preflight may use on
 
 Review / Verify remain part of the adaptive quality pipeline rather than mandatory workers on every Multi run. Main remains the single final integration authority.
 
+In short:
+
+```text
+Single = force exactly one working Agent (Main)
+Multi  = allow AporiaX to automatically choose the useful Agent topology
+```
+
 ## Renderer integration boundary
 
 The large compatibility renderer already stores all timing data and already exposes stable DOM landmarks such as:
