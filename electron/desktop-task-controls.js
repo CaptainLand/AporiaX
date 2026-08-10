@@ -220,8 +220,8 @@ function taskRuntimeControlsBootstrap() {
         : "当前任务运行中，Agent 模式将在任务结束后才能切换"
       : multi
         ? languageIsEnglish()
-          ? "Multi-Agent on · Main + up to 2 isolated Builders"
-          : "多 Agent 已开启 · Main + 最多 2 个隔离 Builder"
+          ? "Adaptive Multi-Agent · AporiaX automatically decides when extra agents are useful"
+          : "自适应多 Agent · AporiaX 会按任务复杂度自动决定是否调用额外 Agent"
         : languageIsEnglish()
           ? "Single Agent · Main only"
           : "单 Agent · 仅 Main";
