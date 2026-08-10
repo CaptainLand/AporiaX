@@ -9,6 +9,7 @@ import {
 import {
   buildAgentProcessSummary,
   currentProcessSummary,
+  deriveLiveAgentStatus,
   extractWorkspaceMentionQuery,
   formatWorkspaceMentionToken,
   rankWorkspaceFiles,
@@ -44,40 +45,61 @@ assert.deepEqual(
   ["src/runtime.jsx", "docs/runtime.md"],
 );
 
-const processSteps = buildAgentProcessSummary(
-  {
-    id: "assistant-1",
-    status: "running",
-    route: [
-      {
-        id: "read-1",
-        stage: "lens",
-        tool: "read_file",
-        title: "读取文件",
-        path: "src/main.jsx",
-        status: "completed",
-        startedAt: "2026-08-10T10:00:00.000Z",
-        finishedAt: "2026-08-10T10:00:01.000Z",
-      },
-      {
-        id: "test-1",
-        stage: "trial",
-        tool: "run_command",
-        title: "运行验证命令",
-        command: "npm test",
-        status: "running",
-        startedAt: "2026-08-10T10:00:02.000Z",
-      },
-    ],
-  },
-  "zh-CN",
-);
+const runningMessage = {
+  id: "assistant-1",
+  status: "running",
+  route: [
+    {
+      id: "read-1",
+      stage: "lens",
+      tool: "read_file",
+      title: "读取文件",
+      path: "src/main.jsx",
+      status: "completed",
+      startedAt: "2026-08-10T10:00:00.000Z",
+      finishedAt: "2026-08-10T10:00:01.000Z",
+    },
+    {
+      id: "test-1",
+      stage: "trial",
+      tool: "run_command",
+      title: "运行验证命令",
+      command: "npm test",
+      status: "running",
+      startedAt: "2026-08-10T10:00:02.000Z",
+    },
+  ],
+};
+const processSteps = buildAgentProcessSummary(runningMessage, "zh-CN");
 assert.equal(processSteps.length, 2);
 assert.equal(processSteps[0].kind, "explore");
 assert.equal(processSteps[0].paths[0], "src/main.jsx");
 assert.equal(processSteps[1].kind, "verify");
 assert.equal(processSteps[1].commands[0], "npm test");
 assert.equal(currentProcessSummary(processSteps).status, "running");
+
+const liveStatus = deriveLiveAgentStatus(runningMessage, "zh-CN");
+assert.equal(liveStatus.state, "running");
+assert.equal(liveStatus.title, "运行验证命令");
+assert.equal(liveStatus.detail, "npm test");
+assert.equal(liveStatus.totalSteps, 2);
+assert.equal(liveStatus.completedSteps, 1);
+
+const completedStatus = deriveLiveAgentStatus(
+  {
+    ...runningMessage,
+    status: "completed",
+    changes: [{ path: "src/main.jsx" }, { path: "src/status.jsx" }],
+    route: runningMessage.route.map((entry) => ({
+      ...entry,
+      status: "completed",
+      finishedAt: "2026-08-10T10:00:05.000Z",
+    })),
+  },
+  "zh-CN",
+);
+assert.equal(completedStatus.state, "completed");
+assert.equal(completedStatus.changeCount, 2);
 
 const root = await mkdtemp(join(tmpdir(), "aporiax-mentions-"));
 try {
