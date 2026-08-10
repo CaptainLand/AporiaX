@@ -72,6 +72,7 @@ import {
 import { Composer } from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
+import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
   getAvailableModels,
@@ -2531,6 +2532,7 @@ function ApplicationSettingsModal({
   onThemeChange,
   providers,
   sandboxStatus,
+  workspacePath = "",
   onProvidersChanged,
   onProviderSaved,
   onNotice,
@@ -2598,6 +2600,14 @@ function ApplicationSettingsModal({
             >
               <KeyRound size={16} />
               {tr("模型与 API", "Models & APIs")}
+            </button>
+            <button
+              type="button"
+              className={section === "extensions" ? "active" : ""}
+              onClick={() => setSection("extensions")}
+            >
+              <Zap size={16} />
+              {tr("扩展与能力", "Extensions")}
             </button>
             <button
               type="button"
@@ -2750,6 +2760,11 @@ function ApplicationSettingsModal({
                 onClose={() => setSection("general")}
                 onChanged={onProvidersChanged}
                 onSaved={onProviderSaved}
+                onNotice={onNotice}
+              />
+            ) : section === "extensions" ? (
+              <ExtensionsSettings
+                workspacePath={workspacePath}
                 onNotice={onNotice}
               />
             ) : (
@@ -4075,6 +4090,7 @@ function App() {
           onThemeChange={setTheme}
           providers={providers}
           sandboxStatus={sandboxStatus}
+          workspacePath={activeTask?.workspacePath || ""}
           onProvidersChanged={reloadProviders}
           onProviderSaved={({ providers: nextProviders }) => {
             if (

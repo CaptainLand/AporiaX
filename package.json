@@ -55,7 +55,8 @@
     "test:self-check-coordinator": "node tests/self-check-coordinator-smoke.mjs",
     "test:native-tool-catalog": "node tests/native-tool-catalog-smoke.mjs",
     "test:capabilities": "node tests/capability-registry-smoke.mjs",
-    "test:mcp-capabilities": "node tests/mcp-capabilities-smoke.mjs"
+    "test:mcp-capabilities": "node tests/mcp-capabilities-smoke.mjs",
+    "test:extensions": "node tests/extensions-center-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
