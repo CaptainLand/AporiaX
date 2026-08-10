@@ -6,6 +6,10 @@ import {
   shouldHideWindowOnClose,
   taskCompletionToastSuppressionCss,
 } from "./desktop-background-state.js";
+import {
+  rendererTaskControlsCss,
+  rendererTaskControlsScript,
+} from "./desktop-task-controls.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -15,10 +19,15 @@ export function installDesktopBackground() {
   let mainWindow = null;
   let isQuitting = false;
   let disposed = false;
+  let refreshTimer = null;
   const activeRunRefs = new Map();
 
-  const activeRunIds = () => activeRunRefs.keys();
-  const status = () => desktopBackgroundStatus(activeRunIds());
+  const activeRunRecords = () =>
+    [...activeRunRefs.entries()].map(([runId, state]) => ({
+      runId,
+      startedAt: state.startedAt,
+    }));
+  const status = () => desktopBackgroundStatus(activeRunRecords());
 
   const showMainWindow = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -27,6 +36,22 @@ export function installDesktopBackground() {
     mainWindow.focus();
     mainWindow.flashFrame(false);
     return true;
+  };
+
+  const stopRefreshTimer = () => {
+    if (!refreshTimer) return;
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  };
+
+  const ensureRefreshTimer = () => {
+    if (!activeRunRefs.size) {
+      stopRefreshTimer();
+      return;
+    }
+    if (refreshTimer) return;
+    refreshTimer = setInterval(() => updateTray(), 1_000);
+    refreshTimer.unref?.();
   };
 
   const updateTray = () => {
@@ -53,6 +78,7 @@ export function installDesktopBackground() {
         },
       ]),
     );
+    ensureRefreshTimer();
   };
 
   const createTray = () => {
@@ -61,6 +87,20 @@ export function installDesktopBackground() {
     tray.on("click", showMainWindow);
     tray.on("double-click", showMainWindow);
     updateTray();
+  };
+
+  const installRendererControls = (window) => {
+    // The Windows notification remains the canonical completion notice. The
+    // injected controls only add elapsed time and the explicit Agent topology
+    // toggle, keeping the large compatibility renderer untouched.
+    void window.webContents
+      .insertCSS(
+        `${taskCompletionToastSuppressionCss()}\n${rendererTaskControlsCss()}`,
+      )
+      .catch(() => undefined);
+    void window.webContents
+      .executeJavaScript(rendererTaskControlsScript(), true)
+      .catch(() => undefined);
   };
 
   const attachMainWindow = (window) => {
@@ -79,12 +119,7 @@ export function installDesktopBackground() {
     });
 
     window.webContents.on("did-finish-load", () => {
-      // The Windows system notification is the canonical completion notice.
-      // Keep the existing renderer state/history intact, but suppress the
-      // duplicate AporiaX in-app completion toast from the rendered UI.
-      void window.webContents
-        .insertCSS(taskCompletionToastSuppressionCss())
-        .catch(() => undefined);
+      installRendererControls(window);
     });
   };
 
@@ -94,6 +129,7 @@ export function installDesktopBackground() {
   };
   const handleWillQuit = () => {
     disposed = true;
+    stopRefreshTimer();
     if (tray && !tray.isDestroyed()) tray.destroy();
     tray = null;
   };
@@ -108,18 +144,29 @@ export function installDesktopBackground() {
   void app.whenReady().then(createTray);
 
   return {
-    runStarted(runId) {
+    runStarted(runId, { startedAt = Date.now() } = {}) {
       const id = String(runId || "").trim();
       if (!id) return status();
-      activeRunRefs.set(id, (activeRunRefs.get(id) || 0) + 1);
+      const current = activeRunRefs.get(id);
+      activeRunRefs.set(id, {
+        references: (current?.references || 0) + 1,
+        startedAt: current?.startedAt || startedAt,
+      });
       updateTray();
       return status();
     },
     runFinished(runId) {
       const id = String(runId || "").trim();
-      const references = activeRunRefs.get(id) || 0;
-      if (references <= 1) activeRunRefs.delete(id);
-      else activeRunRefs.set(id, references - 1);
+      const current = activeRunRefs.get(id);
+      if (!current) return status();
+      if (current.references <= 1) activeRunRefs.delete(id);
+      else {
+        activeRunRefs.set(id, {
+          ...current,
+          references: current.references - 1,
+        });
+      }
+      if (!activeRunRefs.size) stopRefreshTimer();
       updateTray();
       return status();
     },
