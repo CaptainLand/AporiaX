@@ -1,0 +1,35 @@
+name: Validate browser v1
+
+on:
+  push:
+    branches:
+      - agent/browser-v1
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: ${{ !contains(github.event.head_commit.message, '[browser-validated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/browser-v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:browser
+      - run: npm run test:architecture
+      - run: npm run build
+      - name: Remove one-shot validation workflow
+        run: |
+          rm -f .github/workflows/validate-browser-v1.yml
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "test: validate browser v1 [browser-validated]"
+          git push origin HEAD:agent/browser-v1
