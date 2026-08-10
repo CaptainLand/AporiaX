@@ -4,14 +4,16 @@ AporiaX can use a separate OpenAI-compatible vision model when the selected main
 
 ## Behavior
 
-- If the selected main model supports image input, AporiaX keeps the existing native multimodal path and sends the image directly to that model.
+- If the selected main model supports image input natively, AporiaX keeps the existing native multimodal path and sends the image directly to that model.
 - If the selected main model is text-only, AporiaX looks for a configured Provider with an image-capable model.
+- When a usable Vision Provider is configured, the renderer treats image attachments as available even for a text-only main model. This prevents the Composer from rejecting the image before the Vision Proxy can see it.
+- The runtime still keeps the main model's native image capability unchanged. A text-only model such as DeepSeek V4 never receives the raw image.
 - The image-capable model receives only the image attachment(s) and the accompanying user text. It returns a compact visual observation.
 - The original image attachment is then removed from the text-only model request and the visual observation is appended to the user message.
 - Non-image attachments remain unchanged.
-- If no image-capable Provider is configured, the existing text-only behavior remains unchanged.
+- If no usable image-capable Provider with an API key is configured, the existing text-only behavior remains unchanged.
 
-The proxy currently recognizes the existing AporiaX vision model patterns plus Qwen 3.5/3.6/3.7 model IDs. This lets `qwen3.5-flash` act as the vision model even when an older saved Provider record marked it as `supportsImages: false`.
+The proxy currently recognizes the existing AporiaX vision model patterns plus Qwen 3.5/3.6/3.7 model IDs. It prefers `qwen3.5-flash`, then dated Qwen3.5 Flash releases, Qwen3.6 Flash, and Qwen3-VL Flash when multiple visual models are exposed by one Provider.
 
 ## Qwen3.5-Flash
 
@@ -40,6 +42,7 @@ This first implementation is deliberately small:
 - up to 8 images from one message
 - 60 second vision request timeout
 - compact text observation returned to the main model
+- renderer capability exposure when a usable Vision Proxy is present
 
 Not included yet:
 
