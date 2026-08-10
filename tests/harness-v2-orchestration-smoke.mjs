@@ -10,10 +10,10 @@ function git(cwd, args) {
   return result.stdout;
 }
 
-// End-to-end orchestration smoke: a large task may spend one planner call, run
-// two isolated Builders, merge both scopes, and then hand the integrated
-// workspace back to the Lead/Main agent. This uses a deterministic mock
-// provider so no network or paid model request is involved.
+// End-to-end orchestration smoke: one planner creates a shared contract, two
+// isolated Builders implement approved scopes, structured handoffs are checked
+// for semantic consistency, and Lead/Main receives the contract-aware result.
+// The provider is deterministic, so this test spends no network/model money.
 function createSseResponse(delta) {
   return new Response(
     `data: ${JSON.stringify({ choices: [{ delta }] })}\n\ndata: [DONE]\n\n`,
@@ -113,7 +113,22 @@ try {
       return createSseResponse({
         content: JSON.stringify({
           parallelize: true,
-          reason: "auth and ui are independent write scopes",
+          reason: "auth and ui are independent write scopes with one shared version contract",
+          contract: {
+            title: "Version alignment",
+            goal: "Both independently upgraded modules expose version 2",
+            invariants: [
+              {
+                key: "feature.version",
+                category: "api",
+                value: "2",
+                severity: "must",
+                description: "Both modules expose version 2",
+              },
+            ],
+            sharedFiles: [],
+            acceptance: ["Both module versions equal 2"],
+          },
           tasks: [
             {
               id: "auth",
@@ -121,6 +136,11 @@ try {
               task: "Update src/auth/auth.js to authVersion 2.",
               writeScopes: ["src/auth"],
               dependsOn: [],
+              contractKeys: ["feature.version"],
+              approvedPlan: {
+                approach: "Change only authVersion in the owned auth module",
+                assumptions: [],
+              },
             },
             {
               id: "ui",
@@ -128,6 +148,11 @@ try {
               task: "Update src/ui/ui.js to uiVersion 2.",
               writeScopes: ["src/ui"],
               dependsOn: [],
+              contractKeys: ["feature.version"],
+              approvedPlan: {
+                approach: "Change only uiVersion in the owned ui module",
+                assumptions: [],
+              },
             },
           ],
         }),
@@ -173,10 +198,34 @@ try {
           }),
         );
       }
-      return createSseResponse({ content: `${role} Builder completed.` });
+      return createSseResponse({
+        content: JSON.stringify({
+          summary: `${role} Builder completed.`,
+          assumptions: [],
+          requiresMain: [],
+          contractAssertions: [
+            {
+              key: "feature.version",
+              value: "2",
+              evidence: path,
+            },
+          ],
+          messages: [
+            {
+              type: "notice",
+              to: "main",
+              topic: `${role}-ready`,
+              detail: `${role} implemented the approved contract value`,
+              blocking: false,
+            },
+          ],
+        }),
+      });
     }
 
     if (text.includes("AporiaX Harness orchestration update for the Lead/Main agent.")) {
+      assert.match(text, /Shared Collaboration Contract/);
+      assert.match(text, /feature\.version/);
       const hasIntegratedRead =
         tools.includes('"path":"src/auth/auth.js"') &&
         tools.includes('"path":"src/ui/ui.js"') &&
@@ -197,7 +246,7 @@ try {
           ]),
         );
       }
-      return createSseResponse({ content: "Lead verified and integrated both Builder changes." });
+      return createSseResponse({ content: "Lead verified and integrated both Builder changes against the shared contract." });
     }
 
     throw new Error(`Unexpected orchestration model request: ${text.slice(-400)}`);
@@ -235,13 +284,19 @@ try {
   });
   assert.equal(orchestrated.status, "completed");
   assert.equal(orchestrated.orchestration?.enabled, true);
+  assert.equal(orchestrated.orchestration?.planApproval?.approved, true);
+  assert.equal(orchestrated.orchestration?.contract?.invariants?.length, 1);
+  assert.equal(orchestrated.orchestration?.semanticCheck?.passed, true);
   assert.equal(orchestrated.orchestration?.builders.length, 2);
   assert.equal(
     orchestrated.orchestration.builders.every(
-      (builder) => builder.status === "completed",
+      (builder) => builder.status === "completed" && builder.handoff?.structured,
     ),
     true,
   );
+  assert.equal(orchestrated.orchestration?.mailbox?.length, 2);
+  assert.equal(orchestrated.witness?.collaboration?.contract?.id, orchestrated.orchestration.contract.id);
+  assert.equal(orchestrated.witness?.collaboration?.semanticCheck?.passed, true);
   assert.deepEqual(
     orchestrated.changes.map((change) => change.path).sort(),
     ["src/auth/auth.js", "src/ui/ui.js"],
@@ -259,6 +314,18 @@ try {
       (event) => event.type === "subagent.started" && event.role === "builder",
     ).length,
     2,
+  );
+  assert.equal(
+    orchestrationEvents.some((event) => event.type === "collaboration.contract.created"),
+    true,
+  );
+  assert.equal(
+    orchestrationEvents.some((event) => event.type === "collaboration.plan.approved"),
+    true,
+  );
+  assert.equal(
+    orchestrationEvents.some((event) => event.type === "collaboration.semantic.checked"),
+    true,
   );
   assert.equal(
     orchestrationEvents.some((event) => event.type === "task_graph.completed"),
