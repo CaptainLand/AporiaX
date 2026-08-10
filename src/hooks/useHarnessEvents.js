@@ -25,6 +25,46 @@ export function useHarnessEvents({
 }) {
   useEffect(() => {
     if (!window.desktop?.harness?.onEvent) return undefined;
+
+    // Provider SSE can produce many tiny deltas per second. Updating the full
+    // TaskStore for every fragment creates renderer backpressure, especially in
+    // long conversations where Markdown and historical turns are also present.
+    // Buffer only presentation deltas for one short frame; the Provider stream
+    // itself remains unthrottled and the final Harness result is unchanged.
+    const STREAM_FLUSH_MS = 24;
+    const pendingDeltas = new Map();
+    let streamFlushTimer = null;
+
+    const flushPendingDeltas = () => {
+      if (!pendingDeltas.size) return;
+      const batch = [...pendingDeltas.entries()];
+      pendingDeltas.clear();
+      setTasks((current) => {
+        let next = current;
+        for (const [runId, delta] of batch) {
+          const bufferedRun = runsRef.current.get(runId);
+          if (!bufferedRun || !delta) continue;
+          next = updateRunAssistant(next, bufferedRun, (message) => ({
+            ...message,
+            content: `${message.content || ""}${delta}`,
+          }));
+        }
+        return next;
+      }, { type: "stream.delta.flush", batchSize: batch.length });
+    };
+
+    const scheduleDeltaFlush = () => {
+      if (streamFlushTimer !== null) return;
+      streamFlushTimer = window.setTimeout(() => {
+        streamFlushTimer = null;
+        flushPendingDeltas();
+      }, STREAM_FLUSH_MS);
+    };
+
+    const discardPendingDelta = (runId) => {
+      pendingDeltas.delete(runId);
+    };
+
     const toolLabels = {
       delegate_subagent: tr("正在委派子 Agent", "Delegating to a subagent"),
       collect_subagents: tr("正在收集子 Agent 结果", "Collecting subagent results"),
@@ -53,7 +93,7 @@ export function useHarnessEvents({
       update_plan: tr("正在更新执行计划", "Updating the execution plan"),
       complete_self_check: tr("正在提交自检报告", "Submitting self-check report"),
     };
-    return window.desktop.harness.onEvent((event) => {
+    const unsubscribe = window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
 
@@ -189,6 +229,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "response.reset") {
+        discardPendingDelta(event.runId);
         setTasks((current) =>
           current.map((task) =>
             task.id === run.taskId
@@ -219,27 +260,19 @@ export function useHarnessEvents({
       }
 
       if (event.type === "response.delta") {
-        setTasks((current) =>
-          current.map((task) =>
-            task.id === run.taskId
-              ? {
-                  ...task,
-                  messages: task.messages.map((message) =>
-                    message.id === run.assistantId
-                      ? {
-                          ...message,
-                          content: `${message.content || ""}${event.delta || ""}`,
-                        }
-                      : message,
-                  ),
-                }
-              : task,
-          ),
-        );
+        const delta = String(event.delta || "");
+        if (delta) {
+          pendingDeltas.set(
+            event.runId,
+            `${pendingDeltas.get(event.runId) || ""}${delta}`,
+          );
+          scheduleDeltaFlush();
+        }
         return;
       }
 
       if (event.type === "response.retry") {
+        discardPendingDelta(event.runId);
         setTasks((current) =>
           current.map((task) =>
             task.id === run.taskId
@@ -768,6 +801,11 @@ export function useHarnessEvents({
       }
 
       if (event.type === "turn.completed") {
+        if (streamFlushTimer !== null) {
+          window.clearTimeout(streamFlushTimer);
+          streamFlushTimer = null;
+        }
+        flushPendingDeltas();
         const now = new Date().toISOString();
         setTasks((current) =>
           updateRunAssistant(current, run, (message) => ({
@@ -829,5 +867,14 @@ export function useHarnessEvents({
         });
       }
     });
+
+    return () => {
+      if (streamFlushTimer !== null) {
+        window.clearTimeout(streamFlushTimer);
+        streamFlushTimer = null;
+      }
+      pendingDeltas.clear();
+      unsubscribe?.();
+    };
   }, [language, tr]);
 }

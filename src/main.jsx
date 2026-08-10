@@ -2903,7 +2903,16 @@ function App() {
 
   useEffect(() => {
     tasksRef.current = tasks;
-    cacheTasksLocally(tasks);
+  }, [tasks]);
+
+  useEffect(() => {
+    // localStorage is only a startup cache. Serializing the entire task history
+    // synchronously for every streamed token can block the renderer. Keep the
+    // cache reasonably fresh without putting it on the hot response.delta path.
+    const timeout = window.setTimeout(() => {
+      cacheTasksLocally(tasks);
+    }, 750);
+    return () => window.clearTimeout(timeout);
   }, [tasks]);
 
   useEffect(() => {
