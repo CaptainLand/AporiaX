@@ -24,6 +24,32 @@ export function modelSupportsVision(model = {}) {
   return model?.supportsImages === true;
 }
 
+export function exposeVisionProxyCapabilities(providers) {
+  const records = Array.isArray(providers) ? providers : [];
+  const hasUsableVisionProvider = records.some(
+    (provider) =>
+      provider?.hasApiKey === true &&
+      (Array.isArray(provider?.models) ? provider.models : []).some(
+        modelSupportsVision,
+      ),
+  );
+  if (!hasUsableVisionProvider) return records;
+
+  return records.map((provider) => ({
+    ...provider,
+    models: (Array.isArray(provider?.models) ? provider.models : []).map(
+      (model) => ({
+        ...model,
+        nativeSupportsImages: model?.supportsImages === true,
+        supportsImageProxy: model?.supportsImages !== true,
+        // Renderer-level capability: a text-only main model can still accept
+        // image attachments when AporiaX has a usable Vision Proxy configured.
+        supportsImages: true,
+      }),
+    ),
+  }));
+}
+
 function preferredVisionCandidate(candidates) {
   for (const pattern of PREFERRED_VISION_MODELS) {
     const match = candidates.find(({ model }) =>
