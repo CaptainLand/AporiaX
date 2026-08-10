@@ -40,7 +40,12 @@ const providers = [
   {
     id: "qwen",
     name: "Qwen",
-    models: [{ id: "qwen3.5-flash", supportsImages: false }],
+    models: [
+      { id: "qwen3.7-flash", supportsImages: false },
+      { id: "qwen3.6-flash", supportsImages: false },
+      { id: "qwen3.5-flash-2026-02-23", supportsImages: false },
+      { id: "qwen3.5-flash", supportsImages: false },
+    ],
   },
 ];
 const candidate = selectVisionCandidate(providers, {
@@ -49,6 +54,13 @@ const candidate = selectVisionCandidate(providers, {
 });
 assert.equal(candidate.provider.id, "qwen");
 assert.equal(candidate.model.id, "qwen3.5-flash");
+
+const explicitCandidate = selectVisionCandidate(providers, {
+  mainProviderId: "deepseek",
+  mainModelId: "deepseek-v4-pro",
+  visionModelId: "qwen3.6-flash",
+});
+assert.equal(explicitCandidate.model.id, "qwen3.6-flash");
 
 const messages = buildVisionMessages({
   content: "What is wrong in this screenshot?",
