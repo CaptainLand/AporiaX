@@ -101,18 +101,35 @@ const validPlan = normalizeBuilderOrchestrationPlan(
   {
     parallelize: true,
     reason: "independent modules",
+    contract: {
+      title: "Module integration contract",
+      goal: "Keep independently implemented modules aligned on one shared interface version.",
+      invariants: [
+        {
+          key: "module.interface-version",
+          category: "api",
+          value: "v2",
+          severity: "must",
+          description: "Both Builder scopes implement the same interface version.",
+        },
+      ],
+      sharedFiles: [],
+      acceptance: ["Both modules implement interface version v2"],
+    },
     tasks: [
       {
         id: "auth",
         title: "Auth",
         task: "Implement auth module",
         writeScopes: ["src/auth"],
+        contractKeys: ["module.interface-version"],
       },
       {
         id: "ui",
         title: "UI",
         task: "Implement UI module",
         writeScopes: ["src/ui"],
+        contractKeys: ["module.interface-version"],
       },
     ],
   },
