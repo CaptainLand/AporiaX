@@ -139,11 +139,12 @@ Validate server-side changes before delivery.
   );
   assert.equal(prepared.activatedSkills.length, 1);
   assert.equal(prepared.activatedSkills[0].name, "translate-mod");
-  assert.equal(prepared.messages[0].role, "system");
-  assert.equal(prepared.messages[0].skillContext, true);
+  assert.equal(prepared.messages.length, 1);
+  assert.equal(prepared.messages[0].role, "user");
+  assert.equal(prepared.messages[0].skillOriginalContent, "帮我翻译 localization 文件");
+  assert.match(prepared.messages[0].content, /^帮我翻译 localization 文件/);
   assert.match(prepared.messages[0].content, /Preserve keys and variables/);
   assert.match(prepared.messages[0].content, /do not grant additional permissions/i);
-  assert.equal(prepared.messages[1].content, "帮我翻译 localization 文件");
 } finally {
   await rm(root, { recursive: true, force: true });
 }
