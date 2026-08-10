@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld("desktop", {
   theme: {
     set: (theme) => ipcRenderer.invoke("desktop:set-theme", theme),
   },
+  agentMode: {
+    get: () => ipcRenderer.invoke("desktop:agent-mode-get"),
+    set: (mode) => ipcRenderer.invoke("desktop:agent-mode-set", mode),
+  },
   tasks: {
     load: () => ipcRenderer.invoke("tasks:load"),
     save: (tasks) => ipcRenderer.invoke("tasks:save", tasks),
