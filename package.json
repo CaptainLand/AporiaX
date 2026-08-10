@@ -35,6 +35,7 @@
     "test:runtime-ui": "node tests/runtime-ui-smoke.mjs",
     "test:process-ui": "node tests/agent-process-mentions-smoke.mjs",
     "test:task-store": "node tests/task-store-smoke.mjs",
+    "test:renderer-architecture": "node tests/native-renderer-architecture-smoke.mjs",
     "test:skills": "node tests/skill-system-smoke.mjs",
     "test:browser": "node tests/browser-runtime-smoke.mjs",
     "test:mcp": "node tests/mcp-runtime-smoke.mjs",
@@ -53,7 +54,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
+    "remark-gfm": "^4.1.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
