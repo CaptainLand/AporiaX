@@ -15,6 +15,18 @@ AporiaX can use a separate OpenAI-compatible vision model when the selected main
 
 The proxy currently recognizes the existing AporiaX vision model patterns plus Qwen 3.5/3.6/3.7 model IDs. It prefers `qwen3.5-flash`, then dated Qwen3.5 Flash releases, Qwen3.6 Flash, and Qwen3-VL Flash when multiple visual models are exposed by one Provider.
 
+## Task settings feedback
+
+The task settings sidebar distinguishes native image support from effective image support:
+
+- **Native vision** means the selected main model can consume the image itself.
+- **Vision proxy** means the selected main model is text-only, but AporiaX has a configured visual model that can inspect the image first.
+- **Unavailable** means the current main model is text-only and there is no usable visual Provider yet.
+
+When proxy vision is active, the sidebar shows the main model and the visual model used for the automatic route. When vision is unavailable, the sidebar explains that adding a visual model will automatically extend image handling to text-only main models such as DeepSeek and links back to Provider management.
+
+Provider listings expose this distinction with `nativeSupportsImages`, `supportsImageProxy`, `supportsImages` (effective renderer capability), and a non-secret `visionProxy` descriptor. API keys remain main-process only.
+
 ## Qwen3.5-Flash
 
 No dedicated Qwen SDK is required. Add Alibaba Cloud Model Studio as a normal AporiaX OpenAI-compatible Provider:
@@ -43,6 +55,7 @@ This first implementation is deliberately small:
 - 60 second vision request timeout
 - compact text observation returned to the main model
 - renderer capability exposure when a usable Vision Proxy is present
+- task-settings feedback for native, proxied, and unavailable image capability
 
 Not included yet:
 
