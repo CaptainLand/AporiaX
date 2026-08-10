@@ -112,7 +112,7 @@ await runWithAgentBudget(lockedPlan, {}, async () => {
   assert.equal(current.limits.maxTotalSubagents, 0);
 });
 
-assert.equal(DESKTOP_AGENT_MODE_STORAGE_KEY, "aporiax.agent-mode.v1");
+assert.equal(DESKTOP_AGENT_MODE_STORAGE_KEY, "aporiax.agent-mode.v2");
 const css = rendererTaskControlsCss();
 assert.match(css, /desktop-run-duration/);
 assert.match(css, /composer-multi-agent-toggle/);
@@ -121,7 +121,7 @@ assert.match(css, /box-shadow: 0 0 7px/);
 assert.doesNotMatch(css, /#ff4e76|255,\s*78,\s*118/i);
 
 const script = rendererTaskControlsScript();
-assert.match(script, /aporiax\.agent-mode\.v1/);
+assert.match(script, /aporiax\.agent-mode\.v2/);
 assert.match(script, /aporiax\.tasks\.v1/);
 assert.match(script, /assistant-message-heading/);
 assert.match(script, /composer-toolbar-left/);
