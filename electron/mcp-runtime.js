@@ -459,8 +459,16 @@ export class AporiaXMcpRuntime {
       });
       return connection;
     } catch (error) {
-      await client.close?.().catch?.(() => undefined);
-      await transport.close?.().catch?.(() => undefined);
+      try {
+        await client.close?.();
+      } catch {
+        // Best-effort cleanup after failed connect.
+      }
+      try {
+        await transport.close?.();
+      } catch {
+        // Best-effort cleanup after failed connect.
+      }
       this.#emit({
         type: "mcp.server.failed",
         serverId: server.id,
@@ -600,7 +608,11 @@ export class AporiaXMcpRuntime {
         try {
           await connection.client.close?.();
         } finally {
-          await connection.transport.close?.().catch?.(() => undefined);
+          try {
+            await connection.transport.close?.();
+          } catch {
+            // Best-effort transport teardown.
+          }
         }
       }),
     );

@@ -125,12 +125,17 @@ export function publicMcpServerSummary(server) {
     ...(server.transport === "stdio"
       ? {
           command: server.command,
-          args: [...server.args],
+          argCount: server.args?.length || 0,
           cwd: server.cwd || "",
           envKeys: Object.keys(server.env || {}),
         }
       : {
-          url: server.url,
+          url: (() => {
+            const publicUrl = new URL(server.url);
+            publicUrl.search = "";
+            publicUrl.hash = "";
+            return publicUrl.toString();
+          })(),
           headerKeys: Object.keys(server.headers || {}),
         }),
   };

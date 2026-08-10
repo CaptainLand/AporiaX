@@ -5973,7 +5973,12 @@ function App() {
           }),
         );
         setRunStatus({
-          title: toolLabels[event.tool] || tr("Harness 正在运行", "Harness is running"),
+          title:
+            toolLabels[event.tool] ||
+            (String(event.tool || "").startsWith("mcp__") ||
+            String(event.tool || "").startsWith("mcp_")
+              ? tr("正在调用 MCP 能力", "Calling MCP capability")
+              : tr("Harness 正在运行", "Harness is running")),
           detail:
             event.path ||
             event.command ||
