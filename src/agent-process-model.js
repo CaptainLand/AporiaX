@@ -43,6 +43,56 @@ export function currentProcessSummary(steps = []) {
   return active || (steps || []).at(-1) || null;
 }
 
+export function deriveLiveAgentStatus(message = {}, language = "zh-CN") {
+  const english = normalizedLanguage(language) === "en";
+  const steps = buildAgentProcessSummary(message, language);
+  const running = message?.status === "running";
+  const failed = message?.status === "failed" || Boolean(message?.error);
+  const interrupted = message?.status === "interrupted";
+  const completedSteps = steps.filter((step) => step.status === "completed").length;
+  const activeStep = steps.find((step) => step.status === "running") || null;
+  const current = activeStep || steps.at(-1) || null;
+  const route = Array.isArray(message?.route) ? message.route : [];
+  const activeRoute = [...route].reverse().find((entry) =>
+    ["running", "waiting"].includes(entry?.status),
+  );
+  const currentPlanStep = (message?.plan?.steps || []).find(
+    (step) => step?.status === "in_progress",
+  );
+
+  const title = running
+    ? activeRoute?.title || currentPlanStep?.title || current?.title ||
+      (english ? "Working on the task" : "正在处理任务")
+    : failed
+      ? english ? "Run failed" : "任务执行失败"
+      : interrupted
+        ? english ? "Run stopped" : "任务已停止"
+        : english ? "Run completed" : "任务已完成";
+
+  const detail = running
+    ? activeRoute?.path || activeRoute?.command || activeRoute?.detail ||
+      currentPlanStep?.detail || current?.summary ||
+      (english ? "Waiting for the next observable action" : "等待下一项可观察操作")
+    : current?.summary ||
+      (english
+        ? `${completedSteps} process stage${completedSteps === 1 ? "" : "s"} completed`
+        : `已完成 ${completedSteps} 个过程阶段`);
+
+  const changeCount = Array.isArray(message?.changes)
+    ? message.changes.filter((change) => !change?.reverted).length
+    : 0;
+
+  return {
+    state: running ? "running" : failed ? "failed" : interrupted ? "interrupted" : "completed",
+    title,
+    detail,
+    completedSteps,
+    totalSteps: steps.length,
+    changeCount,
+    activeKind: activeStep?.kind || current?.kind || "understand",
+  };
+}
+
 export function extractWorkspaceMentionQuery(text, cursor) {
   const source = String(text || "");
   const caret = Number.isInteger(cursor)
