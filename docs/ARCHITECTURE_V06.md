@@ -2,7 +2,7 @@
 
 AporiaX v0.6 is an incremental architecture consolidation. It is **not** a rewrite.
 
-The goal is to preserve the current product behavior while removing the duplicated state paths and DOM-patching bridges that made small UI/runtime changes expensive and fragile.
+The goal is to preserve the current product behavior while removing the duplicated state paths and oversized module boundaries that made small UI/runtime changes expensive and fragile.
 
 ## Why now
 
@@ -31,7 +31,7 @@ MutationObserver / injected React roots
 
 That duplication produced one class of failures repeatedly: the task itself continued correctly while elapsed time, live status, process UI, or capability cards became stale because a presentation bridge matched a cached message instead of the live React message.
 
-Phase 1 removes that renderer split-brain state.
+Phase 1 removed that renderer split-brain state. Phase 2 is separating the remaining renderer modules and Harness event subscription. Phase 3 is now decomposing the oversized runtime without changing its protocol.
 
 ## v0.6 invariants
 
@@ -43,17 +43,17 @@ Phase 1 removes that renderer split-brain state.
 6. **Capabilities share one boundary** — Native, Browser, Plugin, and MCP tools eventually enter one capability/tool host before Permission → Approval → Witness.
 7. **Behavior before movement** — tests lock existing behavior before code is moved out of `main.jsx` or `agent-runtime-core.js`.
 
-## Renderer after Phase 1
+## Renderer after Phase 2 extraction
 
 ```text
 Harness event
     ↓
-App event reducer
+useHarnessEvents()
     ↓
 TaskStore ───────────────→ desktop checkpoint
     │
     ├─ Sidebar
-    ├─ Conversation
+    ├─ ConversationViews
     │    ├─ UserMessage
     │    │    └─ FoldablePrompt
     │    └─ AssistantMessage
@@ -64,43 +64,39 @@ TaskStore ───────────────→ desktop checkpoint
     │         └─ Witness
     ├─ Composer
     │    └─ WorkspaceMentionAutocomplete
-    ├─ Route
-    └─ Settings
+    ├─ RouteView
+    └─ SettingsPanel
          ├─ VisionCapability
          └─ SkillCapability
 ```
 
 `index.html` boots one renderer entry (`main.jsx`). Runtime presentation no longer mounts secondary React roots into DOM produced by the main React tree.
 
-## Target source layout
+## Current renderer source layout
 
 ```text
 src/
-├─ app/
-│  └─ App.jsx
-├─ conversation/
-│  ├─ Conversation.jsx
-│  ├─ UserMessage.jsx
-│  ├─ AssistantMessage.jsx
-│  └─ RuntimeMessageUI.jsx
+├─ components/
+│  └─ Controls.jsx
 ├─ composer/
 │  ├─ Composer.jsx
 │  └─ WorkspaceMentionAutocomplete.jsx
-├─ route/
-│  └─ RouteView.jsx
+├─ conversation/
+│  ├─ ConversationViews.jsx
+│  └─ RuntimeMessageUI.jsx
+├─ hooks/
+│  └─ useHarnessEvents.js
+├─ models/
+│  └─ model-catalog.js
 ├─ settings/
 │  ├─ SettingsPanel.jsx
 │  └─ TaskCapabilityCards.jsx
-├─ state/
-│  ├─ task-store-core.js
-│  ├─ useTaskStore.js
-│  ├─ run-reducer.js
-│  └─ selectors.js
-└─ hooks/
-   └─ useHarnessEvents.js
+└─ state/
+   ├─ task-store-core.js
+   └─ useTaskStore.js
 ```
 
-The directory structure is a migration target, not a requirement to move every component in one PR.
+`main.jsx` still owns the application shell, task commands, persistence coordination, and some app-level state. Those are the remaining renderer decomposition targets; the large Conversation/Composer/Route/Settings and Harness subscription blocks are no longer embedded in it.
 
 ## TaskStore contract
 
@@ -151,14 +147,22 @@ They consume the actual `message` object passed by `Conversation`. The old DOM/i
 
 `src/settings/TaskCapabilityCards.jsx` renders Vision and Skill state from the current task/provider/core APIs instead of appending cards to the Settings DOM from a secondary root.
 
+## Harness event boundary
+
+`src/hooks/useHarnessEvents.js` owns the renderer subscription to the Harness protocol. The first extraction preserves the existing event branches while removing the subscription from `App`.
+
+It covers streaming deltas, plans, Witness, native/Browser/MCP tool state, Skills, subagents, Project Understanding, self-check, approvals, runtime control and final Route state.
+
+Follow-up work may make individual transforms pure reducer functions, but the subscription boundary is now explicit and testable.
+
 ## Runtime migration
 
-After renderer modules are split, `electron/agent-runtime-core.js` should be decomposed without changing the public Harness contract:
+The runtime target remains:
 
 ```text
 electron/runtime/
 ├─ run-loop.js
-├─ provider-stream.js
+├─ provider-stream.js      ← extracted
 ├─ conversation.js
 ├─ tool-dispatcher.js
 ├─ approvals.js
@@ -167,7 +171,9 @@ electron/runtime/
 └─ evidence.js
 ```
 
-The final `runHarness()` should coordinate these modules rather than own their implementations.
+`electron/runtime/provider-stream.js` now owns OpenAI-compatible fetch/retry/SSE parsing, `response.delta`, reasoning accumulation, tool-call chunk assembly, usage capture, and Provider idle-timeout/abort mapping.
+
+`agent-runtime-core.js` imports the same Provider factory contract, so the Harness event protocol and model loop remain backward compatible.
 
 ## Capability migration
 
@@ -200,17 +206,21 @@ A Skill remains declarative guidance and never grants capability permissions.
 
 ### Phase 2 — Renderer modules
 
-- [ ] Move Conversation/Composer/Route/Settings out of `main.jsx`.
-- [ ] Reduce `main.jsx` to app bootstrap and top-level composition.
-- [ ] Extract Harness-event reduction from `App` into a dedicated hook/reducer boundary.
+- [x] Move Conversation/Composer/Route/Settings out of `main.jsx`.
+- [x] Move model catalog and common task controls out of `main.jsx`.
+- [x] Extract Harness event subscription from `App` into a dedicated hook boundary.
+- [ ] Convert high-value Harness event transforms into pure reducer helpers.
+- [ ] Reduce `main.jsx` further toward app bootstrap/top-level composition.
 - [ ] Add selector-level tests for active task/run/message state.
 
 ### Phase 3 — Runtime modules
 
-- [ ] Split provider streaming and conversation loop.
+- [x] Split Provider streaming/retry/SSE handling into `runtime/provider-stream.js`.
+- [ ] Split the conversation/run loop coordination.
 - [ ] Split tool dispatch / approval.
-- [ ] Split self-check / subagent orchestration.
-- [ ] Keep Harness event shapes backward compatible while moving code.
+- [ ] Split self-check / evidence.
+- [ ] Split subagent orchestration.
+- [x] Keep Harness event shapes backward compatible while moving code.
 
 ### Phase 4 — Unified capability layer
 
@@ -220,19 +230,32 @@ A Skill remains declarative guidance and never grants capability permissions.
 
 ## Validation gates
 
-Phase 1 is guarded by:
+Renderer consolidation is guarded by:
 
 ```text
 npm run test:task-store
 npm run test:runtime-ui
 npm run test:process-ui
 npm run test:renderer-architecture
+npm run test:renderer-modules
+npm run test:harness-events-ui
 npm run test:skills
 npm run test:architecture
 npm run build
 ```
 
-The migration workflow must pass all gates before committing the codemod result to the branch.
+Provider-stream extraction additionally requires:
+
+```text
+npm run test:provider-stream
+npm run test:runtime
+npm run test:vision
+npm run test:mcp
+npm run test:browser
+npm run test:harness-v2
+```
+
+Migration workflows commit generated refactors only after their relevant gates pass.
 
 ## Non-goals
 
