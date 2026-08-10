@@ -1,0 +1,397 @@
+.aporiax-agent-process-host {
+  display: block;
+  margin-top: 12px;
+}
+
+.aporiax-agent-process {
+  overflow: hidden;
+  border: 1px solid rgba(109, 121, 137, 0.17);
+  border-radius: 12px;
+  background: rgba(248, 249, 250, 0.72);
+}
+
+.aporiax-agent-process-heading {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+}
+
+.aporiax-agent-process-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: #4f7890;
+  background: rgba(80, 130, 157, 0.08);
+}
+
+.aporiax-agent-process.running .aporiax-agent-process-mark {
+  color: #4d8fb4;
+  background: rgba(65, 145, 190, 0.09);
+}
+
+.aporiax-agent-process-heading > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aporiax-agent-process-heading strong {
+  color: #394047;
+  font-size: 12px;
+  font-weight: 670;
+}
+
+.aporiax-agent-process-heading span:not(.aporiax-agent-process-mark) {
+  overflow: hidden;
+  color: #7d858c;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-agent-process-heading em {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #73808a;
+  background: rgba(111, 123, 134, 0.08);
+  font-size: 9.4px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.aporiax-agent-process.running .aporiax-agent-process-heading em {
+  color: #4182a6;
+  background: rgba(65, 145, 190, 0.09);
+}
+
+.aporiax-agent-process-note {
+  margin: -3px 12px 10px 47px;
+  color: #949a9f;
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.aporiax-agent-process-steps {
+  border-top: 1px solid rgba(109, 121, 137, 0.12);
+}
+
+.aporiax-agent-process-step {
+  border-bottom: 1px solid rgba(109, 121, 137, 0.1);
+}
+
+.aporiax-agent-process-step:last-child {
+  border-bottom: 0;
+}
+
+.aporiax-agent-process-step > summary {
+  display: flex;
+  min-height: 43px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.aporiax-agent-process-step > summary::-webkit-details-marker {
+  display: none;
+}
+
+.aporiax-agent-process-step.running > summary {
+  background: rgba(65, 145, 190, 0.035);
+}
+
+.aporiax-agent-process-step-icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #6f858f;
+  background: rgba(105, 125, 135, 0.08);
+}
+
+.aporiax-agent-process-step.running .aporiax-agent-process-step-icon {
+  color: #4d9ac2;
+  background: rgba(65, 145, 190, 0.09);
+}
+
+.aporiax-agent-process-step-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aporiax-agent-process-step-copy strong {
+  overflow: hidden;
+  color: #4d555b;
+  font-size: 10.8px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-agent-process-step-copy small {
+  overflow: hidden;
+  color: #92989e;
+  font-size: 9.4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-agent-process-step-state {
+  flex: 0 0 auto;
+  color: #93999e;
+  font-size: 9px;
+  font-weight: 620;
+}
+
+.aporiax-agent-process-step.running .aporiax-agent-process-step-state {
+  color: #4c93b7;
+}
+
+.aporiax-agent-process-detail {
+  display: flex;
+  padding: 0 12px 9px 40px;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.aporiax-agent-process-detail code {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: #7b8389;
+  background: rgba(102, 115, 125, 0.055);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-agent-process-detail code svg {
+  flex: 0 0 auto;
+}
+
+.aporiax-agent-process-plan {
+  display: flex;
+  gap: 6px;
+  color: #7f878d;
+  font-size: 9.5px;
+}
+
+.aporiax-agent-process-plan > span {
+  flex: 0 0 auto;
+  color: #6490a4;
+}
+
+.aporiax-agent-process-plan > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.aporiax-agent-process-plan strong {
+  font-size: 9.6px;
+  font-weight: 600;
+}
+
+.aporiax-agent-process-plan small {
+  color: #9ba0a5;
+  font-size: 8.9px;
+}
+
+.aporiax-workspace-mention-host {
+  position: absolute;
+  z-index: 30;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  left: 8px;
+}
+
+.aporiax-workspace-mention-menu {
+  overflow: hidden;
+  border: 1px solid #d7dce0;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 45px rgba(27, 32, 37, 0.14);
+  backdrop-filter: blur(12px);
+}
+
+.aporiax-workspace-mention-title {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eceeef;
+}
+
+.aporiax-workspace-mention-title > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #46515a;
+  font-size: 10.8px;
+  font-weight: 650;
+}
+
+.aporiax-workspace-mention-title small {
+  color: #92999f;
+  font-size: 9.2px;
+}
+
+.aporiax-workspace-mention-results {
+  max-height: 270px;
+  overflow: auto;
+  padding: 5px;
+}
+
+.aporiax-workspace-mention-results button {
+  display: flex;
+  width: 100%;
+  height: 31px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 7px;
+  color: #606970;
+  background: transparent;
+}
+
+.aporiax-workspace-mention-results button:hover,
+.aporiax-workspace-mention-results button.active {
+  color: #2f3d46;
+  background: #eef3f6;
+}
+
+.aporiax-workspace-mention-results button svg {
+  flex: 0 0 auto;
+  color: #5d8ea7;
+}
+
+.aporiax-workspace-mention-results button span {
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-workspace-mention-empty {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #8d959b;
+  font-size: 10.2px;
+}
+
+.aporiax-workspace-mention-footer {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 13px;
+  padding: 0 10px;
+  border-top: 1px solid #eceeef;
+  color: #9ba1a6;
+  font-size: 8.9px;
+}
+
+[data-theme="dark"] .aporiax-agent-process {
+  border-color: rgba(118, 130, 153, 0.18);
+  background: rgba(25, 22, 31, 0.58);
+}
+
+[data-theme="dark"] .aporiax-agent-process-mark,
+[data-theme="dark"] .aporiax-agent-process-step-icon {
+  color: #8b95a4;
+  background: rgba(115, 126, 148, 0.09);
+}
+
+[data-theme="dark"] .aporiax-agent-process.running .aporiax-agent-process-mark,
+[data-theme="dark"] .aporiax-agent-process-step.running .aporiax-agent-process-step-icon {
+  color: #67bde7;
+  background: rgba(83, 171, 215, 0.1);
+}
+
+[data-theme="dark"] .aporiax-agent-process-heading strong,
+[data-theme="dark"] .aporiax-agent-process-step-copy strong {
+  color: #d9d4df;
+}
+
+[data-theme="dark"] .aporiax-agent-process-heading span:not(.aporiax-agent-process-mark),
+[data-theme="dark"] .aporiax-agent-process-step-copy small,
+[data-theme="dark"] .aporiax-agent-process-note,
+[data-theme="dark"] .aporiax-agent-process-step-state,
+[data-theme="dark"] .aporiax-agent-process-plan {
+  color: #8f8997;
+}
+
+[data-theme="dark"] .aporiax-agent-process-steps,
+[data-theme="dark"] .aporiax-agent-process-step {
+  border-color: rgba(118, 130, 153, 0.11);
+}
+
+[data-theme="dark"] .aporiax-agent-process-step.running > summary {
+  background: rgba(83, 171, 215, 0.04);
+}
+
+[data-theme="dark"] .aporiax-agent-process-detail code {
+  color: #9e98a6;
+  background: rgba(112, 122, 143, 0.07);
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-menu {
+  border-color: rgba(121, 132, 154, 0.25);
+  background: rgba(27, 24, 34, 0.98);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-title,
+[data-theme="dark"] .aporiax-workspace-mention-footer {
+  border-color: rgba(121, 132, 154, 0.14);
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-title > span {
+  color: #d2ccd8;
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-title small,
+[data-theme="dark"] .aporiax-workspace-mention-footer,
+[data-theme="dark"] .aporiax-workspace-mention-empty {
+  color: #8d8795;
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-results button {
+  color: #aaa4b1;
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-results button:hover,
+[data-theme="dark"] .aporiax-workspace-mention-results button.active {
+  color: #eee9f1;
+  background: rgba(96, 157, 190, 0.12);
+}
+
+[data-theme="dark"] .aporiax-workspace-mention-results button svg {
+  color: #68a9c9;
+}
