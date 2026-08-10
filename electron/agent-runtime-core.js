@@ -59,6 +59,18 @@ import {
 } from "./runtime/subagent-model.js";
 import { runSubagentTask } from "./runtime/subagent-loop.js";
 import { createNativeToolExecutor } from "./runtime/native-tool-executor.js";
+import {
+  MAX_COMMAND_OUTPUT_CHARS,
+  TREE_IGNORES,
+  calculateLineChanges,
+  getVerifiedWorkspaceRoot,
+  isPathInside,
+  resolveWorkspacePath,
+  runGitCommand,
+  searchWorkspaceText,
+  verifyExistingTarget,
+  verifyWritableTarget,
+} from "./runtime/workspace-runtime.js";
 export { getPendingSelfCheckPaths } from "./runtime/self-check-evidence.js";
 import {
   getSandboxStatus,
@@ -94,9 +106,7 @@ const MAX_FILE_READ_CHARS = 120_000;
 const MAX_FILE_WRITE_CHARS = 200_000;
 const MAX_DIRECTORY_ENTRIES = 200;
 const MAX_COMMAND_CHARS = 2_000;
-const MAX_COMMAND_OUTPUT_CHARS = 80_000;
 const MAX_SEARCH_RESULTS = 200;
-const MAX_SEARCH_FILE_BYTES = 2_000_000;
 const MAX_PATCH_TEXT_CHARS = 120_000;
 const MAX_TREE_ENTRIES = 700;
 const MAX_GIT_DIFF_CHARS = 120_000;
@@ -113,16 +123,6 @@ const PROJECT_CONFIG_FILES = [
   ".deepagent.json",
   "deepagent.json",
 ];
-const TREE_IGNORES = new Set([
-  ".git",
-  ".idea",
-  ".next",
-  ".turbo",
-  ".vscode",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
 const ANCHOR_IGNORES = new Set([
   ...TREE_IGNORES,
   ".cache",
@@ -581,73 +581,6 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw createAbortError();
 }
 
-function isPathInside(rootPath, candidatePath) {
-  const pathFromRoot = relative(rootPath, candidatePath);
-  return (
-    pathFromRoot === "" ||
-    (!pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot))
-  );
-}
-
-function resolveWorkspacePath(workspaceRoot, requestedPath) {
-  if (typeof requestedPath !== "string" || requestedPath.includes("\0")) {
-    throw new Error("Invalid workspace path.");
-  }
-
-  const targetPath = resolve(workspaceRoot, requestedPath || ".");
-  if (!isPathInside(workspaceRoot, targetPath)) {
-    throw new Error("Path escapes the authorized workspace.");
-  }
-
-  return targetPath;
-}
-
-async function getVerifiedWorkspaceRoot(workspacePath) {
-  if (typeof workspacePath !== "string" || !workspacePath.trim()) {
-    throw new Error("A workspace directory is required.");
-  }
-
-  const workspaceRoot = await realpath(resolve(workspacePath));
-  const workspaceStats = await lstat(workspaceRoot);
-  if (!workspaceStats.isDirectory() || workspaceStats.isSymbolicLink()) {
-    throw new Error("The workspace must be a real directory.");
-  }
-
-  return workspaceRoot;
-}
-
-async function verifyExistingTarget(workspaceRoot, requestedPath) {
-  const lexicalTarget = resolveWorkspacePath(workspaceRoot, requestedPath);
-  const verifiedTarget = await realpath(lexicalTarget);
-  if (!isPathInside(workspaceRoot, verifiedTarget)) {
-    throw new Error("Resolved path escapes the authorized workspace.");
-  }
-  return verifiedTarget;
-}
-
-async function verifyWritableTarget(workspaceRoot, requestedPath) {
-  const targetPath = resolveWorkspacePath(workspaceRoot, requestedPath);
-  const verifiedParent = await realpath(dirname(targetPath));
-  if (!isPathInside(workspaceRoot, verifiedParent)) {
-    throw new Error("Resolved parent path escapes the authorized workspace.");
-  }
-
-  try {
-    const targetStats = await lstat(targetPath);
-    if (targetStats.isSymbolicLink() || targetStats.isDirectory()) {
-      throw new Error("Refusing to overwrite a symbolic link or directory.");
-    }
-    const verifiedTarget = await realpath(targetPath);
-    if (!isPathInside(workspaceRoot, verifiedTarget)) {
-      throw new Error("Resolved file escapes the authorized workspace.");
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-
-  return targetPath;
-}
-
 function anchorFileLimit(path) {
   return isOfficePath(path)
     ? MAX_OFFICE_FILE_BYTES
@@ -887,39 +820,6 @@ function describeToolActivity(toolCall) {
   }
 }
 
-function calculateLineChanges(previousContent, nextContent) {
-  const toLines = (content) =>
-    content === ""
-      ? []
-      : content.replace(/\r\n/g, "\n").split("\n");
-  const before = toLines(previousContent);
-  const after = toLines(nextContent);
-
-  let prefix = 0;
-  while (
-    prefix < before.length &&
-    prefix < after.length &&
-    before[prefix] === after[prefix]
-  ) {
-    prefix += 1;
-  }
-
-  let suffix = 0;
-  while (
-    suffix < before.length - prefix &&
-    suffix < after.length - prefix &&
-    before[before.length - 1 - suffix] ===
-      after[after.length - 1 - suffix]
-  ) {
-    suffix += 1;
-  }
-
-  return {
-    additions: Math.max(0, after.length - prefix - suffix),
-    deletions: Math.max(0, before.length - prefix - suffix),
-  };
-}
-
 function mergeFileChange(changeMap, change) {
   const current = changeMap.get(change.path);
   if (!current) {
@@ -991,156 +891,6 @@ function normalizeExecutionPlan(input, previousPlan = null) {
     explanation: String(input?.explanation || "").trim().slice(0, 500),
     steps,
     updatedAt: new Date().toISOString(),
-  };
-}
-
-function trimCommandOutput(value) {
-  if (value.length <= MAX_COMMAND_OUTPUT_CHARS) return value;
-  const half = Math.floor(MAX_COMMAND_OUTPUT_CHARS / 2);
-  return `${value.slice(0, half)}\n\n… output truncated …\n\n${value.slice(-half)}`;
-}
-
-async function runGitCommand({ args, cwd, signal }) {
-  throwIfAborted(signal);
-
-  return new Promise((resolvePromise, rejectPromise) => {
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    const child = spawn("git", args, {
-      cwd,
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", handleAbort);
-      callback(value);
-    };
-    const handleAbort = () => {
-      child.kill();
-      finish(rejectPromise, createAbortError());
-    };
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, 30_000);
-
-    signal?.addEventListener("abort", handleAbort, { once: true });
-    child.stdout.on("data", (chunk) => {
-      stdout = trimCommandOutput(stdout + chunk.toString("utf8"));
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = trimCommandOutput(stderr + chunk.toString("utf8"));
-    });
-    child.on("error", (error) => finish(rejectPromise, error));
-    child.on("close", (code, signalName) => {
-      finish(resolvePromise, {
-        exitCode: typeof code === "number" ? code : null,
-        signal: signalName || null,
-        timedOut,
-        stdout,
-        stderr,
-      });
-    });
-  });
-}
-
-async function searchWorkspaceText({
-  workspaceRoot,
-  requestedPath,
-  query,
-  caseSensitive,
-  maxResults,
-  signal,
-}) {
-  if (
-    typeof query !== "string" ||
-    !query ||
-    query.length > 500 ||
-    query.includes("\0")
-  ) {
-    throw new Error("Search query must be between 1 and 500 characters.");
-  }
-  const searchRoot = await verifyExistingTarget(
-    workspaceRoot,
-    requestedPath || ".",
-  );
-  const searchStats = await lstat(searchRoot);
-  if (!searchStats.isDirectory()) {
-    throw new Error("The search path must be a directory.");
-  }
-  const normalizedQuery = caseSensitive ? query : query.toLowerCase();
-  const results = [];
-  let filesScanned = 0;
-  let truncated = false;
-
-  async function visit(directoryPath) {
-    throwIfAborted(signal);
-    const entries = await readdir(directoryPath, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-
-    for (const entry of entries) {
-      throwIfAborted(signal);
-      if (results.length >= maxResults) {
-        truncated = true;
-        return;
-      }
-      if (TREE_IGNORES.has(entry.name) || entry.isSymbolicLink()) continue;
-      const entryPath = resolve(directoryPath, entry.name);
-      if (!isPathInside(workspaceRoot, entryPath)) continue;
-      if (entry.isDirectory()) {
-        await visit(entryPath);
-        if (truncated) return;
-        continue;
-      }
-      if (!entry.isFile()) continue;
-
-      try {
-        const stats = await lstat(entryPath);
-        if (stats.size > MAX_SEARCH_FILE_BYTES) continue;
-        const content = await readFile(entryPath, "utf8");
-        filesScanned += 1;
-        if (content.includes("\0")) continue;
-        const lines = content.replace(/\r\n/g, "\n").split("\n");
-        for (let index = 0; index < lines.length; index += 1) {
-          const line = lines[index];
-          const searchable = caseSensitive ? line : line.toLowerCase();
-          const column = searchable.indexOf(normalizedQuery);
-          if (column === -1) continue;
-          results.push({
-            path: relative(workspaceRoot, entryPath).replace(/\\/g, "/"),
-            line: index + 1,
-            column: column + 1,
-            preview:
-              line.length > 320
-                ? `${line.slice(0, 317)}...`
-                : line,
-          });
-          if (results.length >= maxResults) {
-            truncated = true;
-            return;
-          }
-        }
-      } catch (error) {
-        if (error?.name === "AbortError") throw error;
-      }
-    }
-  }
-
-  await visit(searchRoot);
-  return {
-    query,
-    path: requestedPath || ".",
-    caseSensitive,
-    results,
-    filesScanned,
-    truncated,
   };
 }
 
