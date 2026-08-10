@@ -19,7 +19,10 @@ import {
 
 assert.equal(normalizeDesktopAgentMode("multi"), "multi");
 assert.equal(normalizeDesktopAgentMode("MULTI"), "multi");
-assert.equal(normalizeDesktopAgentMode("anything-else"), "single");
+assert.equal(normalizeDesktopAgentMode("single"), "single");
+assert.equal(normalizeDesktopAgentMode(undefined), "multi");
+assert.equal(normalizeDesktopAgentMode("anything-else"), "multi");
+assert.equal(applyDesktopAgentMode({}).desktopAgentMode, "multi");
 
 const single = applyDesktopAgentMode(
   {
@@ -113,7 +116,9 @@ assert.equal(DESKTOP_AGENT_MODE_STORAGE_KEY, "aporiax.agent-mode.v1");
 const css = rendererTaskControlsCss();
 assert.match(css, /desktop-run-duration/);
 assert.match(css, /composer-multi-agent-toggle/);
-assert.match(css, /ff4e76/i);
+assert.match(css, /data-tooltip/);
+assert.match(css, /box-shadow: 0 0 7px/);
+assert.doesNotMatch(css, /#ff4e76|255,\s*78,\s*118/i);
 
 const script = rendererTaskControlsScript();
 assert.match(script, /aporiax\.agent-mode\.v1/);
@@ -121,7 +126,8 @@ assert.match(script, /aporiax\.tasks\.v1/);
 assert.match(script, /assistant-message-heading/);
 assert.match(script, /composer-toolbar-left/);
 assert.match(script, /agentMode/);
-assert.match(script, /自适应多 Agent/);
-assert.match(script, /automatically decides when extra agents are useful/);
+assert.match(script, /storedMode === "single" \? "single" : "multi"/);
+assert.match(script, /建议默认开启 Multi/);
+assert.match(script, /Recommended: keep Multi enabled/);
 
 console.log("task runtime controls smoke: PASS");
