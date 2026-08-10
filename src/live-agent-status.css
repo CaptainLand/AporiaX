@@ -1,0 +1,144 @@
+.aporiax-live-agent-status-host {
+  display: block;
+  margin: 5px 0 10px;
+}
+
+.aporiax-live-agent-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid rgba(121, 133, 148, 0.16);
+  border-radius: 10px;
+  background: rgba(117, 128, 148, 0.045);
+}
+
+.aporiax-live-agent-status.running {
+  border-color: rgba(81, 150, 184, 0.23);
+  background: linear-gradient(90deg, rgba(69, 139, 178, 0.07), rgba(117, 128, 148, 0.035));
+}
+
+.aporiax-live-agent-status.failed {
+  border-color: rgba(194, 89, 89, 0.2);
+  background: rgba(194, 89, 89, 0.05);
+}
+
+.aporiax-live-agent-status-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 8px;
+  color: #5a7688;
+  background: rgba(82, 132, 158, 0.09);
+}
+
+.aporiax-live-agent-status.running .aporiax-live-agent-status-icon {
+  color: #3d8eaf;
+  background: rgba(61, 142, 175, 0.1);
+}
+
+.aporiax-live-agent-status.completed .aporiax-live-agent-status-icon {
+  color: #3f806c;
+  background: rgba(63, 128, 108, 0.09);
+}
+
+.aporiax-live-agent-status.failed .aporiax-live-agent-status-icon,
+.aporiax-live-agent-status.interrupted .aporiax-live-agent-status-icon {
+  color: #a55d5d;
+  background: rgba(165, 93, 93, 0.09);
+}
+
+.aporiax-live-agent-status-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aporiax-live-agent-status-copy strong,
+.aporiax-live-agent-status-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-live-agent-status-copy strong {
+  color: #3b4349;
+  font-size: 11.8px;
+  font-weight: 650;
+}
+
+.aporiax-live-agent-status-copy span {
+  color: #7e878d;
+  font-size: 10.4px;
+}
+
+.aporiax-live-agent-status-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.aporiax-live-agent-status-meta em,
+.aporiax-live-agent-status-meta small {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.aporiax-live-agent-status-meta em {
+  color: #3e7f9a;
+  background: rgba(62, 127, 154, 0.09);
+  font-weight: 650;
+}
+
+.aporiax-live-agent-status.completed .aporiax-live-agent-status-meta em {
+  color: #4a7769;
+  background: rgba(74, 119, 105, 0.08);
+}
+
+.aporiax-live-agent-status-meta small {
+  color: #818990;
+  background: rgba(112, 123, 134, 0.07);
+}
+
+[data-theme="dark"] .aporiax-live-agent-status {
+  border-color: rgba(125, 139, 162, 0.16);
+  background: rgba(106, 116, 140, 0.055);
+}
+
+[data-theme="dark"] .aporiax-live-agent-status.running {
+  border-color: rgba(80, 164, 202, 0.24);
+  background: linear-gradient(90deg, rgba(55, 143, 184, 0.09), rgba(105, 113, 137, 0.04));
+}
+
+[data-theme="dark"] .aporiax-live-agent-status-copy strong {
+  color: #e2dde6;
+}
+
+[data-theme="dark"] .aporiax-live-agent-status-copy span,
+[data-theme="dark"] .aporiax-live-agent-status-meta small {
+  color: #9993a1;
+}
+
+[data-theme="dark"] .aporiax-live-agent-status-icon {
+  color: #8ca6b7;
+  background: rgba(115, 154, 180, 0.08);
+}
+
+[data-theme="dark"] .aporiax-live-agent-status.running .aporiax-live-agent-status-icon,
+[data-theme="dark"] .aporiax-live-agent-status-meta em {
+  color: #69b7d6;
+}
+
+[data-theme="dark"] .aporiax-live-agent-status.completed .aporiax-live-agent-status-icon,
+[data-theme="dark"] .aporiax-live-agent-status.completed .aporiax-live-agent-status-meta em {
+  color: #76b69f;
+}
