@@ -35,20 +35,40 @@ assert.equal(single.agentBudget.locked, true);
 assert.equal(single.agentBudget.maxTotalSubagents, 0);
 assert.equal(single.agentBudget.roles.builder, 0);
 
-const multi = applyDesktopAgentMode(
+const adaptiveSmall = applyDesktopAgentMode(
   {
     workspacePath: "C:/repo",
     permission: "workspace-write",
-    messages: [{ role: "user", content: "实现登录和注册" }],
+    messages: [{ role: "user", content: "实现登录按钮的小改动" }],
   },
   "multi",
 );
-assert.equal(multi.desktopAgentMode, "multi");
-assert.equal(multi.builderOrchestration, true);
-assert.equal(multi.agentBudget.profile, "large");
-assert.equal(multi.agentBudget.locked, true);
-assert.equal(multi.agentBudget.roles.builder, 2);
-assert.equal(desktopAgentModeBudget("multi").maxActiveSubagents, 4);
+assert.equal(adaptiveSmall.desktopAgentMode, "multi");
+assert.equal(adaptiveSmall.builderOrchestration, true);
+assert.equal(adaptiveSmall.agentBudget, undefined);
+assert.equal(desktopAgentModeBudget("multi"), null);
+const adaptiveSmallPlan = planAgentBudget(adaptiveSmall);
+assert.notEqual(adaptiveSmallPlan.profile, "large");
+assert.equal(adaptiveSmallPlan.limits.roles.builder, 0);
+
+const adaptiveLarge = applyDesktopAgentMode(
+  {
+    workspacePath: "C:/repo",
+    permission: "workspace-write",
+    messages: [
+      {
+        role: "user",
+        content:
+          "大型多模块并行架构重构：分别升级登录和注册模块，并完成测试验证。",
+      },
+    ],
+  },
+  "multi",
+);
+const adaptiveLargePlan = planAgentBudget(adaptiveLarge);
+assert.equal(adaptiveLargePlan.profile, "large");
+assert.equal(adaptiveLargePlan.locked, false);
+assert.equal(adaptiveLargePlan.limits.roles.builder, 2);
 
 const lockedPlan = planAgentBudget(single);
 assert.equal(lockedPlan.profile, "direct");
@@ -84,6 +104,7 @@ assert.match(script, /aporiax\.tasks\.v1/);
 assert.match(script, /assistant-message-heading/);
 assert.match(script, /composer-toolbar-left/);
 assert.match(script, /agentMode/);
-assert.match(script, /Main \+ up to 2 isolated Builders/);
+assert.match(script, /自适应多 Agent/);
+assert.match(script, /automatically decides when extra agents are useful/);
 
 console.log("task runtime controls smoke: PASS");
