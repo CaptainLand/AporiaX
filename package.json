@@ -27,6 +27,7 @@
     "test:runtime": "node tests/runtime-smoke.mjs",
     "test:p0": "node tests/p0-model-smoke.mjs",
     "test:cache": "node tests/deepseek-cache-smoke.mjs",
+    "test:vision": "node tests/vision-proxy-smoke.mjs",
     "test:architecture": "node tests/harness-architecture-smoke.mjs",
     "test:collaboration": "node tests/harness-collaboration-smoke.mjs",
     "test:desktop-background": "node tests/desktop-background-smoke.mjs",
