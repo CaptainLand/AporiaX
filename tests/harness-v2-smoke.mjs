@@ -17,7 +17,16 @@ import {
 import { ScopeLeaseManager } from "../electron/harness/scope-leases.js";
 import { createTaskGraph } from "../electron/harness/task-graph.js";
 import { BuilderWorkspaceManager } from "../electron/harness/builder-workspace.js";
-import { createEventEmitter } from "../electron/agent-core.js";
+import { createAgentDefinitionRegistry } from "../electron/harness/agent-definitions.js";
+import {
+  createEventEmitter,
+  createPermissionPolicy,
+  getToolPermission,
+} from "../electron/agent-core.js";
+import {
+  normalizeBuilderOrchestrationPlan,
+  shouldUseBuilderOrchestration,
+} from "../electron/agent-runtime.js";
 
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -34,6 +43,16 @@ const simple = planAgentBudget({
 });
 assert.equal(simple.profile, "direct");
 assert.equal(simple.limits.maxTotalSubagents, 0);
+assert.equal(
+  shouldUseBuilderOrchestration(
+    {
+      workspacePath: "C:/repo",
+      permission: "workspace-write",
+    },
+    simple,
+  ),
+  false,
+);
 
 const smallWrite = planAgentBudget({
   workspacePath: "C:/repo",
@@ -58,6 +77,16 @@ assert.equal(large.profile, "large");
 assert.equal(large.limits.roles.builder, 2);
 assert(large.limits.maxActiveSubagents >= 2);
 assert.equal(
+  shouldUseBuilderOrchestration(
+    {
+      workspacePath: "C:/repo",
+      permission: "workspace-write",
+    },
+    large,
+  ),
+  true,
+);
+assert.equal(
   classifyAgentTask({
     workspacePath: "C:/repo",
     permission: "read-only",
@@ -66,6 +95,70 @@ assert.equal(
     ],
   }).profile,
   "read",
+);
+
+const validPlan = normalizeBuilderOrchestrationPlan(
+  {
+    parallelize: true,
+    reason: "independent modules",
+    tasks: [
+      {
+        id: "auth",
+        title: "Auth",
+        task: "Implement auth module",
+        writeScopes: ["src/auth"],
+      },
+      {
+        id: "ui",
+        title: "UI",
+        task: "Implement UI module",
+        writeScopes: ["src/ui"],
+      },
+    ],
+  },
+  { builderLimit: 2 },
+);
+assert.equal(validPlan.parallelize, true);
+assert.equal(validPlan.tasks.length, 2);
+assert.equal(validPlan.tasks[0].task.length > 0, true);
+
+const overlappingPlan = normalizeBuilderOrchestrationPlan(
+  {
+    parallelize: true,
+    tasks: [
+      {
+        id: "auth",
+        task: "Implement auth",
+        writeScopes: ["src/auth"],
+      },
+      {
+        id: "login",
+        task: "Implement login",
+        writeScopes: ["src/auth/login.js"],
+      },
+    ],
+  },
+  { builderLimit: 2 },
+);
+assert.equal(overlappingPlan.parallelize, false);
+assert.match(overlappingPlan.reason, /overlapping-builder-scopes/);
+
+const registry = createAgentDefinitionRegistry();
+const builderDefinition = registry.get("builder");
+assert(builderDefinition);
+assert(builderDefinition.tools.includes("write_file"));
+assert(!builderDefinition.tools.includes("run_command"));
+
+const builderPolicy = createPermissionPolicy("builder-write");
+assert.equal(getToolPermission(builderPolicy, "write_file"), "allow");
+assert.equal(getToolPermission(builderPolicy, "apply_patch"), "allow");
+assert.equal(getToolPermission(builderPolicy, "run_command"), "deny");
+assert.equal(getToolPermission(builderPolicy, "delegate_subagent"), "deny");
+assert.equal(getToolPermission(builderPolicy, "update_plan"), "allow");
+assert.equal(
+  getToolPermission(createPermissionPolicy("workspace-write"), "update_plan"),
+  "allow",
+  "the Main agent must actually receive update_plan so task complexity can escalate its budget",
 );
 
 runWithAgentBudget(simple, {}, () => {
@@ -125,6 +218,7 @@ const graph = createTaskGraph([
   {
     id: "auth",
     title: "Auth",
+    task: "Implement auth",
     role: "builder",
     writeScopes: ["src/auth"],
     dependsOn: ["plan"],
@@ -132,6 +226,7 @@ const graph = createTaskGraph([
   {
     id: "ui",
     title: "UI",
+    task: "Implement UI",
     role: "builder",
     writeScopes: ["src/ui"],
     dependsOn: ["plan"],
@@ -165,6 +260,7 @@ assert.deepEqual(
 const repo = await mkdtemp(join(tmpdir(), "aporiax-builder-smoke-"));
 let firstSession = null;
 let conflictSession = null;
+let scopeViolationSession = null;
 try {
   git(repo, ["init"]);
   git(repo, ["config", "user.email", "aporiax-smoke@example.invalid"]);
@@ -183,6 +279,15 @@ try {
   );
   git(repo, ["add", "."]);
   git(repo, ["commit", "-m", "baseline"]);
+  await writeFile(
+    join(repo, "local-large-output.bin"),
+    Buffer.alloc(3_000_000, 7),
+  );
+  await writeFile(
+    join(repo, "src", "auth", "local-untracked.js"),
+    "export const localOnly = true;\n",
+    "utf8",
+  );
 
   const manager = new BuilderWorkspaceManager();
   firstSession = await manager.open({
@@ -190,6 +295,19 @@ try {
     agentId: "builder-auth",
     writeScopes: ["src/auth"],
   });
+  assert.equal(
+    await readFile(
+      join(firstSession.workspaceRoot, "src", "auth", "local-untracked.js"),
+      "utf8",
+    ),
+    "export const localOnly = true;\n",
+    "untracked source inside the Builder scope must be overlaid",
+  );
+  await assert.rejects(
+    () => readFile(join(firstSession.workspaceRoot, "local-large-output.bin")),
+    /ENOENT/,
+    "unrelated untracked build/archive files must not be copied into every Builder worktree",
+  );
   await writeFile(
     join(firstSession.workspaceRoot, "src", "auth", "login.js"),
     "export const login = true;\n",
@@ -205,12 +323,36 @@ try {
     merged.changes.map((change) => change.path),
     ["src/auth/login.js"],
   );
+  assert.equal(merged.checkpoints.length, 1);
+  assert.equal(merged.checkpoints[0].beforeMissing, false);
+  assert.equal(merged.checkpoints[0].afterMissing, false);
   assert.equal(
     await readFile(join(repo, "src", "auth", "login.js"), "utf8"),
     "export const login = true;\n",
   );
   await firstSession.close();
   firstSession = null;
+
+  scopeViolationSession = await manager.open({
+    workspaceRoot: repo,
+    agentId: "builder-scope-violation",
+    writeScopes: ["src/auth"],
+  });
+  await writeFile(
+    join(scopeViolationSession.workspaceRoot, "src", "ui", "panel.js"),
+    "export const panel = 2;\n",
+    "utf8",
+  );
+  await assert.rejects(
+    () => scopeViolationSession.merge(),
+    /outside its lease/,
+  );
+  assert.equal(
+    await readFile(join(repo, "src", "ui", "panel.js"), "utf8"),
+    "export const panel = 1;\n",
+  );
+  await scopeViolationSession.close();
+  scopeViolationSession = null;
 
   conflictSession = await manager.open({
     workspaceRoot: repo,
@@ -238,6 +380,7 @@ try {
   conflictSession = null;
 } finally {
   await firstSession?.close().catch(() => undefined);
+  await scopeViolationSession?.close().catch(() => undefined);
   await conflictSession?.close().catch(() => undefined);
   await rm(repo, { recursive: true, force: true });
 }

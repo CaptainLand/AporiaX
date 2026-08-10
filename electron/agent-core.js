@@ -16,6 +16,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     delegate_subagent: "allow",
     collect_subagents: "allow",
     remember_project_fact: "allow",
+    update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
     search_text: "allow",
@@ -29,6 +30,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     delegate_subagent: "allow",
     collect_subagents: "allow",
     remember_project_fact: "allow",
+    update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
     search_text: "allow",
@@ -43,6 +45,21 @@ const DEFAULT_PERMISSION_POLICIES = {
     run_command: "ask",
     complete_self_check: "allow",
   },
+  // Builder workers execute only inside an isolated worktree. They receive the
+  // minimum text-editing surface needed to implement their leased scope. In
+  // particular, they cannot delegate more agents or execute shell commands.
+  "builder-write": {
+    "*": "deny",
+    list_directory: "allow",
+    read_file: "allow",
+    search_text: "allow",
+    git_status: "allow",
+    git_diff: "allow",
+    update_plan: "allow",
+    write_file: "allow",
+    apply_patch: "allow",
+    complete_self_check: "allow",
+  },
 };
 
 const ACTION_RESTRICTIVENESS = {
@@ -50,7 +67,10 @@ const ACTION_RESTRICTIVENESS = {
   ask: 1,
   deny: 2,
 };
-const HARNESS_CONTROL_TOOLS = new Set(["complete_self_check"]);
+const HARNESS_CONTROL_TOOLS = new Set([
+  "update_plan",
+  "complete_self_check",
+]);
 
 function normalizeAction(value, fallback = "deny") {
   return VALID_PERMISSION_ACTIONS.has(value) ? value : fallback;

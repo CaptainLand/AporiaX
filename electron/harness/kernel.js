@@ -15,30 +15,6 @@ export function createHarnessKernel({
 } = {}) {
   const events = createHarnessEventBus({ onEvent, maxHistory: 2_000 });
   const agents = createAgentDefinitionRegistry();
-  agents.register({
-    name: "builder",
-    description:
-      "Implement a delegated change inside an isolated workspace and an explicit non-overlapping write scope.",
-    tools: [
-      "list_directory",
-      "read_file",
-      "search_text",
-      "git_diff",
-      "write_file",
-      "apply_patch",
-    ],
-    permissions: {
-      "*": "deny",
-      write_file: "allow",
-      apply_patch: "allow",
-    },
-    maxRounds: 8,
-    background: true,
-    triggers: ["task.builder.ready"],
-    systemPrompt:
-      "Modify only the delegated write scope. Never broaden the scope, run arbitrary commands, or edit files owned by another Builder.",
-    source: "builtin:v2",
-  });
   const sessions = new HarnessSessionStore({ eventBus: events });
   const scheduler = new HarnessScheduler({
     concurrency: schedulerConcurrency,
@@ -79,7 +55,9 @@ export function createHarnessKernel({
         adaptiveAgentBudget: true,
         taskGraph: true,
         builderIsolation: true,
-        builderExecution: false,
+        builderExecution: true,
+        builderScopeLeases: true,
+        builderConflictCheckedMerge: true,
         taskRpc: false,
       };
     },

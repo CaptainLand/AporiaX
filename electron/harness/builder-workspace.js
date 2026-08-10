@@ -21,7 +21,13 @@ import {
 const SNAPSHOT_MAX_FILES = 800;
 const SNAPSHOT_MAX_BYTES = 24_000_000;
 const SNAPSHOT_MAX_FILE_BYTES = 2_000_000;
-const DIR_IGNORES = new Set([".git", "node_modules", "dist", "release", "coverage"]);
+const DIR_IGNORES = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "release",
+  "coverage",
+]);
 
 function runGit(args, cwd) {
   return new Promise((resolveRun, rejectRun) => {
@@ -63,6 +69,12 @@ function hashBuffer(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+function bufferLooksBinary(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return false;
+  const sample = buffer.subarray(0, Math.min(buffer.length, 8_192));
+  return sample.includes(0);
+}
+
 async function readFileState(root, path) {
   const absolute = resolve(root, ...String(path).split("/"));
   try {
@@ -76,7 +88,11 @@ async function readFileState(root, path) {
       );
     }
     const content = await readFile(absolute);
-    return { missing: false, hash: hashBuffer(content), content };
+    return {
+      missing: false,
+      hash: hashBuffer(content),
+      content,
+    };
   } catch (error) {
     if (error?.code === "ENOENT") {
       return { missing: true, hash: null, content: null };
@@ -98,7 +114,9 @@ async function captureScope(root, scopes) {
 
   const captureFile = async (absolutePath) => {
     if (files.size >= SNAPSHOT_MAX_FILES) {
-      throw new Error(`Builder scope snapshot exceeds ${SNAPSHOT_MAX_FILES} files.`);
+      throw new Error(
+        `Builder scope snapshot exceeds ${SNAPSHOT_MAX_FILES} files.`,
+      );
     }
     const stats = await lstat(absolutePath);
     if (!stats.isFile() || stats.isSymbolicLink()) return;
@@ -166,17 +184,54 @@ function splitNull(buffer) {
     .filter(Boolean);
 }
 
-async function overlayDirtyWorkspace(workspaceRoot, worktreeRoot) {
-  const [unstaged, staged, untracked] = await Promise.all([
-    runGit(["diff", "--name-only", "-z", "HEAD"], workspaceRoot),
-    runGit(["diff", "--cached", "--name-only", "-z", "HEAD"], workspaceRoot),
-    runGit(["ls-files", "--others", "--exclude-standard", "-z"], workspaceRoot),
+async function gitDirtyPathGroups(root) {
+  const [tracked, untracked] = await Promise.all([
+    runGit(["diff", "--name-only", "-z", "HEAD"], root),
+    runGit(["ls-files", "--others", "--exclude-standard", "-z"], root),
   ]);
-  const paths = new Set([
-    ...splitNull(unstaged.stdout),
-    ...splitNull(staged.stdout),
-    ...splitNull(untracked.stdout),
-  ]);
+  return {
+    tracked: [...new Set(splitNull(tracked.stdout))].sort(),
+    untracked: [...new Set(splitNull(untracked.stdout))].sort(),
+  };
+}
+
+async function gitDirtyPaths(root) {
+  const groups = await gitDirtyPathGroups(root);
+  return [...new Set([...groups.tracked, ...groups.untracked])].sort();
+}
+
+async function snapshotDirtyState(root) {
+  const state = new Map();
+  for (const path of await gitDirtyPaths(root)) {
+    if (path === ".git" || path.startsWith(".git/")) continue;
+    state.set(path, await readFileState(root, path));
+  }
+  return state;
+}
+
+function changedDirtyPaths(before, after) {
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  return [...paths].filter((path) => {
+    const leftPresent = before.has(path);
+    const rightPresent = after.has(path);
+    if (leftPresent !== rightPresent) return true;
+    return !sameState(before.get(path), after.get(path));
+  });
+}
+
+async function overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes) {
+  const groups = await gitDirtyPathGroups(workspaceRoot);
+  // Tracked dirty files are part of the user's current project state and are
+  // overlaid repository-wide. Untracked files are overlaid only inside the
+  // Builder's explicit write scopes. This avoids copying unrelated local
+  // archives/build outputs into every worktree while preserving new source
+  // files the Builder may legitimately own.
+  const paths = [
+    ...new Set([
+      ...groups.tracked,
+      ...groups.untracked.filter((path) => pathInsideScopes(path, scopes)),
+    ]),
+  ];
   for (const path of paths) {
     if (path === ".git" || path.startsWith(".git/")) continue;
     const source = resolve(workspaceRoot, ...path.split("/"));
@@ -213,6 +268,75 @@ async function ensureGitWorkspace(workspaceRoot) {
   await runGit(["rev-parse", "--verify", "HEAD"], workspaceRoot);
 }
 
+function calculateLineChanges(previousContent, nextContent) {
+  const toLines = (content) =>
+    content === ""
+      ? []
+      : content.replace(/\r\n/g, "\n").split("\n");
+  const before = toLines(previousContent);
+  const after = toLines(nextContent);
+  let prefix = 0;
+  while (
+    prefix < before.length &&
+    prefix < after.length &&
+    before[prefix] === after[prefix]
+  ) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix &&
+    suffix < after.length - prefix &&
+    before[before.length - 1 - suffix] ===
+      after[after.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  return {
+    additions: Math.max(0, after.length - prefix - suffix),
+    deletions: Math.max(0, before.length - prefix - suffix),
+  };
+}
+
+function createCheckpoint(path, beforeState, afterState) {
+  const before = beforeState || {
+    missing: true,
+    content: Buffer.alloc(0),
+  };
+  const after = afterState || {
+    missing: true,
+    content: Buffer.alloc(0),
+  };
+  if (
+    (!before.missing && bufferLooksBinary(before.content)) ||
+    (!after.missing && bufferLooksBinary(after.content))
+  ) {
+    throw new Error(
+      `Builder merge rejects binary changes; keep Builder scopes to source/config text files: ${path}`,
+    );
+  }
+  const beforeContent = before.missing
+    ? ""
+    : before.content.toString("utf8");
+  const afterContent = after.missing
+    ? ""
+    : after.content.toString("utf8");
+  return {
+    path,
+    beforeContent,
+    afterContent,
+    beforeMissing: Boolean(before.missing),
+    afterMissing: Boolean(after.missing),
+    binary: false,
+    artifact: null,
+    created: Boolean(before.missing && !after.missing),
+    deleted: Boolean(!before.missing && after.missing),
+    reverted: false,
+    source: "builder-merge",
+    ...calculateLineChanges(beforeContent, afterContent),
+  };
+}
+
 export class BuilderWorkspaceManager {
   #leases;
   #eventBus;
@@ -241,8 +365,9 @@ export class BuilderWorkspaceManager {
         ["worktree", "add", "--detach", worktreeRoot, "HEAD"],
         workspaceRoot,
       );
-      await overlayDirtyWorkspace(workspaceRoot, worktreeRoot);
+      await overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes);
       const baseline = await captureScope(workspaceRoot, scopes);
+      const worktreeDirtyBaseline = await snapshotDirtyState(worktreeRoot);
       this.#eventBus?.emit({
         type: "builder.workspace.created",
         agentId: owner,
@@ -278,15 +403,31 @@ export class BuilderWorkspaceManager {
 
       const merge = async () => {
         if (closed) throw new Error("Builder workspace is already closed.");
+        const worktreeDirtyAfter = await snapshotDirtyState(worktreeRoot);
+        const workerTouched = changedDirtyPaths(
+          worktreeDirtyBaseline,
+          worktreeDirtyAfter,
+        );
+        const outsideScopes = workerTouched.filter(
+          (path) => !pathInsideScopes(path, scopes),
+        );
+        if (outsideScopes.length) {
+          this.#eventBus?.emit({
+            type: "builder.scope.violation",
+            agentId: owner,
+            writeScopes: scopes,
+            paths: outsideScopes,
+          });
+          throw new Error(
+            `Builder changed files outside its lease: ${outsideScopes.join(", ")}`,
+          );
+        }
+
         const after = await captureScope(worktreeRoot, scopes);
         const paths = changedPaths(baseline, after);
-        for (const path of paths) {
-          if (!pathInsideScopes(path, scopes)) {
-            throw new Error(
-              `Builder produced a change outside its lease: ${path}`,
-            );
-          }
-        }
+        const checkpoints = paths.map((path) =>
+          createCheckpoint(path, baseline.get(path), after.get(path)),
+        );
 
         const conflicts = [];
         const currentStates = new Map();
@@ -308,7 +449,12 @@ export class BuilderWorkspaceManager {
             writeScopes: scopes,
             conflicts,
           });
-          return { merged: false, conflicts, changes: [] };
+          return {
+            merged: false,
+            conflicts,
+            changes: [],
+            checkpoints: [],
+          };
         }
 
         const applied = [];
@@ -332,7 +478,10 @@ export class BuilderWorkspaceManager {
         } catch (error) {
           for (const path of applied.reverse()) {
             const previous =
-              currentStates.get(path) || { missing: true, content: null };
+              currentStates.get(path) || {
+                missing: true,
+                content: null,
+              };
             const target = resolve(workspaceRoot, ...path.split("/"));
             if (previous.missing) {
               await rm(target, { recursive: true, force: true }).catch(
@@ -350,10 +499,12 @@ export class BuilderWorkspaceManager {
           throw error;
         }
 
-        const changes = paths.map((path) => ({
-          path,
-          created: !after.get(path)?.missing && !baseline.has(path),
-          deleted: !baseline.get(path)?.missing && !after.has(path),
+        const changes = checkpoints.map((checkpoint) => ({
+          path: checkpoint.path,
+          created: checkpoint.created,
+          deleted: checkpoint.deleted,
+          additions: checkpoint.additions,
+          deletions: checkpoint.deletions,
         }));
         this.#eventBus?.emit({
           type: "builder.merge.completed",
@@ -361,7 +512,12 @@ export class BuilderWorkspaceManager {
           writeScopes: scopes,
           changes,
         });
-        return { merged: true, conflicts: [], changes };
+        return {
+          merged: true,
+          conflicts: [],
+          changes,
+          checkpoints,
+        };
       };
 
       return Object.freeze({

@@ -3,14 +3,24 @@ import { normalizeBuilderScopes } from "./scope-leases.js";
 function normalizeTask(input) {
   const id = String(input?.id || "").trim();
   if (!id) throw new Error("Task graph node id is required.");
-  const dependencies = [...new Set((input?.dependsOn || input?.depends_on || []).map(String).filter(Boolean))];
+  const dependencies = [
+    ...new Set(
+      (input?.dependsOn || input?.depends_on || [])
+        .map(String)
+        .filter(Boolean),
+    ),
+  ];
   const role = String(input?.role || "main").trim() || "main";
-  const writeScopes = role === "builder"
-    ? normalizeBuilderScopes(input?.writeScopes || input?.scope || [])
-    : [];
+  const writeScopes =
+    role === "builder"
+      ? normalizeBuilderScopes(input?.writeScopes || input?.scope || [])
+      : [];
   return {
     id,
     title: String(input?.title || id).trim().slice(0, 240),
+    task: String(input?.task || input?.instruction || "")
+      .trim()
+      .slice(0, 4_000),
     role,
     dependencies,
     writeScopes,
@@ -25,7 +35,9 @@ function assertAcyclic(nodes) {
   const visited = new Set();
   const visit = (id) => {
     if (visited.has(id)) return;
-    if (visiting.has(id)) throw new Error(`Task graph contains a cycle at ${id}.`);
+    if (visiting.has(id)) {
+      throw new Error(`Task graph contains a cycle at ${id}.`);
+    }
     visiting.add(id);
     const node = nodes.get(id);
     if (!node) throw new Error(`Unknown task graph dependency: ${id}`);
@@ -42,12 +54,16 @@ export class TaskGraph {
   constructor(tasks = []) {
     for (const task of tasks) {
       const node = normalizeTask(task);
-      if (this.#nodes.has(node.id)) throw new Error(`Duplicate task graph node: ${node.id}`);
+      if (this.#nodes.has(node.id)) {
+        throw new Error(`Duplicate task graph node: ${node.id}`);
+      }
       this.#nodes.set(node.id, node);
     }
     for (const node of this.#nodes.values()) {
       for (const dependency of node.dependencies) {
-        if (!this.#nodes.has(dependency)) throw new Error(`Unknown dependency ${dependency} for ${node.id}.`);
+        if (!this.#nodes.has(dependency)) {
+          throw new Error(`Unknown dependency ${dependency} for ${node.id}.`);
+        }
       }
     }
     assertAcyclic(this.#nodes);
@@ -57,7 +73,11 @@ export class TaskGraph {
     return [...this.#nodes.values()]
       .filter((node) => node.status === "pending")
       .filter((node) => !role || node.role === role)
-      .filter((node) => node.dependencies.every((id) => this.#nodes.get(id)?.status === "completed"))
+      .filter((node) =>
+        node.dependencies.every(
+          (id) => this.#nodes.get(id)?.status === "completed",
+        ),
+      )
       .map((node) => this.#public(node));
   }
 
@@ -73,7 +93,9 @@ export class TaskGraph {
 
   complete(id, result = null) {
     const node = this.#require(id);
-    if (node.status !== "running") throw new Error(`Task graph node is not running: ${node.id}`);
+    if (node.status !== "running") {
+      throw new Error(`Task graph node is not running: ${node.id}`);
+    }
     node.status = "completed";
     node.result = result;
     return this.#public(node);
@@ -82,7 +104,9 @@ export class TaskGraph {
   fail(id, result = null) {
     const node = this.#require(id);
     if (!["running", "pending"].includes(node.status)) {
-      throw new Error(`Task graph node cannot fail from ${node.status}: ${node.id}`);
+      throw new Error(
+        `Task graph node cannot fail from ${node.status}: ${node.id}`,
+      );
     }
     node.status = "failed";
     node.result = result;
@@ -92,7 +116,11 @@ export class TaskGraph {
   blocked() {
     return [...this.#nodes.values()]
       .filter((node) => node.status === "pending")
-      .filter((node) => node.dependencies.some((id) => this.#nodes.get(id)?.status === "failed"))
+      .filter((node) =>
+        node.dependencies.some(
+          (id) => this.#nodes.get(id)?.status === "failed",
+        ),
+      )
       .map((node) => this.#public(node));
   }
 
@@ -110,6 +138,7 @@ export class TaskGraph {
     return {
       id: node.id,
       title: node.title,
+      task: node.task,
       role: node.role,
       dependsOn: [...node.dependencies],
       writeScopes: [...node.writeScopes],
