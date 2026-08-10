@@ -47,7 +47,8 @@
     "test:streaming-performance": "node tests/streaming-performance-smoke.mjs",
     "test:tool-dispatcher": "node tests/tool-dispatcher-smoke.mjs",
     "test:self-check-evidence": "node tests/self-check-evidence-smoke.mjs",
-    "test:subagent-model": "node tests/subagent-model-smoke.mjs"
+    "test:subagent-model": "node tests/subagent-model-smoke.mjs",
+    "test:subagent-loop": "node tests/subagent-loop-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
