@@ -26,7 +26,7 @@ main = replaceSection(
   main,
   `function createLightweightTaskCache(tasks) {`,
   `function getFolderName(folderPath) {`,
-  `function cacheTasksLocally(tasks) {\n  try {\n    const snapshot = serializeTaskCache(tasks, {\n      maxTasks: Number.MAX_SAFE_INTEGER,\n    });\n    localStorage.setItem(STORAGE_KEY, snapshot.json);\n  } catch {\n    try {\n      const fallback = serializeTaskCache(tasks, {\n        maxBytes: 0,\n        maxTasks: 20,\n      });\n      localStorage.setItem(STORAGE_KEY, fallback.json);\n    } catch {\n      // Desktop persistence remains authoritative when browser quota is full.\n    }\n  }\n}\n\nfunction getFolderName(folderPath) {`,
+  `function cacheTasksLocally(tasks) {\n  try {\n    const snapshot = serializeTaskCache(tasks, {\n      maxTasks: Number.MAX_SAFE_INTEGER,\n    });\n    localStorage.setItem(STORAGE_KEY, snapshot.json);\n  } catch {\n    try {\n      const fallback = serializeTaskCache(tasks, {\n        maxBytes: 0,\n        maxTasks: 20,\n      });\n      localStorage.setItem(STORAGE_KEY, fallback.json);\n    } catch {\n      // Desktop persistence remains authoritative when browser quota is full.\n    }\n  }\n}\n\n`,
   "local task cache helpers",
 );
 main = replaceOnce(
