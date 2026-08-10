@@ -45,8 +45,16 @@ runtime = replaceOnce(runtime, oldCall, newCall, "parallel native dispatch");
 const oldSequentialCall = `executeTool({\n              toolCall,\n              workspaceRoot,\n              permissionPolicy,\n              approvalMode: effectiveApprovalMode,\n              requestApproval,\n              signal,\n              sandboxExecutor,\n              sandboxStatus,\n              browserRuntime,\n            })`;
 const newSequentialCall = `dispatchNativeTool({\n              toolCall,\n              registry: TOOL_REGISTRY,\n              permissionPolicy,\n              approvalMode: effectiveApprovalMode,\n              requestApproval,\n              sandboxStatus,\n              signal,\n              parseArguments: parseToolArguments,\n              executeAuthorized: executeAuthorizedTool,\n              executeContext: {\n                workspaceRoot,\n                sandboxExecutor,\n                sandboxStatus,\n                browserRuntime,\n              },\n            })`;
 runtime = replaceOnce(runtime, oldSequentialCall, newSequentialCall, "sequential native dispatch");
-
 await writeFile("electron/agent-runtime-core.js", runtime, "utf8");
+
+let smoke = await readFile("tests/runtime-smoke.mjs", "utf8");
+smoke = replaceOnce(
+  smoke,
+  `  assert.equal(harnessResult.status, "completed");\n  assert.equal(harnessResult.understanding?.committed, true);`,
+  `  if (harnessResult.status !== "completed") {\n    console.error("DISPATCHER_DIAGNOSTIC", JSON.stringify({ status: harnessResult.status, content: harnessResult.content, steps: harnessResult.steps, selfCheck: harnessResult.selfCheck }, null, 2));\n  }\n  assert.equal(harnessResult.status, "completed");\n  assert.equal(harnessResult.understanding?.committed, true);`,
+  "runtime understanding diagnostic",
+);
+await writeFile("tests/runtime-smoke.mjs", smoke, "utf8");
 
 let pkg = JSON.parse(await readFile("package.json", "utf8"));
 pkg.scripts["test:tool-dispatcher"] = "node tests/tool-dispatcher-smoke.mjs";
