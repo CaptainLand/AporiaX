@@ -1,0 +1,43 @@
+name: Validate workspace runtime
+
+on:
+  pull_request:
+    branches:
+      - agent/v0.6-native-tool-executor
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  extract-and-validate:
+    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-workspace-runtime' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.6-workspace-runtime
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: node scripts/apply-workspace-runtime-refactor.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run test:workspace-runtime
+      - run: npm run test:native-tool-executor
+      - run: npm run test:subagent-loop
+      - run: npm run test:tool-dispatcher
+      - run: npm run test:self-check-evidence
+      - run: npm run test:runtime
+      - run: npm run test:harness-v2
+      - run: npm run test:browser
+      - run: npm run test:mcp
+      - run: npm run build
+      - name: Commit validated extraction
+        run: |
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "refactor: extract workspace runtime [workspace-runtime-validated]"
+          git push origin HEAD:agent/v0.6-workspace-runtime
