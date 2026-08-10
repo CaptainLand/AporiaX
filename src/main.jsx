@@ -77,6 +77,8 @@ import {
 } from "./conversation/RuntimeMessageUI";
 import { serializeTaskCache } from "./state/task-store-core.js";
 import { useTaskStore } from "./state/useTaskStore.js";
+import { useWorkspaceMentionAutocomplete } from "./composer/WorkspaceMentionAutocomplete.jsx";
+import { TaskCapabilityCards } from "./settings/TaskCapabilityCards.jsx";
 import "./styles.css";
 
 const STORAGE_KEY = "aporiax.tasks.v1";
@@ -1217,6 +1219,12 @@ function Composer({
     task.providerId,
     task.modelId,
   );
+  const mentionAutocomplete = useWorkspaceMentionAutocomplete({
+    value: message,
+    setValue: setMessage,
+    textareaRef,
+    workspacePath: task.workspacePath || "",
+  });
 
   const send = () => {
     const content = message.trim();
@@ -1329,6 +1337,7 @@ function Composer({
   };
 
   const handleKeyDown = (event) => {
+    if (mentionAutocomplete.handleKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();
@@ -1427,11 +1436,14 @@ function Composer({
             )}
           </div>
         )}
+        {mentionAutocomplete.menu}
         <textarea
           ref={textareaRef}
           value={message}
           onChange={resizeTextarea}
           onKeyDown={handleKeyDown}
+          onClick={mentionAutocomplete.refreshCursor}
+          onKeyUp={mentionAutocomplete.refreshCursor}
           onPaste={handlePaste}
           placeholder={tr("描述你想完成的任务", "Describe what you want to accomplish")}
           rows={1}
@@ -3370,6 +3382,12 @@ function SettingsPanel({
             : tr("绑定工作目录", "Bind workspace")}
         </button>
       </section>
+
+      <TaskCapabilityCards
+        task={task}
+        providers={providers}
+        onManageProviders={onManageProviders}
+      />
 
       <section className="settings-section">
         <div className="settings-label">{tr("界面语言", "Interface language")}</div>
@@ -5544,6 +5562,31 @@ function App() {
     return window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+
+      if (event.type === "skill.activated") {
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => ({
+            ...message,
+            activatedSkills: Array.isArray(event.skills) ? event.skills : [],
+            unresolvedSkills: Array.isArray(event.unresolved)
+              ? event.unresolved
+              : [],
+          })),
+        );
+        return;
+      }
+
+      if (event.type === "skill.unresolved") {
+        setTasks((current) =>
+          updateRunAssistant(current, run, (message) => ({
+            ...message,
+            unresolvedSkills: Array.isArray(event.unresolved)
+              ? event.unresolved
+              : [],
+          })),
+        );
+        return;
+      }
 
       if (event.type === "control.paused") {
         setRunPaused(true);
