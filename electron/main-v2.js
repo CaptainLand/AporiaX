@@ -17,11 +17,10 @@ import {
 // tray, so the renderer and active Harness IPC calls stay alive in background.
 const desktopBackground = installDesktopBackground();
 
-// The compact composer control owns an explicit topology policy switch. Single
-// locks the run to Main-only. Multi restores the normal Adaptive Agent Budget,
-// so AporiaX decides per task whether extra Agents are useful rather than
-// forcing a fixed Main + 2 Builder topology.
-let desktopAgentMode = "single";
+// Multi is the product default: the normal Adaptive Agent Budget decides per
+// task whether Main should stay alone or whether extra Agents are worthwhile.
+// Single is an explicit opt-out that locks the run to Main-only.
+let desktopAgentMode = "multi";
 ipcMain.handle("desktop:agent-mode-get", () => desktopAgentMode);
 ipcMain.handle("desktop:agent-mode-set", (_event, mode) => {
   desktopAgentMode = normalizeDesktopAgentMode(mode);
