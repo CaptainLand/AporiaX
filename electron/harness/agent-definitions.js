@@ -7,7 +7,8 @@ const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
   explore: Object.freeze({
     name: "explore",
-    description: "Search and understand the codebase with exact evidence. Do not edit files.",
+    description:
+      "Search and understand the codebase with exact evidence. Do not edit files.",
     tools: Object.freeze([
       "list_directory",
       "read_file",
@@ -20,11 +21,13 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     maxRounds: 8,
     background: false,
     triggers: Object.freeze([]),
-    systemPrompt: "Return concise, evidence-backed findings to the parent agent.",
+    systemPrompt:
+      "Return concise, evidence-backed findings to the parent agent.",
   }),
   review: Object.freeze({
     name: "review",
-    description: "Review current code or artifacts for correctness, security, completeness, maintainability, and regressions. Do not edit files.",
+    description:
+      "Review current code or artifacts for correctness, security, completeness, maintainability, and regressions. Do not edit files.",
     tools: Object.freeze([
       "list_directory",
       "read_file",
@@ -37,11 +40,13 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     maxRounds: 6,
     background: true,
     triggers: Object.freeze(["plan.step.completed", "changes.batch.ready"]),
-    systemPrompt: "Review only current file versions and return actionable findings with evidence.",
+    systemPrompt:
+      "Review only current file versions and return actionable findings with evidence.",
   }),
   verify: Object.freeze({
     name: "verify",
-    description: "Verify focused claims using repository evidence and project commands. Do not edit source files.",
+    description:
+      "Verify focused claims using repository evidence and project commands. Do not edit source files.",
     tools: Object.freeze([
       "list_directory",
       "read_file",
@@ -55,11 +60,13 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     maxRounds: 4,
     background: true,
     triggers: Object.freeze(["verification.requested"]),
-    systemPrompt: "Report exact commands, exit codes, evidence, and remaining uncertainty.",
+    systemPrompt:
+      "Report exact commands, exit codes, evidence, and remaining uncertainty.",
   }),
   curator: Object.freeze({
     name: "curator",
-    description: "Extract durable, reusable Project Understanding from verified task changes.",
+    description:
+      "Extract durable, reusable Project Understanding from verified task changes.",
     tools: Object.freeze([
       "list_directory",
       "read_file",
@@ -72,7 +79,39 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     maxRounds: 6,
     background: true,
     triggers: Object.freeze(["task.completed"]),
-    systemPrompt: "Store only reusable, evidence-backed project facts and never invent unsupported claims.",
+    systemPrompt:
+      "Store only reusable, evidence-backed project facts and never invent unsupported claims.",
+  }),
+  builder: Object.freeze({
+    name: "builder",
+    description:
+      "Implement one delegated change inside an isolated worktree and explicit non-overlapping write scopes.",
+    tools: Object.freeze([
+      "list_directory",
+      "read_file",
+      "search_text",
+      "git_status",
+      "git_diff",
+      "write_file",
+      "apply_patch",
+      "complete_self_check",
+    ]),
+    permissions: Object.freeze({
+      "*": "deny",
+      list_directory: "allow",
+      read_file: "allow",
+      search_text: "allow",
+      git_status: "allow",
+      git_diff: "allow",
+      write_file: "allow",
+      apply_patch: "allow",
+      complete_self_check: "allow",
+    }),
+    maxRounds: 8,
+    background: true,
+    triggers: Object.freeze(["task.builder.ready"]),
+    systemPrompt:
+      "Modify only the delegated write scopes. Never broaden the scope, run arbitrary commands, or edit files owned by another Builder.",
   }),
 });
 
@@ -97,7 +136,9 @@ function parseScalar(value) {
 
 function parseFrontmatter(content) {
   const source = String(content || "");
-  if (!source.startsWith("---")) return { metadata: {}, body: source.trim() };
+  if (!source.startsWith("---")) {
+    return { metadata: {}, body: source.trim() };
+  }
   const end = source.indexOf("\n---", 3);
   if (end < 0) return { metadata: {}, body: source.trim() };
   const header = source.slice(3, end).trim();
@@ -117,25 +158,42 @@ function parseFrontmatter(content) {
 
 function toStringArray(value, fallback = []) {
   if (Array.isArray(value)) {
-    return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+    return [
+      ...new Set(
+        value.map((item) => String(item || "").trim()).filter(Boolean),
+      ),
+    ];
   }
   if (typeof value === "string" && value.trim()) {
-    return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+    return [
+      ...new Set(
+        value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    ];
   }
   return [...fallback];
 }
 
 function normalizePermissions(value, fallback = {}) {
-  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const input =
+    value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const output = { ...fallback };
   for (const [name, action] of Object.entries(input)) {
     const normalized = String(action || "").trim();
-    if (VALID_PERMISSION_ACTIONS.has(normalized)) output[name] = normalized;
+    if (VALID_PERMISSION_ACTIONS.has(normalized)) {
+      output[name] = normalized;
+    }
   }
   return Object.freeze(output);
 }
 
-function normalizeAgentDefinition(input, builtins = BUILTIN_AGENT_DEFINITIONS) {
+function normalizeAgentDefinition(
+  input,
+  builtins = BUILTIN_AGENT_DEFINITIONS,
+) {
   const name = String(input?.name || "").trim();
   if (!NAME_PATTERN.test(name)) {
     throw new Error(`Invalid agent definition name: ${name || "<empty>"}`);
@@ -147,20 +205,44 @@ function normalizeAgentDefinition(input, builtins = BUILTIN_AGENT_DEFINITIONS) {
   }
   const maxRounds = Math.max(
     2,
-    Math.min(20, Number(input?.maxRounds ?? input?.max_rounds ?? base?.maxRounds ?? 8) || 8),
+    Math.min(
+      20,
+      Number(
+        input?.maxRounds ?? input?.max_rounds ?? base?.maxRounds ?? 8,
+      ) || 8,
+    ),
   );
   return Object.freeze({
     name,
     extends: baseName || null,
-    description: String(input?.description || base?.description || "").trim().slice(0, 2_000),
+    description: String(
+      input?.description || base?.description || "",
+    )
+      .trim()
+      .slice(0, 2_000),
     tools: Object.freeze(toStringArray(input?.tools, base?.tools || [])),
-    permissions: normalizePermissions(input?.permissions, base?.permissions || {}),
-    model: String(input?.model || base?.model || "inherit").trim() || "inherit",
+    permissions: normalizePermissions(
+      input?.permissions,
+      base?.permissions || {},
+    ),
+    model:
+      String(input?.model || base?.model || "inherit").trim() || "inherit",
     maxRounds,
     background:
-      typeof input?.background === "boolean" ? input.background : Boolean(base?.background),
-    triggers: Object.freeze(toStringArray(input?.triggers, base?.triggers || [])),
-    systemPrompt: String(input?.systemPrompt || input?.prompt || base?.systemPrompt || "").trim().slice(0, 16_000),
+      typeof input?.background === "boolean"
+        ? input.background
+        : Boolean(base?.background),
+    triggers: Object.freeze(
+      toStringArray(input?.triggers, base?.triggers || []),
+    ),
+    systemPrompt: String(
+      input?.systemPrompt ||
+        input?.prompt ||
+        base?.systemPrompt ||
+        "",
+    )
+      .trim()
+      .slice(0, 16_000),
     source: input?.source || "runtime",
   });
 }
@@ -177,7 +259,10 @@ export class AgentDefinitionRegistry {
   }
 
   register(input) {
-    const definition = normalizeAgentDefinition(input, Object.fromEntries(this.#definitions));
+    const definition = normalizeAgentDefinition(
+      input,
+      Object.fromEntries(this.#definitions),
+    );
     this.#definitions.set(definition.name, definition);
     return definition;
   }
@@ -197,13 +282,19 @@ export class AgentDefinitionRegistry {
   resolve(name, overrides = {}) {
     const base = this.get(name);
     if (!base) return null;
-    return normalizeAgentDefinition({ ...base, ...overrides, name: base.name }, Object.fromEntries(this.#definitions));
+    return normalizeAgentDefinition(
+      { ...base, ...overrides, name: base.name },
+      Object.fromEntries(this.#definitions),
+    );
   }
 }
 
 export async function loadWorkspaceAgentDefinitions(
   workspaceRoot,
-  { registry = new AgentDefinitionRegistry(), directory = ".aporiax/agents" } = {},
+  {
+    registry = new AgentDefinitionRegistry(),
+    directory = ".aporiax/agents",
+  } = {},
 ) {
   if (!workspaceRoot) return registry;
   const root = join(workspaceRoot, ...directory.split("/"));
