@@ -2,6 +2,11 @@ import {
   createHarnessEventBus,
   getDefaultHarnessEventBus,
 } from "./harness/event-bus.js";
+import {
+  agentBudgetAllowsTool,
+  currentAgentBudget,
+  enforceAgentBudgetEvent,
+} from "./harness/agent-budget.js";
 
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 
@@ -45,18 +50,13 @@ const ACTION_RESTRICTIVENESS = {
   ask: 1,
   deny: 2,
 };
-const HARNESS_CONTROL_TOOLS = new Set([
-  "complete_self_check",
-]);
+const HARNESS_CONTROL_TOOLS = new Set(["complete_self_check"]);
 
 function normalizeAction(value, fallback = "deny") {
   return VALID_PERMISSION_ACTIONS.has(value) ? value : fallback;
 }
 
-export function createPermissionPolicy(
-  mode,
-  projectOverrides = {},
-) {
+export function createPermissionPolicy(mode, projectOverrides = {}) {
   const base =
     DEFAULT_PERMISSION_POLICIES[mode] ||
     DEFAULT_PERMISSION_POLICIES["read-only"];
@@ -66,10 +66,7 @@ export function createPermissionPolicy(
     !Array.isArray(projectOverrides)
       ? projectOverrides
       : {};
-  const names = new Set([
-    ...Object.keys(base),
-    ...Object.keys(overrides),
-  ]);
+  const names = new Set([...Object.keys(base), ...Object.keys(overrides)]);
   const policy = {};
 
   for (const name of names) {
@@ -82,13 +79,8 @@ export function createPermissionPolicy(
       continue;
     }
     const overrideValue =
-      overrides[name] !== undefined
-        ? overrides[name]
-        : overrides["*"];
-    const requestedAction = normalizeAction(
-      overrideValue,
-      baseAction,
-    );
+      overrides[name] !== undefined ? overrides[name] : overrides["*"];
+    const requestedAction = normalizeAction(overrideValue, baseAction);
     // Repository configuration is untrusted input. It may make a task more
     // restrictive, but it must never elevate the permission chosen in the UI.
     policy[name] =
@@ -136,17 +128,24 @@ export class ToolRegistry {
     return [...this.#tools.values()]
       .filter(
         (descriptor) =>
-          getToolPermission(policy, descriptor.name) !== "deny",
+          getToolPermission(policy, descriptor.name) !== "deny" &&
+          agentBudgetAllowsTool(descriptor.name),
       )
       .map((descriptor) => descriptor.definition);
   }
 
   catalog(policy) {
-    return [...this.#tools.values()].map((descriptor) => ({
-      name: descriptor.name,
-      risk: descriptor.risk,
-      permission: getToolPermission(policy, descriptor.name),
-    }));
+    return [...this.#tools.values()].map((descriptor) => {
+      const budgetAllowed = agentBudgetAllowsTool(descriptor.name);
+      return {
+        name: descriptor.name,
+        risk: descriptor.risk,
+        permission: budgetAllowed
+          ? getToolPermission(policy, descriptor.name)
+          : "deny",
+        ...(budgetAllowed ? {} : { budgetBlocked: true }),
+      };
+    });
   }
 }
 
@@ -157,10 +156,19 @@ export function createEventEmitter(onEvent, options = {}) {
     maxHistory: options.maxHistory ?? 1_000,
   });
   const emit = (event) => {
+    if (event?.type === "turn.started") {
+      const budget = currentAgentBudget();
+      if (budget) event.agentBudget = budget;
+    }
+    enforceAgentBudgetEvent(event);
     const enriched = bus.emit(event);
     const sharedBus = getDefaultHarnessEventBus();
     if (enriched && sharedBus && sharedBus !== bus) {
-      const { sequence: runtimeSequence, timestamp: runtimeTimestamp, ...payload } = enriched;
+      const {
+        sequence: runtimeSequence,
+        timestamp: runtimeTimestamp,
+        ...payload
+      } = enriched;
       sharedBus.emit({
         ...payload,
         runtimeSequence,
