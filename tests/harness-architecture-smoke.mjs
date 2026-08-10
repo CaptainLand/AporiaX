@@ -83,15 +83,21 @@ assert(registry.get("docs-review"));
 assert.equal(pluginHost.tools()[0].name, "plugin_echo");
 
 const kernel = createHarnessKernel();
+assert.equal(kernel.capabilities().skills, true);
+assert.equal(kernel.capabilities().progressiveSkillDisclosure, true);
+assert.deepEqual(kernel.skills.list(), []);
 const core = createHarnessCoreServer({ kernel });
 await core.listen();
 const client = createHarnessCoreClient({ baseUrl: core.url, token: core.token });
 const health = await client.health();
 assert.equal(health.ok, true);
 assert.equal(health.capabilities.eventBus, true);
+assert.equal(health.capabilities.skills, true);
 assert.equal(health.capabilities.taskRpc, false);
 const agents = await client.agents();
 assert(agents.agents.some((agent) => agent.name === "review"));
+const skills = await client.skills();
+assert.deepEqual(skills.skills, []);
 await core.close();
 await rm(workspace, { recursive: true, force: true });
 
