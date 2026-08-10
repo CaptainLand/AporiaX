@@ -62,7 +62,7 @@ assert.match(textOnly[0].content, /不支持读取/);
 
 assert.equal(
   sanitizeFinalAnswer("hello 😀  \nworld"),
-  "hello   \nworld",
+  "hello\nworld",
 );
 assert.match(
   formatToolStepDetail("read_file", { error: "Invalid arguments for read_file." }, "en"),
