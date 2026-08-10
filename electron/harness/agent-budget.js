@@ -31,7 +31,7 @@ const PROFILE_LIMITS = Object.freeze({
 });
 
 const MUTATION_PATTERN = /(?:\b(?:add|build|create|edit|fix|implement|migrate|modify|refactor|replace|rewrite|upgrade|write)\b|新增|增加|实现|开发|修改|改造|修复|重构|迁移|替换|升级|写入|制作|接入)/i;
-const INVESTIGATION_PATTERN = /(?:\b(?:analy[sz]e|debug|explain|find|inspect|investigate|review|search|trace|understand)\b|分析|解释|查找|检查|排查|调试|搜索|理解|看看|研究)/i;
+const INVESTIGATION_PATTERN = /(?:\b(?:analy[sz]e|debug|explain|explore|exploration|find|inspect|investigate|review|search|trace|understand)\b|分析|解释|探索|查找|检查|排查|调试|搜索|理解|看看|研究)/i;
 const LARGE_PATTERN = /(?:\b(?:architecture|cross[- ]module|end[- ]to[- ]end|multi[- ]module|platform|plugin|runtime|server|migration|worktree|scheduler)\b|架构|跨模块|全链路|多模块|平台|插件|运行时|服务端|调度|工作树|大规模|整体重构)/i;
 const SIMPLE_PATTERN = /(?:\b(?:tiny|trivial|quick|one[- ]file|rename|typo)\b|简单|小改|只改|改个|单文件|文案|重命名|错别字)/i;
 const AGENT_PATTERN = /(?:\b(?:agent|subagent|parallel|builder|worker)\b|子 ?agent|多 ?agent|并行|builder|worker)/i;
@@ -88,7 +88,7 @@ function classifyRequest(options = {}) {
     return { profile: "direct", score: 0, reason: "no-workspace", text };
   }
   if (!mutating) {
-    if (investigating && (text.length > 220 || pathMentions > 0)) {
+    if (investigating && (text.length > 220 || pathMentions > 0 || mentionsAgents)) {
       return { profile: "read", score: 1, reason: "workspace-investigation", text };
     }
     return { profile: "direct", score: 0, reason: "simple-question", text };
