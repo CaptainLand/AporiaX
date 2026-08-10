@@ -29,7 +29,7 @@ The clock is presentation-only. It does not alter task history, Anchor state, mo
 
 ## Tray runtime
 
-Desktop Background now keeps the start time of each active `harness:run`. While work is active, the tray menu and tooltip refresh once per second:
+Desktop Background keeps the start time of each active `harness:run`. While work is active, the tray menu and tooltip refresh once per second:
 
 ```text
 1 个任务正在后台运行 · 2m 17s
@@ -42,17 +42,27 @@ The timer stops automatically when no runs remain. Duplicate run-id references c
 A compact control is injected immediately after the existing model selector:
 
 ```text
-[model] [Single]
 [model] [Multi]
+[model] [Single]
 ```
 
-The selected mode is stored in renderer localStorage as `aporiax.agent-mode.v1` and synchronized to the Electron main process through a narrow preload bridge.
+**Multi is the default and recommended mode.** An existing explicit `Single` choice remains persisted in renderer localStorage as `aporiax.agent-mode.v1`; fresh/unset state starts in Multi. The renderer synchronizes the selected policy to the Electron main process through a narrow preload bridge.
 
 The control is disabled while a task is already running. A topology change therefore always applies to the next run rather than silently changing the team halfway through a task.
 
+The enabled Multi state uses the same neutral/accent visual language as the surrounding AporiaX controls: a small glowing underline driven by existing accent/current-color tokens instead of a hard-coded red state.
+
+Hovering or keyboard-focusing the switch shows a compact explanation:
+
+```text
+Multi: adaptively uses extra Agents only when useful.
+Single: Main only, with the lowest token/coordination cost.
+Recommended: keep Multi enabled.
+```
+
 ### Single
 
-Single mode is the default and means Main only.
+Single means Main only.
 
 Harness receives a locked `direct` Agent budget:
 
@@ -137,13 +147,14 @@ npm start
 
 Manual Windows checks:
 
-1. Confirm the composer shows `Single` beside the model selector by default.
-2. Start a task in Single mode and confirm no delegated subagent starts even if the task is large.
-3. Confirm the assistant heading timer advances while the task runs and freezes when the turn completes.
-4. Hide AporiaX to the tray and confirm the tray status includes the same style of elapsed runtime.
-5. After the task completes, switch to Multi mode. The control should turn pink/accented.
-6. Run a simple Multi task and confirm AporiaX is allowed to stay Main-only instead of forcing Builders.
-7. Run a medium Multi task and confirm only the useful helper/review topology is selected when applicable.
-8. Run a safely decomposable large multi-module write task and confirm adaptive orchestration can start up to two Builders.
-9. While a task is running, confirm the Single/Multi button is disabled.
-10. Confirm the Windows completion notification remains and the old AporiaX internal completion toast stays hidden.
+1. On a fresh/unset mode state, confirm the composer shows `Multi` beside the model selector by default.
+2. Confirm Multi is shown with the neutral/accent glowing underline rather than a red selected state.
+3. Hover Multi/Single and confirm the tooltip explains both modes and recommends Multi.
+4. Switch to Single, start a large task, and confirm no delegated subagent starts.
+5. Confirm the assistant heading timer advances while the task runs and freezes when the turn completes.
+6. Hide AporiaX to the tray and confirm the tray status includes elapsed runtime.
+7. Return to Multi and run a simple task; confirm AporiaX may stay Main-only rather than forcing Builders.
+8. Run a medium Multi task and confirm only useful helpers are selected when applicable.
+9. Run a safely decomposable large multi-module write task and confirm adaptive orchestration can start up to two Builders.
+10. While a task is running, confirm the Single/Multi button is disabled.
+11. Confirm the Windows completion notification remains and the old AporiaX internal completion toast stays hidden.
