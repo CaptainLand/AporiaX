@@ -75,7 +75,9 @@ export async function prepareSkillRequest(
   const userIndex = selectedUserIndex(messages, request?.sourceUserId);
   if (userIndex < 0) return request;
   const workspacePath = String(request?.workspacePath || "").trim();
-  const originalContent = String(messages[userIndex]?.content || "");
+  const originalContent = String(
+    messages[userIndex]?.skillOriginalContent || messages[userIndex]?.content || "",
+  );
   const activation = await activateForText(originalContent, {
     ...options,
     workspacePath,
@@ -91,7 +93,9 @@ export async function prepareSkillRequest(
   nextMessages[userIndex] = {
     ...messages[userIndex],
     skillOriginalContent: originalContent,
-    content: [originalContent.trim(), context].filter(Boolean).join("\n\n"),
+    content: [String(messages[userIndex]?.content || "").trim(), context]
+      .filter(Boolean)
+      .join("\n\n"),
     activatedSkills: activation.skills.map(publicSkill),
   };
   return {
