@@ -52,6 +52,13 @@ import {
 } from "./agent-context.js";
 import { createWitnessMonitor } from "./witness-monitor.js";
 import {
+  BROWSER_TOOL_DEFINITIONS,
+  BROWSER_TOOL_RISKS,
+  createBrowserRuntime,
+  executeBrowserTool,
+  isBrowserToolName,
+} from "./browser-runtime.js";
+import {
   createProjectUnderstandingStore,
   normalizeProjectUnderstandingCandidate,
 } from "./project-understanding.js";
@@ -471,6 +478,7 @@ const TOOL_DEFINITIONS = [
     },
   },
   ...OFFICE_TOOL_DEFINITIONS,
+  ...BROWSER_TOOL_DEFINITIONS,
   {
     type: "function",
     function: {
@@ -533,6 +541,7 @@ const TOOL_RISKS = {
   create_presentation: "write",
   create_spreadsheet: "write",
   run_command: "execute",
+  ...BROWSER_TOOL_RISKS,
   complete_self_check: "control",
 };
 
@@ -1205,6 +1214,7 @@ async function executeTool({
   signal,
   sandboxExecutor = runCommandWithFallback,
   sandboxStatus = null,
+  browserRuntime = null,
 }) {
   throwIfAborted(signal);
   const toolName = toolCall.function.name;
@@ -1261,6 +1271,12 @@ async function executeTool({
     if (!approval?.approved) {
       throw new Error(`The user rejected tool: ${toolName}`);
     }
+  }
+
+  if (isBrowserToolName(toolName)) {
+    return {
+      modelResult: await executeBrowserTool(browserRuntime, toolName, input),
+    };
   }
 
   if (toolName === "list_directory") {
@@ -3438,6 +3454,7 @@ export async function runHarness({
             commandToolAvailable),
       )
     : [];
+  const browserRuntime = createBrowserRuntime();
   witness = createWitnessMonitor({ emit: forwardEvent });
   emit({
     type: "turn.started",
@@ -3478,6 +3495,7 @@ export async function runHarness({
         "Do not use emoji, pictograms, decorative symbols, or status glyphs anywhere in the final answer.",
         "Do not generate SVG markup or SVG files unless the user explicitly asks for SVG output.",
         "Use git_status and git_diff to inspect repository changes when the workspace is a Git repository.",
+        "Use browser_open and browser_snapshot when the task requires checking a running web page. Prefer semantic browser locators. Treat browser_click, browser_fill, and browser_press as potentially state-changing actions and never claim a page was verified without observing the resulting snapshot, console, or network evidence.",
         "For work that needs more than one meaningful action, call update_plan before changing files. Keep one step in_progress at a time and update the plan whenever the route changes.",
         "Delegate independent codebase exploration, review, and verification to delegate_subagent. Give each subagent a focused task and path scope. Issue multiple delegate_subagent calls in one response when they do not depend on each other; AporiaX can run them concurrently.",
         "Use background subagents for long verification while continuing independent work. Collect their results before relying on them or delivering the final answer.",
@@ -5245,6 +5263,7 @@ export async function runHarness({
               signal,
               sandboxExecutor,
               sandboxStatus,
+              browserRuntime,
             });
             if (result.change) {
               mergeFileChange(changeMap, result.change);
@@ -5530,6 +5549,7 @@ export async function runHarness({
     failedResult.witness = witness.snapshot();
     return failedResult;
   } finally {
+    await browserRuntime.close().catch(() => undefined);
     witness?.dispose();
   }
 }
