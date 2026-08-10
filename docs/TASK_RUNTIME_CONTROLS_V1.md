@@ -68,27 +68,35 @@ The budget is `locked`, so plan growth or changed-file growth cannot automatical
 
 ### Multi
 
-Multi mode enables the existing safe Builder architecture:
+Multi means **adaptive multi-Agent mode**, not "always run Main + 2 Builders".
+
+The desktop layer does not force an Agent Budget profile. Instead it leaves the existing Adaptive Agent Budget and orchestration rules in control:
 
 ```text
-Main / Lead
-    |
-Builder preflight
-    |
-Shared Contract + Plan Approval
-    |
-Task Graph / Scheduler
-   / \
-Builder A  Builder B
-   \ /
-Main integration
+Simple task
+    -> Main only
+
+Read / investigation
+    -> Main + useful read-only helper when budget allows
+
+Medium task
+    -> Main + useful Review / Verify / Explore according to the adaptive budget
+
+Large safely decomposable write task
+    -> Main / Lead
+       -> Builder preflight
+       -> Shared Contract + Plan Approval
+       -> Task Graph / Scheduler
+       -> 0, 1, or up to 2 isolated Builders
+       -> Main integration
+       -> Review / Verify when useful
 ```
 
-The desktop request receives a locked `large` budget with Builder capacity `2` and `builderOrchestration: true`.
+So Multi is permission for AporiaX to form the useful team for the current task. A simple request can still stay entirely Main-only and pay no unnecessary subagent cost. A larger task can receive extra Agents as its plan and changed-file surface justify them.
 
-`2` is a hard maximum, not a requirement to invent parallel work. The existing Builder preflight may still decline parallelization, or use fewer Builders, when the task cannot be split into safe non-overlapping scopes. This preserves Scope Lease, Worktree, Shared Contract, and conflict-check guarantees instead of forcing two workers onto tightly coupled code.
+Two Builders remains the hard maximum. The existing Builder preflight may use one Builder, two Builders, or decline Builder parallelization completely when safe non-overlapping scopes do not exist. This preserves Scope Lease, Worktree, Shared Contract, and conflict-check guarantees.
 
-Review / Verify remain available to the existing quality pipeline in Multi mode. They are not additional production leaders; Main remains the single integration authority.
+Review / Verify remain part of the adaptive quality pipeline rather than mandatory workers on every Multi run. Main remains the single final integration authority.
 
 ## Renderer integration boundary
 
@@ -121,10 +129,11 @@ npm start
 Manual Windows checks:
 
 1. Confirm the composer shows `Single` beside the model selector by default.
-2. Start a task in Single mode and confirm no delegated subagent starts.
+2. Start a task in Single mode and confirm no delegated subagent starts even if the task is large.
 3. Confirm the assistant heading timer advances while the task runs and freezes when the turn completes.
 4. Hide AporiaX to the tray and confirm the tray status includes the same style of elapsed runtime.
 5. After the task completes, switch to Multi mode. The control should turn pink/accented.
-6. Run a safely decomposable multi-module write task and confirm Builder orchestration can start up to two Builders.
-7. While a task is running, confirm the Single/Multi button is disabled.
-8. Confirm the Windows completion notification remains and the old AporiaX internal completion toast stays hidden.
+6. Run a simple Multi task and confirm AporiaX is allowed to stay Main-only instead of forcing Builders.
+7. Run a safely decomposable large multi-module write task and confirm adaptive orchestration can start up to two Builders.
+8. While a task is running, confirm the Single/Multi button is disabled.
+9. Confirm the Windows completion notification remains and the old AporiaX internal completion toast stays hidden.
