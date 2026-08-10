@@ -10,6 +10,7 @@ import {
   rendererTaskControlsScript,
 } from "../electron/desktop-task-controls.js";
 import {
+  classifyAgentTask,
   currentAgentBudget,
   enforceAgentBudgetEvent,
   planAgentBudget,
@@ -50,6 +51,22 @@ assert.equal(desktopAgentModeBudget("multi"), null);
 const adaptiveSmallPlan = planAgentBudget(adaptiveSmall);
 assert.notEqual(adaptiveSmallPlan.profile, "large");
 assert.equal(adaptiveSmallPlan.limits.roles.builder, 0);
+
+const adaptiveExploration = applyDesktopAgentMode(
+  {
+    workspacePath: "C:/repo",
+    permission: "read-only",
+    messages: [
+      {
+        role: "user",
+        content: "Delegate a focused exploration of the persistence mechanism.",
+      },
+    ],
+  },
+  "multi",
+);
+assert.equal(classifyAgentTask(adaptiveExploration).profile, "read");
+assert.equal(planAgentBudget(adaptiveExploration).limits.roles.explore, 1);
 
 const adaptiveLarge = applyDesktopAgentMode(
   {
