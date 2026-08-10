@@ -34,6 +34,7 @@
     "test:vision": "node tests/vision-proxy-smoke.mjs",
     "test:runtime-ui": "node tests/runtime-ui-smoke.mjs",
     "test:process-ui": "node tests/agent-process-mentions-smoke.mjs",
+    "test:task-store": "node tests/task-store-smoke.mjs",
     "test:skills": "node tests/skill-system-smoke.mjs",
     "test:browser": "node tests/browser-runtime-smoke.mjs",
     "test:mcp": "node tests/mcp-runtime-smoke.mjs",
