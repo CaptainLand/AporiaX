@@ -45,7 +45,8 @@
     "test:tool-permissions": "node tests/tool-permissions-smoke.mjs",
     "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs",
     "test:streaming-performance": "node tests/streaming-performance-smoke.mjs",
-    "test:tool-dispatcher": "node tests/tool-dispatcher-smoke.mjs"
+    "test:tool-dispatcher": "node tests/tool-dispatcher-smoke.mjs",
+    "test:self-check-evidence": "node tests/self-check-evidence-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
