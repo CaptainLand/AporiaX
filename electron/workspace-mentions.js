@@ -21,7 +21,14 @@ export function parseWorkspaceMentions(text) {
 
   for (const match of source.matchAll(pattern)) {
     const path = normalizeMentionPath(match[2] || match[3] || match[4]);
-    if (!path || path === "." || matches.includes(path)) continue;
+    if (
+      !path ||
+      path === "." ||
+      path.toLowerCase() === "skill" ||
+      matches.includes(path)
+    ) {
+      continue;
+    }
     matches.push(path);
     if (matches.length >= MAX_MENTIONS) break;
   }
@@ -140,7 +147,9 @@ export async function prepareWorkspaceMentionMessage(
   message = {},
   workspacePath = "",
 ) {
-  const originalContent = String(message?.content || "");
+  const originalContent = String(
+    message?.workspaceMentionOriginalContent || message?.content || "",
+  );
   const records = await resolveWorkspaceMentionRecords(
     String(workspacePath || "").trim(),
     originalContent,
@@ -150,6 +159,7 @@ export async function prepareWorkspaceMentionMessage(
   const context = buildMentionContext(records);
   return {
     ...message,
+    workspaceMentionOriginalContent: originalContent,
     content: [originalContent.trim(), context].filter(Boolean).join("\n\n"),
     workspaceMentions: records.map(({ content, ...record }) => record),
   };
