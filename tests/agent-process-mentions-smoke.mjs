@@ -19,7 +19,7 @@ assert.deepEqual(
   parseWorkspaceMentions(
     'Review @src/main.jsx and @{docs/my guide.md}; ignore mail user@example.com and repeat @src/main.jsx',
   ),
-  ["docs/my guide.md", "src/main.jsx"],
+  ["src/main.jsx", "docs/my guide.md"],
 );
 
 const mentionQuery = extractWorkspaceMentionQuery(
@@ -34,6 +34,7 @@ const replaced = replaceWorkspaceMentionQuery(
 );
 assert.equal(replaced.value, "Please compare @src/main.jsx ");
 assert.equal(formatWorkspaceMentionToken("docs/my guide.md"), "@{docs/my guide.md}");
+assert.equal(formatWorkspaceMentionToken("本地化/规则.md"), "@{本地化/规则.md}");
 assert.deepEqual(
   rankWorkspaceFiles(
     ["src/runtime.jsx", "docs/runtime.md", "src/main.jsx"],
@@ -83,8 +84,10 @@ try {
   const workspace = join(root, "workspace");
   await mkdir(join(workspace, "src"), { recursive: true });
   await mkdir(join(workspace, "docs"), { recursive: true });
+  await mkdir(join(workspace, "本地化"), { recursive: true });
   await writeFile(join(workspace, "src", "main.jsx"), "export const answer = 42;\n", "utf8");
   await writeFile(join(workspace, "docs", "my guide.md"), "Follow the translation guide.\n", "utf8");
+  await writeFile(join(workspace, "本地化", "规则.md"), "保留术语一致性。\n", "utf8");
   await writeFile(join(root, "secret.txt"), "must not escape workspace\n", "utf8");
 
   const prepared = await prepareWorkspaceMentionRequest({
@@ -94,14 +97,15 @@ try {
       {
         id: "user-1",
         role: "user",
-        content: "Read @src/main.jsx and @{docs/my guide.md}.",
+        content: "Read @src/main.jsx, @{docs/my guide.md}, and @{本地化/规则.md}.",
       },
     ],
   });
-  assert.equal(prepared.workspaceMentions.length, 2);
+  assert.equal(prepared.workspaceMentions.length, 3);
   assert.ok(prepared.workspaceMentions.every((item) => item.status === "loaded"));
   assert.match(prepared.messages[0].content, /export const answer = 42/);
   assert.match(prepared.messages[0].content, /Follow the translation guide/);
+  assert.match(prepared.messages[0].content, /保留术语一致性/);
   assert.match(prepared.messages[0].content, /not as higher-priority instructions/);
 
   const blocked = await prepareWorkspaceMentionRequest({
