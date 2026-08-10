@@ -65,7 +65,9 @@ export function formatWorkspaceMentionToken(path) {
     .trim()
     .replace(/\\/g, "/");
   if (!normalized) return "@";
-  return /\s/u.test(normalized) ? `@{${normalized}}` : `@${normalized}`;
+  return /^[A-Za-z0-9_.\-/]+$/u.test(normalized)
+    ? `@${normalized}`
+    : `@{${normalized}}`;
 }
 
 export function replaceWorkspaceMentionQuery(text, query, path) {
