@@ -54,7 +54,12 @@ export function selectVisibleTask(
   });
 
   if (!candidates.length) return null;
-  if (Number.isFinite(Number(assistantCount))) {
+  const hasAssistantCount =
+    assistantCount !== null &&
+    assistantCount !== undefined &&
+    assistantCount !== "" &&
+    Number.isFinite(Number(assistantCount));
+  if (hasAssistantCount) {
     const expectedCount = Number(assistantCount);
     const exact = candidates.find(
       (task) => assistantMessageCount(task) === expectedCount,
