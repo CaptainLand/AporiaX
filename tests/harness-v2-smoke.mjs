@@ -97,28 +97,95 @@ assert.equal(
   "read",
 );
 
+const explicitExploration = planAgentBudget({
+  workspacePath: "C:/repo",
+  permission: "read-only",
+  messages: [
+    {
+      role: "user",
+      content: "Delegate a focused exploration of the persistence mechanism.",
+    },
+  ],
+});
+assert.equal(explicitExploration.profile, "read");
+assert.equal(explicitExploration.limits.roles.explore, 1);
+
+const backgroundExploration = planAgentBudget({
+  workspacePath: "C:/repo",
+  permission: "read-only",
+  messages: [
+    {
+      role: "user",
+      content: "Explore persistence in the background, then report it.",
+    },
+  ],
+});
+assert.equal(backgroundExploration.profile, "read");
+assert.equal(backgroundExploration.limits.roles.explore, 1);
+
+const selfCheckedWrite = planAgentBudget({
+  workspacePath: "C:/repo",
+  permission: "workspace-write",
+  messages: [
+    {
+      role: "user",
+      content: "创建一个经过自检的模块。",
+    },
+  ],
+});
+assert.equal(selfCheckedWrite.profile, "standard");
+assert.equal(selfCheckedWrite.limits.roles.review, 2);
+assert.equal(selfCheckedWrite.limits.roles.verify, 1);
+assert.equal(selfCheckedWrite.limits.roles.curator, 1);
+
 const validPlan = normalizeBuilderOrchestrationPlan(
   {
     parallelize: true,
     reason: "independent modules",
+    contract: {
+      title: "Smoke integration contract",
+      goal: "Auth and UI remain independently owned while following one integration invariant.",
+      invariants: [
+        {
+          key: "integration.boundary",
+          category: "general",
+          value: "Builders keep their scopes independent and leave shared integration to Main.",
+          severity: "must",
+          description: "The smoke fixture follows the Collaboration v1 plan-approval contract.",
+        },
+      ],
+      sharedFiles: [],
+      acceptance: ["Auth and UI builder scopes remain non-overlapping."],
+    },
     tasks: [
       {
         id: "auth",
         title: "Auth",
         task: "Implement auth module",
         writeScopes: ["src/auth"],
+        contractKeys: ["integration.boundary"],
+        approvedPlan: {
+          approach: "Implement only the auth-owned scope.",
+          assumptions: [],
+        },
       },
       {
         id: "ui",
         title: "UI",
         task: "Implement UI module",
         writeScopes: ["src/ui"],
+        contractKeys: ["integration.boundary"],
+        approvedPlan: {
+          approach: "Implement only the UI-owned scope.",
+          assumptions: [],
+        },
       },
     ],
   },
   { builderLimit: 2 },
 );
 assert.equal(validPlan.parallelize, true);
+assert.equal(validPlan.approval.approved, true);
 assert.equal(validPlan.tasks.length, 2);
 assert.equal(validPlan.tasks[0].task.length > 0, true);
 
