@@ -36,9 +36,9 @@ import {
 } from "./attachment-parser.js";
 import { createOpenAICompatibleProvider } from "./runtime/provider-stream.js";
 import {
-  buildToolApprovalRequest,
-  resolveToolExecutionPermission,
-} from "./runtime/tool-permissions.js";
+  dispatchNativeTool,
+  projectNativeToolCatalog,
+} from "./runtime/tool-dispatcher.js";
 import {
   getSandboxStatus,
   runCommandWithFallback,
@@ -1208,51 +1208,17 @@ function countExactOccurrences(content, searchText) {
   return count;
 }
 
-async function executeTool({
+async function executeAuthorizedTool({
   toolCall,
+  toolName = toolCall.function.name,
+  input,
   workspaceRoot,
-  permissionPolicy,
-  approvalMode = "manual",
-  requestApproval,
   signal,
   sandboxExecutor = runCommandWithFallback,
   sandboxStatus = null,
   browserRuntime = null,
 }) {
   throwIfAborted(signal);
-  const toolName = toolCall.function.name;
-  const descriptor = TOOL_REGISTRY.get(toolName);
-  if (!descriptor) {
-    throw new Error(`Unsupported tool: ${toolName}`);
-  }
-  const input = parseToolArguments(toolCall);
-  const permissionAction = getToolPermission(
-    permissionPolicy,
-    toolName,
-  );
-  const permissionDecision = resolveToolExecutionPermission({
-    toolName,
-    permissionAction,
-    approvalMode,
-    sandboxStatus,
-  });
-  if (permissionDecision.denied) {
-    throw new Error(`Permission denied for tool: ${toolName}`);
-  }
-  if (permissionDecision.requiresApproval) {
-    const approval = await requestApproval(
-      buildToolApprovalRequest({
-        toolName,
-        descriptor,
-        input,
-        sandboxStatus,
-      }),
-    );
-    throwIfAborted(signal);
-    if (!approval?.approved) {
-      throw new Error(`The user rejected tool: ${toolName}`);
-    }
-  }
 
   if (isBrowserToolName(toolName)) {
     return {
@@ -2889,15 +2855,21 @@ async function runSubagentTask({
               );
             }
           }
-          const executed = await executeTool({
+          const executed = await dispatchNativeTool({
             toolCall,
-            workspaceRoot,
+            registry: TOOL_REGISTRY,
             permissionPolicy,
             approvalMode,
             requestApproval,
-            signal,
-            sandboxExecutor,
             sandboxStatus,
+            signal,
+            parseArguments: parseToolArguments,
+            executeAuthorized: executeAuthorizedTool,
+            executeContext: {
+              workspaceRoot,
+              sandboxExecutor,
+              sandboxStatus,
+            },
           });
           modelResult = compactSubagentModelResult(executed.modelResult);
         } catch (error) {
@@ -3171,26 +3143,10 @@ export async function runHarness({
     ? await mcpRuntime.discover({ permissionMode: permission })
     : { servers: [], tools: [], errors: [] };
   const staticToolCatalog = hasWorkspace
-    ? TOOL_REGISTRY.catalog(permissionPolicy).map((tool) => {
-        if (tool.name !== "run_command" || !commandToolAvailable) return tool;
-        const decision = resolveToolExecutionPermission({
-          toolName: "run_command",
-          permissionAction: tool.permission,
-          approvalMode: effectiveApprovalMode,
-          sandboxStatus,
-        });
-        return {
-          ...tool,
-          permission: decision.requiresApproval ? "ask" : "allow",
-          executionMode: decision.executionMode,
-          warning: decision.sandboxAutoApproved
-            ? commandUsesContainer
-              ? "Commands run automatically inside the isolated Docker sandbox."
-              : "Commands run automatically in a temporary workspace copy with conflict-checked synchronization."
-            : decision.sandboxSafe
-              ? "Commands use the sandbox but require explicit approval for this task."
-              : "No safe sandbox backend is available. Host execution requires explicit approval.",
-        };
+    ? projectNativeToolCatalog({
+        catalog: TOOL_REGISTRY.catalog(permissionPolicy),
+        approvalMode: effectiveApprovalMode,
+        sandboxStatus,
       })
     : [];
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
@@ -4699,15 +4655,22 @@ export async function runHarness({
                   ),
                 };
               } else {
-                result = await executeTool({
+                result = await dispatchNativeTool({
                   toolCall,
-                  workspaceRoot,
+                  registry: TOOL_REGISTRY,
                   permissionPolicy,
                   approvalMode: effectiveApprovalMode,
                   requestApproval,
-                  signal,
-                  sandboxExecutor,
                   sandboxStatus,
+                  signal,
+                  parseArguments: parseToolArguments,
+                  executeAuthorized: executeAuthorizedTool,
+                  executeContext: {
+                    workspaceRoot,
+                    sandboxExecutor,
+                    sandboxStatus,
+                    browserRuntime,
+                  },
                 });
               }
             } catch (error) {
@@ -5015,16 +4978,22 @@ export async function runHarness({
             if (matchedVerificationCandidate) {
               selfCheck.verificationAttempted = true;
             }
-            result = await executeTool({
+            result = await dispatchNativeTool({
               toolCall,
-              workspaceRoot,
+              registry: TOOL_REGISTRY,
               permissionPolicy,
               approvalMode: effectiveApprovalMode,
               requestApproval,
-              signal,
-              sandboxExecutor,
               sandboxStatus,
-              browserRuntime,
+              signal,
+              parseArguments: parseToolArguments,
+              executeAuthorized: executeAuthorizedTool,
+              executeContext: {
+                workspaceRoot,
+                sandboxExecutor,
+                sandboxStatus,
+                browserRuntime,
+              },
             });
             if (result.change) {
               mergeFileChange(changeMap, result.change);

@@ -44,7 +44,8 @@
     "test:mcp": "node tests/mcp-runtime-smoke.mjs",
     "test:tool-permissions": "node tests/tool-permissions-smoke.mjs",
     "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs",
-    "test:streaming-performance": "node tests/streaming-performance-smoke.mjs"
+    "test:streaming-performance": "node tests/streaming-performance-smoke.mjs",
+    "test:tool-dispatcher": "node tests/tool-dispatcher-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
