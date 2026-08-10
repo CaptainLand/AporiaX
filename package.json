@@ -51,7 +51,8 @@
     "test:subagent-loop": "node tests/subagent-loop-smoke.mjs",
     "test:native-tool-executor": "node tests/native-tool-executor-smoke.mjs",
     "test:workspace-runtime": "node tests/workspace-runtime-smoke.mjs",
-    "test:conversation-runtime": "node tests/conversation-runtime-smoke.mjs"
+    "test:conversation-runtime": "node tests/conversation-runtime-smoke.mjs",
+    "test:self-check-coordinator": "node tests/self-check-coordinator-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
