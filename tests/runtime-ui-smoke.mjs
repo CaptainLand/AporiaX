@@ -41,6 +41,23 @@ assert.equal(
   }).id,
   "task-b",
 );
+assert.equal(
+  selectVisibleTask(tasks, {
+    title: "市场开发",
+    workspace: "市场",
+    assistantCount: 3,
+  }),
+  null,
+  "a truncated/stale cache must not be guessed when the visible assistant count differs",
+);
+assert.equal(
+  selectVisibleTask(tasks, {
+    title: "市场开发",
+    workspace: "市场",
+  }).id,
+  "task-a",
+  "title/workspace fallback remains available when no DOM message count is supplied",
+);
 
 const providers = [
   {
