@@ -32,11 +32,28 @@ export function createHarnessCoreServer({ kernel, host = "127.0.0.1", port = 0, 
       return;
     }
     if (url.pathname === "/v1/health") {
-      json(res, 200, { ok: true, version: kernel.version, capabilities: kernel.capabilities() });
+      json(res, 200, {
+        ok: true,
+        version: kernel.version,
+        capabilities: kernel.capabilities(),
+        capabilitySummary: kernel.capabilitiesRegistry?.summary?.() || null,
+      });
       return;
     }
     if (url.pathname === "/v1/snapshot") {
       json(res, 200, kernel.snapshot());
+      return;
+    }
+    if (url.pathname === "/v1/capabilities") {
+      json(res, 200, {
+        capabilities:
+          kernel.capabilitiesRegistry?.list?.({
+            kind: url.searchParams.get("kind") || "",
+            source: url.searchParams.get("source") || "",
+            scopeId: url.searchParams.get("scopeId") || "",
+          }) || [],
+        summary: kernel.capabilitiesRegistry?.summary?.() || { total: 0, byKind: {}, bySource: {} },
+      });
       return;
     }
     if (url.pathname === "/v1/agents") {
