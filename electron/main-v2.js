@@ -20,9 +20,6 @@ import {
   skillActivationSummary,
 } from "./skill-runtime.js";
 
-// Install desktop background behavior before the compatibility main process
-// creates its BrowserWindow. The close event is intercepted and hidden to the
-// tray, so the renderer and active Harness IPC calls stay alive in background.
 const desktopBackground = installDesktopBackground();
 const activeRunMetadata = new Map();
 let kernel = null;
@@ -33,6 +30,27 @@ function skillRuntimeOptions(workspacePath = "") {
     workspacePath,
     userSkillsDirectory: join(app.getPath("userData"), "skills"),
   };
+}
+
+function seedSkillOriginalContent(request = {}) {
+  const messages = Array.isArray(request?.messages) ? request.messages : [];
+  const targetIndex = request?.sourceUserId
+    ? messages.findIndex(
+        (message) =>
+          message?.role === "user" && message?.id === request.sourceUserId,
+      )
+    : -1;
+  const userIndex =
+    targetIndex >= 0
+      ? targetIndex
+      : messages.findLastIndex((message) => message?.role === "user");
+  if (userIndex < 0) return request;
+  const nextMessages = [...messages];
+  nextMessages[userIndex] = {
+    ...messages[userIndex],
+    skillOriginalContent: String(messages[userIndex]?.content || ""),
+  };
+  return { ...request, messages: nextMessages };
 }
 
 function emitSkillStatus(event, request, activatedSkills = [], unresolved = []) {
@@ -51,12 +69,6 @@ function emitSkillStatus(event, request, activatedSkills = [], unresolved = []) 
   kernel?.events.emit({ runId, ...payload });
 }
 
-// Install the per-run budget boundary before the legacy desktop main process
-// registers harness:run. This keeps the migration incremental while making the
-// cost guard effective for the existing runtime today. Provider listings are
-// also wrapped so the renderer can accept image attachments when a usable
-// Vision Proxy exists, without changing the native capability of the main model
-// inside the runtime.
 const nativeHandle = ipcMain.handle.bind(ipcMain);
 const originalHandle = ipcMain.handle;
 ipcMain.handle = function budgetAwareHandle(channel, listener) {
@@ -116,12 +128,16 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       });
     }
     try {
-      // Skills are selected from the user's original request. Vision runs before
-      // @file inlining so a separate visual Provider never receives unrelated
-      // workspace-file contents. Only activated Skill instructions are disclosed
-      // to the main Agent.
+      // Preserve the original user text for deterministic Skill matching, then
+      // let Vision inspect the original prompt/image before any Skill or @file
+      // body is added. This avoids sending Skill instructions or workspace file
+      // contents to a separate visual Provider.
+      const seededRequest = seedSkillOriginalContent(request);
+      const visionPreparedRequest = await prepareVisionProxyRequest(
+        seededRequest,
+      );
       const skillPreparedRequest = await prepareSkillRequest(
-        request,
+        visionPreparedRequest,
         skillRuntimeOptions(workspacePath),
       );
       emitSkillStatus(
@@ -130,11 +146,8 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
         skillActivationSummary(skillPreparedRequest),
         skillPreparedRequest?.unresolvedSkills || [],
       );
-      const visionPreparedRequest = await prepareVisionProxyRequest(
-        skillPreparedRequest,
-      );
       const preparedRequest = await prepareWorkspaceMentionRequest(
-        visionPreparedRequest,
+        skillPreparedRequest,
       );
       return await runWithAgentBudget(budget, {}, () =>
         listener(event, preparedRequest),
