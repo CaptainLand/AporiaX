@@ -105,7 +105,10 @@ export async function prepareSkillMessage(
   workspacePath = "",
   options = {},
 ) {
-  const activation = await activateForText(message?.content, {
+  const activationSource = String(
+    message?.workspaceMentionOriginalContent || message?.content || "",
+  );
+  const activation = await activateForText(activationSource, {
     ...options,
     workspacePath,
   });
