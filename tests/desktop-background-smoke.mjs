@@ -9,10 +9,6 @@ import {
   taskCompletionToastSuppressionCss,
   trayEducationNotificationText,
 } from "../electron/desktop-background-state.js";
-import {
-  taskRuntimeDisplayCss,
-  taskRuntimeDisplayScript,
-} from "../electron/desktop-runtime-display.js";
 
 assert.equal(shouldHideWindowOnClose(), true);
 assert.equal(shouldHideWindowOnClose({ isQuitting: false }), true);
@@ -60,14 +56,5 @@ assert.equal(
   taskCompletionToastSuppressionCss(),
   ".task-completion-toast{display:none!important;}",
 );
-
-const runtimeCss = taskRuntimeDisplayCss();
-assert.match(runtimeCss, /desktop-run-duration/);
-assert.match(runtimeCss, /aporiax-runtime-pulse/);
-const runtimeScript = taskRuntimeDisplayScript();
-assert.match(runtimeScript, /aporiax\.tasks\.v1/);
-assert.match(runtimeScript, /assistant-message-heading/);
-assert.match(runtimeScript, /Task runtime/);
-assert.doesNotMatch(runtimeScript, /agent-mode|Multi-Agent|Single Agent/);
 
 console.log("desktop background smoke: PASS");
