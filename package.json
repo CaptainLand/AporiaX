@@ -42,6 +42,7 @@
     "test:skills": "node tests/skill-system-smoke.mjs",
     "test:browser": "node tests/browser-runtime-smoke.mjs",
     "test:mcp": "node tests/mcp-runtime-smoke.mjs",
+    "test:tool-permissions": "node tests/tool-permissions-smoke.mjs",
     "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs",
     "test:streaming-performance": "node tests/streaming-performance-smoke.mjs"
   },
