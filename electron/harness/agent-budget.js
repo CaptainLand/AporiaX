@@ -117,9 +117,11 @@ export function planAgentBudget(options = {}) {
   const requestedProfile = String(options?.agentBudget?.profile || "").toLowerCase();
   const profile = PROFILE_LIMITS[requestedProfile] ? requestedProfile : classified.profile;
   const limits = mergeLimits(PROFILE_LIMITS[profile], options?.agentBudget || {});
+  const locked = Boolean(options?.agentBudget?.locked);
   return Object.freeze({
     version: 1,
     profile,
+    locked,
     reason: requestedProfile ? "explicit-override" : classified.reason,
     score: classified.score,
     limits,
@@ -132,6 +134,7 @@ function publicPlan(context) {
   return {
     ...context.plan,
     profile: context.profile,
+    locked: context.locked,
     limits: context.limits,
     state: {
       totalStarted: context.state.totalStarted,
@@ -152,6 +155,7 @@ function notify(context, event) {
 }
 
 function elevate(context, nextProfile, reason) {
+  if (context.locked) return false;
   if (!PROFILE_LIMITS[nextProfile] || profileAtLeast(context.profile, nextProfile)) return false;
   context.profile = nextProfile;
   context.limits = PROFILE_LIMITS[nextProfile];
@@ -259,6 +263,7 @@ export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
   const context = {
     plan: normalized,
     profile: normalized.profile,
+    locked: Boolean(normalized.locked),
     limits: normalized.limits,
     onEvent,
     state: {
@@ -272,6 +277,7 @@ export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
   notify(context, {
     type: "agent_budget.planned",
     profile: context.profile,
+    locked: context.locked,
     reason: normalized.reason,
     score: normalized.score,
     limits: context.limits,
