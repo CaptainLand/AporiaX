@@ -7,15 +7,6 @@ const SINGLE_ROLES = Object.freeze({
   other: 0,
 });
 
-const MULTI_ROLES = Object.freeze({
-  explore: 2,
-  review: 2,
-  verify: 1,
-  curator: 1,
-  builder: 2,
-  other: 2,
-});
-
 export function normalizeDesktopAgentMode(value) {
   return String(value || "").toLowerCase() === "multi" ? "multi" : "single";
 }
@@ -23,13 +14,11 @@ export function normalizeDesktopAgentMode(value) {
 export function desktopAgentModeBudget(mode) {
   const normalized = normalizeDesktopAgentMode(mode);
   if (normalized === "multi") {
-    return {
-      profile: "large",
-      locked: true,
-      maxTotalSubagents: 7,
-      maxActiveSubagents: 4,
-      roles: { ...MULTI_ROLES },
-    };
+    // Multi means the existing Adaptive Agent Budget is allowed to choose the
+    // right topology for this task. It does not force the large profile or two
+    // Builders. Simple tasks can still stay Main-only; larger tasks may grow to
+    // Explore/Review/Verify and, when safe, up to two isolated Builders.
+    return null;
   }
   return {
     profile: "direct",
@@ -42,11 +31,20 @@ export function desktopAgentModeBudget(mode) {
 
 export function applyDesktopAgentMode(request = {}, mode = "single") {
   const normalized = normalizeDesktopAgentMode(mode);
+  if (normalized === "multi") {
+    return {
+      ...request,
+      desktopAgentMode: "multi",
+      // Keep Builder orchestration available, but the adaptive budget still
+      // decides whether this run has Builder capacity at all.
+      builderOrchestration: request.builderOrchestration !== false,
+    };
+  }
   return {
     ...request,
-    desktopAgentMode: normalized,
-    builderOrchestration: normalized === "multi",
-    agentBudget: desktopAgentModeBudget(normalized),
+    desktopAgentMode: "single",
+    builderOrchestration: false,
+    agentBudget: desktopAgentModeBudget("single"),
   };
 }
 
@@ -56,7 +54,7 @@ export function desktopAgentModeDescription(mode) {
         mode: "multi",
         label: "Multi-Agent",
         detail:
-          "Main + up to 2 isolated Builders. Review/Verify remain available to the quality pipeline when needed.",
+          "Adaptive multi-Agent mode. AporiaX automatically chooses Main-only or the useful Explore/Builder/Review/Verify topology for each task, with up to 2 isolated Builders when safe.",
       }
     : {
         mode: "single",
