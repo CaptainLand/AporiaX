@@ -75,7 +75,8 @@ export async function prepareSkillRequest(
   const userIndex = selectedUserIndex(messages, request?.sourceUserId);
   if (userIndex < 0) return request;
   const workspacePath = String(request?.workspacePath || "").trim();
-  const activation = await activateForText(messages[userIndex]?.content, {
+  const originalContent = String(messages[userIndex]?.content || "");
+  const activation = await activateForText(originalContent, {
     ...options,
     workspacePath,
   });
@@ -86,15 +87,16 @@ export async function prepareSkillRequest(
   }
 
   const context = buildSkillContext(activation.skills);
-  const systemMessage = {
-    id: `aporiax-skills-${String(request?.runId || Date.now())}`,
-    role: "system",
-    content: context,
-    skillContext: true,
+  const nextMessages = [...messages];
+  nextMessages[userIndex] = {
+    ...messages[userIndex],
+    skillOriginalContent: originalContent,
+    content: [originalContent.trim(), context].filter(Boolean).join("\n\n"),
+    activatedSkills: activation.skills.map(publicSkill),
   };
   return {
     ...request,
-    messages: [systemMessage, ...messages],
+    messages: nextMessages,
     activatedSkills: activation.skills.map(publicSkill),
     unresolvedSkills: activation.unresolved,
   };
@@ -106,7 +108,10 @@ export async function prepareSkillMessage(
   options = {},
 ) {
   const activationSource = String(
-    message?.workspaceMentionOriginalContent || message?.content || "",
+    message?.workspaceMentionOriginalContent ||
+      message?.skillOriginalContent ||
+      message?.content ||
+      "",
   );
   const activation = await activateForText(activationSource, {
     ...options,
@@ -116,6 +121,7 @@ export async function prepareSkillMessage(
   const context = buildSkillContext(activation.skills);
   return {
     ...message,
+    skillOriginalContent: activationSource,
     content: [String(message?.content || "").trim(), context]
       .filter(Boolean)
       .join("\n\n"),
