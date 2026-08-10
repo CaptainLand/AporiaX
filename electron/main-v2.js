@@ -7,6 +7,7 @@ import {
   planAgentBudget,
   runWithAgentBudget,
 } from "./harness/agent-budget.js";
+import { prepareVisionProxyRequest } from "./vision-proxy.js";
 
 // Install desktop background behavior before the compatibility main process
 // creates its BrowserWindow. The close event is intercepted and hidden to the
@@ -25,8 +26,9 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
     const runId = String(request?.runId || "").trim();
     desktopBackground.runStarted(runId);
     try {
+      const preparedRequest = await prepareVisionProxyRequest(request);
       return await runWithAgentBudget(budget, {}, () =>
-        listener(event, request),
+        listener(event, preparedRequest),
       );
     } finally {
       desktopBackground.runFinished(runId);
