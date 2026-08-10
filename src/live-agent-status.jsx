@@ -9,6 +9,7 @@ import {
 import "./live-agent-status.css";
 
 const roots = new Map();
+const messageByArticle = new WeakMap();
 const activatedSkillsByAssistant = new Map();
 let authoritativeTasks = [];
 let refreshPromise = null;
@@ -44,9 +45,22 @@ function visibleTaskDescriptor() {
 function currentVisibleTask() {
   const descriptor = visibleTaskDescriptor();
   const localTasks = readTaskListFromStorage(window.localStorage);
+  const localTask = selectVisibleTask(localTasks, descriptor);
+
+  // The desktop task store carries the current Harness / Witness state. The
+  // localStorage copy is primarily a renderer cache and can lag behind while
+  // response deltas are streaming. Use local state to identify the task, then
+  // prefer the authoritative desktop copy for the actual status payload.
+  if (localTask?.id) {
+    const authoritativeMatch = authoritativeTasks.find(
+      (task) => task?.id === localTask.id,
+    );
+    if (authoritativeMatch) return authoritativeMatch;
+  }
+
   return (
-    selectVisibleTask(localTasks, descriptor) ||
     selectVisibleTask(authoritativeTasks, descriptor) ||
+    localTask ||
     null
   );
 }
@@ -54,7 +68,7 @@ function currentVisibleTask() {
 async function refreshAuthoritativeTasks({ force = false } = {}) {
   if (!window.desktop?.tasks?.load) return;
   const now = Date.now();
-  if (!force && now - lastDesktopRefresh < 1_500) return;
+  if (!force && now - lastDesktopRefresh < 450) return;
   if (refreshPromise) return refreshPromise;
   lastDesktopRefresh = now;
   refreshPromise = Promise.resolve(window.desktop.tasks.load())
@@ -147,24 +161,25 @@ function syncLiveStatuses() {
   const messages = (Array.isArray(task?.messages) ? task.messages : []).filter(
     (message) => message?.role === "assistant",
   );
-  const activeHosts = new Set();
 
   articles.forEach((article, index) => {
-    const message = messages[index];
     const heading = article.querySelector(":scope > .assistant-message-heading");
     const content = article.querySelector(":scope > .assistant-message-content");
     let host = article.querySelector(":scope > .aporiax-live-agent-status-host");
-    if (!message || !heading || !content) {
-      if (host) cleanupHost(host);
-      return;
-    }
+    const freshMessage = messages[index] || null;
+    const message = freshMessage || messageByArticle.get(article) || null;
+
+    // React can briefly update the streamed message DOM before the persisted
+    // task snapshot catches up. Never remove a live-status host during that
+    // transient mismatch; keep the last observable status attached instead.
+    if (!heading || !content || !message) return;
+    if (freshMessage) messageByArticle.set(article, freshMessage);
 
     if (!host) {
       host = document.createElement("div");
       host.className = "aporiax-live-agent-status-host";
       heading.insertAdjacentElement("afterend", host);
     }
-    activeHosts.add(host);
     let root = roots.get(host);
     if (!root) {
       root = createRoot(host);
@@ -178,8 +193,10 @@ function syncLiveStatuses() {
     );
   });
 
+  // Only tear down hosts whose assistant message actually left the DOM. A
+  // temporary storage mismatch must not make the status row disappear.
   for (const host of [...roots.keys()]) {
-    if (!host.isConnected || !activeHosts.has(host)) cleanupHost(host);
+    if (!host.isConnected) cleanupHost(host);
   }
 }
 
@@ -201,13 +218,16 @@ window.desktop?.harness?.onEvent?.((event) => {
       event.assistantId,
       Array.isArray(event.skills) ? event.skills : [],
     );
-    scheduleSync();
   }
+
+  // Harness events are a better live-status clock than response text
+  // mutations. Pull the desktop snapshot immediately so tool / plan / Witness
+  // state stays visible while Markdown is streaming.
+  void refreshAuthoritativeTasks({ force: true }).finally(scheduleSync);
 });
 
 window.setInterval(() => {
-  void refreshAuthoritativeTasks();
-  syncLiveStatuses();
-}, 700);
+  void refreshAuthoritativeTasks().finally(scheduleSync);
+}, 650);
 
 void refreshAuthoritativeTasks({ force: true }).finally(syncLiveStatuses);
