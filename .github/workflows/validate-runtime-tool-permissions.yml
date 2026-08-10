@@ -11,12 +11,15 @@ permissions:
 
 jobs:
   integrate-and-validate:
-    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-runtime-tool-permissions' && !contains(github.event.pull_request.head.sha, '[tool-permissions-validated]') }}
+    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-runtime-tool-permissions' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/v0.6-runtime-tool-permissions
+          fetch-depth: 0
+      - name: Fetch validated streaming base
+        run: git fetch origin agent/v0.6-streaming-performance --depth=1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
