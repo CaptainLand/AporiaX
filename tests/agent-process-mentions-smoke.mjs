@@ -42,7 +42,8 @@ assert.deepEqual(
     "runtime",
     5,
   ),
-  ["src/runtime.jsx", "docs/runtime.md"],
+  ["docs/runtime.md", "src/runtime.jsx"],
+  "equal-score and equal-length paths use the deterministic lexical tiebreaker",
 );
 
 const runningMessage = {
