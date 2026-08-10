@@ -1,4 +1,8 @@
 import { app, ipcMain } from "electron";
+import {
+  applyDesktopAgentMode,
+  normalizeDesktopAgentMode,
+} from "./desktop-agent-mode.js";
 import { installDesktopBackground } from "./desktop-background.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
@@ -13,6 +17,16 @@ import {
 // tray, so the renderer and active Harness IPC calls stay alive in background.
 const desktopBackground = installDesktopBackground();
 
+// The compact composer control owns an explicit topology switch. Single is the
+// conservative default; the renderer rehydrates the user's persisted choice
+// through the preload bridge after it loads.
+let desktopAgentMode = "single";
+ipcMain.handle("desktop:agent-mode-get", () => desktopAgentMode);
+ipcMain.handle("desktop:agent-mode-set", (_event, mode) => {
+  desktopAgentMode = normalizeDesktopAgentMode(mode);
+  return desktopAgentMode;
+});
+
 // Install the per-run budget boundary before the legacy desktop main process
 // registers harness:run. This keeps the migration incremental while making the
 // cost guard effective for the existing runtime today.
@@ -21,12 +35,16 @@ const originalHandle = ipcMain.handle;
 ipcMain.handle = function budgetAwareHandle(channel, listener) {
   if (channel !== "harness:run") return nativeHandle(channel, listener);
   return nativeHandle(channel, async (event, request) => {
-    const budget = planAgentBudget(request || {});
-    const runId = String(request?.runId || "").trim();
-    desktopBackground.runStarted(runId);
+    const modeRequest = applyDesktopAgentMode(
+      request || {},
+      desktopAgentMode,
+    );
+    const budget = planAgentBudget(modeRequest);
+    const runId = String(modeRequest?.runId || "").trim();
+    desktopBackground.runStarted(runId, { startedAt: Date.now() });
     try {
       return await runWithAgentBudget(budget, {}, () =>
-        listener(event, request),
+        listener(event, modeRequest),
       );
     } finally {
       desktopBackground.runFinished(runId);
@@ -53,7 +71,9 @@ ipcMain.handle("core:events", (_event, request = {}) => ({
   events: kernel.events.history(request),
 }));
 ipcMain.handle("core:agent-budget", (_event, request = {}) => ({
-  budget: planAgentBudget(request),
+  budget: planAgentBudget(
+    applyDesktopAgentMode(request, desktopAgentMode),
+  ),
 }));
 ipcMain.handle("desktop:background-status", () => desktopBackground.snapshot());
 
