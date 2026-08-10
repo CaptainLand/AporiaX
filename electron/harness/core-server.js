@@ -47,6 +47,10 @@ export function createHarnessCoreServer({ kernel, host = "127.0.0.1", port = 0, 
       json(res, 200, { plugins: kernel.plugins.list() });
       return;
     }
+    if (url.pathname === "/v1/skills") {
+      json(res, 200, { skills: kernel.skills?.list?.() || [] });
+      return;
+    }
     if (url.pathname === "/v1/sessions") {
       json(res, 200, { sessions: kernel.sessions.list() });
       return;
