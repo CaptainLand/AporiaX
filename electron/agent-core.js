@@ -23,6 +23,12 @@ const DEFAULT_PERMISSION_POLICIES = {
     git_status: "allow",
     git_diff: "allow",
     inspect_office_file: "allow",
+    browser_open: "allow",
+    browser_snapshot: "allow",
+    browser_screenshot: "allow",
+    browser_console: "allow",
+    browser_network: "allow",
+    browser_close: "allow",
     complete_self_check: "allow",
   },
   "workspace-write": {
@@ -43,11 +49,21 @@ const DEFAULT_PERMISSION_POLICIES = {
     create_spreadsheet: "allow",
     inspect_office_file: "allow",
     run_command: "ask",
+    browser_open: "allow",
+    browser_snapshot: "allow",
+    browser_screenshot: "allow",
+    browser_console: "allow",
+    browser_network: "allow",
+    browser_close: "allow",
+    browser_click: "ask",
+    browser_fill: "ask",
+    browser_press: "ask",
     complete_self_check: "allow",
   },
   // Builder workers execute only inside an isolated worktree. They receive the
   // minimum text-editing surface needed to implement their leased scope. In
-  // particular, they cannot delegate more agents or execute shell commands.
+  // particular, they cannot delegate more agents, execute shell commands, or
+  // control a browser session.
   "builder-write": {
     "*": "deny",
     list_directory: "allow",
