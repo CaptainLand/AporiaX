@@ -175,6 +175,13 @@ function summary(skill) {
   };
 }
 
+function mergeSkill(catalog, skill) {
+  const existing = catalog.get(skill.name);
+  const existingPriority = SOURCE_PRIORITY[existing?.source] || 0;
+  const nextPriority = SOURCE_PRIORITY[skill.source] || 0;
+  if (!existing || nextPriority >= existingPriority) catalog.set(skill.name, skill);
+}
+
 function explicitSkillNames(prompt) {
   const text = String(prompt || "");
   const names = [];
@@ -222,12 +229,7 @@ export class HarnessSkillRegistry {
       throw new Error(`Invalid skill name: ${normalized.name || "<empty>"}`);
     }
     if (builtin) this.#builtins.set(normalized.name, normalized);
-    const existing = this.#skills.get(normalized.name);
-    const existingPriority = SOURCE_PRIORITY[existing?.source] || 0;
-    const nextPriority = SOURCE_PRIORITY[normalized.source] || 0;
-    if (!existing || nextPriority >= existingPriority) {
-      this.#skills.set(normalized.name, normalized);
-    }
+    mergeSkill(this.#skills, normalized);
     this.#eventBus?.emit({
       type: "skill.registered",
       skill: normalized.name,
@@ -236,8 +238,8 @@ export class HarnessSkillRegistry {
     return summary(this.#skills.get(normalized.name));
   }
 
-  async discover({ workspacePath = "", userSkillsDirectory = "", builtinDirectory = "" } = {}) {
-    this.#skills = new Map(this.#builtins);
+  async catalog({ workspacePath = "", userSkillsDirectory = "", builtinDirectory = "" } = {}) {
+    const catalog = new Map(this.#builtins);
     const roots = [
       [builtinDirectory, "builtin"],
       [userSkillsDirectory, "user"],
@@ -245,13 +247,19 @@ export class HarnessSkillRegistry {
     ];
     for (const [root, source] of roots) {
       const loaded = await loadSkillRoot(root, source);
-      for (const skill of loaded) this.register(skill, { builtin: source === "builtin" });
+      for (const skill of loaded) mergeSkill(catalog, skill);
     }
+    return [...catalog.values()];
+  }
+
+  async discover(options = {}) {
+    const catalog = await this.catalog(options);
+    this.#skills = new Map(catalog.map((skill) => [skill.name, skill]));
     const result = this.list();
     this.#eventBus?.emit({
       type: "skills.discovered",
       count: result.length,
-      workspacePath: workspacePath || null,
+      workspacePath: options.workspacePath || null,
     });
     return result;
   }
@@ -271,17 +279,19 @@ export class HarnessSkillRegistry {
     return includeInstructions ? { ...skill } : summary(skill);
   }
 
-  match(prompt, { limit = 2 } = {}) {
+  match(prompt, { limit = 2, catalog = null } = {}) {
+    const skills = Array.isArray(catalog) ? catalog : [...this.#skills.values()];
+    const byName = new Map(skills.map((skill) => [skill.name, skill]));
     const explicit = explicitSkillNames(prompt);
     const matched = [];
     const unresolved = [];
     for (const name of explicit) {
-      const skill = this.#skills.get(name);
+      const skill = byName.get(name);
       if (skill) matched.push({ skill, reason: "explicit", score: 100 });
       else unresolved.push(name);
     }
     const explicitSet = new Set(matched.map((item) => item.skill.name));
-    const automatic = [...this.#skills.values()]
+    const automatic = skills
       .filter((skill) => !explicitSet.has(skill.name))
       .map((skill) => ({ skill, score: automaticScore(skill, prompt), reason: "auto" }))
       .filter((item) => item.score > 0)
@@ -300,15 +310,17 @@ export class HarnessSkillRegistry {
     };
   }
 
-  activate(prompt, { limit = 2 } = {}) {
-    const match = this.match(prompt, { limit });
-    const skills = match.skills
+  activate(prompt, { limit = 2, catalog = null } = {}) {
+    const skills = Array.isArray(catalog) ? catalog : [...this.#skills.values()];
+    const byName = new Map(skills.map((skill) => [skill.name, skill]));
+    const match = this.match(prompt, { limit, catalog: skills });
+    const activated = match.skills
       .map((item) => {
-        const skill = this.#skills.get(item.name);
+        const skill = byName.get(item.name);
         return skill ? { ...skill, reason: item.reason, score: item.score } : null;
       })
       .filter(Boolean);
-    for (const skill of skills) {
+    for (const skill of activated) {
       this.#eventBus?.emit({
         type: "skill.activated",
         skill: skill.name,
@@ -316,7 +328,7 @@ export class HarnessSkillRegistry {
         reason: skill.reason,
       });
     }
-    return { skills, unresolved: match.unresolved };
+    return { skills: activated, unresolved: match.unresolved };
   }
 }
 
