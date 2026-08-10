@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   core: {
     status: () => ipcRenderer.invoke("core:status"),
+    capabilities: (request = {}) =>
+      ipcRenderer.invoke("core:capabilities", request),
     agents: () => ipcRenderer.invoke("core:agents"),
     plugins: () => ipcRenderer.invoke("core:plugins"),
     skills: (request = {}) => ipcRenderer.invoke("core:skills", request),
