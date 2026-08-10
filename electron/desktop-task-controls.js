@@ -34,6 +34,8 @@ export function rendererTaskControlsCss() {
   animation: aporiax-runtime-pulse 1.4s ease-in-out infinite;
 }
 .composer-multi-agent-toggle {
+  --aporiax-agent-accent: var(--accent-color, var(--accent, var(--primary, currentColor)));
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   height: 29px;
@@ -41,6 +43,7 @@ export function rendererTaskControlsCss() {
   justify-content: center;
   padding: 0 9px;
   cursor: pointer;
+  overflow: visible;
   border: 1px solid rgba(128, 128, 144, 0.25);
   border-radius: 8px;
   color: inherit;
@@ -52,15 +55,64 @@ export function rendererTaskControlsCss() {
   opacity: 0.72;
   transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease, transform 140ms ease;
 }
+.composer-multi-agent-toggle::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 80;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  width: 268px;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  pointer-events: none;
+  border: 1px solid rgba(128, 128, 144, 0.28);
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(24, 24, 29, 0.97);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.48;
+  text-align: left;
+  white-space: pre-line;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+.composer-multi-agent-toggle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--aporiax-agent-accent);
+  box-shadow: 0 0 7px var(--aporiax-agent-accent), 0 0 14px var(--aporiax-agent-accent);
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: width 150ms ease, opacity 150ms ease;
+}
+.composer-multi-agent-toggle:hover::before,
+.composer-multi-agent-toggle:focus-visible::before {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
 .composer-multi-agent-toggle:hover:not(:disabled) {
   opacity: 0.96;
   transform: translateY(-1px);
 }
 .composer-multi-agent-toggle.active {
-  border-color: rgba(255, 78, 118, 0.62);
-  color: #ff4e76;
-  background: rgba(255, 78, 118, 0.11);
+  border-color: rgba(128, 128, 144, 0.38);
+  color: var(--aporiax-agent-accent);
+  background: rgba(128, 128, 144, 0.11);
   opacity: 1;
+}
+.composer-multi-agent-toggle.active::after {
+  width: 28px;
+  opacity: 0.95;
 }
 .composer-multi-agent-toggle:disabled {
   cursor: not-allowed;
@@ -84,7 +136,8 @@ function taskRuntimeControlsBootstrap() {
 
   const MODE_KEY = "aporiax.agent-mode.v1";
   const TASKS_KEY = "aporiax.tasks.v1";
-  let mode = localStorage.getItem(MODE_KEY) === "multi" ? "multi" : "single";
+  const storedMode = localStorage.getItem(MODE_KEY);
+  let mode = storedMode === "single" ? "single" : "multi";
   let syncing = false;
 
   function languageIsEnglish() {
@@ -186,7 +239,7 @@ function taskRuntimeControlsBootstrap() {
   }
 
   async function syncMode(nextMode) {
-    mode = nextMode === "multi" ? "multi" : "single";
+    mode = nextMode === "single" ? "single" : "multi";
     localStorage.setItem(MODE_KEY, mode);
     if (syncing) return;
     syncing = true;
@@ -203,6 +256,16 @@ function taskRuntimeControlsBootstrap() {
     }
   }
 
+  function modeTooltip({ running = false } = {}) {
+    const guidance = languageIsEnglish()
+      ? "Multi: adaptively uses extra agents only when useful.\nSingle: Main only, with the lowest token/coordination cost.\nRecommended: keep Multi enabled."
+      : "Multi：按任务复杂度自动调用额外 Agent，需要时才增加协作。\nSingle：仅 Main，Token 与协调成本最低。\n建议默认开启 Multi。";
+    if (!running) return guidance;
+    return languageIsEnglish()
+      ? `Current task is running; the mode is locked until it finishes.\n${guidance}`
+      : `当前任务运行中，模式将在任务结束后才能切换。\n${guidance}`;
+  }
+
   function updateModeButton() {
     const button = document.querySelector(".composer-multi-agent-toggle");
     if (!button) return;
@@ -214,21 +277,19 @@ function taskRuntimeControlsBootstrap() {
     const text = button.querySelector("span");
     const label = multi ? "Multi" : "Single";
     if (text && text.textContent !== label) text.textContent = label;
-    const title = running
+    const tooltip = modeTooltip({ running });
+    if (button.dataset.tooltip !== tooltip) button.dataset.tooltip = tooltip;
+    const ariaLabel = multi
       ? languageIsEnglish()
-        ? "Agent mode is locked while the current task is running"
-        : "当前任务运行中，Agent 模式将在任务结束后才能切换"
-      : multi
-        ? languageIsEnglish()
-          ? "Adaptive Multi-Agent · AporiaX automatically decides when extra agents are useful"
-          : "自适应多 Agent · AporiaX 会按任务复杂度自动决定是否调用额外 Agent"
-        : languageIsEnglish()
-          ? "Single Agent · Main only"
-          : "单 Agent · 仅 Main";
-    if (button.title !== title) button.title = title;
-    if (button.getAttribute("aria-label") !== title) {
-      button.setAttribute("aria-label", title);
+        ? "Adaptive Multi-Agent mode enabled"
+        : "自适应多 Agent 模式已开启"
+      : languageIsEnglish()
+        ? "Single Agent mode enabled"
+        : "单 Agent 模式已开启";
+    if (button.getAttribute("aria-label") !== ariaLabel) {
+      button.setAttribute("aria-label", ariaLabel);
     }
+    button.removeAttribute("title");
   }
 
   function ensureModeButton() {
