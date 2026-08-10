@@ -128,26 +128,27 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       });
     }
     try {
-      // Preserve the original user text for deterministic Skill matching, then
-      // let Vision inspect the original prompt/image before any Skill or @file
-      // body is added. This avoids sending Skill instructions or workspace file
-      // contents to a separate visual Provider.
+      // Preserve the original user text for deterministic Skill matching.
+      // Vision runs first, so a separate visual Provider sees only the original
+      // user prompt/image. @file contents are added next, and only then are the
+      // selected Skill instructions disclosed to the main Agent. Each stage
+      // appends to the request copy instead of replacing prior context.
       const seededRequest = seedSkillOriginalContent(request);
       const visionPreparedRequest = await prepareVisionProxyRequest(
         seededRequest,
       );
-      const skillPreparedRequest = await prepareSkillRequest(
+      const mentionPreparedRequest = await prepareWorkspaceMentionRequest(
         visionPreparedRequest,
+      );
+      const preparedRequest = await prepareSkillRequest(
+        mentionPreparedRequest,
         skillRuntimeOptions(workspacePath),
       );
       emitSkillStatus(
         event,
-        skillPreparedRequest,
-        skillActivationSummary(skillPreparedRequest),
-        skillPreparedRequest?.unresolvedSkills || [],
-      );
-      const preparedRequest = await prepareWorkspaceMentionRequest(
-        skillPreparedRequest,
+        preparedRequest,
+        skillActivationSummary(preparedRequest),
+        preparedRequest?.unresolvedSkills || [],
       );
       return await runWithAgentBudget(budget, {}, () =>
         listener(event, preparedRequest),
