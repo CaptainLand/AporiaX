@@ -24,32 +24,6 @@ export function modelSupportsVision(model = {}) {
   return model?.supportsImages === true;
 }
 
-export function exposeVisionProxyCapabilities(providers) {
-  const records = Array.isArray(providers) ? providers : [];
-  const hasUsableVisionProvider = records.some(
-    (provider) =>
-      provider?.hasApiKey === true &&
-      (Array.isArray(provider?.models) ? provider.models : []).some(
-        modelSupportsVision,
-      ),
-  );
-  if (!hasUsableVisionProvider) return records;
-
-  return records.map((provider) => ({
-    ...provider,
-    models: (Array.isArray(provider?.models) ? provider.models : []).map(
-      (model) => ({
-        ...model,
-        nativeSupportsImages: model?.supportsImages === true,
-        supportsImageProxy: model?.supportsImages !== true,
-        // Renderer-level capability: a text-only main model can still accept
-        // image attachments when AporiaX has a usable Vision Proxy configured.
-        supportsImages: true,
-      }),
-    ),
-  }));
-}
-
 function preferredVisionCandidate(candidates) {
   for (const pattern of PREFERRED_VISION_MODELS) {
     const match = candidates.find(({ model }) =>
@@ -58,6 +32,59 @@ function preferredVisionCandidate(candidates) {
     if (match) return match;
   }
   return candidates[0] || null;
+}
+
+function rendererVisionCandidate(records) {
+  const candidates = [];
+  for (const provider of records) {
+    if (provider?.hasApiKey !== true) continue;
+    for (const model of Array.isArray(provider?.models) ? provider.models : []) {
+      if (!modelSupportsVision(model)) continue;
+      candidates.push({ provider, model });
+    }
+  }
+  return preferredVisionCandidate(candidates);
+}
+
+function publicVisionProxyMetadata(candidate) {
+  if (!candidate) return null;
+  return {
+    providerId: String(candidate.provider?.id || ""),
+    providerName: String(
+      candidate.provider?.name || candidate.provider?.id || "Vision Provider",
+    ),
+    modelId: String(candidate.model?.id || ""),
+    modelName: String(candidate.model?.name || candidate.model?.id || "vision-model"),
+  };
+}
+
+export function exposeVisionProxyCapabilities(providers) {
+  const records = Array.isArray(providers) ? providers : [];
+  const proxyCandidate = rendererVisionCandidate(records);
+  const proxyMetadata = publicVisionProxyMetadata(proxyCandidate);
+
+  return records.map((provider) => ({
+    ...provider,
+    models: (Array.isArray(provider?.models) ? provider.models : []).map(
+      (model) => {
+        // This is the model's real/native capability, not the renderer's
+        // effective capability after AporiaX routing. Pattern inference is
+        // important for older saved Qwen records that predate image metadata.
+        const nativeSupportsImages = modelSupportsVision(model);
+        const supportsImageProxy =
+          !nativeSupportsImages && Boolean(proxyMetadata);
+        return {
+          ...model,
+          nativeSupportsImages,
+          supportsImageProxy,
+          visionProxy: supportsImageProxy ? proxyMetadata : null,
+          // Renderer-level capability: a text-only main model can accept image
+          // attachments when AporiaX has a usable Vision Proxy configured.
+          supportsImages: nativeSupportsImages || supportsImageProxy,
+        };
+      },
+    ),
+  }));
 }
 
 export function imageAttachments(message = {}) {
