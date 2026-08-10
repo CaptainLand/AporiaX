@@ -55,10 +55,19 @@ export function selectVisibleTask(
 
   if (!candidates.length) return null;
   if (Number.isFinite(Number(assistantCount))) {
+    const expectedCount = Number(assistantCount);
     const exact = candidates.find(
-      (task) => assistantMessageCount(task) === Number(assistantCount),
+      (task) => assistantMessageCount(task) === expectedCount,
     );
     if (exact) return exact;
+
+    // AporiaX deliberately truncates oversized localStorage task caches. Once
+    // that happens, matching the visible DOM to the shortened message array by
+    // index shifts every later assistant turn and makes elapsed-time/status UI
+    // disappear or attach to the wrong round. Treat a count mismatch as a
+    // stale/incomplete snapshot so callers can fall back to the authoritative
+    // desktop task history instead of guessing.
+    return null;
   }
   return candidates[0] || null;
 }
