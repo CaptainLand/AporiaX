@@ -71,6 +71,22 @@ const adaptiveExploration = applyDesktopAgentMode(
 assert.equal(classifyAgentTask(adaptiveExploration).profile, "read");
 assert.equal(planAgentBudget(adaptiveExploration).limits.roles.explore, 1);
 
+const adaptiveBackgroundExploration = applyDesktopAgentMode(
+  {
+    workspacePath: "C:/repo",
+    permission: "read-only",
+    messages: [
+      {
+        role: "user",
+        content: "Explore persistence in the background, then report it.",
+      },
+    ],
+  },
+  "multi",
+);
+assert.equal(classifyAgentTask(adaptiveBackgroundExploration).profile, "read");
+assert.equal(planAgentBudget(adaptiveBackgroundExploration).limits.roles.explore, 1);
+
 const adaptiveLarge = applyDesktopAgentMode(
   {
     workspacePath: "C:/repo",
