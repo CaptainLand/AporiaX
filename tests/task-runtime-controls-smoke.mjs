@@ -87,6 +87,25 @@ const adaptiveBackgroundExploration = applyDesktopAgentMode(
 assert.equal(classifyAgentTask(adaptiveBackgroundExploration).profile, "read");
 assert.equal(planAgentBudget(adaptiveBackgroundExploration).limits.roles.explore, 1);
 
+const adaptiveSelfCheck = applyDesktopAgentMode(
+  {
+    workspacePath: "C:/repo",
+    permission: "workspace-write",
+    messages: [
+      {
+        role: "user",
+        content: "创建一个经过自检的模块。",
+      },
+    ],
+  },
+  "multi",
+);
+const adaptiveSelfCheckPlan = planAgentBudget(adaptiveSelfCheck);
+assert.equal(adaptiveSelfCheckPlan.profile, "standard");
+assert.equal(adaptiveSelfCheckPlan.limits.roles.review, 2);
+assert.equal(adaptiveSelfCheckPlan.limits.roles.verify, 1);
+assert.equal(adaptiveSelfCheckPlan.limits.roles.curator, 1);
+
 const adaptiveLarge = applyDesktopAgentMode(
   {
     workspacePath: "C:/repo",
