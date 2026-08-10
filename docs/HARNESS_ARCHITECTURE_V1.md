@@ -6,7 +6,7 @@ This branch introduces the first migration layer from a monolithic desktop harne
 
 `electron/harness/event-bus.js` is the common event backbone. It supports exact and wildcard subscriptions, ordered hooks, bounded event history, synchronous delivery for the current runtime, and an async delivery path for future blocking hooks.
 
-`createEventEmitter()` in `agent-core.js` now uses this bus without changing existing callers. Existing `sequence` and `timestamp` behavior is preserved.
+`createEventEmitter()` in `agent-core.js` now uses this bus without changing existing callers. Existing `sequence` and `timestamp` behavior is preserved. When the desktop kernel is active, runtime events are also mirrored into the shared Core Event Bus so Witness-style activity can be consumed by future clients and plugins without wiring directly into the main loop.
 
 ## 2. Declarative Agent Definitions
 

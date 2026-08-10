@@ -1,4 +1,7 @@
-import { createHarnessEventBus } from "./harness/event-bus.js";
+import {
+  createHarnessEventBus,
+  getDefaultHarnessEventBus,
+} from "./harness/event-bus.js";
 
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 
@@ -153,7 +156,19 @@ export function createEventEmitter(onEvent, options = {}) {
     now: options.now,
     maxHistory: options.maxHistory ?? 1_000,
   });
-  const emit = (event) => bus.emit(event);
+  const emit = (event) => {
+    const enriched = bus.emit(event);
+    const sharedBus = getDefaultHarnessEventBus();
+    if (enriched && sharedBus && sharedBus !== bus) {
+      const { sequence: runtimeSequence, timestamp: runtimeTimestamp, ...payload } = enriched;
+      sharedBus.emit({
+        ...payload,
+        runtimeSequence,
+        runtimeTimestamp,
+      });
+    }
+    return enriched;
+  };
   Object.assign(emit, {
     bus,
     on: bus.on.bind(bus),

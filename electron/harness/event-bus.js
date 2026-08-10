@@ -1,3 +1,5 @@
+let defaultHarnessEventBus = null;
+
 function normalizePattern(pattern) {
   const value = String(pattern || "*").trim();
   return value || "*";
@@ -182,3 +184,12 @@ export function createHarnessEventBus(options) {
 }
 
 export { matchesPattern as eventPatternMatches };
+
+export function setDefaultHarnessEventBus(bus) {
+  defaultHarnessEventBus = bus && typeof bus.emit === "function" ? bus : null;
+  return defaultHarnessEventBus;
+}
+
+export function getDefaultHarnessEventBus() {
+  return defaultHarnessEventBus;
+}

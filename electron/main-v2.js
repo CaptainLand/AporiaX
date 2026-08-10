@@ -2,8 +2,10 @@ import { app, ipcMain } from "electron";
 import "./main.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
+import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
 
 const kernel = createHarnessKernel();
+setDefaultHarnessEventBus(kernel.events);
 const coreServer = createHarnessCoreServer({ kernel });
 
 ipcMain.handle("core:status", () => ({
