@@ -1,0 +1,213 @@
+.aporiax-skill-capability-host {
+  display: block;
+  padding: 0 14px 18px;
+}
+
+.aporiax-skill-capability {
+  padding-top: 16px;
+  border-top: 1px solid #e7e9eb;
+}
+
+.aporiax-skill-label {
+  margin-bottom: 9px;
+  color: #7e858b;
+  font-size: 11.6px;
+  font-weight: 620;
+}
+
+.aporiax-skill-card {
+  padding: 13px;
+  border: 1px solid #dfe4e7;
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(255,255,255,.94), rgba(247,248,251,.96));
+}
+
+.aporiax-skill-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.aporiax-skill-icon {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  color: #7959a0;
+  background: rgba(121, 89, 160, .09);
+}
+
+.aporiax-skill-heading > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.aporiax-skill-heading strong {
+  color: #31373c;
+  font-size: 12.3px;
+  font-weight: 670;
+}
+
+.aporiax-skill-heading span {
+  color: #818990;
+  font-size: 10.3px;
+  line-height: 1.45;
+}
+
+.aporiax-skill-list {
+  display: flex;
+  margin-top: 11px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aporiax-skill-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid rgba(115, 127, 145, .12);
+  border-radius: 8px;
+  background: rgba(115, 127, 145, .04);
+}
+
+.aporiax-skill-item > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.aporiax-skill-item strong,
+.aporiax-skill-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-skill-item strong {
+  color: #4a5056;
+  font-size: 10.6px;
+  font-weight: 640;
+}
+
+.aporiax-skill-item span {
+  color: #91979c;
+  font-size: 9.2px;
+}
+
+.aporiax-skill-item em,
+.aporiax-skill-item small {
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: #7a6c88;
+  background: rgba(121, 89, 160, .07);
+  font-size: 8.8px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.aporiax-skill-item small {
+  color: #6c7c86;
+  background: rgba(90, 120, 139, .07);
+}
+
+.aporiax-skill-more,
+.aporiax-skill-error {
+  color: #858c92;
+  font-size: 9.5px;
+}
+
+.aporiax-skill-error {
+  margin: 10px 0 0;
+  color: #a45f5f;
+}
+
+.aporiax-skill-empty {
+  margin-top: 11px;
+}
+
+.aporiax-skill-empty p {
+  margin: 0 0 8px;
+  color: #747d84;
+  font-size: 10.4px;
+  line-height: 1.55;
+}
+
+.aporiax-skill-empty code {
+  display: block;
+  overflow: hidden;
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: #66717a;
+  background: rgba(115, 127, 145, .06);
+  font-size: 9.4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aporiax-skill-footnote {
+  display: flex;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.aporiax-skill-footnote span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #7b8288;
+  background: rgba(112, 123, 134, .06);
+  font-size: 8.8px;
+}
+
+[data-theme="dark"] .aporiax-skill-capability {
+  border-top-color: rgba(126, 139, 160, .13);
+}
+
+[data-theme="dark"] .aporiax-skill-label {
+  color: #8f8a99;
+}
+
+[data-theme="dark"] .aporiax-skill-card {
+  border-color: rgba(116, 132, 158, .2);
+  background: linear-gradient(145deg, rgba(31,27,38,.96), rgba(27,24,34,.98));
+}
+
+[data-theme="dark"] .aporiax-skill-icon {
+  color: #c6a4ea;
+  background: rgba(170, 121, 218, .1);
+}
+
+[data-theme="dark"] .aporiax-skill-heading strong,
+[data-theme="dark"] .aporiax-skill-item strong {
+  color: #e5dfe8;
+}
+
+[data-theme="dark"] .aporiax-skill-heading span,
+[data-theme="dark"] .aporiax-skill-item span,
+[data-theme="dark"] .aporiax-skill-empty p,
+[data-theme="dark"] .aporiax-skill-footnote span {
+  color: #9993a1;
+}
+
+[data-theme="dark"] .aporiax-skill-item {
+  border-color: rgba(126,139,160,.13);
+  background: rgba(105,113,137,.055);
+}
+
+[data-theme="dark"] .aporiax-skill-item em {
+  color: #c7a6e9;
+  background: rgba(170,121,218,.1);
+}
+
+[data-theme="dark"] .aporiax-skill-empty code {
+  color: #aaa4b0;
+  background: rgba(105,113,137,.07);
+}
