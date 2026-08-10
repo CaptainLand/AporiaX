@@ -885,6 +885,7 @@ export async function runHarness({
   understandingDirectory = null,
   mcpServers = [],
   mcpConfigErrors = [],
+  capabilityRegistry = null,
 }) {
   if (
     !providerConfig ||
@@ -1021,6 +1022,8 @@ export async function runHarness({
   const mcpRuntime = createMcpRuntime({
     servers: Array.isArray(mcpServers) ? mcpServers : [],
     emit,
+    capabilityRegistry,
+    scopeId: runId ? "mcp:" + runId : "",
   });
   for (const configError of Array.isArray(mcpConfigErrors) ? mcpConfigErrors : []) {
     emit({ type: "mcp.config.warning", error: String(configError) });
