@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { Check, CircleStop, LoaderCircle, TriangleAlert } from "lucide-react";
+import { Check, CircleStop, LoaderCircle, Sparkles, TriangleAlert } from "lucide-react";
 import { deriveLiveAgentStatus } from "./agent-process-model.js";
 import {
   readTaskListFromStorage,
@@ -9,6 +9,7 @@ import {
 import "./live-agent-status.css";
 
 const roots = new Map();
+const activatedSkillsByAssistant = new Map();
 let authoritativeTasks = [];
 let refreshPromise = null;
 let lastDesktopRefresh = 0;
@@ -76,7 +77,7 @@ function StatusIcon({ state }) {
   return <Check size={14} />;
 }
 
-function LiveAgentStatus({ message }) {
+function LiveAgentStatus({ message, skills = [] }) {
   const status = deriveLiveAgentStatus(
     message,
     isEnglish() ? "en" : "zh-CN",
@@ -98,6 +99,14 @@ function LiveAgentStatus({ message }) {
         <span title={status.detail}>{status.detail}</span>
       </div>
       <div className="aporiax-live-agent-status-meta">
+        {skills.length > 0 && (
+          <small className="skill" title={skills.map((skill) => skill.title || skill.name).join(", ")}>
+            <Sparkles size={10} />
+            {skills.length === 1
+              ? skills[0].name
+              : tr(`${skills.length} Skills`, `${skills.length} Skills`)}
+          </small>
+        )}
         {status.state === "running" ? (
           <em>{tr("进行中", "Live")}</em>
         ) : (
@@ -161,7 +170,12 @@ function syncLiveStatuses() {
       root = createRoot(host);
       roots.set(host, root);
     }
-    root.render(<LiveAgentStatus message={message} />);
+    root.render(
+      <LiveAgentStatus
+        message={message}
+        skills={activatedSkillsByAssistant.get(message.id) || []}
+      />,
+    );
   });
 
   for (const host of [...roots.keys()]) {
@@ -180,6 +194,16 @@ function scheduleSync() {
 
 const observer = new MutationObserver(scheduleSync);
 observer.observe(document.documentElement, { childList: true, subtree: true });
+
+window.desktop?.harness?.onEvent?.((event) => {
+  if (event?.type === "skill.activated" && event?.assistantId) {
+    activatedSkillsByAssistant.set(
+      event.assistantId,
+      Array.isArray(event.skills) ? event.skills : [],
+    );
+    scheduleSync();
+  }
+});
 
 window.setInterval(() => {
   void refreshAuthoritativeTasks();
