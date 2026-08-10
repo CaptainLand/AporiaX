@@ -9,10 +9,6 @@ import {
   taskCompletionToastSuppressionCss,
   trayEducationNotificationText,
 } from "./desktop-background-state.js";
-import {
-  taskRuntimeDisplayCss,
-  taskRuntimeDisplayScript,
-} from "./desktop-runtime-display.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -135,13 +131,10 @@ export function installDesktopBackground() {
 
     window.webContents.on("did-finish-load", () => {
       // Windows system notifications remain the canonical completion notice.
-      // Keep renderer state/history intact, suppress the duplicate in-app toast,
-      // and add a presentation-only task runtime chip beside the message heading.
+      // Keep renderer state/history intact and suppress only the duplicate
+      // in-app completion toast. Per-task elapsed time is renderer-owned now.
       void window.webContents
-        .insertCSS(`${taskCompletionToastSuppressionCss()}\n${taskRuntimeDisplayCss()}`)
-        .catch(() => undefined);
-      void window.webContents
-        .executeJavaScript(taskRuntimeDisplayScript(), true)
+        .insertCSS(taskCompletionToastSuppressionCss())
         .catch(() => undefined);
     });
   };
