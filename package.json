@@ -15,7 +15,7 @@
   "private": true,
   "version": "0.4.1",
   "type": "module",
-  "main": "electron/main.js",
+  "main": "electron/main-v2.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
@@ -25,8 +25,9 @@
     "preview": "vite preview",
     "start": "electron .",
     "test:runtime": "node tests/runtime-smoke.mjs",
+    "test:p0": "node tests/p0-model-smoke.mjs",
     "test:cache": "node tests/deepseek-cache-smoke.mjs",
-    "test:p0": "node tests/p0-model-smoke.mjs"
+    "test:architecture": "node tests/harness-architecture-smoke.mjs"
   },
   "dependencies": {
     "diff": "^9.0.0",
