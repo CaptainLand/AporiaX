@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 const SKILL_NAME = /^[a-z][a-z0-9_-]{1,63}$/;
 const MAX_SKILL_FILE_BYTES = 128_000;
@@ -111,6 +111,14 @@ export function parseSkillDocument(source, options = {}) {
   });
 }
 
+function pathInside(rootPath, candidatePath) {
+  const child = relative(rootPath, candidatePath);
+  return (
+    child === "" ||
+    (child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child))
+  );
+}
+
 async function loadSkillFile(skillPath, { source, fallbackName }) {
   let stats;
   try {
@@ -129,11 +137,17 @@ async function loadSkillFile(skillPath, { source, fallbackName }) {
   });
 }
 
-async function loadSkillRoot(rootDirectory, source) {
+async function loadSkillRoot(rootDirectory, source, allowedRoot = "") {
   if (!rootDirectory) return [];
   let root;
   try {
+    const lexicalStats = await lstat(resolve(rootDirectory));
+    if (!lexicalStats.isDirectory() || lexicalStats.isSymbolicLink()) return [];
     root = await realpath(resolve(rootDirectory));
+    if (allowedRoot) {
+      const boundary = await realpath(resolve(allowedRoot));
+      if (!pathInside(boundary, root)) return [];
+    }
   } catch {
     return [];
   }
@@ -241,12 +255,12 @@ export class HarnessSkillRegistry {
   async catalog({ workspacePath = "", userSkillsDirectory = "", builtinDirectory = "" } = {}) {
     const catalog = new Map(this.#builtins);
     const roots = [
-      [builtinDirectory, "builtin"],
-      [userSkillsDirectory, "user"],
-      [workspacePath ? join(workspacePath, ".aporiax", "skills") : "", "project"],
+      [builtinDirectory, "builtin", builtinDirectory],
+      [userSkillsDirectory, "user", userSkillsDirectory],
+      [workspacePath ? join(workspacePath, ".aporiax", "skills") : "", "project", workspacePath],
     ];
-    for (const [root, source] of roots) {
-      const loaded = await loadSkillRoot(root, source);
+    for (const [root, source, allowedRoot] of roots) {
+      const loaded = await loadSkillRoot(root, source, allowedRoot);
       for (const skill of loaded) mergeSkill(catalog, skill);
     }
     return [...catalog.values()];
