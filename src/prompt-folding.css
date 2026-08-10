@@ -2,7 +2,8 @@
   position: relative;
 }
 
-.user-message.prompt-foldable:not(.prompt-expanded) > .message-bubble {
+.user-message.prompt-foldable:not(.prompt-expanded) > .message-bubble,
+.message-bubble.native-prompt-collapsed {
   position: relative;
   max-height: 13.5rem;
   overflow: hidden;
