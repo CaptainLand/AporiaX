@@ -105,6 +105,8 @@ Single = force exactly one working Agent (Main)
 Multi  = allow AporiaX to automatically choose the useful Agent topology
 ```
 
+This distinction is intentional: Multi switches **automatic multi-Agent orchestration on**, not every possible Agent on.
+
 ## Renderer integration boundary
 
 The large compatibility renderer already stores all timing data and already exposes stable DOM landmarks such as:
@@ -141,6 +143,7 @@ Manual Windows checks:
 4. Hide AporiaX to the tray and confirm the tray status includes the same style of elapsed runtime.
 5. After the task completes, switch to Multi mode. The control should turn pink/accented.
 6. Run a simple Multi task and confirm AporiaX is allowed to stay Main-only instead of forcing Builders.
-7. Run a safely decomposable large multi-module write task and confirm adaptive orchestration can start up to two Builders.
-8. While a task is running, confirm the Single/Multi button is disabled.
-9. Confirm the Windows completion notification remains and the old AporiaX internal completion toast stays hidden.
+7. Run a medium Multi task and confirm only the useful helper/review topology is selected when applicable.
+8. Run a safely decomposable large multi-module write task and confirm adaptive orchestration can start up to two Builders.
+9. While a task is running, confirm the Single/Multi button is disabled.
+10. Confirm the Windows completion notification remains and the old AporiaX internal completion toast stays hidden.
