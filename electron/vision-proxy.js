@@ -7,7 +7,6 @@ import {
   hasImageAttachments,
   imageAttachments,
   mergeVisionObservation,
-  modelSupportsVision,
   selectVisionCandidate,
 } from "./vision-proxy-core.js";
 
@@ -129,7 +128,7 @@ export async function prepareVisionProxyRequest(request, { signal } = {}) {
 
   const records = await readProviderRecords();
   const main = resolveMainModel(records, request);
-  if (main.model && modelSupportsVision(main.model)) return request;
+  if (main.model?.supportsImages === true) return request;
 
   const candidate = selectVisionCandidate(records, {
     mainProviderId: request?.providerId,
