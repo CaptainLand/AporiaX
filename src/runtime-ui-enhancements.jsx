@@ -1,6 +1,21 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowRight, Eye, ImagePlus } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  Eye,
+  FileText,
+  ImagePlus,
+  LoaderCircle,
+  Terminal,
+} from "lucide-react";
+import {
+  buildAgentProcessSummary,
+  currentProcessSummary,
+  extractWorkspaceMentionQuery,
+  rankWorkspaceFiles,
+  replaceWorkspaceMentionQuery,
+} from "./agent-process-model.js";
 import {
   formatTaskDuration,
   readTaskListFromStorage,
@@ -10,8 +25,13 @@ import {
 import "./runtime-ui-enhancements.css";
 
 const durationRoots = new Map();
+const processRoots = new Map();
+const workspaceFileIndexes = new Map();
 let visionHost = null;
 let visionRoot = null;
+let mentionHost = null;
+let mentionRoot = null;
+let mentionTextarea = null;
 let authoritativeTasks = [];
 let providers = [];
 let tasksRefreshPromise = null;
@@ -19,11 +39,22 @@ let providerRefreshPromise = null;
 let lastTaskRefresh = 0;
 let lastProviderRefresh = 0;
 let refreshQueued = false;
+let mentionState = {
+  query: null,
+  workspacePath: "",
+  suggestions: [],
+  selectedIndex: 0,
+  loading: false,
+};
 
 function isEnglish() {
   return String(document.documentElement.lang || "")
     .toLowerCase()
     .startsWith("en");
+}
+
+function languageCode() {
+  return isEnglish() ? "en" : "zh-CN";
 }
 
 function tr(zh, en) {
@@ -113,23 +144,25 @@ function RunDurationChip({ message, now }) {
         `Task elapsed time · ${label}`,
       )}
     >
-      {running && <span className="aporiax-run-duration-dot" aria-hidden="true" />}
+      {running && (
+        <span className="aporiax-run-duration-dot" aria-hidden="true" />
+      )}
       <span>{label}</span>
     </span>
   );
 }
 
-function cleanupDurationHost(host) {
-  const root = durationRoots.get(host);
+function cleanupRoot(map, host) {
+  const root = map.get(host);
   if (root) {
     try {
       root.unmount();
     } catch {
       // Presentation-only enhancement cleanup must not affect the task UI.
     }
-    durationRoots.delete(host);
+    map.delete(host);
   }
-  host.remove();
+  host?.remove();
 }
 
 function syncDurationChips() {
@@ -151,7 +184,7 @@ function syncDurationChips() {
       ":scope > .aporiax-run-duration-host",
     );
     if (!message) {
-      if (host) cleanupDurationHost(host);
+      if (host) cleanupRoot(durationRoots, host);
       return;
     }
     if (!host) {
@@ -170,14 +203,160 @@ function syncDurationChips() {
 
   for (const host of [...durationRoots.keys()]) {
     if (!host.isConnected || !activeHosts.has(host)) {
-      cleanupDurationHost(host);
+      cleanupRoot(durationRoots, host);
+    }
+  }
+}
+
+function ProcessStepIcon({ status }) {
+  if (status === "running") {
+    return <LoaderCircle className="spin" size={13} />;
+  }
+  return <Check size={13} />;
+}
+
+function AgentProcessTrace({ message }) {
+  const steps = buildAgentProcessSummary(message, languageCode());
+  if (!steps.length) return null;
+  const current = currentProcessSummary(steps);
+  const running = message?.status === "running";
+
+  return (
+    <section className={`aporiax-agent-process ${running ? "running" : "done"}`}>
+      <div className="aporiax-agent-process-heading">
+        <span className="aporiax-agent-process-mark">
+          {running ? (
+            <LoaderCircle className="spin" size={14} />
+          ) : (
+            <Check size={14} />
+          )}
+        </span>
+        <div>
+          <strong>{tr("Agent 过程", "Agent process")}</strong>
+          <span>
+            {current?.title ||
+              tr("正在整理执行过程", "Preparing the execution trace")}
+          </span>
+        </div>
+        <em>
+          {running ? tr("进行中", "Live") : tr("已保留", "Saved")}
+        </em>
+      </div>
+      <p className="aporiax-agent-process-note">
+        {tr(
+          "展示可观察的行动与过程摘要，不显示模型私有思维链。任务结束后仍会保留。",
+          "Shows observable actions and concise process summaries, not private chain-of-thought. The trace remains after completion.",
+        )}
+      </p>
+      <div className="aporiax-agent-process-steps">
+        {steps.map((step) => (
+          <details
+            className={`aporiax-agent-process-step ${step.status}`}
+            key={step.id}
+            open={step.status === "running" ? true : undefined}
+          >
+            <summary>
+              <span className="aporiax-agent-process-step-icon">
+                <ProcessStepIcon status={step.status} />
+              </span>
+              <span className="aporiax-agent-process-step-copy">
+                <strong>{step.title}</strong>
+                <small>{step.summary}</small>
+              </span>
+              <span className="aporiax-agent-process-step-state">
+                {step.status === "running"
+                  ? tr("正在做", "Working")
+                  : step.status === "attention"
+                    ? tr("需注意", "Attention")
+                    : step.status === "interrupted"
+                      ? tr("已停止", "Stopped")
+                      : tr("完成", "Done")}
+              </span>
+            </summary>
+            {(step.paths.length > 0 ||
+              step.commands.length > 0 ||
+              step.planSteps.length > 0) && (
+              <div className="aporiax-agent-process-detail">
+                {step.planSteps.map((planStep) => (
+                  <div className="aporiax-agent-process-plan" key={planStep.id}>
+                    <span>{planStep.status === "completed" ? "✓" : "·"}</span>
+                    <div>
+                      <strong>{planStep.title}</strong>
+                      {planStep.detail && <small>{planStep.detail}</small>}
+                    </div>
+                  </div>
+                ))}
+                {step.paths.map((path) => (
+                  <code key={`path-${path}`}>
+                    <FileText size={11} />
+                    {path}
+                  </code>
+                ))}
+                {step.commands.map((command) => (
+                  <code key={`command-${command}`}>
+                    <Terminal size={11} />
+                    {command}
+                  </code>
+                ))}
+              </div>
+            )}
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function syncProcessTraces() {
+  const task = currentVisibleTask();
+  const articles = [
+    ...document.querySelectorAll(".message-list .assistant-message"),
+  ];
+  const messages = (Array.isArray(task?.messages) ? task.messages : []).filter(
+    (message) => message?.role === "assistant",
+  );
+  const activeHosts = new Set();
+
+  articles.forEach((article, index) => {
+    const message = messages[index];
+    const content = article.querySelector(":scope > .assistant-message-content");
+    let host = article.querySelector(":scope > .aporiax-agent-process-host");
+    if (!message || !content) {
+      if (host) cleanupRoot(processRoots, host);
+      return;
+    }
+    const steps = buildAgentProcessSummary(message, languageCode());
+    if (!steps.length) {
+      if (host) cleanupRoot(processRoots, host);
+      return;
+    }
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "aporiax-agent-process-host";
+      content.insertAdjacentElement("afterend", host);
+    }
+    activeHosts.add(host);
+    let root = processRoots.get(host);
+    if (!root) {
+      root = createRoot(host);
+      processRoots.set(host, root);
+    }
+    root.render(<AgentProcessTrace message={message} />);
+  });
+
+  for (const host of [...processRoots.keys()]) {
+    if (!host.isConnected || !activeHosts.has(host)) {
+      cleanupRoot(processRoots, host);
     }
   }
 }
 
 function capabilityStatusText(capability) {
   if (capability.mode === "native") {
-    return tr("当前模型原生支持图片输入", "Current model supports images natively");
+    return tr(
+      "当前模型原生支持图片输入",
+      "Current model supports images natively",
+    );
   }
   if (capability.mode === "proxy") {
     const proxyName = capability.proxy?.modelName || capability.proxy?.modelId;
@@ -196,7 +375,10 @@ function VisionCapabilityCard({ capability }) {
   const available = capability.available;
   const proxyMode = capability.mode === "proxy";
   const nativeMode = capability.mode === "native";
-  const mainModel = capability.mainModelName || capability.mainModelId || tr("当前模型", "Current model");
+  const mainModel =
+    capability.mainModelName ||
+    capability.mainModelId ||
+    tr("当前模型", "Current model");
   const proxyModel =
     capability.proxy?.modelName || capability.proxy?.modelId || "";
 
@@ -252,9 +434,7 @@ function VisionCapabilityCard({ capability }) {
                 </div>
               </>
             )}
-            {nativeMode && (
-              <em>{tr("原生视觉", "Native vision")}</em>
-            )}
+            {nativeMode && <em>{tr("原生视觉", "Native vision")}</em>}
           </div>
         )}
 
@@ -313,7 +493,11 @@ function syncVisionCapability() {
     return;
   }
 
-  if (!visionHost || !visionHost.isConnected || visionHost.parentElement !== panel) {
+  if (
+    !visionHost ||
+    !visionHost.isConnected ||
+    visionHost.parentElement !== panel
+  ) {
     cleanupVisionRoot();
     visionHost = document.createElement("div");
     visionHost.className = "aporiax-vision-capability-host";
@@ -327,9 +511,254 @@ function syncVisionCapability() {
   visionRoot.render(<VisionCapabilityCard capability={capability} />);
 }
 
+async function buildWorkspaceFileIndex(workspacePath) {
+  if (!workspacePath || !window.desktop?.workspace?.listTree) return [];
+  if (workspaceFileIndexes.has(workspacePath)) {
+    return workspaceFileIndexes.get(workspacePath);
+  }
+
+  const promise = (async () => {
+    const files = [];
+    const queue = ["."];
+    const visited = new Set();
+    while (queue.length && visited.size < 260 && files.length < 4_000) {
+      const directory = queue.shift();
+      if (!directory || visited.has(directory)) continue;
+      visited.add(directory);
+      let result;
+      try {
+        result = await window.desktop.workspace.listTree(
+          workspacePath,
+          directory,
+        );
+      } catch {
+        continue;
+      }
+      for (const entry of result?.entries || []) {
+        if (entry?.type === "file") {
+          files.push(String(entry.path || "").replace(/\\/g, "/"));
+          if (files.length >= 4_000) break;
+        } else if (entry?.type === "directory" && entry.path) {
+          queue.push(entry.path);
+        }
+      }
+    }
+    return [...new Set(files)].filter(Boolean);
+  })();
+
+  workspaceFileIndexes.set(workspacePath, promise);
+  return promise;
+}
+
+function WorkspaceMentionMenu({ state, onSelect }) {
+  return (
+    <div className="aporiax-workspace-mention-menu" role="listbox">
+      <div className="aporiax-workspace-mention-title">
+        <span>
+          <FileText size={13} />
+          {tr("引用工作区文件", "Mention workspace file")}
+        </span>
+        <small>{tr("@ 文件会作为本轮上下文", "@ files become turn context")}</small>
+      </div>
+      {state.loading ? (
+        <div className="aporiax-workspace-mention-empty">
+          <LoaderCircle className="spin" size={13} />
+          {tr("正在索引工作区…", "Indexing workspace…")}
+        </div>
+      ) : state.suggestions.length ? (
+        <div className="aporiax-workspace-mention-results">
+          {state.suggestions.map((path, index) => (
+            <button
+              className={index === state.selectedIndex ? "active" : ""}
+              key={path}
+              type="button"
+              role="option"
+              aria-selected={index === state.selectedIndex}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onSelect(path)}
+            >
+              <FileText size={13} />
+              <span>{path}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="aporiax-workspace-mention-empty">
+          {tr("没有匹配的文件", "No matching files")}
+        </div>
+      )}
+      <div className="aporiax-workspace-mention-footer">
+        <span>↑↓ {tr("选择", "Select")}</span>
+        <span>Enter / Tab {tr("引用", "Mention")}</span>
+        <span>Esc {tr("关闭", "Close")}</span>
+      </div>
+    </div>
+  );
+}
+
+function cleanupMentionMenu() {
+  mentionState = {
+    query: null,
+    workspacePath: "",
+    suggestions: [],
+    selectedIndex: 0,
+    loading: false,
+  };
+  if (mentionRoot) {
+    try {
+      mentionRoot.unmount();
+    } catch {
+      // Autocomplete cleanup is presentation-only.
+    }
+  }
+  mentionRoot = null;
+  mentionHost?.remove();
+  mentionHost = null;
+}
+
+function renderMentionMenu() {
+  if (!mentionState.query || !mentionTextarea?.isConnected) {
+    cleanupMentionMenu();
+    return;
+  }
+  const composer = mentionTextarea.closest(".composer");
+  if (!composer) {
+    cleanupMentionMenu();
+    return;
+  }
+  if (!mentionHost || !mentionHost.isConnected) {
+    mentionHost = document.createElement("div");
+    mentionHost.className = "aporiax-workspace-mention-host";
+    composer.appendChild(mentionHost);
+    mentionRoot = createRoot(mentionHost);
+  }
+  mentionRoot.render(
+    <WorkspaceMentionMenu state={mentionState} onSelect={selectWorkspaceMention} />,
+  );
+}
+
+function setControlledTextareaValue(textarea, value, cursor) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(textarea, value);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  window.requestAnimationFrame(() => {
+    textarea.focus();
+    textarea.setSelectionRange(cursor, cursor);
+  });
+}
+
+function selectWorkspaceMention(path) {
+  if (!mentionTextarea || !mentionState.query) return;
+  const result = replaceWorkspaceMentionQuery(
+    mentionTextarea.value,
+    mentionState.query,
+    path,
+  );
+  setControlledTextareaValue(mentionTextarea, result.value, result.cursor);
+  cleanupMentionMenu();
+}
+
+async function refreshMentionState() {
+  if (!mentionTextarea?.isConnected) return cleanupMentionMenu();
+  const query = extractWorkspaceMentionQuery(
+    mentionTextarea.value,
+    mentionTextarea.selectionStart,
+  );
+  const workspacePath = currentVisibleTask()?.workspacePath || "";
+  if (!query || !workspacePath) return cleanupMentionMenu();
+
+  mentionState = {
+    query,
+    workspacePath,
+    suggestions: mentionState.suggestions,
+    selectedIndex: 0,
+    loading: true,
+  };
+  renderMentionMenu();
+
+  const paths = await buildWorkspaceFileIndex(workspacePath);
+  if (!mentionTextarea?.isConnected) return;
+  const latestQuery = extractWorkspaceMentionQuery(
+    mentionTextarea.value,
+    mentionTextarea.selectionStart,
+  );
+  if (
+    !latestQuery ||
+    latestQuery.start !== query.start ||
+    latestQuery.query !== query.query
+  ) {
+    return;
+  }
+  mentionState = {
+    query: latestQuery,
+    workspacePath,
+    suggestions: rankWorkspaceFiles(paths, latestQuery.query, 12),
+    selectedIndex: 0,
+    loading: false,
+  };
+  renderMentionMenu();
+}
+
+function handleMentionKeyDown(event) {
+  if (!mentionState.query || !mentionRoot) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    cleanupMentionMenu();
+    return;
+  }
+  if (!mentionState.suggestions.length) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    event.stopPropagation();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const count = mentionState.suggestions.length;
+    mentionState = {
+      ...mentionState,
+      selectedIndex:
+        (mentionState.selectedIndex + direction + count) % count,
+    };
+    renderMentionMenu();
+    return;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    event.stopPropagation();
+    selectWorkspaceMention(
+      mentionState.suggestions[mentionState.selectedIndex] ||
+        mentionState.suggestions[0],
+    );
+  }
+}
+
+function syncComposerMentionBinding() {
+  const textarea = document.querySelector(
+    ".composer textarea:not(.provider-models-input)",
+  );
+  if (textarea === mentionTextarea) return;
+  if (mentionTextarea) {
+    mentionTextarea.removeEventListener("input", refreshMentionState);
+    mentionTextarea.removeEventListener("click", refreshMentionState);
+    mentionTextarea.removeEventListener("keyup", refreshMentionState);
+    mentionTextarea.removeEventListener("keydown", handleMentionKeyDown);
+  }
+  cleanupMentionMenu();
+  mentionTextarea = textarea instanceof HTMLTextAreaElement ? textarea : null;
+  if (!mentionTextarea) return;
+  mentionTextarea.addEventListener("input", refreshMentionState);
+  mentionTextarea.addEventListener("click", refreshMentionState);
+  mentionTextarea.addEventListener("keyup", refreshMentionState);
+  mentionTextarea.addEventListener("keydown", handleMentionKeyDown);
+}
+
 function refreshPresentation() {
   syncDurationChips();
+  syncProcessTraces();
   syncVisionCapability();
+  syncComposerMentionBinding();
 }
 
 function scheduleRefresh() {
