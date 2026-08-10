@@ -59,12 +59,12 @@ async function activateForText(
   },
 ) {
   if (!registry) return { skills: [], unresolved: [] };
-  await registry.discover({
+  const catalog = await registry.catalog({
     workspacePath,
     userSkillsDirectory,
     builtinDirectory,
   });
-  return registry.activate(String(text || ""), { limit });
+  return registry.activate(String(text || ""), { limit, catalog });
 }
 
 export async function prepareSkillRequest(
