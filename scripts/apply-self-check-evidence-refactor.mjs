@@ -18,7 +18,7 @@ let runtime = await readFile("electron/agent-runtime-core.js", "utf8");
 runtime = replaceOnce(
   runtime,
   `import {\n  dispatchNativeTool,\n  projectNativeToolCatalog,\n} from "./runtime/tool-dispatcher.js";\n`,
-  `import {\n  dispatchNativeTool,\n  projectNativeToolCatalog,\n} from "./runtime/tool-dispatcher.js";\nimport {\n  buildChanges,\n  buildSelfCheckResult,\n  createChangeVersionSignature,\n  createProgressiveReviewTask,\n  createProgressiveVerifyTask,\n  createSelfCheckPrompt,\n  findVerificationCandidate,\n  getPendingSelfCheckPaths,\n  normalizeSelfCheckReport,\n  parseProgressiveReviewReport,\n  reviewableChanges,\n} from "./runtime/self-check-evidence.js";\n`,
+  `import {\n  dispatchNativeTool,\n  projectNativeToolCatalog,\n} from "./runtime/tool-dispatcher.js";\nimport {\n  buildChanges,\n  buildSelfCheckResult,\n  createChangeVersionSignature,\n  createProgressiveReviewTask,\n  createProgressiveVerifyTask,\n  createSelfCheckPrompt,\n  findVerificationCandidate,\n  getPendingSelfCheckPaths,\n  normalizeSelfCheckReport,\n  parseProgressiveReviewReport,\n  reviewableChanges,\n} from "./runtime/self-check-evidence.js";\nexport { getPendingSelfCheckPaths } from "./runtime/self-check-evidence.js";\n`,
   "self-check evidence import",
 );
 
