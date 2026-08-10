@@ -159,3 +159,11 @@
   color: #c6a4ea;
   background: rgba(170, 121, 218, 0.1);
 }
+
+/* While the observable Live Agent Status is mounted, the old empty-body
+   placeholder is redundant and looks like a stalled stream. Actual
+   response.delta content still renders normally as soon as the main model
+   enters its answer phase. */
+.assistant-message:has(> .aporiax-live-agent-status-host) .stream-placeholder {
+  display: none;
+}
