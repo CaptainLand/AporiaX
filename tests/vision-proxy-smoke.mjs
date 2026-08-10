@@ -68,7 +68,12 @@ const exposedQwen = exposedProviders
 assert.equal(exposedDeepSeek.supportsImages, true);
 assert.equal(exposedDeepSeek.nativeSupportsImages, false);
 assert.equal(exposedDeepSeek.supportsImageProxy, true);
+assert.equal(exposedDeepSeek.visionProxy.providerId, "qwen");
+assert.equal(exposedDeepSeek.visionProxy.modelId, "qwen3.5-flash");
 assert.equal(exposedQwen.supportsImages, true);
+assert.equal(exposedQwen.nativeSupportsImages, true);
+assert.equal(exposedQwen.supportsImageProxy, false);
+assert.equal(exposedQwen.visionProxy, null);
 
 const noKeyProviders = exposeVisionProxyCapabilities([
   {
@@ -83,6 +88,9 @@ const noKeyProviders = exposeVisionProxyCapabilities([
   },
 ]);
 assert.equal(noKeyProviders[0].models[0].supportsImages, false);
+assert.equal(noKeyProviders[0].models[0].supportsImageProxy, false);
+assert.equal(noKeyProviders[0].models[0].visionProxy, null);
+assert.equal(noKeyProviders[1].models[0].nativeSupportsImages, true);
 
 const explicitCandidate = selectVisionCandidate(providers, {
   mainProviderId: "deepseek",
