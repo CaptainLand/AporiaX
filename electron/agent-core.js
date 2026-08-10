@@ -48,7 +48,10 @@ const DEFAULT_PERMISSION_POLICIES = {
     create_presentation: "allow",
     create_spreadsheet: "allow",
     inspect_office_file: "allow",
-    run_command: "ask",
+    // `run_command` is permitted at the policy layer for workspace-write.
+    // The runtime still requires approval for unsandboxed/manual execution and
+    // only auto-runs when the current sandbox backend is marked safe.
+    run_command: "allow",
     browser_open: "allow",
     browser_snapshot: "allow",
     browser_screenshot: "allow",
@@ -60,10 +63,10 @@ const DEFAULT_PERMISSION_POLICIES = {
     browser_press: "ask",
     complete_self_check: "allow",
   },
-  // Builder workers execute only inside an isolated worktree. They receive the
-  // minimum text-editing surface needed to implement their leased scope. In
-  // particular, they cannot delegate more agents, execute shell commands, or
-  // control a browser session.
+  // Builder workers operate only inside their leased isolated worktree. They
+  // may now run verification commands there so a Builder can test its own
+  // implementation before handoff. They still cannot delegate more agents or
+  // control Browser/MCP/external systems.
   "builder-write": {
     "*": "deny",
     list_directory: "allow",
@@ -74,6 +77,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     update_plan: "allow",
     write_file: "allow",
     apply_patch: "allow",
+    run_command: "allow",
     complete_self_check: "allow",
   },
 };
