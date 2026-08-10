@@ -35,7 +35,13 @@ export function parseWorkspaceMentions(text) {
 
 function pathInsideWorkspace(workspaceRoot, targetPath) {
   const child = relative(workspaceRoot, targetPath);
-  return Boolean(child) && child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child);
+  const outsidePrefix = process.platform === "win32" ? "..\\" : "../";
+  return (
+    Boolean(child) &&
+    child !== ".." &&
+    !child.startsWith(outsidePrefix) &&
+    !isAbsolute(child)
+  );
 }
 
 async function loadMentionedFile(workspaceRoot, mentionPath, remainingBytes) {
@@ -110,6 +116,50 @@ function buildMentionContext(records) {
   return sections.join("\n");
 }
 
+async function resolveWorkspaceMentionRecords(workspacePath, text) {
+  const mentions = parseWorkspaceMentions(text);
+  if (!mentions.length || !workspacePath) return [];
+
+  let workspaceRoot;
+  try {
+    workspaceRoot = await realpath(resolve(workspacePath));
+  } catch {
+    return [];
+  }
+
+  const records = [];
+  let consumedBytes = 0;
+  for (const mention of mentions) {
+    const record = await loadMentionedFile(
+      workspaceRoot,
+      mention,
+      Math.max(0, MAX_TOTAL_BYTES - consumedBytes),
+    );
+    records.push(record);
+    if (record.status === "loaded") consumedBytes += record.bytes || 0;
+  }
+  return records;
+}
+
+export async function prepareWorkspaceMentionMessage(
+  message = {},
+  workspacePath = "",
+) {
+  const originalContent = String(message?.content || "");
+  const records = await resolveWorkspaceMentionRecords(
+    String(workspacePath || "").trim(),
+    originalContent,
+  );
+  if (!records.length) return message;
+
+  const context = buildMentionContext(records);
+  return {
+    ...message,
+    content: [originalContent.trim(), context].filter(Boolean).join("\n\n"),
+    workspaceMentions: records.map(({ content, ...record }) => record),
+  };
+}
+
 export async function prepareWorkspaceMentionRequest(request = {}) {
   const workspacePath = String(request?.workspacePath || "").trim();
   const messages = Array.isArray(request?.messages) ? request.messages : [];
@@ -127,42 +177,17 @@ export async function prepareWorkspaceMentionRequest(request = {}) {
       : messages.findLastIndex((message) => message?.role === "user");
   if (userIndex < 0) return request;
 
-  const mentions = parseWorkspaceMentions(messages[userIndex]?.content);
-  if (!mentions.length) return request;
+  const preparedMessage = await prepareWorkspaceMentionMessage(
+    messages[userIndex],
+    workspacePath,
+  );
+  if (preparedMessage === messages[userIndex]) return request;
 
-  let workspaceRoot;
-  try {
-    workspaceRoot = await realpath(resolve(workspacePath));
-  } catch {
-    return request;
-  }
-
-  const records = [];
-  let consumedBytes = 0;
-  for (const mention of mentions) {
-    const record = await loadMentionedFile(
-      workspaceRoot,
-      mention,
-      Math.max(0, MAX_TOTAL_BYTES - consumedBytes),
-    );
-    records.push(record);
-    if (record.status === "loaded") consumedBytes += record.bytes || 0;
-  }
-
-  const context = buildMentionContext(records);
-  if (!context) return request;
   const nextMessages = [...messages];
-  nextMessages[userIndex] = {
-    ...nextMessages[userIndex],
-    content: [String(nextMessages[userIndex]?.content || "").trim(), context]
-      .filter(Boolean)
-      .join("\n\n"),
-    workspaceMentions: records.map(({ content, ...record }) => record),
-  };
-
+  nextMessages[userIndex] = preparedMessage;
   return {
     ...request,
     messages: nextMessages,
-    workspaceMentions: records.map(({ content, ...record }) => record),
+    workspaceMentions: preparedMessage.workspaceMentions || [],
   };
 }
