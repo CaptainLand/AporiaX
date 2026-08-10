@@ -152,10 +152,12 @@ function taskRuntimeControlsBootstrap() {
     const end = running ? Date.now() : Number.isFinite(completed) ? completed : Date.now();
     const label = formatDuration(Math.max(0, end - start));
     chip.dataset.running = running ? "true" : "false";
-    chip.querySelector(".desktop-run-duration-value").textContent = label;
-    chip.title = languageIsEnglish()
+    const valueNode = chip.querySelector(".desktop-run-duration-value");
+    if (valueNode && valueNode.textContent !== label) valueNode.textContent = label;
+    const title = languageIsEnglish()
       ? `Task runtime · ${label}`
       : `本次任务运行时间 · ${label}`;
+    if (chip.title !== title) chip.title = title;
   }
 
   function updateDurationChips() {
@@ -210,8 +212,9 @@ function taskRuntimeControlsBootstrap() {
     button.disabled = running;
     button.setAttribute("aria-pressed", multi ? "true" : "false");
     const text = button.querySelector("span");
-    if (text) text.textContent = multi ? "Multi" : "Single";
-    button.title = running
+    const label = multi ? "Multi" : "Single";
+    if (text && text.textContent !== label) text.textContent = label;
+    const title = running
       ? languageIsEnglish()
         ? "Agent mode is locked while the current task is running"
         : "当前任务运行中，Agent 模式将在任务结束后才能切换"
@@ -222,7 +225,10 @@ function taskRuntimeControlsBootstrap() {
         : languageIsEnglish()
           ? "Single Agent · Main only"
           : "单 Agent · 仅 Main";
-    button.setAttribute("aria-label", button.title);
+    if (button.title !== title) button.title = title;
+    if (button.getAttribute("aria-label") !== title) {
+      button.setAttribute("aria-label", title);
+    }
   }
 
   function ensureModeButton() {
@@ -254,7 +260,15 @@ function taskRuntimeControlsBootstrap() {
     updateDurationChips();
   }
 
-  const observer = new MutationObserver(() => refresh());
+  let refreshQueued = false;
+  const observer = new MutationObserver(() => {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    window.requestAnimationFrame(() => {
+      refreshQueued = false;
+      refresh();
+    });
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   window.setInterval(refresh, 1_000);
   void syncMode(mode);
