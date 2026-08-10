@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import {
   captureWorkspaceState,
   getPendingSelfCheckPaths,
@@ -2170,7 +2170,10 @@ try {
   globalThis.fetch = originalFetch;
   const resolvedRoot = resolve(testRoot);
   const resolvedWorkspace = resolve(".");
-  if (!resolvedRoot.startsWith(`${resolvedWorkspace}\\`)) {
+  if (
+    !resolvedRoot.startsWith(`${resolvedWorkspace}${sep}`) ||
+    !basename(resolvedRoot).startsWith(".runtime-smoke-")
+  ) {
     throw new Error("Refusing to remove a test directory outside the workspace.");
   }
   await rm(resolvedRoot, { recursive: true, force: true });
