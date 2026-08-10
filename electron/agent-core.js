@@ -1,3 +1,13 @@
+import {
+  createHarnessEventBus,
+  getDefaultHarnessEventBus,
+} from "./harness/event-bus.js";
+import {
+  agentBudgetAllowsTool,
+  currentAgentBudget,
+  enforceAgentBudgetEvent,
+} from "./harness/agent-budget.js";
+
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 
 const DEFAULT_PERMISSION_POLICIES = {
@@ -6,6 +16,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     delegate_subagent: "allow",
     collect_subagents: "allow",
     remember_project_fact: "allow",
+    update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
     search_text: "allow",
@@ -19,6 +30,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     delegate_subagent: "allow",
     collect_subagents: "allow",
     remember_project_fact: "allow",
+    update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
     search_text: "allow",
@@ -33,6 +45,21 @@ const DEFAULT_PERMISSION_POLICIES = {
     run_command: "ask",
     complete_self_check: "allow",
   },
+  // Builder workers execute only inside an isolated worktree. They receive the
+  // minimum text-editing surface needed to implement their leased scope. In
+  // particular, they cannot delegate more agents or execute shell commands.
+  "builder-write": {
+    "*": "deny",
+    list_directory: "allow",
+    read_file: "allow",
+    search_text: "allow",
+    git_status: "allow",
+    git_diff: "allow",
+    update_plan: "allow",
+    write_file: "allow",
+    apply_patch: "allow",
+    complete_self_check: "allow",
+  },
 };
 
 const ACTION_RESTRICTIVENESS = {
@@ -41,6 +68,7 @@ const ACTION_RESTRICTIVENESS = {
   deny: 2,
 };
 const HARNESS_CONTROL_TOOLS = new Set([
+  "update_plan",
   "complete_self_check",
 ]);
 
@@ -48,10 +76,7 @@ function normalizeAction(value, fallback = "deny") {
   return VALID_PERMISSION_ACTIONS.has(value) ? value : fallback;
 }
 
-export function createPermissionPolicy(
-  mode,
-  projectOverrides = {},
-) {
+export function createPermissionPolicy(mode, projectOverrides = {}) {
   const base =
     DEFAULT_PERMISSION_POLICIES[mode] ||
     DEFAULT_PERMISSION_POLICIES["read-only"];
@@ -61,10 +86,7 @@ export function createPermissionPolicy(
     !Array.isArray(projectOverrides)
       ? projectOverrides
       : {};
-  const names = new Set([
-    ...Object.keys(base),
-    ...Object.keys(overrides),
-  ]);
+  const names = new Set([...Object.keys(base), ...Object.keys(overrides)]);
   const policy = {};
 
   for (const name of names) {
@@ -77,13 +99,8 @@ export function createPermissionPolicy(
       continue;
     }
     const overrideValue =
-      overrides[name] !== undefined
-        ? overrides[name]
-        : overrides["*"];
-    const requestedAction = normalizeAction(
-      overrideValue,
-      baseAction,
-    );
+      overrides[name] !== undefined ? overrides[name] : overrides["*"];
+    const requestedAction = normalizeAction(overrideValue, baseAction);
     // Repository configuration is untrusted input. It may make a task more
     // restrictive, but it must never elevate the permission chosen in the UI.
     policy[name] =
@@ -131,29 +148,62 @@ export class ToolRegistry {
     return [...this.#tools.values()]
       .filter(
         (descriptor) =>
-          getToolPermission(policy, descriptor.name) !== "deny",
+          getToolPermission(policy, descriptor.name) !== "deny" &&
+          agentBudgetAllowsTool(descriptor.name),
       )
       .map((descriptor) => descriptor.definition);
   }
 
   catalog(policy) {
-    return [...this.#tools.values()].map((descriptor) => ({
-      name: descriptor.name,
-      risk: descriptor.risk,
-      permission: getToolPermission(policy, descriptor.name),
-    }));
+    return [...this.#tools.values()].map((descriptor) => {
+      const budgetAllowed = agentBudgetAllowsTool(descriptor.name);
+      return {
+        name: descriptor.name,
+        risk: descriptor.risk,
+        permission: budgetAllowed
+          ? getToolPermission(policy, descriptor.name)
+          : "deny",
+        ...(budgetAllowed ? {} : { budgetBlocked: true }),
+      };
+    });
   }
 }
 
-export function createEventEmitter(onEvent) {
-  let sequence = 0;
-  return (event) => {
-    if (!event || typeof event.type !== "string") return;
-    sequence += 1;
-    onEvent?.({
-      sequence,
-      timestamp: new Date().toISOString(),
-      ...event,
-    });
+export function createEventEmitter(onEvent, options = {}) {
+  const bus = createHarnessEventBus({
+    onEvent,
+    now: options.now,
+    maxHistory: options.maxHistory ?? 1_000,
+  });
+  const emit = (event) => {
+    if (event?.type === "turn.started") {
+      const budget = currentAgentBudget();
+      if (budget) event.agentBudget = budget;
+    }
+    enforceAgentBudgetEvent(event);
+    const enriched = bus.emit(event);
+    const sharedBus = getDefaultHarnessEventBus();
+    if (enriched && sharedBus && sharedBus !== bus) {
+      const {
+        sequence: runtimeSequence,
+        timestamp: runtimeTimestamp,
+        ...payload
+      } = enriched;
+      sharedBus.emit({
+        ...payload,
+        runtimeSequence,
+        runtimeTimestamp,
+      });
+    }
+    return enriched;
   };
+  Object.assign(emit, {
+    bus,
+    on: bus.on.bind(bus),
+    once: bus.once.bind(bus),
+    hook: bus.hook.bind(bus),
+    history: bus.history.bind(bus),
+    snapshot: bus.snapshot.bind(bus),
+  });
+  return emit;
 }

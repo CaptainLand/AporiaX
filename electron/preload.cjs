@@ -52,6 +52,13 @@ contextBridge.exposeInMainWorld("desktop", {
     status: () => ipcRenderer.invoke("sandbox:status"),
     prepare: () => ipcRenderer.invoke("sandbox:prepare"),
   },
+  core: {
+    status: () => ipcRenderer.invoke("core:status"),
+    agents: () => ipcRenderer.invoke("core:agents"),
+    plugins: () => ipcRenderer.invoke("core:plugins"),
+    sessions: () => ipcRenderer.invoke("core:sessions"),
+    events: (request = {}) => ipcRenderer.invoke("core:events", request),
+  },
   notifications: {
     taskCompleted: (payload) =>
       ipcRenderer.invoke("desktop:task-completed", payload),

@@ -13,9 +13,9 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
-  "main": "electron/main.js",
+  "main": "electron/main-v2.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
@@ -25,7 +25,12 @@
     "preview": "vite preview",
     "start": "electron .",
     "test:runtime": "node tests/runtime-smoke.mjs",
-    "test:p0": "node tests/p0-model-smoke.mjs"
+    "test:p0": "node tests/p0-model-smoke.mjs",
+    "test:cache": "node tests/deepseek-cache-smoke.mjs",
+    "test:architecture": "node tests/harness-architecture-smoke.mjs",
+    "test:collaboration": "node tests/harness-collaboration-smoke.mjs",
+    "test:desktop-background": "node tests/desktop-background-smoke.mjs",
+    "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs"
   },
   "dependencies": {
     "diff": "^9.0.0",
