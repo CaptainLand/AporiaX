@@ -16,19 +16,14 @@ function normalizeMentionPath(value) {
 export function parseWorkspaceMentions(text) {
   const source = String(text || "");
   const matches = [];
-  const patterns = [
-    /(^|[\s(])@\{([^}\r\n]+)\}/g,
-    /(^|[\s(])@"([^"\r\n]+)"/g,
-    /(^|[\s(])@([A-Za-z0-9_.\-/\\]+)/g,
-  ];
+  const pattern =
+    /(^|[\s(])@(?:\{([^}\r\n]+)\}|"([^"\r\n]+)"|([A-Za-z0-9_.\-/\\]+))/g;
 
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const path = normalizeMentionPath(match[2]);
-      if (!path || path === "." || matches.includes(path)) continue;
-      matches.push(path);
-      if (matches.length >= MAX_MENTIONS) return matches;
-    }
+  for (const match of source.matchAll(pattern)) {
+    const path = normalizeMentionPath(match[2] || match[3] || match[4]);
+    if (!path || path === "." || matches.includes(path)) continue;
+    matches.push(path);
+    if (matches.length >= MAX_MENTIONS) break;
   }
   return matches;
 }
