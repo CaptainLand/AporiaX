@@ -109,6 +109,18 @@
   background: rgba(112, 123, 134, 0.07);
 }
 
+.aporiax-live-agent-status-meta small.skill {
+  display: inline-flex;
+  max-width: 120px;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  color: #78599b;
+  background: rgba(120, 89, 155, 0.09);
+  font-weight: 620;
+  text-overflow: ellipsis;
+}
+
 [data-theme="dark"] .aporiax-live-agent-status {
   border-color: rgba(125, 139, 162, 0.16);
   background: rgba(106, 116, 140, 0.055);
@@ -141,4 +153,9 @@
 [data-theme="dark"] .aporiax-live-agent-status.completed .aporiax-live-agent-status-icon,
 [data-theme="dark"] .aporiax-live-agent-status.completed .aporiax-live-agent-status-meta em {
   color: #76b69f;
+}
+
+[data-theme="dark"] .aporiax-live-agent-status-meta small.skill {
+  color: #c6a4ea;
+  background: rgba(170, 121, 218, 0.1);
 }
