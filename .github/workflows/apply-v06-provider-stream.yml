@@ -25,6 +25,8 @@ jobs:
           cache: npm
       - name: Extract provider streaming runtime
         run: node scripts/apply-v06-provider-stream.mjs
+      - name: Make runtime smoke cleanup cross-platform
+        run: node scripts/fix-runtime-smoke-cleanup.mjs
       - run: npm ci --ignore-scripts
       - run: npm run test:provider-stream
       - run: npm run test:runtime
