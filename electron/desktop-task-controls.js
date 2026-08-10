@@ -1,4 +1,4 @@
-export const DESKTOP_AGENT_MODE_STORAGE_KEY = "aporiax.agent-mode.v1";
+export const DESKTOP_AGENT_MODE_STORAGE_KEY = "aporiax.agent-mode.v2";
 
 export function rendererTaskControlsCss() {
   return `
@@ -134,7 +134,7 @@ function taskRuntimeControlsBootstrap() {
   if (window.__aporiaxTaskRuntimeControlsV1) return;
   window.__aporiaxTaskRuntimeControlsV1 = true;
 
-  const MODE_KEY = "aporiax.agent-mode.v1";
+  const MODE_KEY = "aporiax.agent-mode.v2";
   const TASKS_KEY = "aporiax.tasks.v1";
   const storedMode = localStorage.getItem(MODE_KEY);
   let mode = storedMode === "single" ? "single" : "multi";
