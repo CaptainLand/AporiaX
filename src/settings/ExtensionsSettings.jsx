@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useI18n } from "../i18n";
+import "./extensions.css";
 
 function sourceLabel(source, tr) {
   return {
