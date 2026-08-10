@@ -5,6 +5,7 @@ import { HarnessScheduler } from "./scheduler.js";
 import { HarnessToolHost } from "./tool-host.js";
 import { ReviewCoordinator } from "./review-coordinator.js";
 import { HarnessPluginHost } from "./plugin-api.js";
+import { createSkillRegistry } from "./skills/registry.js";
 import { planAgentBudget } from "./agent-budget.js";
 import { BuilderWorkspaceManager } from "./builder-workspace.js";
 import { createTaskGraph } from "./task-graph.js";
@@ -27,6 +28,7 @@ export function createHarnessKernel({
     agentRegistry: agents,
     toolHost: tools,
   });
+  const skills = createSkillRegistry({ eventBus: events });
   const builders = new BuilderWorkspaceManager({ eventBus: events });
 
   const kernel = {
@@ -38,6 +40,7 @@ export function createHarnessKernel({
     tools,
     reviews,
     plugins,
+    skills,
     builders,
     planAgentBudget,
     createTaskGraph,
@@ -51,6 +54,11 @@ export function createHarnessKernel({
         toolHost: true,
         reviewVersioning: true,
         plugins: true,
+        skills: true,
+        skillDiscovery: true,
+        projectSkills: true,
+        userSkills: true,
+        progressiveSkillDisclosure: true,
         coreApi: true,
         adaptiveAgentBudget: true,
         taskGraph: true,
@@ -75,6 +83,7 @@ export function createHarnessKernel({
         events: events.snapshot(),
         agents: agents.list(),
         plugins: plugins.list(),
+        skills: skills.list(),
         tools: tools.list().map((tool) => ({
           name: tool.name,
           risk: tool.risk,
