@@ -8,7 +8,9 @@ const SINGLE_ROLES = Object.freeze({
 });
 
 export function normalizeDesktopAgentMode(value) {
-  return String(value || "").toLowerCase() === "multi" ? "multi" : "single";
+  // Multi is the product default. Only an explicit persisted/user-selected
+  // "single" value opts out of adaptive orchestration.
+  return String(value || "").toLowerCase() === "single" ? "single" : "multi";
 }
 
 export function desktopAgentModeBudget(mode) {
@@ -29,7 +31,7 @@ export function desktopAgentModeBudget(mode) {
   };
 }
 
-export function applyDesktopAgentMode(request = {}, mode = "single") {
+export function applyDesktopAgentMode(request = {}, mode = "multi") {
   const normalized = normalizeDesktopAgentMode(mode);
   if (normalized === "multi") {
     return {
@@ -54,7 +56,7 @@ export function desktopAgentModeDescription(mode) {
         mode: "multi",
         label: "Multi-Agent",
         detail:
-          "Adaptive multi-Agent mode. AporiaX automatically chooses Main-only or the useful Explore/Builder/Review/Verify topology for each task, with up to 2 isolated Builders when safe.",
+          "Recommended adaptive mode. AporiaX automatically chooses Main-only or the useful Explore/Builder/Review/Verify topology for each task, with up to 2 isolated Builders when safe.",
       }
     : {
         mode: "single",
