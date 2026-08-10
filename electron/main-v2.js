@@ -19,6 +19,10 @@ import {
   prepareSkillRequest,
   skillActivationSummary,
 } from "./skill-runtime.js";
+import {
+  loadMcpConfiguration,
+  publicMcpServerSummary,
+} from "./mcp-config.js";
 
 const desktopBackground = installDesktopBackground();
 const activeRunMetadata = new Map();
@@ -29,6 +33,13 @@ function skillRuntimeOptions(workspacePath = "") {
     registry: kernel?.skills || null,
     workspacePath,
     userSkillsDirectory: join(app.getPath("userData"), "skills"),
+  };
+}
+
+function mcpConfigurationOptions(workspacePath = "") {
+  return {
+    userDataDirectory: app.getPath("userData"),
+    workspacePath,
   };
 }
 
@@ -130,9 +141,9 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
     try {
       // Preserve the original user text for deterministic Skill matching.
       // Vision runs first, so a separate visual Provider sees only the original
-      // user prompt/image. @file contents are added next, and only then are the
-      // selected Skill instructions disclosed to the main Agent. Each stage
-      // appends to the request copy instead of replacing prior context.
+      // user prompt/image. @file contents are added next, selected Skill bodies
+      // are disclosed only to the main Agent, and trusted MCP server config is
+      // attached as main-process-only runtime metadata.
       const seededRequest = seedSkillOriginalContent(request);
       const visionPreparedRequest = await prepareVisionProxyRequest(
         seededRequest,
@@ -140,16 +151,24 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       const mentionPreparedRequest = await prepareWorkspaceMentionRequest(
         visionPreparedRequest,
       );
-      const preparedRequest = await prepareSkillRequest(
+      const skillPreparedRequest = await prepareSkillRequest(
         mentionPreparedRequest,
         skillRuntimeOptions(workspacePath),
       );
       emitSkillStatus(
         event,
-        preparedRequest,
-        skillActivationSummary(preparedRequest),
-        preparedRequest?.unresolvedSkills || [],
+        skillPreparedRequest,
+        skillActivationSummary(skillPreparedRequest),
+        skillPreparedRequest?.unresolvedSkills || [],
       );
+      const mcpConfiguration = await loadMcpConfiguration(
+        mcpConfigurationOptions(workspacePath),
+      );
+      const preparedRequest = {
+        ...skillPreparedRequest,
+        mcpServers: mcpConfiguration.servers,
+        mcpConfigErrors: mcpConfiguration.errors,
+      };
       return await runWithAgentBudget(budget, {}, () =>
         listener(event, preparedRequest),
       );
@@ -189,6 +208,20 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
     userSkillsDirectory,
     projectSkillsDirectory,
     manualInvocation: "/skill:name",
+  };
+});
+ipcMain.handle("core:mcp", async (_event, request = {}) => {
+  const workspacePath = String(request?.workspacePath || "").trim();
+  const configuration = await loadMcpConfiguration(
+    mcpConfigurationOptions(workspacePath),
+  );
+  return {
+    servers: configuration.servers.map(publicMcpServerSummary),
+    allServers: configuration.allServers.map(publicMcpServerSummary),
+    errors: configuration.errors,
+    userConfigPath: configuration.userConfigPath,
+    projectConfigPath: configuration.projectConfigPath,
+    projectSelection: configuration.projectSelection,
   };
 });
 ipcMain.handle("core:sessions", () => ({ sessions: kernel.sessions.list() }));
