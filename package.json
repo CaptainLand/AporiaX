@@ -33,6 +33,7 @@
     "test:vision": "node tests/vision-proxy-smoke.mjs",
     "test:runtime-ui": "node tests/runtime-ui-smoke.mjs",
     "test:process-ui": "node tests/agent-process-mentions-smoke.mjs",
+    "test:skills": "node tests/skill-system-smoke.mjs",
     "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs"
   },
   "dependencies": {
