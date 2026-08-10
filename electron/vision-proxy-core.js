@@ -4,6 +4,15 @@ const KNOWN_VISION_MODEL_PATTERNS = [
   /(?:^|[-_/])qwen3\.(?:5|6|7)(?:[-_/.:]|$)/i,
 ];
 
+const PREFERRED_VISION_MODELS = [
+  /^qwen3\.5-flash$/i,
+  /^qwen3\.5-flash[-_.:]/i,
+  /^qwen3\.6-flash$/i,
+  /^qwen3\.6-flash[-_.:]/i,
+  /^qwen3-vl-flash$/i,
+  /^qwen3-vl-flash[-_.:]/i,
+];
+
 const MAX_VISION_IMAGES_PER_MESSAGE = 8;
 const MAX_VISION_DATA_URL_CHARS = 28_000_000;
 
@@ -13,6 +22,16 @@ export function modelSupportsVision(model = {}) {
     return true;
   }
   return model?.supportsImages === true;
+}
+
+function preferredVisionCandidate(candidates) {
+  for (const pattern of PREFERRED_VISION_MODELS) {
+    const match = candidates.find(({ model }) =>
+      pattern.test(String(model?.id || "").trim()),
+    );
+    if (match) return match;
+  }
+  return candidates[0] || null;
 }
 
 export function imageAttachments(message = {}) {
@@ -76,12 +95,12 @@ export function selectVisionCandidate(
 
   if (explicitProvider || explicitModel) return candidates[0];
 
-  const nonMain = candidates.find(
+  const nonMain = candidates.filter(
     ({ provider, model }) =>
       String(provider?.id || "") !== String(mainProviderId || "") ||
       String(model?.id || "") !== String(mainModelId || ""),
   );
-  return nonMain || candidates[0];
+  return preferredVisionCandidate(nonMain.length ? nonMain : candidates);
 }
 
 export function buildVisionMessages(message, images = imageAttachments(message)) {
