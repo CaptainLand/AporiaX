@@ -1,0 +1,40 @@
+name: Validate Extensions Center
+
+on:
+  pull_request:
+    branches:
+      - agent/v0.6-mcp-capabilities
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-extensions-center' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.6-extensions-center
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: node scripts/apply-extensions-center.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run test:extensions
+      - run: npm run test:capabilities
+      - run: npm run test:mcp-capabilities
+      - run: npm run test:renderer-modules
+      - run: npm run test:renderer-architecture
+      - run: npm run test:runtime
+      - run: npm run build
+      - name: Commit validated Extensions Center
+        run: |
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: add Extensions capability center [extensions-center-validated]"
+          git push origin HEAD:agent/v0.6-extensions-center
