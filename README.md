@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <strong>Adaptive · Observable · Conflict-safe Multi-Agent Harness</strong><br>
   <em>Every problem begins with an aporia.</em>
 </p>
 
@@ -22,19 +23,111 @@
   <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
 </p>
 
-AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的
-行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、
-验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
+AporiaX 是一个 **local-first 桌面 Coding Harness**。它不只让一个 Agent 在聊天框里循环调用工具，而是围绕一个拥有最终决策权的 **Main Agent**，按任务复杂度自适应组织 Explore、Builder、Review、Verify、Curator 与 Witness，把模糊需求转化为可观察、可验证、可回退的真实工程过程。
+
+它可以直接操作授权工作区、编辑代码、运行验证、生成真实 Office 文件，并把行动路径、工具证据、文件修改、冲突检查和最终产物留在界面中。
 
 > [!IMPORTANT]
 > AporiaX `v0.5.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
-> `run_command` 默认在本地临时工作区副本中自动执行，结束后通过冲突检查同步项目变更，
-> 不需要逐条批准。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
-> 本地沙箱主要隔离工作区改动，仍使用当前用户的本机网络与进程权限。
+> 关闭主窗口时，正在运行的任务会继续留在 Electron 进程中并收至系统托盘；**完全退出进程后任务不会继续运行，也尚不支持重启后恢复正在执行的任务**。
+> `run_command` 默认在本地临时工作区副本中执行并通过冲突检查同步改动。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
 
-- **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
-- **Evidence**：保留工具调用、文件修改、验证结果和失败原因。
-- **Anchor**：把可恢复检查点带到每一轮对话旁，支持预览 Diff、冲突检查和安全回退。
+- **Route**：展示任务真正发生过的步骤，而不是把执行藏在聊天文字背后。
+- **Evidence**：保留工具调用、文件修改、验证结果、失败原因与协作证据。
+- **Anchor**：把可恢复检查点带到每一轮对话旁，支持 Diff 预览、冲突检查和安全回退。
+
+## 0.5.0：从 Agent 系统走向自适应 Multi-Agent Harness
+
+`v0.5.0` 是 AporiaX 目前最重要的一次 Harness 架构升级。重点不是“同时开更多 Agent”，而是让额外 Agent **只在值得的时候出现，并且在明确边界内协作**。
+
+### Adaptive Agent Budget
+
+简单问题不会为了“多 Agent”而额外烧 Token：Main 可以直接完成。随着任务出现跨模块修改、探索、审查、自检或明确委派需求，Harness 才会逐步开放额外预算。
+
+- 简单任务可以保持 **Main-only**。
+- 复杂只读任务可以委派 Explore / Review / Verify。
+- 符合条件的大型写任务最多启用 **2 个 Builder**。
+- Agent 数量、并发数和角色容量都有硬上限，不提供无限制团队聊天。
+
+### Main + Builder：并行，但不抢最终控制权
+
+Builder 不是第二个 Main。Main 始终负责拆解、集成、处理共享边界并给出最终交付。
+
+```text
+User
+  │
+  ▼
+Main ─────────────── final integration authority
+  ├─ Explore        read-only investigation
+  ├─ Builder A      isolated writable scope
+  ├─ Builder B      isolated writable scope
+  ├─ Review         semantic/static review
+  ├─ Verify         build/test/runtime evidence
+  ├─ Curator        durable project understanding
+  └─ Witness        observation only
+```
+
+每个 Builder 在独立 Git worktree 中工作，并受到 **Scope Lease** 约束：
+
+- 写入范围在任务开始前显式确定。
+- 超出 scope 的改动在合入真实工作区前直接拒绝。
+- Builder 不允许递归委派 Agent，也不能任意扩大自己的权限。
+- 合并前会检查基线与并发修改；用户/Main 同时改过的文件不会被静默覆盖。
+- 真实工作区存在未提交改动时，会使用 dirty-workspace overlay 保留现状并进行冲突安全集成。
+
+### Collaboration v1：先约定，再并行
+
+两个 Builder 即使没有编辑同一个文件，也可能在 API、UI、Schema 或状态语义上互相打架。0.5.0 因此加入了协作层：
+
+- **Shared Contract**：把跨 Builder 必须共同遵守的 UI、API、Schema、State、安全和验收不变量写成共享契约。
+- **Plan Approval**：只有 scope、依赖、Contract key 和共享文件责任都明确后，才允许并行执行。
+- **Structured Handoff**：Builder 结束时必须交付摘要、假设、Main 待处理事项、Contract assertions 与消息。
+- **Bounded Mailbox**：支持问题、通知和 blocker，但避免无限制的 peer-to-peer 对话消耗上下文。
+- **Semantic disagreement detection**：在 Builder wave 之后检查跨 Builder 的语义不一致，再由 Main 决定如何集成。
+
+### Review / Verify / Witness：质量链路仍然独立
+
+0.5.0 保留并强化了 AporiaX 原有的可观察自检流程：
+
+- **Review** 检查语义、实现和静态问题。
+- **Verify** 关注 build、test、lint、typecheck 与运行时证据。
+- **Witness** 只观察，不修改文件；持续记录 Main、子 Agent、耗时、失败与协作状态。
+- Review / Verify 会匹配当前文件版本，避免拿旧版本结果为新代码背书。
+
+### Harness Architecture v1
+
+底层也开始从巨型 Runtime 向可演进 Harness 拆分：
+
+- Event Bus + Hook API
+- Declarative Agent Definition
+- Session / Scheduler / Context / Tool / Review 等明确边界
+- Plugin API
+- loopback-only Core Server / Desktop Client 基础
+
+当前 Core HTTP `taskRpc` 仍然关闭；0.5.0 先建立结构，不宣称已经成为可在桌面进程退出后继续执行的独立 daemon。
+
+### Windows 后台任务体验
+
+0.5.0 同时补齐了桌面端最实际的一块体验：
+
+- 点击关闭按钮时隐藏到 Windows 系统托盘，而不是中断正在执行的任务。
+- 托盘可以恢复窗口，也提供真正的 **Exit AporiaX**。
+- Dialogue 显示任务已运行时间；托盘状态也会实时更新 elapsed runtime。
+- 隐藏状态下完成任务会发送 Windows/Electron 系统通知。
+- 首次关闭到托盘时会显示一次说明，避免用户误以为应用已经退出。
+- 重复的应用内“Task completed”通知被抑制，系统通知作为后台完成的主要提示。
+
+[查看完整的 0.5.0 中英双语发布说明](docs/RELEASE_NOTES_v0.5.0.md)
+
+## 下载
+
+| Windows x64 | 适合场景 |
+| --- | --- |
+| [下载安装版 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
+| [下载便携版 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Portable-0.5.0-x64.exe) | 不安装，直接运行和试用 |
+| [查看 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.5.0) | Release Notes、校验文件与构建产物 |
+
+## 看见 Agent 真正在做什么
 
 <table>
   <tr>
@@ -63,62 +156,39 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
   </tr>
 </table>
 
-## 现在的一些功能
+## 当前能力
 
 | 能力 | 当前实现 |
 | --- | --- |
-| 代码与工作区 | 文件树、搜索、预览、编辑、`Ctrl+S`、精确 Patch、Git 状态与 Diff |
+| 自适应 Agent 拓扑 | Adaptive Agent Budget；简单任务 Main-only，复杂任务按需开放 Explore / Review / Verify / Curator / Builder |
+| 并行 Builder | 最多 2 个可写 Builder；Scope Lease、隔离 Git worktree、dirty overlay、冲突安全合并 |
+| 协作契约 | Shared Contract、Plan Approval、structured handoff、bounded mailbox、语义分歧检测 |
+| 代码与工作区 | 文件树、搜索、预览、编辑、`Ctrl+S`、精确 Patch、Git status / diff |
+| 可观察执行 | Witness + Route 持续记录 Agent、工具、耗时、失败、自检与协作证据 |
+| 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、对话级 Anchor、原子冲突检查 |
 | 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
-| 自适应多 Agent | Adaptive Agent Budget 按任务复杂度分配额外 Agent；简单任务保持 Main-only，复杂任务受限扩展 |
-| Builder 编排 | 大型可写任务最多使用 2 个 Builder；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
-| Agent 协作 | Shared Contract、Plan Approval、结构化 handoff 与有界 mailbox；Main 保持最终集成权 |
-| 可观察执行 | Witness 在 Dialogue 实时记录主/子 Agent、当前动作、耗时、失败与自检阶段；Route 保留完整路径 |
-| 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、对话级 Anchor、跨轮恢复与原子冲突检查 |
-| 强制自检 | 分段 Review/Verify 子 Agent 复核当前文件版本，最后以轻量封印确认测试、风险和交付物 |
-| 子 Agent 与上下文 | 并行读取与检索；独立 Explore、Review、Verify、Curator，以及受 Scope 约束的 Builder；目录级规则、结构化压缩和按需历史召回 |
-| 桌面后台 | 关闭窗口时可收至系统托盘继续任务；托盘恢复/退出、Windows 完成通知、任务运行时间显示 |
-| 项目理解 | 一个工作区对应一个项目；Understanding 持续沉淀架构、约定、命令、偏好和调试经验，供项目内任务共享 |
-| 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
-| 中英双语 | 开屏与设置页即时切换；界面和新回复跟随语言，历史消息与文件保持原样 |
-| 附件与解析 | PDF、Office、Markdown、代码和图片附件；PDF 本地文本提取 |
-| 权限与执行 | `allow` / `ask` / `deny` 策略；本地工作区沙箱自动执行，Docker 可选加强隔离 |
+| 项目理解 | Understanding 持续沉淀架构、约定、命令、偏好和调试经验 |
+| 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现、任务级模型选择 |
+| 桌面后台 | 关闭到托盘、后台继续任务、系统完成通知、任务 elapsed runtime |
+| 权限与执行 | `allow` / `ask` / `deny`；本地工作区沙箱自动执行，Docker 可选加强隔离 |
+| 中英双语 | 开屏与设置页即时切换；界面和新回复跟随语言 |
 
-扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。图片是否发送由每个
-Provider 模型的视觉能力决定。
+扫描版 PDF 会被识别为“需要 OCR”，但当前尚未内置 OCR 引擎。图片是否发送取决于所选 Provider 模型的视觉能力。
 
-## 下载
-
-| Windows x64 | 适合场景 |
-| --- | --- |
-| [下载安装版 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
-| [下载便携版 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Portable-0.5.0-x64.exe) | 不安装，直接运行和试用 |
-
-### 0.5.0 更新：从项目级 Agent 系统到自适应多 Agent Harness
-
-- **Adaptive Agent Budget**：简单任务保持 Main-only，复杂任务才按预算启用 Explore、Review、Verify、Curator 或 Builder，避免固定多 Agent 带来的无效成本。
-- **Builder 编排**：大型可写任务最多启用 2 个 Builder，通过 Task Graph、Scope Lease、独立 Git worktree 和合并前冲突检查实现受控并行写入。
-- **Collaboration v1**：Shared Contract、确定性 Plan Approval、结构化 Builder handoff、语义分歧检测和有界 mailbox，让并行 Agent 共享约束而不是自由互相打断。
-- **Main / Review / Verify / Witness**：Main 保持最终集成权；Review 与 Verify 提供版本匹配的质量检查；Witness 只观察、记录和告警，不修改文件。
-- **桌面后台体验**：关闭主窗口时任务可继续在系统托盘运行，支持托盘恢复与显式退出、Windows 完成通知、任务耗时和托盘实时运行时间。
-- **Harness Architecture**：新增 Event Bus / Hook API、声明式 Agent Definition、Plugin API 与 Core Server 基础，并逐步拆分 Session、Scheduler、Context、Tool、Review 等运行边界。
-
-[查看 0.5.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.5.0) · [查看完整更新记录](CHANGELOG.md)
+## 快速开始
 
 首次启动后：
 
 1. 新建任务并选择本地工作目录。
 2. 添加一个 OpenAI-compatible API Provider 与模型。
-3. 描述目标，查看 Route、文件修改、自检和最终产物。
+3. 描述目标；AporiaX 会根据任务复杂度自动选择 Main-only 或受限的多 Agent 拓扑。
+4. 在 Dialogue / Route 中查看工具、Builder、Review、Verify、文件修改与最终产物。
 
-Docker Desktop 是可选项。未启用时，命令默认在临时工作区副本中自动执行，并通过冲突
-检查同步修改；启用后则进入默认断网、只读系统的容器沙箱，获得更强的 OS 级隔离。
+Docker Desktop 是可选项。未启用时，命令默认在临时工作区副本中执行，并通过冲突检查同步修改；启用后则进入默认断网、只读系统的容器沙箱，获得更强的 OS 级隔离。
 
 ## 从源码运行
 
-需要 Node.js 20 或更高版本。若希望使用容器化 `run_command`，还需要启动 Docker Desktop；
-应用内点击“准备 Docker 沙箱”会构建 `aporiax-sandbox:0.1` 本地镜像。
-未启动 Docker 时仍可在本地临时工作区副本中自动执行命令，但会使用当前用户的网络与
-进程权限，因此需要更强隔离时应启用 Docker。
+需要 Node.js 20 或更高版本。
 
 ```powershell
 git clone https://github.com/CaptainLand/AporiaX.git
@@ -127,131 +197,48 @@ npm install
 npm run dev
 ```
 
-首次使用时在“模型 Provider”中添加 API Base URL 和 API Key。AporiaX 支持
-OpenAI-compatible Chat Completions 接口，会尝试通过 `/models` 识别模型，也允许
-手动输入模型 ID。可以同时保存多个 Provider，并让不同任务使用不同模型。
-
-为兼容旧版本，DeepSeek 也可以通过环境变量提供：
-
-```powershell
-$env:DEEPSEEK_API_KEY="your-api-key"
-npm start
-```
-
-API Key 使用 Electron `safeStorage` 加密，不返回渲染进程。不要把真实密钥写入源码、
-`.env`、Issue 或日志。
+首次使用时，在“模型 Provider”中添加 API Base URL 和 API Key。API Key 使用 Electron `safeStorage` 加密，不返回渲染进程。不要把真实密钥写入源码、`.env`、Issue 或日志。
 
 ## 常用命令
 
 ```powershell
-# 开发模式：同时启动 Vite 与 Electron
+# 开发
 npm run dev
 
-# 运行时与 P0 数据模型测试
-npm run test:runtime
-npm run test:p0
-
-# Harness / Collaboration / Desktop smoke tests
-npm run test:architecture
+# 0.5.0 主要 smoke / regression gate
+npm run test:desktop-background
 npm run test:collaboration
 npm run test:harness-v2
-npm run test:desktop-background
+npm run test:architecture
+npm run test:cache
+npm run test:runtime
 
 # Web 生产构建
 npm run build
 
-# 构建 Windows 安装版和便携版
+# Windows Setup + Portable
 npm run dist:win
 ```
 
-## 生成 Office 文件
+## 架构文档
 
-新建“工作区读写”任务并绑定工作目录，然后直接描述目标：
+- [Harness Architecture v1](docs/HARNESS_ARCHITECTURE_V1.md)
+- [Harness Architecture v2 / Builder orchestration](docs/HARNESS_ARCHITECTURE_V2.md)
+- [Harness Collaboration v1](docs/HARNESS_COLLABORATION_V1.md)
+- [Desktop Background v1](docs/DESKTOP_BACKGROUND_V1.md)
+- [0.5.0 Release Notes / 发布说明](docs/RELEASE_NOTES_v0.5.0.md)
+- [Changelog](CHANGELOG.md)
 
-```text
-生成一份项目周报.docx，包含标题、进展要点、风险和里程碑表格。
-```
+## 已知边界
 
-```text
-生成一份 6 页的季度复盘.pptx，并创建带增长率公式的销售看板.xlsx。
-```
-
-Harness 会使用结构化 Office 工具生成文件，再重新解析文档块、幻灯片、工作表和公式。
-当前结构复核不能替代 Word、PowerPoint 或 Excel 中的最终视觉检查。
-
-## 子 Agent 与项目上下文
-
-AporiaX 会并行执行互不依赖的只读工具，并把较大的探索、审查和验证任务委派给拥有
-独立上下文与路径范围的 Explore、Review、Verify 子 Agent。Curator 负责明确的持久项目理解；
-对于满足条件的大型可写 Git 工作区任务，Harness 最多可规划 2 个 Builder，在独立 Git
-worktree 中按 Scope Lease 写入，再由 Main 在冲突检查通过后集成。Builder 不能扩大写入范围、
-执行任意命令或递归委派 Agent。
-
-并行 Builder 在执行前需要通过 Shared Contract 与 Plan Approval，共享跨模块不变量、
-验收条件和 Main 所有的共享文件边界；完成后通过结构化 handoff 和有界 mailbox 回传结果。
-Main 保持最终集成权，Witness 只观察和记录。
-
-Harness 支持以下项目规则：
-
-- 工作区根目录和子目录中的 `AGENTS.md`、`APORIAX.md`、`DEEPAGENT.md`。
-- `.aporiax/rules/*.md` 路径规则；可在 frontmatter 中使用 `paths` glob。
-- 应用用户目录中的项目记忆，用于保存已验证命令、架构约定和明确偏好；凭据会被拒绝。
-
-```markdown
----
-paths:
-  - src/**/*.js
----
-修改 JavaScript 后运行项目的语法检查。
-```
-
-上下文接近模型窗口时，Harness 会保留系统与目录规则，将旧内容压缩成结构化 checkpoint，
-再按当前任务检索相关约束、证据和项目记忆。若 Provider 返回实际 token usage，估算器会
-自动校准；模型配置也可以提供 `contextWindow`。
-
-运行任务时，Dialogue 底部的 **Witness** 会订阅 Harness 事件流，实时展示主 Agent 与
-子 Agent 正在处理的动作。Witness 本身只观察和记录，不修改文件；操作耗时超过阈值或
-同一工具连续失败时会显示提醒，完整工具证据仍保留在 Route。
-
-## 项目级权限
-
-工作区根目录可以添加 `.aporiax.json`：
-
-```json
-{
-  "permissions": {
-    "write_file": "ask",
-    "apply_patch": "ask",
-    "create_word_document": "ask",
-    "create_presentation": "ask",
-    "create_spreadsheet": "ask",
-    "delegate_subagent": "allow",
-    "remember_project_fact": "allow",
-    "run_command": "deny"
-  }
-}
-```
-
-配置只允许收紧任务权限，不能把只读任务提升为可写，也不能关闭 Harness 自检控制工具。
-
-## 项目结构
-
-```text
-electron/   Electron 主进程、Harness、工具与安全边界
-src/        React 界面、Route/Workspace 与审核体验
-tests/      Runtime 和 P0 行为测试
-docs/       架构与 Harness 路线图
-build/      应用图标等构建资源
-```
-
-Harness 现状和后续计划见
-[docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md)。本版本更新记录见
-[CHANGELOG.md](CHANGELOG.md)。
+- Core HTTP `taskRpc` 仍然关闭；凭据、审批、pause/resume 和 mutation control 仍在桌面 Runtime 内。
+- 关闭到托盘会保持 Electron 进程存活，但任务尚不能跨“完全退出 / 重启”继续执行。
+- 部分 legacy 只读子 Agent 路径仍通过 compatibility runtime 执行。
+- Collaboration v1 有意不提供无限制的实时 peer-to-peer Agent 聊天。
 
 ## 参与贡献
 
-请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按
-[SECURITY.md](SECURITY.md) 私下报告，不要公开披露真实凭据或漏洞细节。
+请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要公开披露真实凭据或漏洞细节。
 
 ## License
 
