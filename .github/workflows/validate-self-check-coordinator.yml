@@ -1,0 +1,40 @@
+name: Validate self-check coordinator
+
+on:
+  pull_request:
+    branches:
+      - agent/v0.6-conversation-runtime
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  extract-and-validate:
+    if: ${{ github.event.pull_request.head.ref == 'agent/v0.6-self-check-coordinator' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.6-self-check-coordinator
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: node scripts/apply-self-check-coordinator-refactor.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run test:self-check-coordinator
+      - run: npm run test:self-check-evidence
+      - run: npm run test:subagent-loop
+      - run: npm run test:tool-dispatcher
+      - run: npm run test:runtime
+      - run: npm run test:harness-v2
+      - run: npm run build
+      - name: Commit validated extraction
+        run: |
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "refactor: extract progressive self-check coordinator [self-check-coordinator-validated]"
+          git push origin HEAD:agent/v0.6-self-check-coordinator
