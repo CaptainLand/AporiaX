@@ -30,6 +30,7 @@
     "test:architecture": "node tests/harness-architecture-smoke.mjs",
     "test:collaboration": "node tests/harness-collaboration-smoke.mjs",
     "test:desktop-background": "node tests/desktop-background-smoke.mjs",
+    "test:task-controls": "node tests/task-runtime-controls-smoke.mjs",
     "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs"
   },
   "dependencies": {
