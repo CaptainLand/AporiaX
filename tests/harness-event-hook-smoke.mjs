@@ -15,7 +15,7 @@ assert.match(hook, /event\.type === "tool\.started"/);
 assert.match(hook, /event\.type === "witness\.updated"/);
 assert.match(hook, /event\.type === "approval\.required"/);
 assert.match(hook, /event\.type === "skill\.activated"/);
-assert.match(hook, /event\.type === "browser/);
+assert.match(hook, /browser_open/);
 assert.match(hook, /mcp__/);
 
 console.log("Harness event hook smoke: PASS");
