@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFile, writeFile, rm } from "node:fs/promises";
 
 function replaceOnce(source, before, after, label) {
@@ -58,6 +59,40 @@ runtime = replaceOnce(
 );
 
 await writeFile("electron/agent-runtime-core.js", runtime, "utf8");
+
+let agentDefinitions = execFileSync(
+  "git",
+  [
+    "show",
+    "origin/agent/v0.6-streaming-performance:electron/harness/agent-definitions.js",
+  ],
+  { encoding: "utf8" },
+);
+agentDefinitions = replaceOnce(
+  agentDefinitions,
+  `      "Implement one delegated change inside an isolated worktree and explicit non-overlapping write scopes.",`,
+  `      "Implement and verify one delegated change inside an isolated worktree and explicit non-overlapping write scopes.",`,
+  "builder description",
+);
+agentDefinitions = replaceOnce(
+  agentDefinitions,
+  `      "write_file",\n      "apply_patch",\n      "complete_self_check",`,
+  `      "write_file",\n      "apply_patch",\n      "run_command",\n      "complete_self_check",`,
+  "builder command tool",
+);
+agentDefinitions = replaceOnce(
+  agentDefinitions,
+  `      write_file: "allow",\n      apply_patch: "allow",\n      complete_self_check: "allow",`,
+  `      write_file: "allow",\n      apply_patch: "allow",\n      run_command: "allow",\n      complete_self_check: "allow",`,
+  "builder command permission",
+);
+agentDefinitions = replaceOnce(
+  agentDefinitions,
+  `      "Modify only the delegated write scopes. Never broaden the scope, run arbitrary commands, or edit files owned by another Builder.",`,
+  `      "Modify only the delegated write scopes. You may run relevant build, test, lint, or typecheck commands inside your isolated worktree to verify the implementation. Never broaden the scope, access unrelated external systems, or edit files owned by another Builder.",`,
+  "builder prompt",
+);
+await writeFile("electron/harness/agent-definitions.js", agentDefinitions, "utf8");
 
 let harnessSmoke = await readFile("tests/harness-v2-smoke.mjs", "utf8");
 harnessSmoke = replaceOnce(
