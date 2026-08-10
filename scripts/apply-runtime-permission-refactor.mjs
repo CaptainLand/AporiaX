@@ -58,6 +58,22 @@ runtime = replaceOnce(
 );
 
 await writeFile("electron/agent-runtime-core.js", runtime, "utf8");
+
+let harnessSmoke = await readFile("tests/harness-v2-smoke.mjs", "utf8");
+harnessSmoke = replaceOnce(
+  harnessSmoke,
+  `assert(!builderDefinition.tools.includes("run_command"));`,
+  `assert(builderDefinition.tools.includes("run_command"));`,
+  "builder definition command expectation",
+);
+harnessSmoke = replaceOnce(
+  harnessSmoke,
+  `assert.equal(getToolPermission(builderPolicy, "run_command"), "deny");`,
+  `assert.equal(getToolPermission(builderPolicy, "run_command"), "allow");`,
+  "builder permission command expectation",
+);
+await writeFile("tests/harness-v2-smoke.mjs", harnessSmoke, "utf8");
+
 await rm("scripts/apply-runtime-permission-refactor.mjs", { force: true });
 await rm(".github/workflows/validate-runtime-tool-permissions.yml", { force: true });
 console.log("runtime permission refactor applied");
