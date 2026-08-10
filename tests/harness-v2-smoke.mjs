@@ -214,12 +214,12 @@ const registry = createAgentDefinitionRegistry();
 const builderDefinition = registry.get("builder");
 assert(builderDefinition);
 assert(builderDefinition.tools.includes("write_file"));
-assert(!builderDefinition.tools.includes("run_command"));
+assert(builderDefinition.tools.includes("run_command"));
 
 const builderPolicy = createPermissionPolicy("builder-write");
 assert.equal(getToolPermission(builderPolicy, "write_file"), "allow");
 assert.equal(getToolPermission(builderPolicy, "apply_patch"), "allow");
-assert.equal(getToolPermission(builderPolicy, "run_command"), "deny");
+assert.equal(getToolPermission(builderPolicy, "run_command"), "allow");
 assert.equal(getToolPermission(builderPolicy, "delegate_subagent"), "deny");
 assert.equal(getToolPermission(builderPolicy, "update_plan"), "allow");
 assert.equal(

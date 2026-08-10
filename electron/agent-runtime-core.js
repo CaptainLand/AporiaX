@@ -36,6 +36,10 @@ import {
 } from "./attachment-parser.js";
 import { createOpenAICompatibleProvider } from "./runtime/provider-stream.js";
 import {
+  buildToolApprovalRequest,
+  resolveToolExecutionPermission,
+} from "./runtime/tool-permissions.js";
+import {
   getSandboxStatus,
   runCommandWithFallback,
 } from "./sandbox-runtime.js";
@@ -1226,46 +1230,24 @@ async function executeTool({
     permissionPolicy,
     toolName,
   );
-  if (permissionAction === "deny") {
+  const permissionDecision = resolveToolExecutionPermission({
+    toolName,
+    permissionAction,
+    approvalMode,
+    sandboxStatus,
+  });
+  if (permissionDecision.denied) {
     throw new Error(`Permission denied for tool: ${toolName}`);
   }
-  const sandboxAutoApproved =
-    approvalMode === "sandbox-auto" &&
-    toolName === "run_command" &&
-    Boolean(
-      sandboxStatus?.autoApprovalSafe ||
-        sandboxStatus?.available ||
-        sandboxStatus?.localAvailable,
+  if (permissionDecision.requiresApproval) {
+    const approval = await requestApproval(
+      buildToolApprovalRequest({
+        toolName,
+        descriptor,
+        input,
+        sandboxStatus,
+      }),
     );
-  const requiresApproval =
-    (permissionAction === "ask" && !sandboxAutoApproved) ||
-    (toolName === "run_command" &&
-      approvalMode === "manual" &&
-      !sandboxAutoApproved);
-  if (requiresApproval) {
-    const approval = await requestApproval({
-      kind: descriptor.risk,
-      title:
-        toolName === "run_command"
-          ? "运行工作区命令"
-          : `允许工具：${toolName}`,
-      command:
-        toolName === "run_command"
-          ? String(input.command || "").trim()
-          : `${toolName}${input.path ? ` ${input.path}` : ""}`,
-      cwd: input.cwd || ".",
-      reason:
-        typeof input.reason === "string" && input.reason.trim()
-          ? input.reason.trim()
-          : descriptor.risk === "read"
-            ? "Agent 请求读取工作区信息。"
-            : "Agent 请求执行可能改变工作区或运行进程的操作。",
-      ...(toolName === "run_command"
-        ? {
-            sandbox: sandboxStatus,
-          }
-        : {}),
-    });
     throwIfAborted(signal);
     if (!approval?.approved) {
       throw new Error(`The user rejected tool: ${toolName}`);
@@ -2105,7 +2087,7 @@ function createSelfCheckPrompt(
       "Fix problems immediately with write_file or apply_patch. Re-read every file after its latest write.",
       verificationCandidates.length
         ? [
-            "Harness found the following project verification commands. Use run_command to attempt at least one relevant check; command execution still requires user approval:",
+            "Harness found the following project verification commands. Use run_command to attempt at least one relevant check; Harness will apply the current sandbox and approval policy:",
             ...verificationCandidates.map(
               (candidate) =>
                 `- ${candidate.command} (directory: ${candidate.cwd})`,
@@ -2127,7 +2109,7 @@ function createSelfCheckPrompt(
     "发现问题时立即使用 write_file 修复。任何再次写入的文件都必须在修复后重新 read_file。",
     verificationCandidates.length
       ? [
-          "Harness 检测到以下项目验证命令。必须使用 run_command 至少尝试一项最相关的验证；命令仍需用户审批：",
+          "Harness 检测到以下项目验证命令。必须使用 run_command 至少尝试一项最相关的验证；Harness 会按当前沙箱与审批策略执行：",
           ...verificationCandidates.map(
             (candidate) =>
               `- ${candidate.command}（目录：${candidate.cwd}）`,
@@ -3189,35 +3171,27 @@ export async function runHarness({
     ? await mcpRuntime.discover({ permissionMode: permission })
     : { servers: [], tools: [], errors: [] };
   const staticToolCatalog = hasWorkspace
-    ? TOOL_REGISTRY.catalog(permissionPolicy).map((tool) =>
-        tool.name === "run_command" &&
-        commandToolAvailable &&
-        effectiveApprovalMode === "sandbox-auto" &&
-        (commandUsesContainer || commandUsesLocalSandbox)
-          ? {
-              ...tool,
-              permission: "allow",
-              executionMode: commandUsesContainer
-                ? "container-auto-approval"
-                : "local-workspace-auto-approval",
-              warning:
-                commandUsesContainer
-                  ? "Commands run automatically inside the isolated Docker sandbox."
-                  : "Commands run automatically in a temporary workspace copy. Docker is optional for stronger OS isolation.",
-            }
-          : tool.name === "run_command" &&
-              commandToolAvailable &&
-              !commandUsesContainer &&
-              !commandUsesLocalSandbox
-            ? {
-                ...tool,
-                permission: "ask",
-                executionMode: "host-approval",
-                warning:
-                  "No sandbox backend is available. Host execution requires explicit approval.",
-              }
-            : tool,
-      )
+    ? TOOL_REGISTRY.catalog(permissionPolicy).map((tool) => {
+        if (tool.name !== "run_command" || !commandToolAvailable) return tool;
+        const decision = resolveToolExecutionPermission({
+          toolName: "run_command",
+          permissionAction: tool.permission,
+          approvalMode: effectiveApprovalMode,
+          sandboxStatus,
+        });
+        return {
+          ...tool,
+          permission: decision.requiresApproval ? "ask" : "allow",
+          executionMode: decision.executionMode,
+          warning: decision.sandboxAutoApproved
+            ? commandUsesContainer
+              ? "Commands run automatically inside the isolated Docker sandbox."
+              : "Commands run automatically in a temporary workspace copy with conflict-checked synchronization."
+            : decision.sandboxSafe
+              ? "Commands use the sandbox but require explicit approval for this task."
+              : "No safe sandbox backend is available. Host execution requires explicit approval.",
+        };
+      })
     : [];
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
   const staticToolDefinitions = hasWorkspace
@@ -3284,7 +3258,7 @@ export async function runHarness({
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
         "After creating or replacing an Office file, use inspect_office_file during mandatory self-check. Treat structural inspection as distinct from final visual rendering.",
         commandUsesContainer
-          ? "Use run_command only when a command materially verifies the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
+          ? "Use run_command when a command materially helps implement or verify the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
           : commandUsesLocalSandbox
             ? "Use run_command only when it materially verifies the result. Commands run in a temporary copy of the authorized workspace and changes are conflict-checked before being synchronized back. This local sandbox uses the host network and process permissions; never claim OS-level or network isolation. Docker is optional and only adds stronger isolation."
             : commandToolAvailable

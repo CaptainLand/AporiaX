@@ -221,89 +221,113 @@ function normalizeAgentDefinition(
       input?.description || base?.description || "",
     )
       .trim()
-      .slice(0, 1_000),
-    tools: Object.freeze(
-      toStringArray(input?.tools, base?.tools || []),
-    ),
+      .slice(0, 2_000),
+    tools: Object.freeze(toStringArray(input?.tools, base?.tools || [])),
     permissions: normalizePermissions(
       input?.permissions,
-      base?.permissions || { "*": "deny" },
+      base?.permissions || {},
     ),
+    model:
+      String(input?.model || base?.model || "inherit").trim() || "inherit",
     maxRounds,
     background:
-      input?.background === undefined
-        ? Boolean(base?.background)
-        : Boolean(input.background),
+      typeof input?.background === "boolean"
+        ? input.background
+        : Boolean(base?.background),
     triggers: Object.freeze(
       toStringArray(input?.triggers, base?.triggers || []),
     ),
     systemPrompt: String(
       input?.systemPrompt ||
-        input?.system_prompt ||
+        input?.prompt ||
         base?.systemPrompt ||
         "",
     )
       .trim()
-      .slice(0, 4_000),
+      .slice(0, 16_000),
+    source: input?.source || "runtime",
   });
 }
 
 export class AgentDefinitionRegistry {
   #definitions = new Map();
 
-  constructor() {
-    for (const definition of Object.values(BUILTIN_AGENT_DEFINITIONS)) {
-      this.#definitions.set(definition.name, definition);
+  constructor({ includeBuiltins = true } = {}) {
+    if (includeBuiltins) {
+      for (const definition of Object.values(BUILTIN_AGENT_DEFINITIONS)) {
+        this.#definitions.set(definition.name, definition);
+      }
     }
   }
 
+  register(input) {
+    const definition = normalizeAgentDefinition(
+      input,
+      Object.fromEntries(this.#definitions),
+    );
+    this.#definitions.set(definition.name, definition);
+    return definition;
+  }
+
   get(name) {
-    return this.#definitions.get(String(name || "").trim()) || null;
+    return this.#definitions.get(String(name || "")) || null;
+  }
+
+  has(name) {
+    return this.#definitions.has(String(name || ""));
   }
 
   list() {
     return [...this.#definitions.values()];
   }
 
-  register(input, { source = "runtime" } = {}) {
-    const normalized = normalizeAgentDefinition(input);
-    const record = Object.freeze({ ...normalized, source });
-    this.#definitions.set(record.name, record);
-    return record;
-  }
-
-  async discover(directoryPath) {
-    if (!directoryPath) return [];
-    let entries;
-    try {
-      entries = await readdir(directoryPath, { withFileTypes: true });
-    } catch (error) {
-      if (error?.code === "ENOENT") return [];
-      throw error;
-    }
-    const discovered = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".agent.md")) continue;
-      const content = await readFile(join(directoryPath, entry.name), "utf8");
-      const { metadata, body } = parseFrontmatter(content);
-      const name = String(
-        metadata.name || entry.name.replace(/\.agent\.md$/, ""),
-      ).trim();
-      discovered.push(
-        this.register(
-          {
-            ...metadata,
-            name,
-            systemPrompt: body || metadata.systemPrompt || "",
-          },
-          { source: entry.name },
-        ),
-      );
-    }
-    return discovered;
+  resolve(name, overrides = {}) {
+    const base = this.get(name);
+    if (!base) return null;
+    return normalizeAgentDefinition(
+      { ...base, ...overrides, name: base.name },
+      Object.fromEntries(this.#definitions),
+    );
   }
 }
 
-export function createAgentDefinitionRegistry() {
-  return new AgentDefinitionRegistry();
+export async function loadWorkspaceAgentDefinitions(
+  workspaceRoot,
+  {
+    registry = new AgentDefinitionRegistry(),
+    directory = ".aporiax/agents",
+  } = {},
+) {
+  if (!workspaceRoot) return registry;
+  const root = join(workspaceRoot, ...directory.split("/"));
+  let entries = [];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return registry;
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !/\.md$/i.test(entry.name)) continue;
+    const source = await readFile(join(root, entry.name), "utf8");
+    const { metadata, body } = parseFrontmatter(source);
+    registry.register({
+      ...metadata,
+      name: metadata.name || entry.name.replace(/\.md$/i, ""),
+      systemPrompt: metadata.systemPrompt || metadata.prompt || body,
+      source: `${directory}/${entry.name}`,
+    });
+  }
+  return registry;
 }
+
+export function createAgentDefinitionRegistry(options) {
+  return new AgentDefinitionRegistry(options);
+}
+
+export function builtinAgentDefinitions() {
+  return Object.values(BUILTIN_AGENT_DEFINITIONS);
+}
+
+export { parseFrontmatter as parseAgentDefinitionFile };
