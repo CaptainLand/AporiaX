@@ -1,0 +1,41 @@
+name: Validate Harness event reducers
+
+on:
+  pull_request:
+    branches:
+      - agent/v0.6-capability-observability
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    if: github.head_ref == 'agent/v0.6-harness-event-reducers'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.6-harness-event-reducers
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: node scripts/apply-harness-event-reducers.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run test:harness-event-reducer
+      - run: npm run test:harness-events-ui
+      - run: npm run test:task-store
+      - run: npm run test:p0
+      - run: npm run test:capability-observability
+      - run: npm run test:runtime
+      - run: npm run test:harness-v2
+      - run: npm run build
+      - name: Commit validated reducer migration
+        run: |
+          git config user.name "AporiaX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "refactor: reduce Harness task events through pure state [harness-reducers]"
+          git push origin HEAD:agent/v0.6-harness-event-reducers
