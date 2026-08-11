@@ -348,6 +348,48 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "lsp",
+      description:
+        "Use a persistent Language Server Protocol session for semantic code intelligence. Prefer LSP definition/references/hover/symbols over heuristic text search when semantic precision matters, and use diagnostics after code edits before final build/test verification.",
+      parameters: {
+        type: "object",
+        properties: {
+          operation: {
+            type: "string",
+            enum: ["status", "diagnostics", "definition", "references", "hover", "document_symbols", "workspace_symbols"],
+          },
+          path: {
+            type: "string",
+            description: "Workspace-relative source file. Required for every operation except status; workspace_symbols uses it to select the language server.",
+          },
+          line: {
+            type: "integer",
+            minimum: 1,
+            description: "1-based line for definition, references, or hover.",
+          },
+          character: {
+            type: "integer",
+            minimum: 1,
+            description: "1-based character for definition, references, or hover.",
+          },
+          query: {
+            type: "string",
+            maxLength: 500,
+            description: "Workspace symbol query. Empty string requests the server's broadest supported result.",
+          },
+          include_declaration: {
+            type: "boolean",
+            description: "Whether references should include the declaration. Defaults to true.",
+          },
+        },
+        required: ["operation"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_command",
       description:
         "Run one foreground workspace command. Prefer the network-disabled Docker sandbox; when Docker is unavailable, use the explicitly approved host fallback without OS isolation.",
@@ -584,6 +626,7 @@ export const TOOL_RISKS = {
   inspect_office_file: "read",
   write_file: "write",
   apply_patch: "write",
+  lsp: "read",
   create_word_document: "write",
   create_presentation: "write",
   create_spreadsheet: "write",

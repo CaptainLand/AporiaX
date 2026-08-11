@@ -61,6 +61,7 @@ import {
 import { runSubagentTask } from "./runtime/subagent-loop.js";
 import { createNativeToolExecutor } from "./runtime/native-tool-executor.js";
 import { createPersistentProcessManager } from "./runtime/process-runtime.js";
+import { createLspManager } from "./runtime/lsp-runtime.js";
 import {
   MAX_COMMAND_OUTPUT_CHARS,
   TREE_IGNORES,
@@ -1105,6 +1106,7 @@ export async function runHarness({
   const browserEnabled = extensionPolicy?.browser !== false;
   const browserRuntime = createBrowserRuntime();
   const processManager = createPersistentProcessManager({ emit });
+  const lspManager = createLspManager({ workspaceRoot, emit, signal });
   witness = createWitnessMonitor({ emit: forwardEvent });
   const commandSandboxExecutor = async (request = {}) => {
     const command = String(request.command || "").trim();
@@ -1234,6 +1236,7 @@ export async function runHarness({
         `Reply to the user in ${responseLanguage}. Keep file paths, command names, source code, API identifiers, and user-provided proper nouns unchanged.`,
         "Inspect the authorized workspace with tools before making claims about its contents.",
         "Use search_text to locate relevant code before reading many files.",
+        "Use the native lsp tool for semantic diagnostics, definitions, references, hover, and symbols when the file type has a configured language server. After code edits, prefer LSP diagnostics as a fast inner-loop signal, but still use build/tests for final verification.",
         "Use read_file line ranges or offset continuation when a file is truncated. Use read_external_file only when the user task genuinely needs a specific file outside the workspace; every call requires fresh approval and remains read-only.",
         "Use workspace-relative paths only.",
         "Never claim a file was changed unless write_file or apply_patch succeeded.",
@@ -2803,6 +2806,7 @@ export async function runHarness({
                 sandboxStatus,
                 browserRuntime,
                 processManager,
+                lspManager,
               },
             });
             const directChanges = Array.isArray(result.changes)
@@ -3100,6 +3104,7 @@ export async function runHarness({
     failedResult.witness = witness.snapshot();
     return failedResult;
   } finally {
+    await lspManager.closeAll().catch(() => undefined);
     await processManager.closeAll().catch(() => undefined);
     await mcpRuntime.close().catch(() => undefined);
     await browserRuntime.close().catch(() => undefined);

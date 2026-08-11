@@ -119,6 +119,7 @@ export function createNativeToolExecutor({
     sandboxStatus = null,
     browserRuntime = null,
     processManager = null,
+    lspManager = null,
   }) {
     throwIfAborted(signal);
 
@@ -475,6 +476,11 @@ export function createNativeToolExecutor({
           ...lineChanges,
         } }),
       };
+    }
+
+    if (toolName === "lsp") {
+      if (!lspManager) throw new Error("LSP runtime is unavailable for this task.");
+      return { modelResult: await lspManager.execute(input) };
     }
 
     if (toolName === "run_command") {
