@@ -29,7 +29,7 @@ export async function dispatchNativeTool({
   approvalMode = "manual",
   requestApproval,
   sandboxStatus = null,
-  executionMode = "safe",
+  executionMode = null,
   signal,
   parseArguments,
   executeAuthorized,
@@ -96,7 +96,7 @@ export function projectNativeToolCatalog({
   catalog = [],
   approvalMode = "manual",
   sandboxStatus = null,
-  executionMode = "safe",
+  executionMode = null,
 } = {}) {
   return (catalog || []).map((tool) => {
     if (tool?.name !== "run_command" || tool.permission === "deny") return tool;
@@ -114,9 +114,9 @@ export function projectNativeToolCatalog({
       permission: decision.requiresApproval ? "ask" : "allow",
       executionMode: decision.executionMode,
       warning:
-        executionMode === "direct"
+        backend.mode === "direct"
           ? "Direct execution uses the real workspace and host authority. Only recognized low-risk commands may auto-run; unknown commands require approval."
-          : executionMode === "isolated"
+          : backend.mode === "isolated"
             ? backend.available
               ? "Commands use the Docker isolation profile. Explicit destructive, dependency-mutating, and remote-write commands still require approval."
               : "Docker isolation was selected but is not ready. Command execution remains behind an approval boundary until the isolated backend is available."
