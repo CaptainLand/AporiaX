@@ -476,6 +476,157 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "git_log",
+      description: "Read recent Git commit history without modifying the repository.",
+      parameters: {
+        type: "object",
+        properties: {
+          max_count: { type: "integer", minimum: 1, maximum: 100 },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_stage",
+      description: "Stage explicit workspace-relative paths for a future commit. Requires approval and never stages the whole repository implicitly.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: { type: "string" },
+          },
+          reason: { type: "string" },
+        },
+        required: ["paths", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_commit",
+      description: "Create a Git commit from the currently staged changes. This tool does not auto-stage files.",
+      parameters: {
+        type: "object",
+        properties: {
+          message: { type: "string", minLength: 1, maxLength: 4000 },
+          reason: { type: "string" },
+        },
+        required: ["message", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_create_branch",
+      description: "Create and switch to a new Git branch after validating its ref name.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", minLength: 1, maxLength: 240 },
+          reason: { type: "string" },
+        },
+        required: ["name", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_pull",
+      description: "Pull remote Git changes into a clean workspace. Defaults to --ff-only; rebase is available explicitly. Requires approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          remote: { type: "string", maxLength: 120 },
+          branch: { type: "string", maxLength: 240 },
+          strategy: { type: "string", enum: ["ff-only", "rebase"] },
+          reason: { type: "string" },
+        },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_push",
+      description: "Push the current or named branch to a remote. Force push is intentionally unsupported. Requires approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          remote: { type: "string", maxLength: 120 },
+          branch: { type: "string", maxLength: 240 },
+          set_upstream: { type: "boolean" },
+          reason: { type: "string" },
+        },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_pr_create",
+      description: "Create a GitHub pull request through the authenticated GitHub CLI. Requires approval and never exposes GitHub credentials to the model.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 240 },
+          body: { type: "string", maxLength: 20000 },
+          base: { type: "string", maxLength: 240 },
+          head: { type: "string", maxLength: 240 },
+          draft: { type: "boolean" },
+          reason: { type: "string" },
+        },
+        required: ["title", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_pr_view",
+      description: "Read the current or numbered GitHub pull request through GitHub CLI.",
+      parameters: {
+        type: "object",
+        properties: {
+          number: { type: "integer", minimum: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_pr_checks",
+      description: "Read GitHub checks for the current or numbered pull request. A failing check is returned as evidence rather than treated as a tool failure.",
+      parameters: {
+        type: "object",
+        properties: {
+          number: { type: "integer", minimum: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
   ...OFFICE_TOOL_DEFINITIONS,
   ...BROWSER_TOOL_DEFINITIONS,
   {
@@ -581,6 +732,15 @@ export const TOOL_RISKS = {
   search_text: "read",
   git_status: "read",
   git_diff: "read",
+  git_log: "read",
+  git_stage: "write",
+  git_commit: "write",
+  git_create_branch: "write",
+  git_pull: "write",
+  git_push: "control",
+  github_pr_create: "control",
+  github_pr_view: "read",
+  github_pr_checks: "read",
   inspect_office_file: "read",
   write_file: "write",
   apply_patch: "write",

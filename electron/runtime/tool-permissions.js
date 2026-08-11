@@ -95,6 +95,14 @@ export function buildToolApprovalRequest({
       ? String(input.command || "").trim()
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
   const commandPolicy = permissionDecision?.commandPolicy || null;
+  const approvalTitles = {
+    git_stage: "暂存 Git 变更",
+    git_commit: "创建 Git Commit",
+    git_create_branch: "创建 Git 分支",
+    git_pull: "拉取远程 Git 变更",
+    git_push: "推送 Git 分支",
+    github_pr_create: "创建 GitHub Pull Request",
+  };
   return {
     toolName: toolName || "unknown",
     kind: risk,
@@ -105,7 +113,7 @@ export function buildToolApprovalRequest({
           ? "启动持久终端进程"
           : toolName === "read_external_file"
             ? "读取工作区外文件"
-            : `允许工具：${toolName || "unknown"}`,
+            : approvalTitles[toolName] || `允许工具：${toolName || "unknown"}`,
     command,
     cwd: input.cwd || ".",
     reason:
