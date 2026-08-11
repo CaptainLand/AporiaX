@@ -6,6 +6,7 @@ on:
       - agent/0.6.5-github-workflow
     paths:
       - scripts/patch-v065-github.mjs
+      - scripts/fix-v065-github-patch.mjs
       - .github/workflows/v065-github-patch.yml
 
 permissions:
@@ -29,7 +30,9 @@ jobs:
           cache: npm
 
       - name: Apply deterministic patch
-        run: node scripts/patch-v065-github.mjs
+        run: |
+          node scripts/fix-v065-github-patch.mjs
+          node scripts/patch-v065-github.mjs
 
       - name: Install dependencies
         run: npm ci
