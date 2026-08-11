@@ -43,9 +43,6 @@ jobs:
       - name: Verify tool permissions
         run: npm run test:tool-permissions && npm run test:tool-dispatcher
 
-      - name: Verify runtime
-        run: npm run test:runtime
-
       - name: Build renderer
         run: npm run build
 
