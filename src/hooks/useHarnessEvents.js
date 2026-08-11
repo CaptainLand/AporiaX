@@ -4,6 +4,10 @@ import {
   getRouteToolMeta,
   updateRunAssistant,
 } from "../p0-model";
+import {
+  PURE_TASK_EVENT_TYPES,
+  reduceHarnessTaskEvent,
+} from "../state/harness-event-reducer.js";
 
 /**
  * Owns the renderer subscription to the Harness event protocol.
@@ -96,29 +100,20 @@ export function useHarnessEvents({
     const unsubscribe = window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+      const reduceTaskEvent = (targetEvent = event) => {
+        if (!PURE_TASK_EVENT_TYPES.has(targetEvent.type)) return;
+        setTasks((current) =>
+          reduceHarnessTaskEvent(current, run, targetEvent, { language, tr }),
+        );
+      };
 
       if (event.type === "skill.activated") {
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => ({
-            ...message,
-            activatedSkills: Array.isArray(event.skills) ? event.skills : [],
-            unresolvedSkills: Array.isArray(event.unresolved)
-              ? event.unresolved
-              : [],
-          })),
-        );
+        reduceTaskEvent();
         return;
       }
 
       if (event.type === "skill.unresolved") {
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => ({
-            ...message,
-            unresolvedSkills: Array.isArray(event.unresolved)
-              ? event.unresolved
-              : [],
-          })),
-        );
+        reduceTaskEvent();
         return;
       }
 
@@ -189,12 +184,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "plan.updated") {
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => ({
-            ...message,
-            plan: event.plan,
-          })),
-        );
+        reduceTaskEvent();
         const activeStep = event.plan?.steps?.find(
           (step) => step.status === "in_progress",
         );
@@ -219,31 +209,13 @@ export function useHarnessEvents({
       }
 
       if (event.type === "witness.updated") {
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => ({
-            ...message,
-            witness: event.witness || message.witness || null,
-          })),
-        );
+        reduceTaskEvent();
         return;
       }
 
       if (event.type === "response.reset") {
         discardPendingDelta(event.runId);
-        setTasks((current) =>
-          current.map((task) =>
-            task.id === run.taskId
-              ? {
-                  ...task,
-                  messages: task.messages.map((message) =>
-                    message.id === run.assistantId
-                      ? { ...message, content: "" }
-                      : message,
-                  ),
-                }
-              : task,
-          ),
-        );
+        reduceTaskEvent();
         setRunStatus({
           title:
             event.phase === "self-check"
@@ -330,37 +302,7 @@ export function useHarnessEvents({
           language,
           event.capability,
         );
-        const roleLabel =
-          event.role === "review"
-            ? tr("审查", "Review")
-            : event.role === "verify"
-              ? tr("验证", "Verify")
-              : tr("探索", "Explore");
-        const now = new Date().toISOString();
-        run.routeCounter = (run.routeCounter || 0) + 1;
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => ({
-            ...message,
-            route: [
-              ...(message.route || []),
-              {
-                id: `${event.runId}-subagent-tool-${run.routeCounter}`,
-                callId: `${event.agentId}:${event.callId || run.routeCounter}`,
-                agentId: event.agentId,
-                stage: meta.stage,
-                title: `${roleLabel} · ${meta.title}`,
-                tool: event.tool,
-                capability: event.capability || null,
-                path: event.path || "",
-                command: event.command || "",
-                detail: event.detail || "",
-                status: "running",
-                parallel: Boolean(event.parallel),
-                startedAt: now,
-              },
-            ],
-          })),
-        );
+        reduceTaskEvent();
         setRunStatus({
           title: tr(
             "子 Agent 正在收集证据",
@@ -377,32 +319,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "subagent.tool.completed") {
-        const now = new Date().toISOString();
-        const callId = `${event.agentId}:${event.callId || ""}`;
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => {
-            const route = [...(message.route || [])];
-            const routeIndex = route.findLastIndex(
-              (entry) =>
-                entry.agentId === event.agentId &&
-                (event.callId
-                  ? entry.callId === callId
-                  : entry.tool === event.tool) &&
-                entry.status === "running",
-            );
-            if (routeIndex < 0) return message;
-            route[routeIndex] = {
-              ...route[routeIndex],
-              status: event.success ? "completed" : "failed",
-              detail: event.detail || route[routeIndex].detail,
-              path: event.path || route[routeIndex].path,
-              command: event.command || route[routeIndex].command,
-              exitCode: event.exitCode,
-              completedAt: now,
-            };
-            return { ...message, route };
-          }),
-        );
+        reduceTaskEvent();
         return;
       }
 
@@ -499,42 +416,7 @@ export function useHarnessEvents({
           language,
           event.capability,
         );
-        const now = new Date().toISOString();
-        run.routeCounter = (run.routeCounter || 0) + 1;
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => {
-            const previousRoute = event.parallel
-              ? [...(message.route || [])]
-              : (message.route || []).map((entry) =>
-                  entry.tool === "complete_self_check" &&
-                  entry.status === "running"
-                    ? entry
-                    : closeRunningRouteEntries([entry], now)[0],
-                );
-            return {
-              ...message,
-              route: [
-                ...previousRoute,
-                {
-                  id: `${event.runId}-tool-${run.routeCounter}`,
-                  callId: event.callId || null,
-                  stage: meta.stage,
-                  title: meta.title,
-                  tool: event.tool,
-                  capability: event.capability || null,
-                  phase: event.phase,
-                  path: event.path || "",
-                  command: event.command || "",
-                  detail: event.detail || "",
-                  planStepId: event.planStepId || null,
-                  status: "running",
-                  parallel: Boolean(event.parallel),
-                  startedAt: now,
-                },
-              ],
-            };
-          }),
-        );
+        reduceTaskEvent();
         setRunStatus({
           title:
             meta.activity ||
@@ -566,50 +448,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "tool.completed") {
-        const now = new Date().toISOString();
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => {
-            const route = [...(message.route || [])];
-            const routeIndex = route.findLastIndex(
-              (entry) =>
-                (event.callId
-                  ? entry.callId === event.callId
-                  : entry.tool === event.tool) &&
-                ["running", "waiting"].includes(entry.status),
-            );
-            if (routeIndex >= 0) {
-              route[routeIndex] = {
-                ...route[routeIndex],
-                status: event.skipped
-                  ? "skipped"
-                  : event.retry
-                    ? "retry"
-                    : event.success
-                      ? "completed"
-                      : "failed",
-                detail: event.detail || route[routeIndex].detail,
-                finishedAt: now,
-              };
-            }
-            if (event.success && !event.skipped && routeIndex >= 0) {
-              for (let index = 0; index < routeIndex; index += 1) {
-                if (
-                  route[index].tool === event.tool &&
-                  ["failed", "retry"].includes(route[index].status)
-                ) {
-                  route[index] = {
-                    ...route[index],
-                    status: "recovered",
-                    detail:
-                      route[index].detail ||
-                      tr("后续重试已成功", "A later retry succeeded"),
-                  };
-                }
-              }
-            }
-            return { ...message, route };
-          }),
-        );
+        reduceTaskEvent();
         setRunStatus({
           title: event.skipped
             ? tr("检查不适用于当前工作区", "Check is not applicable to this workspace")
@@ -630,26 +469,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "file.changed") {
-        setTasks((current) =>
-          updateRunAssistant(current, run, (message) => {
-            const route = [...(message.route || [])];
-            const routeIndex = route.findLastIndex(
-              (entry) =>
-                entry.stage === "forge" &&
-                ["running", "waiting"].includes(entry.status),
-            );
-            if (routeIndex >= 0) {
-              route[routeIndex] = {
-                ...route[routeIndex],
-                path: event.path,
-                additions: event.additions || 0,
-                deletions: event.deletions || 0,
-                artifact: event.artifact || null,
-              };
-            }
-            return { ...message, route };
-          }),
-        );
+        reduceTaskEvent();
         return;
       }
 

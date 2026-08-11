@@ -57,7 +57,8 @@
     "test:capabilities": "node tests/capability-registry-smoke.mjs",
     "test:mcp-capabilities": "node tests/mcp-capabilities-smoke.mjs",
     "test:extensions": "node tests/extensions-center-smoke.mjs",
-    "test:capability-observability": "node tests/capability-observability-smoke.mjs"
+    "test:capability-observability": "node tests/capability-observability-smoke.mjs",
+    "test:harness-event-reducer": "node tests/harness-event-reducer-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
