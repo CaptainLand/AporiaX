@@ -63,7 +63,6 @@ jobs:
             electron/runtime/lsp-runtime.js \
             package.json \
             package-lock.json \
-            .github/workflows/ci.yml \
             tests/lsp-runtime-smoke.mjs \
             docs/releases/v0.6.5.md
           git commit -m "feat: add persistent native LSP intelligence"
