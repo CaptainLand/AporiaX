@@ -74,6 +74,7 @@ export async function runSubagentTask({
   executeAuthorizedTool,
   describeToolActivity,
   describeCapability,
+  systemOwned = false,
 }) {
   if (!toolRegistry?.definitions) {
     throw new Error("Subagent loop requires the native tool registry.");
@@ -146,6 +147,7 @@ export async function runSubagentTask({
     task: input.task,
     scope: input.scope,
     background: input.background,
+    systemOwned,
   });
 
   try {
@@ -217,6 +219,7 @@ export async function runSubagentTask({
           rounds: round,
           toolSteps: toolSteps.length,
           summary: result.summary.slice(0, 500),
+          systemOwned,
         });
         return result;
       }
@@ -356,6 +359,7 @@ export async function runSubagentTask({
       rounds: result.rounds,
       toolSteps: toolSteps.length,
       summary: result.summary,
+      systemOwned,
     });
     return result;
   } catch (error) {
@@ -374,6 +378,7 @@ export async function runSubagentTask({
       agentId,
       role: input.role,
       error: error.message,
+      systemOwned,
     });
     return result;
   }

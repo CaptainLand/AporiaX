@@ -4,6 +4,7 @@ import {
   chooseHydratedTasks,
   createLightweightTaskSnapshot,
   createTaskStore,
+  replaceAssistantForRetry,
   serializeTaskCache,
   updateTaskMessageById,
 } from "../src/state/task-store-core.js";
@@ -95,6 +96,55 @@ const withFollowUp = appendTaskMessage(withDelta, "task-1", {
   content: "continue",
 });
 assert.equal(withFollowUp[0].messages.length, 3);
+
+const failedRetryTask = {
+  id: "task-retry",
+  messages: [
+    { id: "retry-user", role: "user", content: "try this" },
+    {
+      id: "failed-assistant",
+      role: "assistant",
+      status: "failed",
+      error: true,
+      content: "request failed",
+      sourceUserId: "retry-user",
+    },
+  ],
+};
+const retriedAssistant = {
+  id: "retry-assistant",
+  role: "assistant",
+  status: "running",
+  sourceUserId: "retry-user",
+};
+const afterRetry = replaceAssistantForRetry(
+  failedRetryTask,
+  "failed-assistant",
+  retriedAssistant,
+);
+assert.equal(afterRetry.messages.length, 3, "retry reuses the existing user turn");
+assert.equal(
+  afterRetry.messages[1].supersededByRetryId,
+  "retry-assistant",
+  "the stale failure is retired from the active conversation",
+);
+assert.ok(afterRetry.messages[1].supersededAt);
+assert.equal(afterRetry.messages[2].id, "retry-assistant");
+assert.equal(afterRetry.messages[2].retryOfAssistantId, "failed-assistant");
+assert.equal(
+  failedRetryTask.messages[1].supersededByRetryId,
+  undefined,
+  "retry replacement remains immutable",
+);
+assert.equal(
+  replaceAssistantForRetry(
+    failedRetryTask,
+    "missing-assistant",
+    retriedAssistant,
+  ),
+  failedRetryTask,
+  "an unknown retry target is a no-op",
+);
 
 const store = createTaskStore(tasks);
 let notifications = 0;

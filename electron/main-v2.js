@@ -33,6 +33,13 @@ import {
   loadMcpConfiguration,
   publicMcpServerSummary,
 } from "./mcp-config.js";
+import {
+  extensionLibrarySnapshot,
+  installCatalogSkill,
+  removeMcpServer,
+  removeUserSkill,
+  saveMcpServer,
+} from "./extension-library.js";
 
 const desktopBackground = installDesktopBackground();
 const activeRunMetadata = new Map();
@@ -312,6 +319,36 @@ ipcMain.handle("core:mcp", async (_event, request = {}) => {
     projectSelection: configuration.projectSelection,
   };
 });
+ipcMain.handle("core:library", async (_event, request = {}) =>
+  extensionLibrarySnapshot({
+    userDataDirectory: app.getPath("userData"),
+    workspacePath: String(request?.workspacePath || "").trim(),
+  }),
+);
+ipcMain.handle("core:library:install-skill", async (_event, request = {}) =>
+  installCatalogSkill({
+    userDataDirectory: app.getPath("userData"),
+    catalogId: request?.catalogId,
+  }),
+);
+ipcMain.handle("core:library:remove-skill", async (_event, request = {}) =>
+  removeUserSkill({
+    userDataDirectory: app.getPath("userData"),
+    name: request?.name,
+  }),
+);
+ipcMain.handle("core:library:save-mcp", async (_event, request = {}) =>
+  saveMcpServer({
+    userDataDirectory: app.getPath("userData"),
+    server: request?.server,
+  }),
+);
+ipcMain.handle("core:library:remove-mcp", async (_event, request = {}) =>
+  removeMcpServer({
+    userDataDirectory: app.getPath("userData"),
+    id: request?.id,
+  }),
+);
 ipcMain.handle("core:sessions", () => ({ sessions: kernel.sessions.list() }));
 ipcMain.handle("core:events", (_event, request = {}) => ({
   events: kernel.events.history(request),

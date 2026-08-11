@@ -12,7 +12,7 @@ assert.match(hook, /pendingDeltas\.set\(/);
 assert.match(hook, /scheduleDeltaFlush\(\);/);
 assert.match(hook, /type: "stream\.delta\.flush"/);
 assert.match(hook, /discardPendingDelta\(event\.runId\);/);
-assert.match(hook, /flushPendingDeltas\(\);\n        const now = new Date\(\)\.toISOString\(\);/);
+assert.match(hook, /flushPendingDeltas\(\);\r?\n        const now = new Date\(\)\.toISOString\(\);/);
 
 const deltaBranch = hook.slice(
   hook.indexOf('if (event.type === "response.delta")'),
@@ -22,7 +22,7 @@ assert.doesNotMatch(deltaBranch, /setTasks\(/);
 
 assert.match(
   main,
-  /tasksRef\.current = tasks;\n  \}, \[tasks\]\);\n\n  useEffect\(\(\) => \{[\s\S]*?cacheTasksLocally\(tasks\);[\s\S]*?\}, 750\);/,
+  /tasksRef\.current = tasks;\r?\n  \}, \[tasks\]\);\r?\n\r?\n  useEffect\(\(\) => \{[\s\S]*?cacheTasksLocally\(tasks\);[\s\S]*?\}, 750\);/,
 );
 
 console.log("streaming performance smoke: PASS");

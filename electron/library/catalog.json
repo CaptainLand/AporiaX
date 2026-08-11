@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "source": "AporiaX Bundled Library",
+  "entries": [
+    {
+      "id": "skill.frontend-review",
+      "type": "skill",
+      "name": "frontend-review",
+      "title": "Frontend Review",
+      "titleEn": "Frontend Review",
+      "titleZh": "前端审阅",
+      "description": "Review UI changes for clarity, accessibility, responsive layout, and visual regressions before delivery.",
+      "descriptionEn": "Review UI changes for clarity, accessibility, responsive layout, and visual regressions before delivery.",
+      "descriptionZh": "在交付前检查界面清晰度、无障碍、响应式布局与视觉回归。",
+      "version": "1.0.0",
+      "author": "AporiaX",
+      "tags": ["frontend", "review", "accessibility"],
+      "trust": "bundled",
+      "skillFile": "skills/frontend-review/SKILL.md"
+    },
+    {
+      "id": "skill.release-readiness",
+      "type": "skill",
+      "name": "release-readiness",
+      "title": "Release Readiness",
+      "titleEn": "Release Readiness",
+      "titleZh": "发布就绪检查",
+      "description": "Turn release work into a bounded checklist covering tests, build artifacts, versioning, and handoff evidence.",
+      "descriptionEn": "Turn release work into a bounded checklist covering tests, build artifacts, versioning, and handoff evidence.",
+      "descriptionZh": "把发布工作整理成有限清单，覆盖测试、构建产物、版本号与交付证据。",
+      "version": "1.0.0",
+      "author": "AporiaX",
+      "tags": ["release", "build", "verification"],
+      "trust": "bundled",
+      "skillFile": "skills/release-readiness/SKILL.md"
+    },
+    {
+      "id": "mcp.remote-http",
+      "type": "mcp-template",
+      "name": "remote-http",
+      "title": "Remote MCP Server",
+      "titleEn": "Remote MCP Server",
+      "titleZh": "远程 MCP 服务",
+      "description": "Connect a trusted Streamable HTTP MCP endpoint. Credentials stay in environment-variable references.",
+      "descriptionEn": "Connect a trusted Streamable HTTP MCP endpoint. Credentials stay in environment-variable references.",
+      "descriptionZh": "连接可信的 Streamable HTTP MCP 端点，凭据仅通过环境变量引用。",
+      "version": "1",
+      "author": "AporiaX",
+      "tags": ["mcp", "remote", "http"],
+      "trust": "template",
+      "template": { "transport": "streamable-http", "url": "https://" }
+    },
+    {
+      "id": "mcp.local-stdio",
+      "type": "mcp-template",
+      "name": "local-stdio",
+      "title": "Local MCP Process",
+      "titleEn": "Local MCP Process",
+      "titleZh": "本地 MCP 进程",
+      "description": "Register a trusted local stdio MCP process with explicit command, arguments, and environment references.",
+      "descriptionEn": "Register a trusted local stdio MCP process with explicit command, arguments, and environment references.",
+      "descriptionZh": "通过明确的命令、参数和环境变量引用注册可信的本地 stdio MCP 进程。",
+      "version": "1",
+      "author": "AporiaX",
+      "tags": ["mcp", "local", "stdio"],
+      "trust": "template",
+      "template": { "transport": "stdio", "command": "npx" }
+    }
+  ]
+}

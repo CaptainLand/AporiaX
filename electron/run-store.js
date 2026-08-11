@@ -60,6 +60,7 @@ export async function beginRunJournal(dataDirectory, input) {
     workspacePath: String(input?.workspacePath || ""),
     providerId: String(input?.providerId || ""),
     modelId: String(input?.modelId || ""),
+    recoveryOfRunId: String(input?.recoveryOfRunId || ""),
     status: "running",
     startedAt: now,
     updatedAt: now,
@@ -174,6 +175,66 @@ export async function listRecoverableRuns(dataDirectory) {
         String(right.startedAt || ""),
       ),
     );
+}
+
+export async function getRunRecoveryContext(dataDirectory, runId) {
+  const paths = getRunPaths(dataDirectory, runId);
+  const metadata = JSON.parse(await readFile(paths.metadata, "utf8"));
+  let events = [];
+  try {
+    events = (await readFile(paths.events, "utf8"))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-120)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .map((event) => ({
+        at: event.at || event.timestamp || null,
+        type: event.type || "unknown",
+        tool: event.tool || null,
+        path: event.path || null,
+        command: event.command || null,
+        status: event.status || null,
+        title: event.title || null,
+        detail: event.detail || null,
+        error: event.error ? String(event.error).slice(0, 500) : null,
+      }));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return {
+    runId: metadata.runId,
+    taskId: metadata.taskId,
+    sourceUserId: metadata.sourceUserId,
+    prompt: metadata.prompt,
+    workspacePath: metadata.workspacePath,
+    startedAt: metadata.startedAt,
+    lastEventType: metadata.lastEventType,
+    events,
+  };
+}
+
+export async function markRunRecoveryStarted(
+  dataDirectory,
+  runId,
+  resumedByRunId,
+) {
+  await appendRunJournalEvent(dataDirectory, runId, {
+    type: "run.recovery_started",
+    resumedByRunId,
+  });
+  return updateRunJournalMetadata(dataDirectory, runId, {
+    status: "interrupted",
+    resumedByRunId: String(resumedByRunId || ""),
+    resumedAt: new Date().toISOString(),
+    lastEventType: "run.recovery_started",
+  });
 }
 
 export async function acknowledgeRecoverableRun(dataDirectory, runId) {

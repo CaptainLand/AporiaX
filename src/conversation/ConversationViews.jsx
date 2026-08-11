@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { diffLines } from "diff";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ArrowRight,
@@ -31,9 +32,7 @@ import {
 } from "../p0-model";
 import { useI18n } from "../i18n";
 import {
-  AgentProcessTrace,
   FoldableUserPrompt,
-  LiveAgentStatus,
   RunDurationChip,
 } from "./RuntimeMessageUI.jsx";
 
@@ -545,7 +544,7 @@ function TurnAnchorReview({
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="review-backdrop turn-anchor-backdrop"
       role="presentation"
@@ -763,12 +762,14 @@ function TurnAnchorReview({
           </div>
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
 function AssistantMessage({ message, onRetry, onOpenAnchor }) {
   const { tr } = useI18n();
+  const [retrying, setRetrying] = useState(false);
   const failed = message.error || message.status === "failed";
   const interrupted = message.status === "interrupted";
   const hasAnchor = Boolean(message.anchor && message.changes?.length);
@@ -809,7 +810,36 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           </button>
         )}
       </div>
-      <LiveAgentStatus message={message} />
+      {Array.isArray(message.progressUpdates) &&
+        message.progressUpdates.length > 0 && (
+          <div className="assistant-progress-journal">
+            {message.progressUpdates.map((update, index) => (
+              <section
+                className={`assistant-progress-entry ${update.kind || "progress"}`}
+                key={update.id || `${message.id}-progress-${index}`}
+              >
+                <header>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <strong>{update.title}</strong>
+                </header>
+                {update.kind === "plan" ? (
+                  <div className="assistant-progress-plan">
+                    {update.explanation && <p>{update.explanation}</p>}
+                    <ol>
+                      {(update.steps || []).map((step) => (
+                        <li className={step.status} key={step.id || step.title}>
+                          {step.title}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ) : (
+                  <MarkdownMessage content={update.content || ""} />
+                )}
+              </section>
+            ))}
+          </div>
+        )}
       <div className="assistant-message-content">
         {restored ? (
           <div className="restored-turn-output">
@@ -839,17 +869,32 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           <span className="stream-placeholder">{tr("暂无回复内容", "No response content")}</span>
         )}
       </div>
-      <AgentProcessTrace message={message} />
       {(failed || interrupted) && message.prompt && (
         <button
           className="retry-message-button"
           type="button"
-          onClick={() => onRetry(message)}
+          disabled={retrying}
+          onClick={async () => {
+            if (retrying) return;
+            setRetrying(true);
+            try {
+              const started = await onRetry(message);
+              if (!started) setRetrying(false);
+            } catch {
+              setRetrying(false);
+            }
+          }}
         >
-          <RotateCcw size={13} />
-          {message.recoverable
-            ? tr("恢复任务", "Resume task")
-            : tr("重试本轮", "Retry turn")}
+          {retrying ? (
+            <LoaderCircle className="spin" size={13} />
+          ) : (
+            <RotateCcw size={13} />
+          )}
+          {retrying
+            ? tr("正在重试", "Retrying")
+            : message.recoverable
+              ? tr("恢复任务", "Resume task")
+              : tr("重试本轮", "Retry turn")}
         </button>
       )}
     </article>
@@ -1218,6 +1263,8 @@ export function Conversation({
           </article>
           );
         }
+
+        if (message.supersededByRetryId) return null;
 
         const files = collectEditedFiles(
           message.steps,

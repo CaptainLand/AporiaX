@@ -42,7 +42,9 @@ import {
   appendRunJournalEvent,
   beginRunJournal,
   finishRunJournal,
+  getRunRecoveryContext,
   listRecoverableRuns,
+  markRunRecoveryStarted,
   updateRunJournalMetadata,
 } from "./run-store.js";
 import { createProjectUnderstandingStore } from "./project-understanding.js";
@@ -55,6 +57,29 @@ let mainWindow = null;
 let completionFlashTimer = null;
 const activeRuns = new Map();
 const pendingApprovals = new Map();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+const RUN_SCOPED_BROWSER_TOOLS = new Set([
+  "browser_click",
+  "browser_fill",
+  "browser_press",
+]);
+
+function approvalGrantKey(details = {}) {
+  return RUN_SCOPED_BROWSER_TOOLS.has(details.toolName)
+    ? "browser-control"
+    : "";
+}
 
 function createRunControl() {
   let paused = false;
@@ -387,6 +412,11 @@ function sendHarnessEvent(event, runId, payload) {
 
 function requestHarnessApproval(event, runId, details, signal) {
   if (signal.aborted) return Promise.resolve({ approved: false });
+  const run = activeRuns.get(runId);
+  const grantKey = approvalGrantKey(details);
+  if (grantKey && run?.approvalGrants?.has(grantKey)) {
+    return Promise.resolve({ approved: true, remembered: true });
+  }
   const approvalId = randomUUID();
 
   return new Promise((resolveApproval) => {
@@ -398,6 +428,7 @@ function requestHarnessApproval(event, runId, details, signal) {
     pendingApprovals.set(approvalId, {
       runId,
       senderId: event.sender.id,
+      grantKey,
       resolve: (response) => {
         signal.removeEventListener("abort", handleAbort);
         resolveApproval(response);
@@ -407,6 +438,7 @@ function requestHarnessApproval(event, runId, details, signal) {
       type: "approval.required",
       approval: {
         id: approvalId,
+        canRememberForRun: Boolean(grantKey),
         ...details,
       },
     });
@@ -767,15 +799,38 @@ ipcMain.handle("harness:run", async (event, request) => {
     throw new Error("This Harness run is already active.");
   }
   const provider = await resolveProvider(request?.providerId);
+  let recoveryContext = null;
+  if (request?.recoveryRunId) {
+    recoveryContext = await getRunRecoveryContext(
+      app.getPath("userData"),
+      request.recoveryRunId,
+    );
+    if (
+      recoveryContext.taskId &&
+      request?.taskId &&
+      recoveryContext.taskId !== request.taskId
+    ) {
+      throw new Error("The recovery checkpoint belongs to another task.");
+    }
+    if (
+      recoveryContext.workspacePath &&
+      request?.workspacePath &&
+      resolve(recoveryContext.workspacePath) !== resolve(request.workspacePath)
+    ) {
+      throw new Error("The recovery checkpoint belongs to another workspace.");
+    }
+  }
 
   const controller = new AbortController();
   const control = createRunControl();
   const run = {
     runId,
+    taskId: request?.taskId || "",
     controller,
     control,
     senderId: event.sender.id,
     journalTail: Promise.resolve(),
+    approvalGrants: new Set(),
   };
   await beginRunJournal(app.getPath("userData"), {
     runId,
@@ -786,8 +841,16 @@ ipcMain.handle("harness:run", async (event, request) => {
     workspacePath: request?.workspacePath,
     providerId: request?.providerId,
     modelId: request?.modelId,
+    recoveryOfRunId: recoveryContext?.runId,
   });
   activeRuns.set(runId, run);
+  if (recoveryContext?.runId) {
+    await markRunRecoveryStarted(
+      app.getPath("userData"),
+      recoveryContext.runId,
+      runId,
+    ).catch(() => undefined);
+  }
 
   try {
     const result = await runHarness({
@@ -795,6 +858,7 @@ ipcMain.handle("harness:run", async (event, request) => {
       provider,
       memoryDirectory: join(app.getPath("userData"), "project-memory"),
       understandingDirectory: getProjectUnderstandingDirectory(),
+      recoveryContext,
       signal: controller.signal,
       control,
       onEvent: (payload) => {
@@ -902,7 +966,7 @@ ipcMain.handle("harness:steer", (event, { runId, message }) => {
 
 ipcMain.handle(
   "harness:approval-response",
-  (event, { runId, approvalId, approved }) => {
+  (event, { runId, approvalId, approved, scope = "once" }) => {
     assertTrustedSender(event);
     const approval = pendingApprovals.get(approvalId);
     if (
@@ -913,7 +977,15 @@ ipcMain.handle(
       return false;
     }
     pendingApprovals.delete(approvalId);
-    approval.resolve({ approved: Boolean(approved) });
+    const shouldRemember =
+      Boolean(approved) && scope === "run" && Boolean(approval.grantKey);
+    if (shouldRemember) {
+      activeRuns.get(runId)?.approvalGrants?.add(approval.grantKey);
+    }
+    approval.resolve({
+      approved: Boolean(approved),
+      remembered: shouldRemember,
+    });
     return true;
   },
 );
@@ -922,6 +994,7 @@ ipcMain.handle("harness:active-runs", (event) => {
   assertTrustedSender(event);
   return [...activeRuns.values()].map((run) => ({
     runId: run.runId,
+    taskId: run.taskId,
     paused: run.control.paused,
   }));
 });
@@ -941,6 +1014,7 @@ ipcMain.handle(
 );
 
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return;
   if (process.platform === "win32") {
     app.setAppUserModelId("com.aporiax.desktop");
   }

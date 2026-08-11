@@ -3017,6 +3017,7 @@ body.panel-is-resizing * {
 
 .approval-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   padding: 10px 14px;
   border-top: 1px solid #e8eaec;
@@ -3043,6 +3044,97 @@ body.panel-is-resizing * {
   border-color: #34383b;
   color: #fff;
   background: #34383b;
+}
+
+.assistant-progress-journal {
+  display: grid;
+  margin: 2px 0 18px;
+  gap: 9px;
+}
+
+.assistant-progress-entry {
+  padding: 9px 12px 10px;
+  border-left: 2px solid rgba(54, 174, 227, 0.72);
+  border-radius: 0 9px 9px 0;
+  background: linear-gradient(
+    90deg,
+    rgba(61, 176, 226, 0.07),
+    rgba(61, 176, 226, 0.018) 72%,
+    transparent
+  );
+}
+
+.assistant-progress-entry > header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  color: #2f7f9f;
+  gap: 8px;
+}
+
+.assistant-progress-entry > header > span {
+  font: 600 9px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  opacity: 0.68;
+}
+
+.assistant-progress-entry > header > strong {
+  font-size: 11.8px;
+  font-weight: 650;
+}
+
+.assistant-progress-entry .markdown-message,
+.assistant-progress-plan {
+  color: #5a6268;
+  font-size: 12.8px;
+  line-height: 1.62;
+}
+
+.assistant-progress-plan p {
+  margin: 0 0 7px;
+}
+
+.assistant-progress-plan ol {
+  display: grid;
+  margin: 0;
+  padding-left: 20px;
+  gap: 3px;
+}
+
+.assistant-progress-plan li.completed {
+  color: #57926d;
+  text-decoration: line-through;
+  text-decoration-color: rgba(87, 146, 109, 0.38);
+}
+
+.assistant-progress-plan li.in_progress {
+  color: #2f7f9f;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .assistant-progress-entry {
+  border-left-color: rgba(64, 199, 255, 0.82);
+  background: linear-gradient(
+    90deg,
+    rgba(54, 169, 226, 0.105),
+    rgba(76, 52, 111, 0.04) 72%,
+    transparent
+  );
+}
+
+:root[data-theme="dark"] .assistant-progress-entry > header,
+:root[data-theme="dark"] .assistant-progress-plan li.in_progress {
+  color: #68d1ff;
+}
+
+:root[data-theme="dark"] .assistant-progress-entry .markdown-message,
+:root[data-theme="dark"] .assistant-progress-plan {
+  color: #a9b8c1;
+}
+
+.approval-actions button.approval-run-grant {
+  border-color: #3f96bd;
+  color: #09202b;
+  background: #73c9ed;
 }
 
 .approval-actions button:disabled {
@@ -4666,6 +4758,12 @@ body.panel-is-resizing * {
   border-color: #cfd8de;
   color: #11161b;
   background: #dce4e9;
+}
+
+:root[data-theme="dark"] .approval-actions button.approval-run-grant {
+  border-color: rgba(77, 200, 255, 0.58);
+  color: #07151b;
+  background: #66c9f3;
 }
 
 :root[data-theme="dark"] .review-file-list,
@@ -11179,7 +11277,14 @@ button.anchor-history-heading:hover {
 
 .turn-anchor-review {
   width: min(1080px, calc(100vw - 72px));
-  height: min(720px, calc(100vh - 110px));
+  height: min(720px, calc(100dvh - 70px));
+  min-height: 0;
+  max-height: calc(100dvh - 54px);
+}
+
+.turn-anchor-backdrop {
+  z-index: 220;
+  padding: clamp(8px, 2vw, 20px);
 }
 
 .turn-anchor-review .review-panel-header > div > svg {
@@ -11243,6 +11348,8 @@ button.anchor-history-heading:hover {
 
 .turn-anchor-footer {
   min-height: 62px;
+  position: relative;
+  z-index: 1;
 }
 
 .turn-anchor-footer > div:last-child {
@@ -11355,6 +11462,24 @@ button.anchor-history-heading:hover {
   border-color: rgba(77, 169, 210, 0.45);
   color: #a6dbf0;
   background: rgba(65, 153, 193, 0.15);
+}
+
+@media (max-height: 720px) {
+  .turn-anchor-review {
+    width: min(1080px, calc(100vw - 24px));
+    height: calc(100dvh - 54px);
+    max-height: calc(100dvh - 54px);
+  }
+
+  .turn-anchor-review .review-panel-header {
+    height: 52px;
+  }
+
+  .turn-anchor-footer {
+    min-height: 54px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
 }
 
 .application-author-credit {

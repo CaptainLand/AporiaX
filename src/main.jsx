@@ -79,7 +79,10 @@ import {
   getDefaultTaskConfig,
   getModel,
 } from "./models/model-catalog.js";
-import { serializeTaskCache } from "./state/task-store-core.js";
+import {
+  replaceAssistantForRetry,
+  serializeTaskCache,
+} from "./state/task-store-core.js";
 import { useTaskStore } from "./state/useTaskStore.js";
 import { useHarnessEvents } from "./hooks/useHarnessEvents.js";
 import "./styles.css";
@@ -322,7 +325,7 @@ function Sidebar({
   onRenameTask,
   onDeleteTask,
   onNotice,
-  runningTaskId,
+  runningTaskIds,
   searchOpen,
   onToggleSearch,
 }) {
@@ -522,7 +525,7 @@ function Sidebar({
                         <span className="task-item-copy">
                           <span className="task-item-title">{task.title}</span>
                         </span>
-                        {runningTaskId === task.id && (
+                        {runningTaskIds.has(task.id) && (
                           <LoaderCircle className="spin task-running" size={13} />
                         )}
                       </button>
@@ -584,14 +587,14 @@ function Sidebar({
             className="danger"
             type="button"
             role="menuitem"
-            disabled={runningTaskId === contextTask.id}
+            disabled={runningTaskIds.has(contextTask.id)}
             onClick={() => {
               setDeleteTask(contextTask);
               setContextMenu(null);
             }}
           >
             <Trash2 size={15} />
-            {runningTaskId === contextTask.id
+            {runningTaskIds.has(contextTask.id)
               ? tr("运行中，无法删除", "Running; cannot delete")
               : tr("删除任务", "Delete task")}
           </button>
@@ -2834,13 +2837,13 @@ function App() {
     useState("general");
   const [sandboxStatus, setSandboxStatus] = useState(null);
   const [sandboxPreparing, setSandboxPreparing] = useState(false);
-  const [runningTaskId, setRunningTaskId] = useState(null);
-  const [activeRunId, setActiveRunId] = useState(null);
-  const [runPaused, setRunPaused] = useState(false);
+  const [runningTaskIds, setRunningTaskIds] = useState(() => new Set());
+  const [activeRunIdsByTask, setActiveRunIdsByTask] = useState({});
+  const [pausedTaskIds, setPausedTaskIds] = useState(() => new Set());
   // Witness is now the visible, append-only run monitor. Keep the legacy
   // event branches inert until they are removed from the renderer protocol.
   const setRunStatus = () => {};
-  const [approval, setApproval] = useState(null);
+  const [approvalsByTask, setApprovalsByTask] = useState({});
   const [approvalResponding, setApprovalResponding] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
   const [theme, setTheme] = useState(readSavedTheme);
@@ -2850,6 +2853,31 @@ function App() {
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
   const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
+  const activeRunId = activeTaskId
+    ? activeRunIdsByTask[activeTaskId] || null
+    : null;
+  const runPaused = activeTaskId ? pausedTaskIds.has(activeTaskId) : false;
+  const approval = activeTaskId
+    ? approvalsByTask[activeTaskId] || null
+    : null;
+  const setTaskPaused = (taskId, paused) => {
+    if (!taskId) return;
+    setPausedTaskIds((current) => {
+      const next = new Set(current);
+      if (paused) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  };
+  const setTaskApproval = (taskId, nextApproval) => {
+    if (!taskId) return;
+    setApprovalsByTask((current) => {
+      const next = { ...current };
+      if (nextApproval) next[taskId] = nextApproval;
+      else delete next[taskId];
+      return next;
+    });
+  };
 
   const openApplicationSettings = (section = "general") => {
     setApplicationSettingsSection(section);
@@ -2987,11 +3015,6 @@ function App() {
               { count: recoverableRuns.length },
             ),
           );
-          await Promise.allSettled(
-            recoverableRuns.map((record) =>
-              window.desktop.harness.acknowledgeRecovery?.(record.runId),
-            ),
-          );
         }
       } catch {
         if (active) setNotice(tr("任务历史加载失败，已使用本地缓存", "Task history failed to load; using the local cache"));
@@ -3056,10 +3079,10 @@ function App() {
     tr,
     runsRef,
     setTasks,
-    setRunPaused,
+    setRunPaused: setTaskPaused,
     setRunStatus,
     setSandboxStatus,
-    setApproval,
+    setApproval: setTaskApproval,
     normalizeWorkspacePath,
   });
 
@@ -3155,7 +3178,7 @@ function App() {
   };
 
   const deleteTask = (taskId) => {
-    if (runningTaskId === taskId) {
+    if (runningTaskIds.has(taskId)) {
       setNotice(
         tr(
           "任务正在运行，请先停止任务再删除。",
@@ -3182,7 +3205,7 @@ function App() {
   };
 
   const sendMessage = (content, attachments = [], request = {}) => {
-    if (!window.desktop?.harness) {
+    if (typeof window.desktop?.harness?.run !== "function") {
       setNotice(tr("请在 Electron 桌面端运行 Harness", "Run the Harness in the Electron desktop app"));
       return false;
     }
@@ -3195,12 +3218,14 @@ function App() {
       ? tasksRef.current.find((task) => task.id === request.taskId)
       : activeTask;
     if (!targetTask) return false;
+    const targetRunEntry = [...runsRef.current.entries()].find(
+      ([, run]) => run.taskId === targetTask.id,
+    );
+    const targetRunId = targetRunEntry?.[0] || null;
 
-    if (runningTaskId && !request.force) {
+    if (targetRunId && !request.force) {
       const createdAt = new Date().toISOString();
       if (
-        targetTask.id === runningTaskId &&
-        activeRunId &&
         window.desktop.harness.steer
       ) {
         const steeringMessage = {
@@ -3223,7 +3248,7 @@ function App() {
         );
         void window.desktop.harness
           .steer({
-            runId: activeRunId,
+            runId: targetRunId,
             message: steeringMessage,
           })
           .then((accepted) => {
@@ -3295,13 +3320,29 @@ function App() {
 
     const runId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
+    const retryAssistantId = request.retryAssistantId || "";
+    const recoveryRunId = request.recoveryRunId || "";
+    const retrySource = retryAssistantId
+      ? targetTask.messages.find(
+          (message) =>
+            message.role === "user" &&
+            message.id === request.retrySourceUserId,
+        )
+      : null;
     const queuedSource = request.userMessageId
       ? targetTask.messages.find(
           (message) =>
             message.id === request.userMessageId && message.queued,
         )
       : null;
-    const userMessage = queuedSource
+    const userMessage = retrySource
+      ? {
+          ...retrySource,
+          content: content || retrySource.content,
+          attachments,
+          retriedAt: new Date().toISOString(),
+        }
+      : queuedSource
       ? {
           ...queuedSource,
           queued: false,
@@ -3334,6 +3375,8 @@ function App() {
         },
       ],
       witness: null,
+      retryOfAssistantId: retryAssistantId || null,
+      recoveryOfRunId: recoveryRunId || null,
       createdAt: new Date().toISOString(),
     };
     setTasks((current) =>
@@ -3341,7 +3384,21 @@ function App() {
         task.id === targetTask.id
           ? {
               ...task,
-              messages: queuedSource
+              messages: retryAssistantId
+                ? retrySource
+                  ? replaceAssistantForRetry(
+                      task,
+                      retryAssistantId,
+                      assistantMessage,
+                    ).messages
+                  : [
+                      ...task.messages.filter(
+                        (message) => message.id !== retryAssistantId,
+                      ),
+                      userMessage,
+                      assistantMessage,
+                    ]
+                : queuedSource
                 ? [
                     ...task.messages.map((message) =>
                       message.id === userMessage.id
@@ -3368,18 +3425,22 @@ function App() {
           ? "manual"
           : "sandbox-auto",
     });
-    setRunningTaskId(targetTask.id);
-    setActiveRunId(runId);
-    setRunPaused(false);
-    setApproval(null);
+    setRunningTaskIds((current) => new Set(current).add(targetTask.id));
+    setActiveRunIdsByTask((current) => ({
+      ...current,
+      [targetTask.id]: runId,
+    }));
+    setTaskPaused(targetTask.id, false);
+    setTaskApproval(targetTask.id, null);
     setRunStatus({
       title: tr("正在启动 Harness", "Starting Harness"),
       detail: tr("正在加载项目指令与任务上下文", "Loading project instructions and task context"),
     });
 
-    void window.desktop.harness
-      .run({
+    void Promise.resolve()
+      .then(() => window.desktop.harness.run({
         runId,
+        recoveryRunId: recoveryRunId || undefined,
         taskId: targetTask.id,
         assistantId,
         sourceUserId: userMessage.id,
@@ -3398,11 +3459,14 @@ function App() {
         messages: [
           ...targetTask.messages.filter(
             (message) =>
-              !message.queued && message.id !== userMessage.id,
+              !message.queued &&
+              !message.supersededByRetryId &&
+              message.id !== userMessage.id &&
+              message.id !== retryAssistantId,
           ),
           userMessage,
         ],
-      })
+      }))
       .then((result) => {
         setTasks((current) =>
           current.map((task) =>
@@ -3533,15 +3597,26 @@ function App() {
       })
       .finally(() => {
         runsRef.current.delete(runId);
-        setRunningTaskId((current) =>
-          current === targetTask.id ? null : current,
-        );
-        setActiveRunId((current) => (current === runId ? null : current));
-        setRunPaused(false);
-        setApproval((current) =>
-          current?.runId === runId ? null : current,
-        );
+        setRunningTaskIds((current) => {
+          const next = new Set(current);
+          next.delete(targetTask.id);
+          return next;
+        });
+        setActiveRunIdsByTask((current) => {
+          if (current[targetTask.id] !== runId) return current;
+          const next = { ...current };
+          delete next[targetTask.id];
+          return next;
+        });
+        setTaskPaused(targetTask.id, false);
+        setApprovalsByTask((current) => {
+          if (current[targetTask.id]?.runId !== runId) return current;
+          const next = { ...current };
+          delete next[targetTask.id];
+          return next;
+        });
         const nextQueued = tasksRef.current
+          .filter((task) => task.id === targetTask.id)
           .flatMap((task) =>
             task.messages
               .filter(
@@ -3586,7 +3661,7 @@ function App() {
       title: tr("正在停止任务", "Stopping task"),
       detail: tr("等待当前操作安全退出", "Waiting for the current operation to exit safely"),
     });
-    setApproval(null);
+    if (activeTaskId) setTaskApproval(activeTaskId, null);
     try {
       await window.desktop.harness.interrupt(activeRunId);
     } catch {
@@ -3621,7 +3696,7 @@ function App() {
     }
   };
 
-  const respondToApproval = async (approved) => {
+  const respondToApproval = async (approved, scope = "once") => {
     if (!approval || !window.desktop?.harness?.respondToApproval) return;
     const currentApproval = approval;
     setApprovalResponding(true);
@@ -3630,14 +3705,20 @@ function App() {
         runId: currentApproval.runId,
         approvalId: currentApproval.id,
         approved,
+        scope,
       });
       if (!accepted) {
         setNotice(tr("审批请求已经失效", "The approval request has expired"));
         return;
       }
-      setApproval((current) =>
-        current?.id === currentApproval.id ? null : current,
-      );
+      setApprovalsByTask((current) => {
+        if (current[currentApproval.taskId]?.id !== currentApproval.id) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[currentApproval.taskId];
+        return next;
+      });
       setRunStatus({
         title: approved ? tr("操作已批准", "Action approved") : tr("操作已拒绝", "Action denied"),
         detail: approved
@@ -3651,7 +3732,7 @@ function App() {
     }
   };
 
-  const retryMessage = (assistantMessage) => {
+  const retryMessage = async (assistantMessage) => {
     const task = tasksRef.current.find((candidate) =>
       candidate.messages.some(
         (message) => message.id === assistantMessage.id,
@@ -3660,6 +3741,89 @@ function App() {
     const sourceMessage = task?.messages.find(
       (message) => message.id === assistantMessage.sourceUserId,
     );
+    const retryContent =
+      assistantMessage.prompt || sourceMessage?.content || "";
+    if (!task || (!retryContent.trim() && !sourceMessage?.attachments?.length)) {
+      setNotice(
+        tr(
+          "找不到这一轮的原始请求，无法重试",
+          "The original request for this turn is unavailable",
+        ),
+      );
+      return false;
+    }
+    const taskRunEntry = [...runsRef.current.entries()].find(
+      ([, run]) => run.taskId === task.id,
+    );
+    const taskRunId = taskRunEntry?.[0] || null;
+    if (taskRunId) {
+      if (!assistantMessage.recoverable || !window.desktop?.harness?.interrupt) {
+        setNotice(
+          tr(
+            "请等待当前任务结束后再重试这一轮",
+            "Wait for the current task to finish before retrying this turn",
+          ),
+        );
+        return false;
+      }
+      setNotice(
+        tr(
+          "正在停止残留任务并准备恢复…",
+          "Stopping the stale run before recovery…",
+        ),
+      );
+      await window.desktop.harness.interrupt(taskRunId).catch(() => false);
+      const deadline = Date.now() + 8_000;
+      let stopped = false;
+      while (Date.now() < deadline) {
+        const localActive = [...runsRef.current.values()].some(
+          (run) => run.taskId === task.id,
+        );
+        const mainRuns = window.desktop?.harness?.activeRuns
+          ? await window.desktop.harness.activeRuns().catch(() => [])
+          : [];
+        const mainActive = mainRuns.some(
+          (run) => run.runId === taskRunId || run.taskId === task.id,
+        );
+        if (!localActive && !mainActive) {
+          stopped = true;
+          break;
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+      }
+      if (!stopped) {
+        setNotice(
+          tr(
+            "旧任务仍在退出，请稍后再次点击恢复任务",
+            "The previous run is still exiting. Try Resume task again shortly.",
+          ),
+        );
+        return false;
+      }
+    }
+    if (runningTaskIds.has(task.id)) {
+      // A synchronous IPC/bridge failure in an older build could leave the
+      // renderer marked as running even though no Harness run exists. Retrying
+      // is also the recovery path for that stale state.
+      setRunningTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
+      setActiveRunIdsByTask((current) => {
+        const next = { ...current };
+        delete next[task.id];
+        return next;
+      });
+      setTaskPaused(task.id, false);
+      setTaskApproval(task.id, null);
+    }
+    const retryRequest = {
+      taskId: task.id,
+      retryAssistantId: assistantMessage.id,
+      retrySourceUserId: sourceMessage?.id || assistantMessage.sourceUserId,
+      recoveryRunId: assistantMessage.recoverable?.runId || "",
+    };
     const retryAttachments =
       sourceMessage?.attachments ||
       assistantMessage.inputAttachments ||
@@ -3675,15 +3839,17 @@ function App() {
     ) {
       setNotice(tr("当前模型不支持识图，已移除图片并按文字内容重试", "This model cannot read images. Images were removed before retrying the text."));
       return sendMessage(
-        assistantMessage.prompt || sourceMessage?.content || "",
+        retryContent,
         retryAttachments.filter(
           (attachment) => !isImageAttachment(attachment),
         ),
+        retryRequest,
       );
     }
     return sendMessage(
-      assistantMessage.prompt || sourceMessage?.content || "",
+      retryContent,
       retryAttachments,
+      retryRequest,
     );
   };
 
@@ -3773,7 +3939,7 @@ function App() {
       );
       return { success: false, reason: "bridge-unavailable" };
     }
-    if (runningTaskId === taskId) {
+    if (runningTaskIds.has(taskId)) {
       setNotice(
         tr(
           "请先停止当前任务，再恢复 Anchor",
@@ -3996,7 +4162,7 @@ function App() {
             onRenameTask={renameTaskById}
             onDeleteTask={deleteTask}
             onNotice={setNotice}
-            runningTaskId={runningTaskId}
+            runningTaskIds={runningTaskIds}
             searchOpen={searchOpen}
             onToggleSearch={() => setSearchOpen((open) => !open)}
           />
@@ -4049,10 +4215,8 @@ function App() {
               approvalResponding={approvalResponding}
               onRespondApproval={respondToApproval}
               onUpdateTask={updateActiveTask}
-              isRunning={runningTaskId === activeTask.id}
-              isPaused={
-                runningTaskId === activeTask.id && runPaused
-              }
+              isRunning={runningTaskIds.has(activeTask.id)}
+              isPaused={runningTaskIds.has(activeTask.id) && runPaused}
               onManageProviders={() => openApplicationSettings("models")}
               sandboxStatus={sandboxStatus}
               sandboxPreparing={sandboxPreparing}

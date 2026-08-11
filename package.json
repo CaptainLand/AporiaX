@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -57,6 +57,10 @@
     "test:capabilities": "node tests/capability-registry-smoke.mjs",
     "test:mcp-capabilities": "node tests/mcp-capabilities-smoke.mjs",
     "test:extensions": "node tests/extensions-center-smoke.mjs",
+    "test:extension-library": "node tests/extension-library-smoke.mjs",
+    "test:sandbox-watchdog": "node tests/sandbox-watchdog-smoke.mjs",
+    "test:witness-watchdog": "node tests/witness-watchdog-smoke.mjs",
+    "test:understanding-automation": "node tests/understanding-automation-smoke.mjs",
     "test:capability-observability": "node tests/capability-observability-smoke.mjs",
     "test:harness-event-reducer": "node tests/harness-event-reducer-smoke.mjs",
     "test:turn-coordinator": "node tests/turn-coordinator-smoke.mjs",

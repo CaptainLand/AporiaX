@@ -43,11 +43,45 @@ tasks = reduceHarnessTaskEvent(tasks, run, {
   plan: { revision: 1, steps: [{ id: "a", title: "Inspect", status: "in_progress" }] },
 }, { tr, now });
 assert.equal(tasks[0].messages[1].plan.revision, 1);
+assert.equal(tasks[0].messages[1].progressUpdates.length, 1);
+assert.equal(tasks[0].messages[1].progressUpdates[0].kind, "plan");
 
 tasks = reduceHarnessTaskEvent(tasks, run, {
   type: "response.reset",
 }, { tr, now });
 assert.equal(tasks[0].messages[1].content, "");
+assert.equal(tasks[0].messages[1].progressUpdates.length, 2);
+assert.equal(tasks[0].messages[1].progressUpdates[1].content, "old");
+
+const progressIds = tasks[0].messages[1].progressUpdates.map(
+  (update) => update.id,
+);
+assert.equal(new Set(progressIds).size, progressIds.length);
+
+const parallelTask = {
+  id: "task-2",
+  messages: [
+    { id: "user-2", role: "user", content: "another task" },
+    {
+      id: "assistant-2",
+      role: "assistant",
+      content: "independent",
+      route: [],
+    },
+  ],
+};
+const isolatedTasks = reduceHarnessTaskEvent(
+  [...tasks, parallelTask],
+  run,
+  {
+    type: "response.reset",
+    runId: "run-1",
+    timestamp: "2026-08-11T00:00:05.000Z",
+  },
+  { tr, now },
+);
+assert.strictEqual(isolatedTasks[1], parallelTask);
+assert.equal(isolatedTasks[1].messages[1].content, "independent");
 
 tasks = reduceHarnessTaskEvent(tasks, run, {
   type: "tool.started",

@@ -24,6 +24,7 @@ const TOOL_PRESENTATION = {
   browser_fill: ["forge", "填写页面内容", "Fill page input", "正在填写页面内容", "Filling page input", "keyboard"],
   browser_press: ["forge", "发送键盘操作", "Send keyboard input", "正在发送键盘操作", "Sending keyboard input", "keyboard"],
   browser_close: ["route", "关闭浏览器会话", "Close browser session", "正在关闭浏览器会话", "Closing browser session", "browser"],
+  request_self_check: ["trial", "请求独立自检", "Request independent review", "正在启动自适应自检", "Starting adaptive self-check", "verify"],
   complete_self_check: ["trial", "提交自检结果", "Submit self-check result", "正在提交自检报告", "Submitting self-check report", "verify"],
 };
 

@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -34,7 +34,7 @@ evidence, changes, and deliverables visible instead of reducing the work to a
 chat response.
 
 > [!IMPORTANT]
-> AporiaX `v0.5.0` is still a preview and currently ships for Windows x64.
+> AporiaX `v0.6.0` is still a preview and currently ships for Windows x64.
 > `run_command` runs automatically in a temporary local workspace copy and
 > conflict-checks project changes before synchronizing them back. Docker is
 > entirely optional; enabling it upgrades execution to an offline,
@@ -104,19 +104,21 @@ yet. Image delivery depends on the vision capability of the selected model.
 
 | Windows x64 | Use case |
 | --- | --- |
-| [Installer 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe) | Standard installation, desktop shortcut, and Start menu |
-| [Portable 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Portable-0.5.0-x64.exe) | Run and evaluate without installation |
+| [Installer 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe) | Standard installation, desktop shortcut, and Start menu |
+| [Portable 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Portable-0.6.0-x64.exe) | Run and evaluate without installation |
 
-### What's new in 0.5.0: from a project-level agent system to an adaptive multi-agent Harness
+### What's new in 0.6.0: from accumulated features to an extensible local Agent platform
 
-- **Adaptive Agent Budget** — simple requests stay Main-only, while complex tasks can receive bounded Explore, Review, Verify, Curator, or Builder capacity instead of paying a fixed multi-agent cost.
-- **Builder orchestration** — eligible large write tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and pre-merge conflict checks.
-- **Collaboration v1** — Shared Contracts, deterministic Plan Approval, structured Builder handoffs, semantic disagreement detection, and a bounded mailbox keep parallel work aligned without unrestricted peer interruption.
-- **Main / Review / Verify / Witness** — Main keeps final integration authority; Review and Verify provide version-matched quality checks; Witness remains observation-only.
-- **Desktop background experience** — closing the main window can hide AporiaX to the system tray while work continues, with tray restore/exit, Windows completion notifications, elapsed task time, and live tray runtime.
-- **Harness Architecture** — added Event Bus / Hook API, declarative Agent definitions, Plugin API, Core Server foundations, and clearer Session, Scheduler, Context, Tool, and Review boundaries.
+- **Architecture reconstruction** — native React conversation UI, a single-source TaskStore, pure event reducers, explicit run/turn coordination, and testable runtime modules replace migration-era bridges.
+- **Unified capability system** — native tools, Office, Browser, Skills, and MCP share one Capability Registry that drives permissions, Route presentation, and extension visibility.
+- **Skill / MCP Extensions center** — a bilingual library, install/configure flows, source policies, lifecycle controls, and trusted local or remote MCP server connections.
+- **More reliable multi-agent work** — scoped Builder, Explore, Review, Verify, and Curator roles; bounded parallel preflight review; version-matched findings; and evidence-based final sealing.
+- **Witness and long-command governance** — durable progress records, slow-command warnings, strategy-adjustment signals, and bounded process-tree cleanup.
+- **Autonomous Understanding** — Curator decides whether task evidence is durable enough to update shared architecture, conventions, commands, preferences, or debugging knowledge.
+- **Local sandbox and recovery** — Docker is optional; temporary workspace execution adds secret filtering, conflict checks, and safe synchronization while task isolation, stopped-run recovery, and retries are hardened.
+- **Browser, vision, and workspace context** — isolated Browser tools, vision proxy routing, ordered file mentions, stable live status, prompt folding, and lower-overhead streaming.
 
-[Read the 0.5.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.5.0) · [Read the complete changelog](CHANGELOG.md)
+[Read the 0.6.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.6.0) · [Read the complete changelog](CHANGELOG.md)
 
 After the first launch:
 

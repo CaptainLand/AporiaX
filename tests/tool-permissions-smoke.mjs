@@ -85,6 +85,7 @@ assert.deepEqual(
     sandboxStatus: { backend: "local-workspace" },
   }),
   {
+    toolName: "run_command",
     kind: "execute",
     title: "运行工作区命令",
     command: "npm test",
@@ -93,6 +94,14 @@ assert.deepEqual(
     sandbox: { backend: "local-workspace" },
   },
 );
+
+const browserApproval = buildToolApprovalRequest({
+  toolName: "browser_click",
+  descriptor: { risk: "control" },
+  input: { reason: "Open the next result" },
+});
+assert.equal(browserApproval.toolName, "browser_click");
+assert.equal(browserApproval.kind, "control");
 
 const genericCompletedMessage = {
   id: "assistant-generic",

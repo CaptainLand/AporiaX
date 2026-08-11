@@ -19,10 +19,12 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 export const SANDBOX_IMAGE = "aporiax-sandbox:0.1";
 export const SANDBOX_TIMEOUT_MS = 120_000;
+export const COMMAND_WATCHDOG_SLOW_MS = 45_000;
+export const COMMAND_WATCHDOG_INTERVENTION_MS = SANDBOX_TIMEOUT_MS;
 export const SANDBOX_MEMORY = "1536m";
 export const SANDBOX_CPUS = "2";
 export const SANDBOX_PIDS_LIMIT = 256;
@@ -75,6 +77,34 @@ function createAbortError(message = "Sandbox execution was interrupted.") {
   return error;
 }
 
+function terminateProcessTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    try {
+      const systemRoot = process.env.SystemRoot || "C:\\Windows";
+      const killed = spawnSync(
+        join(systemRoot, "System32", "taskkill.exe"),
+        ["/pid", String(child.pid), "/t", "/f"],
+        { windowsHide: true, stdio: "ignore", timeout: 5_000 },
+      );
+      if (!killed.error && killed.status === 0) return;
+    } catch {
+      // Fall through to the direct child kill below.
+    }
+  } else {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      // The process may not own a detached group.
+    }
+  }
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // The child may already have exited.
+  }
+}
+
 function runProcess({
   program,
   args,
@@ -83,6 +113,8 @@ function runProcess({
   signal,
   timeoutMs,
   onOutput,
+  onWatchdog,
+  watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
 }) {
   if (signal?.aborted) return Promise.reject(createAbortError());
 
@@ -91,10 +123,14 @@ function runProcess({
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let forcedFinish = null;
+    let lastOutputAt = Date.now();
+    const watchdogEvents = [];
     const child = spawn(program, args, {
       cwd,
       env,
       shell: false,
+      detached: process.platform !== "win32",
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -103,26 +139,59 @@ function runProcess({
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      clearTimeout(slowTimer);
+      if (forcedFinish) clearTimeout(forcedFinish);
       signal?.removeEventListener("abort", handleAbort);
       callback(value);
     };
     const handleAbort = () => {
-      child.kill();
+      terminateProcessTree(child);
       finish(rejectPromise, createAbortError());
     };
+    const notifyWatchdog = (stage, detail = {}) => {
+      const notice = {
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        idleMs: Date.now() - lastOutputAt,
+        ...detail,
+      };
+      watchdogEvents.push(notice);
+      onWatchdog?.(notice);
+    };
+    const startedAt = Date.now();
+    const slowTimer = setTimeout(() => {
+      if (!settled) notifyWatchdog("slow");
+    }, Math.min(watchdogSlowMs, Math.max(10, timeoutMs - 1)));
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      notifyWatchdog("intervention", { reason: "timeout" });
+      terminateProcessTree(child);
+      forcedFinish = setTimeout(() => {
+        child.stdout?.destroy?.();
+        child.stderr?.destroy?.();
+        child.unref?.();
+        finish(resolvePromise, {
+          exitCode: null,
+          signal: "WATCHDOG_TIMEOUT",
+          timedOut: true,
+          stdout,
+          stderr,
+          watchdogEvents,
+        });
+      }, 4_000);
+      forcedFinish.unref?.();
     }, timeoutMs);
 
     signal?.addEventListener("abort", handleAbort, { once: true });
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString("utf8");
+      lastOutputAt = Date.now();
       stdout = trimOutput(stdout + text);
       onOutput?.({ stream: "stdout", text });
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8");
+      lastOutputAt = Date.now();
       stderr = trimOutput(stderr + text);
       onOutput?.({ stream: "stderr", text });
     });
@@ -134,6 +203,7 @@ function runProcess({
         timedOut,
         stdout,
         stderr,
+        watchdogEvents,
       });
     });
   });
@@ -372,6 +442,9 @@ export async function runSandboxedCommand({
   cwd,
   signal,
   onOutput,
+  onWatchdog,
+  timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
+  watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
 }) {
   const status = sandboxStatus?.available
@@ -404,8 +477,10 @@ export async function runSandboxedCommand({
   try {
     const result = await dockerResult(args, {
       signal,
-      timeoutMs: SANDBOX_TIMEOUT_MS,
+      timeoutMs,
       onOutput,
+      onWatchdog,
+      watchdogSlowMs,
     });
     if (result.timedOut) cleanup();
     if (result.exitCode === 125) {
@@ -669,6 +744,9 @@ export async function runLocalSandboxedCommand({
   cwd,
   signal,
   onOutput,
+  onWatchdog,
+  timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
+  watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
   localSandboxBaseDirectory,
 }) {
@@ -707,8 +785,10 @@ export async function runLocalSandboxedCommand({
       cwd: localCwd,
       env: createHostFallbackEnvironment(),
       signal,
-      timeoutMs: SANDBOX_TIMEOUT_MS,
+      timeoutMs,
       onOutput,
+      onWatchdog,
+      watchdogSlowMs,
     });
     const sync =
       result.timedOut || signal?.aborted
@@ -731,7 +811,7 @@ export async function runLocalSandboxedCommand({
           ? "root-node-modules"
           : "disabled-for-package-mutation",
         sensitiveEnvironment: "removed",
-        timeoutMs: SANDBOX_TIMEOUT_MS,
+        timeoutMs,
         sync,
         reason:
           sandboxStatus?.detail ||
@@ -752,6 +832,9 @@ export async function runHostFallbackCommand({
   cwd,
   signal,
   onOutput,
+  onWatchdog,
+  timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
+  watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
 }) {
   const shell = hostShell(command);
@@ -760,8 +843,10 @@ export async function runHostFallbackCommand({
     cwd,
     env: createHostFallbackEnvironment(),
     signal,
-    timeoutMs: SANDBOX_TIMEOUT_MS,
+    timeoutMs,
     onOutput,
+    onWatchdog,
+    watchdogSlowMs,
   });
   return {
     ...result,
@@ -774,7 +859,7 @@ export async function runHostFallbackCommand({
       workspace: "approved-working-directory",
       workspaceRoot,
       sensitiveEnvironment: "removed",
-      timeoutMs: SANDBOX_TIMEOUT_MS,
+      timeoutMs,
       reason:
         sandboxStatus?.detail ||
         "Docker container sandbox is unavailable.",

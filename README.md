@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -27,7 +27,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX `v0.5.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
+> AporiaX `v0.6.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
 > `run_command` 默认在本地临时工作区副本中自动执行，结束后通过冲突检查同步项目变更，
 > 不需要逐条批准。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
 > 本地沙箱主要隔离工作区改动，仍使用当前用户的本机网络与进程权限。
@@ -90,19 +90,21 @@ Provider 模型的视觉能力决定。
 
 | Windows x64 | 适合场景 |
 | --- | --- |
-| [下载安装版 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Setup-0.5.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
-| [下载便携版 0.5.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.5.0/AporiaX-Portable-0.5.0-x64.exe) | 不安装，直接运行和试用 |
+| [下载安装版 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
+| [下载便携版 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Portable-0.6.0-x64.exe) | 不安装，直接运行和试用 |
 
-### 0.5.0 更新：从项目级 Agent 系统到自适应多 Agent Harness
+### 0.6.0 更新：从功能累积到可扩展的本地 Agent 平台
 
-- **Adaptive Agent Budget**：简单任务保持 Main-only，复杂任务才按预算启用 Explore、Review、Verify、Curator 或 Builder，避免固定多 Agent 带来的无效成本。
-- **Builder 编排**：大型可写任务最多启用 2 个 Builder，通过 Task Graph、Scope Lease、独立 Git worktree 和合并前冲突检查实现受控并行写入。
-- **Collaboration v1**：Shared Contract、确定性 Plan Approval、结构化 Builder handoff、语义分歧检测和有界 mailbox，让并行 Agent 共享约束而不是自由互相打断。
-- **Main / Review / Verify / Witness**：Main 保持最终集成权；Review 与 Verify 提供版本匹配的质量检查；Witness 只观察、记录和告警，不修改文件。
-- **桌面后台体验**：关闭主窗口时任务可继续在系统托盘运行，支持托盘恢复与显式退出、Windows 完成通知、任务耗时和托盘实时运行时间。
-- **Harness Architecture**：新增 Event Bus / Hook API、声明式 Agent Definition、Plugin API 与 Core Server 基础，并逐步拆分 Session、Scheduler、Context、Tool、Review 等运行边界。
+- **架构重构**：对话界面迁移为原生 React，TaskStore 成为渲染层唯一状态源；Run/Turn Coordinator、纯事件 Reducer 和模块化 Runtime 统一任务生命周期。
+- **统一能力系统**：原生工具、Office、Browser、Skill 与 MCP 进入同一个 Capability Registry，Route 与权限界面从能力元数据生成，不再依赖散落的硬编码。
+- **Skill / MCP 扩展中心**：加入中英文扩展库、安装与配置流程、来源策略、启停控制和权限说明，可连接受信任的本地或远程 MCP Server。
+- **更可靠的多 Agent**：Builder、Explore、Review、Verify 与 Curator 使用明确作用域；渐进式自检支持最多两个受控检查 Worker，并以当前文件版本和有效证据完成最终封印。
+- **Witness 与长命令治理**：运行过程成为可保留的行动记录；Witness 会识别长期无进展命令、提醒 Main 调整策略，并在上限到达时清理进程树。
+- **Understanding 自主沉淀**：Curator 根据任务证据判断是否值得写入共享理解，只保存可复用的架构、约定、命令、偏好和调试经验。
+- **本地沙箱与恢复**：Docker 不再是命令执行前提；本地临时工作区提供自动执行、敏感变量过滤、冲突检查与安全同步，同时修复跨任务污染、停止恢复和重试残留状态。
+- **Browser、视觉与工作区上下文**：新增隔离 Browser 工具、视觉代理、文件 `@mention`、稳定实时状态、长提示折叠与更低开销的流式渲染。
 
-[查看 0.5.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.5.0) · [查看完整更新记录](CHANGELOG.md)
+[查看 0.6.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.6.0) · [查看完整更新记录](CHANGELOG.md)
 
 首次启动后：
 

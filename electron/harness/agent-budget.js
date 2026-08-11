@@ -200,6 +200,14 @@ function budgetError(message, detail) {
 export function enforceAgentBudgetEvent(event) {
   const context = budgetStorage.getStore();
   if (!context || !event || typeof event.type !== "string") return;
+  if (
+    event.systemOwned &&
+    ["subagent.started", "subagent.completed", "subagent.failed"].includes(
+      event.type,
+    )
+  ) {
+    return;
+  }
 
   if (event.type === "plan.updated") {
     const steps = Array.isArray(event.plan?.steps) ? event.plan.steps.length : 0;

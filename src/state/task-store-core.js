@@ -137,6 +137,46 @@ export function appendTaskMessage(tasks, taskId, message) {
   }));
 }
 
+export function replaceAssistantForRetry(
+  task,
+  failedAssistantId,
+  retryAssistant,
+) {
+  if (
+    !task ||
+    !failedAssistantId ||
+    !retryAssistant ||
+    typeof retryAssistant !== "object"
+  ) {
+    return task;
+  }
+  const messages = Array.isArray(task.messages) ? task.messages : [];
+  const failedAssistant = messages.find(
+    (message) =>
+      message?.id === failedAssistantId && message?.role === "assistant",
+  );
+  if (!failedAssistant) return task;
+  const retriedAt = new Date().toISOString();
+  return {
+    ...task,
+    messages: [
+      ...messages.map((message) =>
+        message.id === failedAssistantId
+          ? {
+              ...message,
+              supersededByRetryId: retryAssistant.id,
+              supersededAt: retriedAt,
+            }
+          : message,
+      ),
+      {
+        ...retryAssistant,
+        retryOfAssistantId: failedAssistantId,
+      },
+    ],
+  };
+}
+
 export class AporiaXTaskStore {
   #tasks;
   #listeners = new Set();

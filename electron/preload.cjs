@@ -60,6 +60,15 @@ contextBridge.exposeInMainWorld("desktop", {
     plugins: () => ipcRenderer.invoke("core:plugins"),
     skills: (request = {}) => ipcRenderer.invoke("core:skills", request),
     mcp: (request = {}) => ipcRenderer.invoke("core:mcp", request),
+    library: (request = {}) => ipcRenderer.invoke("core:library", request),
+    installLibrarySkill: (request) =>
+      ipcRenderer.invoke("core:library:install-skill", request),
+    removeLibrarySkill: (request) =>
+      ipcRenderer.invoke("core:library:remove-skill", request),
+    saveLibraryMcp: (request) =>
+      ipcRenderer.invoke("core:library:save-mcp", request),
+    removeLibraryMcp: (request) =>
+      ipcRenderer.invoke("core:library:remove-mcp", request),
     extensionPolicy: (request = {}) =>
       ipcRenderer.invoke("core:extension-policy", request),
     setExtensionPolicy: (request) =>
@@ -102,6 +111,7 @@ contextBridge.exposeInMainWorld("desktop", {
     pause: (runId) => ipcRenderer.invoke("harness:pause", runId),
     resume: (runId) => ipcRenderer.invoke("harness:resume", runId),
     steer: (request) => ipcRenderer.invoke("harness:steer", request),
+    activeRuns: () => ipcRenderer.invoke("harness:active-runs"),
     recoverableRuns: () =>
       ipcRenderer.invoke("harness:recoverable-runs"),
     acknowledgeRecovery: (runId) =>

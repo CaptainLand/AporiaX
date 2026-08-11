@@ -3,6 +3,8 @@ import { access, readFile } from "node:fs/promises";
 
 const index = await readFile("index.html", "utf8");
 const main = await readFile("src/main.jsx", "utf8");
+const electronMain = await readFile("electron/main.js", "utf8");
+const preload = await readFile("electron/preload.cjs", "utf8");
 const conversation = await readFile(
   "src/conversation/ConversationViews.jsx",
   "utf8",
@@ -23,8 +25,27 @@ assert.doesNotMatch(index, /agent-process-mentions\.css/);
 
 assert.match(main, /useTaskStore\(readSavedTasks\)/);
 assert.match(conversation, /<RunDurationChip message=\{message\}/);
-assert.match(conversation, /<LiveAgentStatus message=\{message\}/);
-assert.match(conversation, /<AgentProcessTrace message=\{message\}/);
+assert.doesNotMatch(conversation, /<LiveAgentStatus message=\{message\}/);
+assert.doesNotMatch(conversation, /<AgentProcessTrace message=\{message\}/);
+assert.match(conversation, /<WitnessPanel/);
+assert.match(conversation, /createPortal\(/);
+assert.match(conversation, /message\.supersededByRetryId/);
+assert.match(conversation, /tr\("正在重试", "Retrying"\)/);
+assert.match(main, /Promise\.resolve\(\)\s*\.then\(\(\) => window\.desktop\.harness\.run/);
+assert.match(conversation, /message\.progressUpdates/);
+assert.match(conversation, /assistant-progress-journal/);
+assert.match(main, /const \[runningTaskIds, setRunningTaskIds\]/);
+assert.match(main, /const \[activeRunIdsByTask, setActiveRunIdsByTask\]/);
+assert.match(main, /run\.taskId === targetTask\.id/);
+assert.match(main, /runningTaskIds\.has\(activeTask\.id\)/);
+assert.doesNotMatch(main, /const \[runningTaskId, setRunningTaskId\]/);
+assert.match(electronMain, /const activeRuns = new Map\(\)/);
+assert.match(electronMain, /app\.requestSingleInstanceLock\(\)/);
+assert.match(electronMain, /taskId: request\?\.taskId \|\| ""/);
+assert.match(preload, /activeRuns: \(\) => ipcRenderer\.invoke\("harness:active-runs"\)/);
+assert.match(main, /const retryMessage = async \(assistantMessage\)/);
+assert.match(main, /window\.desktop\.harness\.interrupt\(taskRunId\)/);
+assert.match(electronMain, /approvalGrants/);
 assert.match(
   conversation,
   /<FoldableUserPrompt content=\{message\.content\}/,

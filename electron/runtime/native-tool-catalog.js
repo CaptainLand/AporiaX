@@ -367,9 +367,35 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "request_self_check",
+      description:
+        "Request an independent adaptive self-check when the work may be wrong, incomplete, risky, or difficult to verify. Do not call this for casual conversation or a straightforward answer with no file changes.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description:
+              "Concise concrete reason an independent review is warranted.",
+          },
+          focus: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Optional workspace-relative files or concerns the reviewers should prioritize.",
+          },
+        },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "complete_self_check",
       description:
-        "Finish the mandatory self-check phase. This succeeds only after every changed text file has been re-read and every changed Office file has been structurally inspected after its latest write.",
+        "Finish an active fallback self-check phase. This succeeds only after every changed text file has been re-read and every changed Office file has been structurally inspected after its latest write.",
       parameters: {
         type: "object",
         properties: {
@@ -427,6 +453,7 @@ export const TOOL_RISKS = {
   create_spreadsheet: "write",
   run_command: "execute",
   ...BROWSER_TOOL_RISKS,
+  request_self_check: "control",
   complete_self_check: "control",
 };
 

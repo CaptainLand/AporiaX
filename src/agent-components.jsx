@@ -297,11 +297,21 @@ export function ApprovalCard({ approval, onRespond, responding }) {
           className="approve"
           type="button"
           disabled={responding}
-          onClick={() => onRespond(true)}
+          onClick={() => onRespond(true, "once")}
         >
           {responding && <LoaderCircle className="spin" size={14} />}
           {tr("本次允许", "Allow once")}
         </button>
+        {approval.canRememberForRun && (
+          <button
+            className="approve approval-run-grant"
+            type="button"
+            disabled={responding}
+            onClick={() => onRespond(true, "run")}
+          >
+            {tr("本轮允许浏览器操作", "Allow browser controls for this task")}
+          </button>
+        )}
       </div>
     </section>
   );

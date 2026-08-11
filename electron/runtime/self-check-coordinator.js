@@ -10,6 +10,27 @@ import {
   reviewableChanges,
 } from "./self-check-evidence.js";
 
+function isConfirmedMissingFileEvidence(item) {
+  if (item?.tool !== "read_file" || !item?.error) return false;
+  return /\bENOENT\b|not found|does not exist|cannot find|不存在|找不到/i.test(
+    String(item.error),
+  );
+}
+
+function reviewEvidenceCoversChange(change, item) {
+  if (item?.path !== change.path) return false;
+  if (change.afterMissing) {
+    return (
+      (item.tool === "git_diff" && !item.error) ||
+      isConfirmedMissingFileEvidence(item)
+    );
+  }
+  if (item?.error) return false;
+  return change.binary
+    ? item.tool === "inspect_office_file"
+    : item.tool === "read_file";
+}
+
 export function createSelfCheckCoordinator({
   selfCheck,
   changeMap,
@@ -158,15 +179,9 @@ export function createSelfCheckCoordinator({
     );
     const missingReviewEvidence = pendingChanges
       .filter((change) =>
-        !reviewEvidence.some((item) => {
-          if (item?.path !== change.path) return false;
-          if (change.afterMissing) {
-            return ["read_file", "git_diff"].includes(item.tool);
-          }
-          return change.binary
-            ? item.tool === "inspect_office_file"
-            : item.tool === "read_file";
-        }),
+        !reviewEvidence.some((item) =>
+          reviewEvidenceCoversChange(change, item),
+        ),
       )
       .map((change) => change.path);
     if (
@@ -224,15 +239,15 @@ export function createSelfCheckCoordinator({
         );
       } else {
         verifyReport.commands = observedCommands;
-        verifyReport.verdict = observedCommands.some(
+        verifyReport.verdict = observedCommands.every(
           (command) => command.passed,
         )
           ? "pass"
           : "fail";
         selfCheck.verificationAttempted = true;
-        selfCheck.verificationPassed =
-          selfCheck.verificationPassed ||
-          observedCommands.some((command) => command.passed);
+        selfCheck.verificationPassed = observedCommands.every(
+          (command) => command.passed,
+        );
         for (const command of observedCommands) {
           selfCheck.verificationResults.push(command);
         }
@@ -261,9 +276,13 @@ export function createSelfCheckCoordinator({
         : []),
     ];
     segment.verdict =
-      reviewReport.verdict === "pass" && verifyReport.verdict !== "uncertain"
-        ? "pass"
-        : reviewReport.verdict;
+      reviewReport.verdict === "needs_changes" ||
+      verifyReport.verdict === "fail"
+        ? "needs_changes"
+        : reviewReport.verdict === "pass" &&
+            ["pass", "not_run"].includes(verifyReport.verdict)
+          ? "pass"
+          : "uncertain";
     segment.status = "completed";
     segment.completedAt = new Date().toISOString();
     emit({

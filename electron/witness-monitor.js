@@ -337,6 +337,26 @@ export function createWitnessMonitor({
         }
         break;
       }
+      case "witness.command.slow":
+        addAlert({
+          code: `slow-command:${clipped(event.command, 80)}`,
+          severity: "notice",
+          detail:
+            event.advice ||
+            `Command has been running for ${Math.round((event.elapsedMs || 0) / 1000)} seconds.`,
+          timestamp,
+        });
+        break;
+      case "witness.command.intervention":
+        addAlert({
+          code: `command-intervention:${clipped(event.command, 80)}`,
+          severity: "warning",
+          detail:
+            event.advice ||
+            "Witness stopped a command that exceeded the execution boundary.",
+          timestamp,
+        });
+        break;
       case "subagent.started": {
         const agent = {
           agentId: event.agentId,

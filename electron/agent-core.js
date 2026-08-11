@@ -29,6 +29,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     browser_console: "allow",
     browser_network: "allow",
     browser_close: "allow",
+    request_self_check: "allow",
     complete_self_check: "allow",
   },
   "workspace-write": {
@@ -61,6 +62,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     browser_click: "ask",
     browser_fill: "ask",
     browser_press: "ask",
+    request_self_check: "allow",
     complete_self_check: "allow",
   },
   // Builder workers operate only inside their leased isolated worktree. They
@@ -78,6 +80,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     write_file: "allow",
     apply_patch: "allow",
     run_command: "allow",
+    request_self_check: "allow",
     complete_self_check: "allow",
   },
 };
@@ -89,6 +92,7 @@ const ACTION_RESTRICTIVENESS = {
 };
 const HARNESS_CONTROL_TOOLS = new Set([
   "update_plan",
+  "request_self_check",
   "complete_self_check",
 ]);
 

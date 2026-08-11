@@ -12,13 +12,16 @@ for (const api of [
   "core?.mcp",
   "core?.plugins",
   "core?.extensionPolicy",
+  "core?.library",
 ]) {
   assert(extensions.includes(api), `Extensions Center must consume ${api}`);
 }
 assert(extensions.includes('import "./extensions.css"'));
 assert(extensions.includes("setExtensionPolicy"));
-assert(extensions.includes("Extension source policy"));
+assert(extensions.includes("Extensions Library"));
 assert(extensions.includes("MANAGED_SOURCES"));
+assert(extensions.includes("installLibrarySkill"));
+assert(extensions.includes("saveLibraryMcp"));
 
 assert(main.includes('import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";'));
 assert(main.includes('section === "extensions"'));
@@ -30,9 +33,13 @@ assert(main.includes("workspacePath={workspacePath}"));
 assert(preload.includes('capabilities: (request = {}) =>'));
 assert(preload.includes('extensionPolicy: (request = {}) =>'));
 assert(preload.includes('setExtensionPolicy: (request) =>'));
+assert(preload.includes('library: (request = {}) =>'));
+assert(preload.includes('installLibrarySkill: (request) =>'));
 assert(mainV2.includes('ipcMain.handle("core:capabilities"'));
 assert(mainV2.includes('ipcMain.handle("core:extension-policy"'));
 assert(mainV2.includes('ipcMain.handle("core:set-extension-policy"'));
+assert(mainV2.includes('ipcMain.handle("core:library"'));
+assert(mainV2.includes('ipcMain.handle("core:library:install-skill"'));
 assert(mainV2.includes('extensionSourceEnabled(policy, "skill")'));
 assert(mainV2.includes('extensionSourceEnabled(policy, "mcp")'));
 

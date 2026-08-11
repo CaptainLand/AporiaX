@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.6.0 — 2026-08-11
+
+AporiaX 0.6.0 is a major architecture release. It replaces accumulated renderer and runtime bridges with explicit state, lifecycle, capability, extension, review, and execution boundaries while adding a substantially broader local Agent platform.
+
+### Architecture reconstruction
+
+- Rebuilt the conversation surface as native React UI and removed the legacy DOM enhancement islands.
+- Added a single-source TaskStore, pure Harness event reducers, and an explicit run/turn lifecycle coordinator so task state, streaming updates, retries, stops, and recovery share one authority.
+- Extracted provider streaming, tool permissions, native tool dispatch/execution, workspace safety, conversation normalization, subagent loops, self-check evidence, and progressive review coordination into testable runtime modules.
+- Batched streaming deltas and deferred persistence outside the hot path to reduce renderer churn on long responses.
+- Added an architecture freeze gate that prevents retired state bridges and migration-era compatibility paths from silently returning.
+
+### Unified capabilities, Skills, MCP, and Browser
+
+- Added a unified Harness capability registry for native tools, Skills, MCP tools, Browser tools, Office generation, and extension-provided capabilities.
+- Added a bilingual Extensions center with discover, install/configure, enable/disable, source-policy, and permission presentation for Skills and MCP servers.
+- Added a built-in extension library and first-party Skill templates for frontend review and release readiness.
+- Added declarative Skill discovery and per-run activation with workspace isolation and bounded instruction loading.
+- Added trusted local and remote MCP server configuration with scoped tool exposure and explicit approval boundaries.
+- Added an isolated Playwright Browser runtime with observable actions and separate interaction permissions.
+- Added vision-proxy routing and native/proxied vision capability feedback for image attachments.
+
+### Multi-Agent execution and quality
+
+- Preserved Adaptive Agent Budget and conflict-safe Builder orchestration while moving their tools through the unified dispatcher and capability model.
+- Made progressive Review and Verify work version-aware so stale findings and stale verification evidence cannot seal newer file contents.
+- Allowed up to two bounded self-check workers for eligible preflight review without blocking Main Agent progress unnecessarily.
+- Added stronger final-seal evidence rules, per-file review tracking, and current-version verification requirements.
+- Added autonomous Curator decisions for Project Understanding: durable architecture, conventions, commands, preferences, and debugging knowledge are proposed only when the task produced reusable evidence.
+
+### Witness, recovery, and task isolation
+
+- Made Witness a persistent, observable record of Main/subagent progress instead of a disappearing transient status line.
+- Added slow-command warnings and bounded intervention for commands that stop making progress, including process-tree cleanup and strategy-adjustment evidence.
+- Strengthened turn and task isolation so a greeting or new task cannot silently resume unrelated unfinished work from another conversation.
+- Fixed stopped-run recovery and retry cleanup so stale run state no longer leaves an unusable recovery card behind.
+- Kept Anchor rollback versioned and conflict-checked across turns.
+
+### Sandbox and desktop experience
+
+- Commands now run automatically in a temporary local workspace sandbox when Docker is unavailable; Docker remains an optional stronger offline, read-only-root isolation layer.
+- Added conflict-checked synchronization, sensitive-environment filtering, bounded command length/runtime, and workspace-only working-directory enforcement.
+- Added stable live Agent status, workspace file mentions, long-prompt folding, task duration, tray background execution, and Windows completion notifications.
+- Extended task settings and renderer capability feedback without hard-coding a single model provider.
+
+### Validation
+
+The 0.6.0 release gate covers the production renderer build and focused smoke suites for runtime behavior, task state, turn coordination, streaming, permissions, sandbox and Witness watchdogs, Browser, MCP, Skills, extension lifecycle policy, Understanding automation, progressive self-check, capability observability, and the v0.6 architecture freeze.
+
+### Known boundaries
+
+- Windows x64 remains the packaged desktop target for this preview release.
+- Docker sandbox networking is intentionally disabled; dependency downloads should use the local sandbox or a separately approved workflow.
+- Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet.
+- Third-party Skills and MCP servers remain trusted extensions and should be reviewed before enabling.
+
 ## 0.5.0 — 2026-08-10
 
 AporiaX 0.5.0 is a major Harness milestone focused on adaptive multi-agent execution, conflict-safe parallel building, collaboration contracts, and a more practical Windows desktop lifecycle.

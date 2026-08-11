@@ -62,6 +62,7 @@ export function buildToolApprovalRequest({
       ? String(input.command || "").trim()
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
   return {
+    toolName: toolName || "unknown",
     kind: risk,
     title:
       toolName === "run_command"

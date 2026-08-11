@@ -95,6 +95,7 @@ export function useHarnessEvents({
       browser_network: tr("正在检查网络请求", "Inspecting browser network"),
       browser_close: tr("正在关闭浏览器会话", "Closing browser session"),
       update_plan: tr("正在更新执行计划", "Updating the execution plan"),
+      request_self_check: tr("正在启动自适应自检", "Starting adaptive self-check"),
       complete_self_check: tr("正在提交自检报告", "Submitting self-check report"),
     };
     const unsubscribe = window.desktop.harness.onEvent((event) => {
@@ -118,7 +119,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "control.paused") {
-        setRunPaused(true);
+        setRunPaused(run.taskId, true);
         setRunStatus({
           title: tr("任务已暂停", "Task paused"),
           detail: tr(
@@ -130,7 +131,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "control.resumed") {
-        setRunPaused(false);
+        setRunPaused(run.taskId, false);
         setRunStatus({
           title: tr("正在继续任务", "Resuming task"),
           detail: tr(
@@ -201,7 +202,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "turn.started") {
-        setRunPaused(false);
+        setRunPaused(run.taskId, false);
         if (event.sandbox) setSandboxStatus(event.sandbox);
         run.sandbox = event.sandbox || null;
         run.approvalMode = event.approvalMode || "manual";
@@ -679,7 +680,7 @@ export function useHarnessEvents({
             return { ...message, route };
           }),
         );
-        setApproval({
+        setApproval(run.taskId, {
           ...event.approval,
           runId: event.runId,
           taskId: run.taskId,

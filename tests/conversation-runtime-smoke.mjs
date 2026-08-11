@@ -75,4 +75,52 @@ assert.match(
   /项目验证命令/,
 );
 
+const interruptedHistory = sanitizeConversation([
+  { id: "old-user", role: "user", content: "continue the old UI test" },
+  {
+    id: "old-assistant",
+    role: "assistant",
+    sourceUserId: "old-user",
+    content: "stopped",
+    status: "interrupted",
+  },
+  { id: "new-user", role: "user", content: "What time is it?" },
+]);
+assert.deepEqual(
+  interruptedHistory,
+  [{ role: "user", content: "What time is it?" }],
+  "an interrupted assistant and its source request must be removed together",
+);
+
+const retriedHistory = sanitizeConversation([
+  { id: "retry-user", role: "user", content: "inspect app.js" },
+  {
+    role: "assistant",
+    sourceUserId: "retry-user",
+    content: "failed",
+    status: "failed",
+  },
+  {
+    role: "assistant",
+    sourceUserId: "retry-user",
+    content: "inspection completed",
+    status: "completed",
+  },
+  { id: "next-user", role: "user", content: "Summarize the result" },
+]);
+assert.equal(retriedHistory.length, 3);
+assert.equal(retriedHistory[0].content, "inspect app.js");
+
+const greetingHistory = sanitizeConversation([
+  { id: "done-user", role: "user", content: "build the old feature" },
+  {
+    role: "assistant",
+    sourceUserId: "done-user",
+    content: "done",
+    status: "completed",
+  },
+  { id: "hello-user", role: "user", content: "你好" },
+]);
+assert.deepEqual(greetingHistory, [{ role: "user", content: "你好" }]);
+
 console.log("conversation runtime smoke: PASS");

@@ -155,7 +155,7 @@ export function compactMcpResult(result) {
 }
 
 function clientIdentity() {
-  return { name: "AporiaX", version: "0.5.0" };
+  return { name: "AporiaX", version: "0.6.0" };
 }
 
 function defaultTransport(server) {

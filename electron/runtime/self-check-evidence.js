@@ -15,6 +15,59 @@ export function reviewableChanges(changeMap) {
   );
 }
 
+export function evaluateAdaptiveSelfCheck({
+  requested = false,
+  requestReason = "",
+  changes = [],
+  steps = [],
+  prompt = "",
+} = {}) {
+  const changeList = Array.isArray(changes) ? changes : [];
+  const reasons = [];
+  if (requested) {
+    reasons.push(
+      String(requestReason || "The model requested an independent self-check."),
+    );
+  }
+  if (changeList.some((change) => change?.afterMissing)) {
+    reasons.push("A file deletion requires independent review.");
+  }
+  if (
+    changeList.some(
+      (change) => change?.binary || isOfficePath(String(change?.path || "")),
+    )
+  ) {
+    reasons.push("A binary or Office artifact requires structural review.");
+  }
+  if (changeList.length >= 3) {
+    reasons.push("The task changed three or more files.");
+  }
+  if (
+    (Array.isArray(steps) ? steps : []).some(
+      (step) =>
+        step &&
+        step.success === false &&
+        !step.skipped &&
+        ["write_file", "apply_patch", "run_command"].includes(step.name),
+    )
+  ) {
+    reasons.push("A mutation or verification tool reported a failure.");
+  }
+  if (
+    changeList.length > 0 &&
+    /(?:自检|复核|审查|测试|验证|检查|review|test|verify|validate)/i.test(
+      String(prompt || ""),
+    )
+  ) {
+    reasons.push("The user explicitly requested checking or verification.");
+  }
+  return {
+    required: reasons.length > 0,
+    reasons: [...new Set(reasons)],
+    source: requested ? "model" : reasons.length ? "harness" : "skipped",
+  };
+}
+
 export function createChangeVersionSignature(changes) {
   const digest = createHash("sha256");
   for (const change of [...changes].sort((left, right) =>
@@ -235,6 +288,28 @@ export function buildSelfCheckResult(selfCheck, changeMap) {
       mode: selfCheck.mode || "progressive",
       segments: [],
       seal: selfCheck.seal || null,
+    };
+  }
+  if (selfCheck.required === false) {
+    return {
+      required: false,
+      completed: true,
+      reviewedFiles: [],
+      summary: selfCheck.decisionReason || "Adaptive self-check was not required.",
+      checks: [],
+      improvements: [],
+      remainingRisks: [],
+      verification: {
+        required: false,
+        attempted: false,
+        passed: false,
+        candidates: [],
+        results: [],
+      },
+      mode: "adaptive",
+      decision: selfCheck.decisionSource || "skipped",
+      segments: [],
+      seal: null,
     };
   }
   return {

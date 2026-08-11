@@ -15,6 +15,7 @@ for (const required of [
   "run_command",
   "browser_open",
   "browser_click",
+  "request_self_check",
   "complete_self_check",
 ]) {
   assert(names.includes(required), `missing ${required}`);
@@ -27,6 +28,7 @@ assert.deepEqual(runCommand.function.parameters.required, ["command", "cwd"]);
 assert(runCommand.function.parameters.properties.reason);
 assert.equal(TOOL_RISKS.run_command, "execute");
 assert.equal(TOOL_RISKS.browser_click, "control");
+assert.equal(TOOL_RISKS.request_self_check, "control");
 assert.equal(TOOL_REGISTRY.get("run_command")?.risk, "execute");
 assert.equal(TOOL_REGISTRY.get("read_file")?.risk, "read");
 

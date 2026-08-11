@@ -47,7 +47,9 @@ import {
   appendRunJournalEvent,
   beginRunJournal,
   finishRunJournal,
+  getRunRecoveryContext,
   listRecoverableRuns,
+  markRunRecoveryStarted,
   updateRunJournalMetadata,
 } from "../electron/run-store.js";
 import {
@@ -536,6 +538,22 @@ try {
     ["runtime-resume-1"],
     "paused runs should survive process restarts and be offered for recovery",
   );
+  const recoveryContext = await getRunRecoveryContext(
+    journalRoot,
+    "runtime-resume-1",
+  );
+  assert.equal(recoveryContext.prompt, "Continue a durable task");
+  assert.equal(recoveryContext.events.at(-1).type, "tool.started");
+  await markRunRecoveryStarted(
+    journalRoot,
+    "runtime-resume-1",
+    "runtime-resumed-by-2",
+  );
+  assert.equal((await listRecoverableRuns(journalRoot)).length, 0);
+  const resumedMetadata = JSON.parse(
+    await readFile(join(journalRoot, "aporiax-runs", "runtime-resume-1.json"), "utf8"),
+  );
+  assert.equal(resumedMetadata.resumedByRunId, "runtime-resumed-by-2");
   await acknowledgeRecoverableRun(journalRoot, "runtime-resume-1");
   assert.equal((await listRecoverableRuns(journalRoot)).length, 0);
 
@@ -1132,6 +1150,7 @@ try {
     join(testRoot, "package.json"),
     JSON.stringify({
       name: "runtime-self-check-fixture",
+      type: "module",
       scripts: {
         test: "node --check checked.js",
       },
@@ -1218,7 +1237,7 @@ try {
     if (/AporiaX verify subagent/.test(systemPrompt)) {
       stagedVerifyRound += 1;
       return createSseResponse(
-        stagedVerifyRound === 1
+        stagedVerifyRound % 2 === 1
           ? createToolDelta("staged-verify-command", "run_command", {
               command: "npm run test",
               cwd: ".",
@@ -1338,6 +1357,13 @@ try {
     "checked.js",
   ]);
   assert.equal(harnessResult.selfCheck?.verification?.passed, true);
+  assert.equal(
+    harnessEvents.filter(
+      (event) => event.type === "subagent.started" && event.role === "verify",
+    ).length,
+    1,
+    "a later verification step should reserve the single Verify budget for the final current version",
+  );
   assert.equal(
     await readFile(join(testRoot, "checked.js"), "utf8"),
     "export const checked = 'reviewed';\n",

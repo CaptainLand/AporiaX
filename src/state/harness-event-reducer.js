@@ -31,6 +31,26 @@ function routeId(event, suffix = "tool") {
   return `${event.runId}-${suffix}-${String(event?.timestamp || "event")}`;
 }
 
+function appendProgressUpdate(message, update) {
+  const updates = Array.isArray(message?.progressUpdates)
+    ? message.progressUpdates
+    : [];
+  const duplicate = updates.some(
+    (entry) =>
+      entry.kind === update.kind &&
+      ((update.kind === "plan" && entry.revision === update.revision) ||
+        (update.kind === "progress" && entry.content === update.content)),
+  );
+  if (duplicate) return updates;
+  return [
+    ...updates,
+    {
+      ...update,
+      id: `${update.id || "progress"}-${updates.length + 1}`,
+    },
+  ].slice(-40);
+}
+
 export function reduceHarnessTaskEvent(
   tasks,
   run,
@@ -62,6 +82,21 @@ export function reduceHarnessTaskEvent(
     return updateRunAssistant(tasks, run, (message) => ({
       ...message,
       plan: event.plan,
+      progressUpdates: appendProgressUpdate(message, {
+        id: routeId(event, "progress-plan"),
+        kind: "plan",
+        revision: event.plan?.revision || 0,
+        title: tr("行动规划已更新", "Action plan updated"),
+        explanation: String(event.plan?.explanation || ""),
+        steps: Array.isArray(event.plan?.steps)
+          ? event.plan.steps.map((step) => ({
+              id: step.id,
+              title: step.title,
+              status: step.status,
+            }))
+          : [],
+        createdAt: now(),
+      }),
     }));
   }
 
@@ -73,10 +108,22 @@ export function reduceHarnessTaskEvent(
   }
 
   if (event.type === "response.reset") {
-    return updateRunAssistant(tasks, run, (message) => ({
-      ...message,
-      content: "",
-    }));
+    return updateRunAssistant(tasks, run, (message) => {
+      const content = String(message.content || "").trim();
+      return {
+        ...message,
+        content: "",
+        progressUpdates: content
+          ? appendProgressUpdate(message, {
+              id: routeId(event, "progress-note"),
+              kind: "progress",
+              title: tr("阶段进展", "Progress update"),
+              content,
+              createdAt: now(),
+            })
+          : message.progressUpdates || [],
+      };
+    });
   }
 
   if (event.type === "subagent.tool.started") {

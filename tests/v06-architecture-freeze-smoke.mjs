@@ -60,6 +60,7 @@ assert.match(capabilityRegistry, /presentation/);
 
 const extensions = await readFile("src/settings/ExtensionsSettings.jsx", "utf8");
 assert.match(extensions, /setExtensionPolicy/);
-assert.match(extensions, /Extension source policy/);
+assert.match(extensions, /Sources & policy/);
+assert.match(extensions, /来源与权限/);
 
 console.log("AporiaX v0.6 architecture freeze: PASS");
