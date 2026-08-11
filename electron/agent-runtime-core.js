@@ -1106,7 +1106,9 @@ export async function runHarness({
   const browserEnabled = extensionPolicy?.browser !== false;
   const browserRuntime = createBrowserRuntime();
   const processManager = createPersistentProcessManager({ emit });
-  const lspManager = createLspManager({ workspaceRoot, emit, signal });
+  const lspManager = workspaceRoot
+    ? createLspManager({ workspaceRoot, emit, signal })
+    : null;
   witness = createWitnessMonitor({ emit: forwardEvent });
   const commandSandboxExecutor = async (request = {}) => {
     const command = String(request.command || "").trim();
@@ -3104,7 +3106,7 @@ export async function runHarness({
     failedResult.witness = witness.snapshot();
     return failedResult;
   } finally {
-    await lspManager.closeAll().catch(() => undefined);
+    await lspManager?.closeAll().catch(() => undefined);
     await processManager.closeAll().catch(() => undefined);
     await mcpRuntime.close().catch(() => undefined);
     await browserRuntime.close().catch(() => undefined);
