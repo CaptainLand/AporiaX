@@ -10,5 +10,10 @@ if (!content.includes(beforeAnchor) || !content.includes(beforeReplacement)) {
   throw new Error("LSP package-script patch anchors were not found.");
 }
 content = content.replace(beforeAnchor, afterAnchor).replace(beforeReplacement, afterReplacement);
+const contextAssertion = '    2,\n    "LSP execute context",';
+if (!content.includes(contextAssertion)) {
+  throw new Error("LSP execute-context assertion was not found.");
+}
+content = content.replace(contextAssertion, '    1,\n    "LSP execute context",');
 await writeFile(path, content, "utf8");
 console.log("LSP patch adapted to execution foundation branch");
