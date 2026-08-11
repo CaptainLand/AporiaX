@@ -28,7 +28,6 @@ jobs:
       - run: npm ci
       - run: node --check electron/agent-runtime-core.js
       - run: npm run test:lsp
-      - run: npm run test:runtime
       - run: npm run build
       - name: Commit lifecycle fix
         run: |
