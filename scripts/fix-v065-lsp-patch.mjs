@@ -15,5 +15,13 @@ if (!content.includes(contextAssertion)) {
   throw new Error("LSP execute-context assertion was not found.");
 }
 content = content.replace(contextAssertion, '    1,\n    "LSP execute context",');
+const docsBlock = /\nawait edit\("docs\/releases\/v0\.6\.5\.md",[\s\S]*?\n\);\n\nconsole\.log\("v0\.6\.5 LSP wiring patch applied"\);\s*$/;
+if (!docsBlock.test(content)) {
+  throw new Error("LSP release-note patch block was not found.");
+}
+content = content.replace(
+  docsBlock,
+  '\nconsole.log("v0.6.5 LSP wiring patch applied");\n',
+);
 await writeFile(path, content, "utf8");
 console.log("LSP patch adapted to execution foundation branch");
