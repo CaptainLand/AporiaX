@@ -10,10 +10,14 @@ export function resolveToolExecutionPermission({
   permissionAction,
   approvalMode = "manual",
   sandboxStatus = null,
-  executionMode = "safe",
+  executionMode = null,
   input = {},
 } = {}) {
-  const mode = normalizeExecutionMode(executionMode);
+  const mode = executionMode
+    ? normalizeExecutionMode(executionMode)
+    : sandboxStatus?.available
+      ? "isolated"
+      : "safe";
   const backend = resolveExecutionBackend({
     executionMode: mode,
     sandboxStatus,
