@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Blocks,
   Bot,
@@ -10,7 +10,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { Switch } from "../components/Controls.jsx";
 import "./extensions.css";
+
+const MANAGED_SOURCES = ["browser", "skill", "mcp", "plugin"];
 
 function sourceLabel(source, tr) {
   return {
@@ -33,6 +36,7 @@ function SourceIcon({ source }) {
 
 export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) {
   const { tr } = useI18n();
+  const [savingSource, setSavingSource] = useState("");
   const [state, setState] = useState({
     loading: true,
     capabilities: [],
@@ -40,28 +44,36 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
     skills: [],
     mcp: null,
     plugins: [],
+    policy: null,
     error: "",
   });
 
-  useEffect(() => {
-    let active = true;
-    Promise.all([
-      window.desktop?.core?.capabilities?.({}) || Promise.resolve({ capabilities: [], summary: {} }),
+  const loadData = useCallback(async () => {
+    const [capabilityResult, skillResult, mcpResult, pluginResult, policyResult] = await Promise.all([
+      window.desktop?.core?.capabilities?.({ workspacePath }) || Promise.resolve({ capabilities: [], summary: {} }),
       window.desktop?.core?.skills?.({ workspacePath }) || Promise.resolve({ skills: [] }),
       window.desktop?.core?.mcp?.({ workspacePath }) || Promise.resolve(null),
       window.desktop?.core?.plugins?.() || Promise.resolve({ plugins: [] }),
-    ])
-      .then(([capabilityResult, skillResult, mcpResult, pluginResult]) => {
-        if (!active) return;
-        setState({
-          loading: false,
-          capabilities: capabilityResult?.capabilities || [],
-          summary: capabilityResult?.summary || { total: 0, bySource: {}, byKind: {} },
-          skills: skillResult?.skills || [],
-          mcp: mcpResult,
-          plugins: pluginResult?.plugins || [],
-          error: "",
-        });
+      window.desktop?.core?.extensionPolicy?.({ workspacePath }) || Promise.resolve(null),
+    ]);
+    return {
+      loading: false,
+      capabilities: capabilityResult?.capabilities || [],
+      summary: capabilityResult?.summary || { total: 0, bySource: {}, byKind: {} },
+      skills: skillResult?.skills || [],
+      mcp: mcpResult,
+      plugins: pluginResult?.plugins || [],
+      policy: policyResult,
+      error: "",
+    };
+  }, [workspacePath]);
+
+  useEffect(() => {
+    let active = true;
+    setState((current) => ({ ...current, loading: true }));
+    loadData()
+      .then((next) => {
+        if (active) setState(next);
       })
       .catch((error) => {
         if (!active) return;
@@ -74,7 +86,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
     return () => {
       active = false;
     };
-  }, [workspacePath]);
+  }, [loadData]);
 
   const sourceEntries = useMemo(
     () =>
@@ -83,7 +95,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
         .sort(([left], [right]) => left.localeCompare(right)),
     [state.summary],
   );
-  const configuredMcp = state.mcp?.servers || [];
+  const configuredMcp = state.mcp?.allServers || state.mcp?.servers || [];
 
   const copyMcpPath = async () => {
     const path = state.mcp?.userConfigPath;
@@ -96,6 +108,24 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
     }
   };
 
+  const setSourceEnabled = async (source, enabled) => {
+    if (!window.desktop?.core?.setExtensionPolicy) return;
+    setSavingSource(source);
+    try {
+      await window.desktop.core.setExtensionPolicy({ source, enabled, workspacePath });
+      setState(await loadData());
+      onNotice(
+        enabled
+          ? tr("{source} 已启用", "{source} enabled", { source: sourceLabel(source, tr) })
+          : tr("{source} 已停用", "{source} disabled", { source: sourceLabel(source, tr) }),
+      );
+    } catch (error) {
+      onNotice(String(error?.message || error));
+    } finally {
+      setSavingSource("");
+    }
+  };
+
   return (
     <section className="extensions-center">
       <div className="application-settings-intro">
@@ -103,8 +133,8 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
         <h3>{tr("一个入口，看清 AporiaX 的全部能力。", "One place for every AporiaX capability.")}</h3>
         <p>
           {tr(
-            "Native、Browser、Plugin、Skill 与 MCP 现在共享同一 Capability Registry。",
-            "Native, Browser, Plugin, Skill, and MCP capabilities now share one registry.",
+            "启停只改变能力是否可用，不会提高任何工具权限；项目还可以进一步禁用扩展来源。",
+            "Enable/disable controls availability only; it never elevates tool permission, and projects may further disable extension sources.",
           )}
         </p>
       </div>
@@ -130,12 +160,53 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
 
           <section className="preference-card extensions-detail-card">
             <div className="preference-card-heading">
+              <span className="ready"><Blocks size={17} /></span>
+              <div>
+                <strong>{tr("扩展来源策略", "Extension source policy")}</strong>
+                <p>{tr("Native 核心能力始终可用；下面的开关只控制可选扩展来源。", "Native core capabilities remain available; these switches only control optional extension sources.")}</p>
+              </div>
+            </div>
+          </section>
+          <div className="extensions-item-list">
+            {MANAGED_SOURCES.map((source) => {
+              const userEnabled = state.policy?.sources?.[source] !== false;
+              const projectDisabled = state.policy?.projectDisabled?.includes(source);
+              const effective = state.policy?.effective?.[source] !== false;
+              return (
+                <div className="extensions-item" key={`policy:${source}`}>
+                  <span><SourceIcon source={source} /></span>
+                  <div>
+                    <strong>{sourceLabel(source, tr)}</strong>
+                    <small>
+                      {projectDisabled
+                        ? tr("当前项目已禁用", "Disabled by this project")
+                        : effective
+                          ? tr("当前可用", "Available")
+                          : tr("已在用户设置中停用", "Disabled in user settings")}
+                    </small>
+                  </div>
+                  <Switch
+                    checked={userEnabled}
+                    disabled={savingSource === source}
+                    label={tr("切换 {source}", "Toggle {source}", { source: sourceLabel(source, tr) })}
+                    onChange={(enabled) => void setSourceEnabled(source, enabled)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          <section className="preference-card extensions-detail-card">
+            <div className="preference-card-heading">
               <span className={state.skills.length ? "ready" : ""}><Sparkles size={17} /></span>
               <div>
                 <strong>Skills</strong>
                 <p>
                   {state.skills.length
-                    ? tr("当前发现 {count} 个 Skill。", "{count} Skill(s) discovered.", { count: state.skills.length })
+                    ? tr("发现 {count} 个 Skill；当前策略：{status}。", "{count} Skill(s) discovered; policy: {status}.", {
+                        count: state.skills.length,
+                        status: state.policy?.effective?.skill === false ? tr("停用", "disabled") : tr("启用", "enabled"),
+                      })
                     : tr("当前没有发现 Skill。", "No Skills discovered yet.")}
                 </p>
               </div>
@@ -164,8 +235,8 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                 <strong>MCP Servers</strong>
                 <p>
                   {configuredMcp.length
-                    ? tr("当前项目可使用 {count} 个已信任 MCP Server。", "{count} trusted MCP server(s) are available for this workspace.", { count: configuredMcp.length })
-                    : tr("尚未配置可用的 MCP Server。", "No MCP server is configured yet.")}
+                    ? tr("已配置 {count} 个受信任 MCP Server；策略关闭时不会连接。", "{count} trusted MCP server(s) configured; disabled policy prevents connection.", { count: configuredMcp.length })
+                    : tr("尚未配置 MCP Server。", "No MCP server is configured yet.")}
                 </p>
               </div>
             </div>
@@ -183,7 +254,9 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                     <strong>{server.name || server.id}</strong>
                     <small>{server.id} · {server.transport}</small>
                   </div>
-                  <span className="extensions-state">{tr("已配置", "Configured")}</span>
+                  <span className="extensions-state">
+                    {state.policy?.effective?.mcp === false ? tr("已停用", "Disabled") : tr("已配置", "Configured")}
+                  </span>
                 </div>
               ))}
             </div>
@@ -194,7 +267,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
               <span className={state.plugins.length ? "ready" : ""}><Puzzle size={17} /></span>
               <div>
                 <strong>{tr("本地插件", "Local Plugins")}</strong>
-                <p>{tr("已加载 {count} 个插件。", "{count} plugin(s) loaded.", { count: state.plugins.length })}</p>
+                <p>{tr("已加载 {count} 个插件；停用后其能力不会进入可用目录。", "{count} plugin(s) loaded; disabling removes their capabilities from availability.", { count: state.plugins.length })}</p>
               </div>
             </div>
             <span className="preference-status">{state.plugins.length}</span>
@@ -203,8 +276,8 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
           {state.error && <p className="extensions-error">{state.error}</p>}
           <p className="extensions-footnote">
             {tr(
-              "MCP v1 仍以用户级配置文件作为信任边界；项目只能选择已信任的 Server，不能静默定义可执行命令。",
-              "MCP v1 keeps the user-level config as its trust boundary; projects can select trusted servers but cannot silently define executable commands.",
+              "扩展开关不是权限开关。重新启用 Browser/MCP/Plugin 也不会绕过 Harness Permission、Approval 或 MCP 用户级信任边界。项目配置只能进一步禁用来源。",
+              "Extension switches are not permission switches. Re-enabling Browser/MCP/Plugins never bypasses Harness Permission, Approval, or the user-level MCP trust boundary. Project policy can only further disable sources.",
             )}
           </p>
         </>
