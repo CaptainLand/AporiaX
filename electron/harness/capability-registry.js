@@ -1,3 +1,9 @@
+import {
+  defaultCapabilityPresentation,
+  normalizeCapabilityPresentation,
+  publicToolCapability,
+} from "./capability-presentation.js";
+
 const VALID_KINDS = new Set(["tool", "resource", "prompt", "agent", "skill"]);
 const VALID_SOURCES = new Set(["native", "browser", "plugin", "mcp", "skill", "runtime"]);
 const VALID_RISKS = new Set(["read", "write", "execute", "control", "none"]);
@@ -20,12 +26,19 @@ function normalizeCapability(input = {}) {
     input.id || `${scopeId ? `${scopeId}:` : ""}${kind}:${source}:${name}`,
     500,
   );
+  const title = normalizeString(input.title || name, 200);
+  const presentation = normalizeCapabilityPresentation(input.presentation, {
+    name,
+    title,
+    source,
+    risk,
+  });
   return Object.freeze({
     id,
     kind,
     source,
     name,
-    title: normalizeString(input.title || name, 200),
+    title,
     description: normalizeString(input.description, 1_600),
     risk,
     scopeId: scopeId || null,
@@ -37,6 +50,7 @@ function normalizeCapability(input = {}) {
     tags: Object.freeze(
       [...new Set((Array.isArray(input.tags) ? input.tags : []).map((tag) => normalizeString(tag, 80)).filter(Boolean))].slice(0, 20),
     ),
+    presentation,
     metadata:
       input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
         ? Object.freeze({ ...input.metadata })
@@ -67,6 +81,7 @@ export class HarnessCapabilityRegistry {
         name: record.name,
         risk: record.risk,
         scopeId: record.scopeId,
+        presentation: record.presentation,
       },
     });
     return record;
@@ -127,6 +142,29 @@ export class HarnessCapabilityRegistry {
     });
   }
 
+  describeTool(name, phase = "work") {
+    const matches = this.list({ kind: "tool", name: String(name || "") });
+    if (!matches.length) {
+      const fallback = normalizeCapability({
+        kind: "tool",
+        source: "runtime",
+        name: String(name || "tool"),
+        title: String(name || "tool"),
+        risk: "control",
+        presentation: defaultCapabilityPresentation({
+          name: String(name || "tool"),
+          title: String(name || "tool"),
+          source: "runtime",
+          risk: "control",
+        }),
+      });
+      return publicToolCapability(fallback, phase);
+    }
+    // Dynamic scoped capabilities (for example MCP) are appended after static
+    // registrations. Prefer the most recently registered matching capability.
+    return publicToolCapability(matches.at(-1), phase);
+  }
+
   summary() {
     const records = this.list();
     const byKind = {};
@@ -150,16 +188,22 @@ export function createCapabilityRegistry(options) {
 export function capabilityFromToolDescriptor(descriptor = {}) {
   const name = descriptor?.definition?.function?.name || descriptor?.name;
   const browser = String(name || "").startsWith("browser_");
+  const source = descriptor.source || (descriptor.plugin ? "plugin" : browser ? "browser" : "native");
+  const title = descriptor.title || name;
+  const risk = descriptor.risk || "control";
   return {
     kind: "tool",
-    source: descriptor.source || (descriptor.plugin ? "plugin" : browser ? "browser" : "native"),
+    source,
     name,
-    title: descriptor.title || name,
+    title,
     description: descriptor?.definition?.function?.description || descriptor.description || "",
-    risk: descriptor.risk || "control",
+    risk,
     plugin: descriptor.plugin || null,
     provider: descriptor.provider || null,
     tags: descriptor.tags || [],
+    presentation:
+      descriptor.presentation ||
+      defaultCapabilityPresentation({ name, title, source, risk }),
     metadata: {
       functionSchema: descriptor?.definition?.function?.parameters || null,
     },
