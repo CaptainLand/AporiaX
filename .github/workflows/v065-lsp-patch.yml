@@ -1,0 +1,70 @@
+name: v0.6.5 LSP patch
+
+on:
+  push:
+    branches:
+      - agent/0.6.5-lsp
+    paths:
+      - scripts/patch-v065-lsp.mjs
+      - scripts/fix-v065-lsp-patch.mjs
+      - electron/runtime/lsp-runtime.js
+      - .github/workflows/v065-lsp-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/0.6.5-lsp
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Adapt and apply deterministic patch
+        run: |
+          node scripts/fix-v065-lsp-patch.mjs
+          node scripts/patch-v065-lsp.mjs
+
+      - name: Add bundled TypeScript language server
+        run: npm install --save typescript@^5.7.2 typescript-language-server
+
+      - name: Syntax check LSP runtime
+        run: node --check electron/runtime/lsp-runtime.js
+
+      - name: Verify LSP runtime
+        run: npm run test:lsp
+
+      - name: Verify tool registry and permissions
+        run: npm run test:native-tool-catalog && npm run test:tool-permissions && npm run test:tool-dispatcher
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Commit generated LSP changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            electron/agent-core.js \
+            electron/agent-runtime-core.js \
+            electron/runtime/native-tool-catalog.js \
+            electron/runtime/native-tool-executor.js \
+            electron/runtime/lsp-runtime.js \
+            package.json \
+            package-lock.json \
+            .github/workflows/ci.yml \
+            tests/lsp-runtime-smoke.mjs \
+            docs/releases/v0.6.5.md
+          git commit -m "feat: add persistent native LSP intelligence"
+          git push origin HEAD:agent/0.6.5-lsp
