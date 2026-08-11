@@ -1349,6 +1349,8 @@ export async function runHarness({
       parseToolArguments,
       executeAuthorizedTool,
       describeToolActivity,
+      describeCapability: (toolName, phase = "work") =>
+        capabilityRegistry?.describeTool(toolName, phase) || null,
     })
       .catch((error) => ({
         agentId,
@@ -2083,19 +2085,23 @@ export async function runHarness({
             throwIfAborted(signal);
             await control?.waitIfPaused?.(signal);
             const toolName = toolCall.function.name;
+            const phase = selfCheck.started ? "self-check" : "work";
+            const capability = capabilityRegistry?.describeTool(toolName, phase) || null;
             const activity = describeToolActivity(toolCall);
             emit({
               type: "tool.requested",
               callId: toolCall.id,
               tool: toolName,
-              phase: selfCheck.started ? "self-check" : "work",
+              phase,
+              capability,
               parallel: true,
             });
             emit({
               type: "tool.started",
               callId: toolCall.id,
               tool: toolName,
-              phase: selfCheck.started ? "self-check" : "work",
+              phase,
+              capability,
               planStepId:
                 plan?.steps.find((step) => step.status === "in_progress")
                   ?.id || null,
@@ -2148,7 +2154,8 @@ export async function runHarness({
               tool: toolName,
               success,
               detail,
-              phase: selfCheck.started ? "self-check" : "work",
+              phase,
+              capability,
               parallel: true,
             });
             return { toolCall, result, success, detail };
@@ -2208,18 +2215,22 @@ export async function runHarness({
         let result;
         let success = true;
         let matchedVerificationCandidate = null;
+        const phase = selfCheck.started ? "self-check" : "work";
+        const capability = capabilityRegistry?.describeTool(toolCall.function.name, phase) || null;
         const activity = describeToolActivity(toolCall);
         emit({
           type: "tool.requested",
           callId: toolCall.id,
           tool: toolCall.function.name,
-          phase: selfCheck.started ? "self-check" : "work",
+          phase,
+          capability,
         });
         emit({
           type: "tool.started",
           callId: toolCall.id,
           tool: toolCall.function.name,
-          phase: selfCheck.started ? "self-check" : "work",
+          phase,
+          capability,
           planStepId:
             plan?.steps.find((step) => step.status === "in_progress")
               ?.id || null,
@@ -2616,7 +2627,8 @@ export async function runHarness({
           skipped: Boolean(modelResult?.skipped),
           retry: shouldRetry,
           detail: stepDetail,
-          phase: selfCheck.started ? "self-check" : "work",
+          phase,
+          capability,
         });
         conversation.push({
           role: "tool",

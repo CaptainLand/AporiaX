@@ -52,7 +52,26 @@ const ROUTE_TOOL_META = {
   complete_self_check: { stage: "trial", zh: "提交自检结果", en: "Submit self-check result" },
 };
 
-export function getRouteToolMeta(tool, phase, language = "zh-CN") {
+export function getRouteToolMeta(tool, phase, language = "zh-CN", capability = null) {
+  if (capability?.stage) {
+    return {
+      stage: capability.stage,
+      zh: capability.titleZh || capability.title || tool || "执行工具",
+      en: capability.titleEn || capability.title || tool || "Run tool",
+      title:
+        language === "en"
+          ? capability.titleEn || capability.title || tool || "Run tool"
+          : capability.titleZh || capability.title || tool || "执行工具",
+      activity:
+        language === "en"
+          ? capability.activityEn || capability.titleEn || capability.title || tool
+          : capability.activityZh || capability.titleZh || capability.title || tool,
+      iconKey: capability.iconKey || null,
+      source: capability.source || null,
+      risk: capability.risk || null,
+      capabilityId: capability.id || null,
+    };
+  }
   const meta = ROUTE_TOOL_META[tool] || {
     stage: phase === "self-check" ? "trial" : "route",
     zh: "执行工具",
@@ -108,7 +127,7 @@ const WITNESS_BLOCK_META = {
 
 function witnessRecordBlockKind(record) {
   if (record?.kind === "tool" || record?.tool) {
-    const stage = getRouteToolMeta(record.tool, record.phase).stage;
+    const stage = getRouteToolMeta(record.tool, record.phase, "zh-CN", record.capability).stage;
     if (stage === "lens") return "explore";
     if (stage === "forge") return "execute";
     if (stage === "trial") return "verify";

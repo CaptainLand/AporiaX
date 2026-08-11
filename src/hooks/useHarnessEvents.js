@@ -324,7 +324,12 @@ export function useHarnessEvents({
       }
 
       if (event.type === "subagent.tool.started") {
-        const meta = getRouteToolMeta(event.tool, "work", language);
+        const meta = getRouteToolMeta(
+          event.tool,
+          ["review", "verify"].includes(event.role) ? "self-check" : "work",
+          language,
+          event.capability,
+        );
         const roleLabel =
           event.role === "review"
             ? tr("审查", "Review")
@@ -345,6 +350,7 @@ export function useHarnessEvents({
                 stage: meta.stage,
                 title: `${roleLabel} · ${meta.title}`,
                 tool: event.tool,
+                capability: event.capability || null,
                 path: event.path || "",
                 command: event.command || "",
                 detail: event.detail || "",
@@ -363,6 +369,7 @@ export function useHarnessEvents({
           detail:
             event.path ||
             event.command ||
+            meta.activity ||
             toolLabels[event.tool] ||
             event.tool,
         });
@@ -486,7 +493,12 @@ export function useHarnessEvents({
       }
 
       if (event.type === "tool.started") {
-        const meta = getRouteToolMeta(event.tool, event.phase, language);
+        const meta = getRouteToolMeta(
+          event.tool,
+          event.phase,
+          language,
+          event.capability,
+        );
         const now = new Date().toISOString();
         run.routeCounter = (run.routeCounter || 0) + 1;
         setTasks((current) =>
@@ -509,6 +521,7 @@ export function useHarnessEvents({
                   stage: meta.stage,
                   title: meta.title,
                   tool: event.tool,
+                  capability: event.capability || null,
                   phase: event.phase,
                   path: event.path || "",
                   command: event.command || "",
@@ -524,11 +537,9 @@ export function useHarnessEvents({
         );
         setRunStatus({
           title:
+            meta.activity ||
             toolLabels[event.tool] ||
-            (String(event.tool || "").startsWith("mcp__") ||
-            String(event.tool || "").startsWith("mcp_")
-              ? tr("正在调用 MCP 能力", "Calling MCP capability")
-              : tr("Harness 正在运行", "Harness is running")),
+            tr("Harness 正在运行", "Harness is running"),
           detail:
             event.path ||
             event.command ||

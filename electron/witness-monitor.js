@@ -39,6 +39,8 @@ function publicRecord(record, currentTime) {
     agentId: record.agentId || null,
     callId: record.callId || null,
     tool: record.tool || null,
+    phase: record.phase || null,
+    capability: record.capability || null,
     status: record.status,
     detail: record.detail || "",
     path: record.path || "",
@@ -102,6 +104,8 @@ export function createWitnessMonitor({
       agentId: input.agentId || null,
       callId: input.callId || null,
       tool: input.tool || null,
+      phase: input.phase || null,
+      capability: input.capability || null,
       status: input.status || "completed",
       detail: clipped(input.detail),
       path: clipped(input.path, 320),
@@ -134,6 +138,8 @@ export function createWitnessMonitor({
     record.detail = recordDetail(event) || record.detail;
     record.path = clipped(event?.path, 320) || record.path;
     record.command = clipped(event?.command, 700) || record.command;
+    record.phase = event?.phase || record.phase || null;
+    record.capability = event?.capability || record.capability || null;
     return record;
   };
 
@@ -303,6 +309,8 @@ export function createWitnessMonitor({
           actor: "main",
           callId: event.callId || null,
           tool: event.tool,
+          phase: event.phase || null,
+          capability: event.capability || null,
           status: "running",
           detail: recordDetail(event),
           path: event.path,
@@ -364,6 +372,8 @@ export function createWitnessMonitor({
           agentId: event.agentId,
           callId: event.callId || null,
           tool: event.tool,
+          phase: event.phase || null,
+          capability: event.capability || null,
           status: "running",
           detail: recordDetail(event),
           path: event.path,

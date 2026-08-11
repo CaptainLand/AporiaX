@@ -73,6 +73,7 @@ export async function runSubagentTask({
   parseToolArguments,
   executeAuthorizedTool,
   describeToolActivity,
+  describeCapability,
 }) {
   if (!toolRegistry?.definitions) {
     throw new Error("Subagent loop requires the native tool registry.");
@@ -87,6 +88,10 @@ export async function runSubagentTask({
     typeof describeToolActivity === "function"
       ? describeToolActivity
       : () => ({});
+  const capabilityFor =
+    typeof describeCapability === "function"
+      ? describeCapability
+      : () => null;
   const roleConfig = SUBAGENT_ROLE_CONFIG[input.role];
   const permissionPolicy = createSubagentPermissionPolicy(
     parentPermissionPolicy,
@@ -224,6 +229,10 @@ export async function runSubagentTask({
       const parallelBatch = subagentToolsAreParallel(message.tool_calls);
       const executeCall = async (toolCall) => {
         const toolName = toolCall.function.name;
+        const capabilityPhase = ["review", "verify"].includes(input.role)
+          ? "self-check"
+          : "work";
+        const capability = capabilityFor(toolName, capabilityPhase);
         let modelResult;
         let success = true;
         emit({
@@ -232,6 +241,7 @@ export async function runSubagentTask({
           callId: toolCall.id,
           role: input.role,
           tool: toolName,
+          capability,
           parallel: parallelBatch,
           ...activityFor(toolCall),
         });
