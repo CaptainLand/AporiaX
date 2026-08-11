@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld("desktop", {
     plugins: () => ipcRenderer.invoke("core:plugins"),
     skills: (request = {}) => ipcRenderer.invoke("core:skills", request),
     mcp: (request = {}) => ipcRenderer.invoke("core:mcp", request),
+    extensionPolicy: (request = {}) =>
+      ipcRenderer.invoke("core:extension-policy", request),
+    setExtensionPolicy: (request) =>
+      ipcRenderer.invoke("core:set-extension-policy", request),
     sessions: () => ipcRenderer.invoke("core:sessions"),
     events: (request = {}) => ipcRenderer.invoke("core:events", request),
   },
