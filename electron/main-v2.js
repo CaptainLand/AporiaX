@@ -5,6 +5,12 @@ import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
 import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
 import {
+  capabilityAvailability,
+  extensionSourceEnabled,
+  loadExtensionPolicy,
+  setExtensionSourceEnabled,
+} from "./harness/extension-policy.js";
+import {
   planAgentBudget,
   runWithAgentBudget,
 } from "./harness/agent-budget.js";
@@ -52,6 +58,13 @@ function skillRuntimeOptions(workspacePath = "") {
 }
 
 function mcpConfigurationOptions(workspacePath = "") {
+  return {
+    userDataDirectory: app.getPath("userData"),
+    workspacePath,
+  };
+}
+
+function extensionPolicyOptions(workspacePath = "") {
   return {
     userDataDirectory: app.getPath("userData"),
     workspacePath,
@@ -111,15 +124,18 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       if (!workspacePath || !request?.message) {
         return listener(event, request);
       }
+      const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
       const mentionedMessage = await prepareWorkspaceMentionMessage(
         request.message,
         workspacePath,
       );
-      const message = await prepareSkillMessage(
-        mentionedMessage,
-        workspacePath,
-        skillRuntimeOptions(workspacePath),
-      );
+      const message = extensionSourceEnabled(policy, "skill")
+        ? await prepareSkillMessage(
+            mentionedMessage,
+            workspacePath,
+            skillRuntimeOptions(workspacePath),
+          )
+        : mentionedMessage;
       const skills = (message?.activatedSkills || []).map((skill) => ({
         name: skill.name,
         title: skill.title,
@@ -154,22 +170,16 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       });
     }
     try {
-      // Preserve the original user text for deterministic Skill matching.
-      // Vision runs first, so a separate visual Provider sees only the original
-      // user prompt/image. @file contents are added next, selected Skill bodies
-      // are disclosed only to the main Agent, and trusted MCP server config is
-      // attached as main-process-only runtime metadata.
+      const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
       const seededRequest = seedSkillOriginalContent(request);
-      const visionPreparedRequest = await prepareVisionProxyRequest(
-        seededRequest,
-      );
-      const mentionPreparedRequest = await prepareWorkspaceMentionRequest(
-        visionPreparedRequest,
-      );
-      const skillPreparedRequest = await prepareSkillRequest(
-        mentionPreparedRequest,
-        skillRuntimeOptions(workspacePath),
-      );
+      const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest);
+      const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest);
+      const skillPreparedRequest = extensionSourceEnabled(policy, "skill")
+        ? await prepareSkillRequest(
+            mentionPreparedRequest,
+            skillRuntimeOptions(workspacePath),
+          )
+        : mentionPreparedRequest;
       emitSkillStatus(
         event,
         skillPreparedRequest,
@@ -181,8 +191,11 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       );
       const preparedRequest = {
         ...skillPreparedRequest,
-        mcpServers: mcpConfiguration.servers,
+        mcpServers: extensionSourceEnabled(policy, "mcp")
+          ? mcpConfiguration.servers
+          : [],
         mcpConfigErrors: mcpConfiguration.errors,
+        extensionPolicy: policy.effective,
         capabilityRegistry: kernel?.capabilitiesRegistry || null,
       };
       return await runWithAgentBudget(budget, {}, () =>
@@ -208,18 +221,41 @@ ipcMain.handle("core:status", () => ({
   capabilities: kernel.capabilities(),
   capabilitySummary: kernel.capabilitiesRegistry.summary(),
 }));
-ipcMain.handle("core:capabilities", (_event, request = {}) => ({
-  capabilities: kernel.capabilitiesRegistry.list({
+ipcMain.handle("core:capabilities", async (_event, request = {}) => {
+  const workspacePath = String(request?.workspacePath || "").trim();
+  const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
+  const capabilities = kernel.capabilitiesRegistry.list({
     kind: request?.kind || "",
     source: request?.source || "",
     scopeId: request?.scopeId || "",
-  }),
-  summary: kernel.capabilitiesRegistry.summary(),
-}));
+  }).map((capability) => ({
+    ...capability,
+    availability: capabilityAvailability(capability, policy),
+  }));
+  return {
+    capabilities,
+    summary: kernel.capabilitiesRegistry.summary(),
+    policy,
+  };
+});
 ipcMain.handle("core:agents", () => ({ agents: kernel.agents.list() }));
 ipcMain.handle("core:plugins", () => ({ plugins: kernel.plugins.list() }));
+ipcMain.handle("core:extension-policy", async (_event, request = {}) => {
+  const workspacePath = String(request?.workspacePath || "").trim();
+  return loadExtensionPolicy(extensionPolicyOptions(workspacePath));
+});
+ipcMain.handle("core:set-extension-policy", async (_event, request = {}) => {
+  await setExtensionSourceEnabled({
+    userDataDirectory: app.getPath("userData"),
+    source: request?.source,
+    enabled: request?.enabled,
+  });
+  const workspacePath = String(request?.workspacePath || "").trim();
+  return loadExtensionPolicy(extensionPolicyOptions(workspacePath));
+});
 ipcMain.handle("core:skills", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
+  const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const userSkillsDirectory = join(app.getPath("userData"), "skills");
   const projectSkillsDirectory = workspacePath
     ? join(workspacePath, ".aporiax", "skills")
@@ -230,24 +266,28 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
   });
   const scopeId = `skills:${workspacePath || "global"}`;
   kernel.capabilitiesRegistry.unregisterScope(scopeId);
-  for (const skill of skills) {
-    kernel.capabilitiesRegistry.upsert({
-      kind: "skill",
-      source: "skill",
-      name: skill.name,
-      title: skill.title || skill.name,
-      description: skill.description || "",
-      risk: "none",
-      scopeId,
-      tags: [skill.source || "skill", skill.auto ? "auto" : "manual"],
-      metadata: {
-        auto: Boolean(skill.auto),
-        tools: [...(skill.tools || [])],
-      },
-    });
+  if (extensionSourceEnabled(policy, "skill")) {
+    for (const skill of skills) {
+      kernel.capabilitiesRegistry.upsert({
+        kind: "skill",
+        source: "skill",
+        name: skill.name,
+        title: skill.title || skill.name,
+        description: skill.description || "",
+        risk: "none",
+        scopeId,
+        tags: [skill.source || "skill", skill.auto ? "auto" : "manual"],
+        metadata: {
+          auto: Boolean(skill.auto),
+          tools: [...(skill.tools || [])],
+        },
+      });
+    }
   }
   return {
     skills,
+    enabled: extensionSourceEnabled(policy, "skill"),
+    policy,
     userSkillsDirectory,
     projectSkillsDirectory,
     manualInvocation: "/skill:name",
@@ -255,12 +295,17 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
 });
 ipcMain.handle("core:mcp", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
+  const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const configuration = await loadMcpConfiguration(
     mcpConfigurationOptions(workspacePath),
   );
   return {
-    servers: configuration.servers.map(publicMcpServerSummary),
+    servers: extensionSourceEnabled(policy, "mcp")
+      ? configuration.servers.map(publicMcpServerSummary)
+      : [],
     allServers: configuration.allServers.map(publicMcpServerSummary),
+    enabled: extensionSourceEnabled(policy, "mcp"),
+    policy,
     errors: configuration.errors,
     userConfigPath: configuration.userConfigPath,
     projectConfigPath: configuration.projectConfigPath,
