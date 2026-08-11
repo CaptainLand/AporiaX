@@ -1,0 +1,68 @@
+name: v0.6.5 GitHub workflow patch
+
+on:
+  push:
+    branches:
+      - agent/0.6.5-github-workflow
+    paths:
+      - scripts/patch-v065-github.mjs
+      - .github/workflows/v065-github-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/0.6.5-github-workflow
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply deterministic patch
+        run: node scripts/patch-v065-github.mjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify GitHub workflow
+        run: npm run test:github-workflow
+
+      - name: Verify tool permissions
+        run: npm run test:tool-permissions && npm run test:tool-dispatcher
+
+      - name: Verify runtime
+        run: npm run test:runtime
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Commit generated GitHub workflow changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No patch changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            electron/agent-core.js \
+            electron/runtime/native-tool-catalog.js \
+            electron/runtime/native-tool-executor.js \
+            electron/runtime/tool-permissions.js \
+            package.json \
+            .github/workflows/ci.yml \
+            tests/github-workflow-smoke.mjs \
+            docs/releases/v0.6.5.md
+          git commit -m "feat: add native Git and GitHub workflow tools"
+          git push origin HEAD:agent/0.6.5-github-workflow
