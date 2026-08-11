@@ -20,6 +20,7 @@ import {
   sep,
 } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { currentExecutionMode } from "./harness/agent-budget.js";
 
 export const SANDBOX_IMAGE = "aporiax-sandbox:0.1";
 export const SANDBOX_TIMEOUT_MS = 120_000;
@@ -249,7 +250,7 @@ function sandboxState({
   };
 }
 
-export async function getSandboxStatus() {
+async function getSandboxEngineStatus() {
   let versionResult;
   try {
     versionResult = await dockerResult([
@@ -303,6 +304,68 @@ export async function getSandboxStatus() {
   });
 }
 
+export function projectSandboxStatusForExecutionMode(status, executionMode = null) {
+  const mode = ["direct", "safe", "isolated"].includes(executionMode)
+    ? executionMode
+    : null;
+  if (!mode) return status;
+  const dockerAvailable = Boolean(status?.available);
+  if (mode === "direct") {
+    return {
+      ...status,
+      executionProfile: "direct",
+      dockerAvailable,
+      backend: "host",
+      available: false,
+      localAvailable: false,
+      autoApprovalSafe: false,
+      fallbackAvailable: true,
+      executionMode: "host",
+      network: "host",
+      filesystem: "workspace-write",
+      rootFilesystem: "host",
+      isolation: "none",
+      detail: "Direct execution selected: commands use the real workspace and host authority. Smart Permission remains active.",
+    };
+  }
+  if (mode === "safe") {
+    return {
+      ...status,
+      executionProfile: "safe",
+      dockerAvailable,
+      backend: "local-workspace",
+      available: false,
+      localAvailable: true,
+      autoApprovalSafe: true,
+      fallbackAvailable: true,
+      executionMode: "local-workspace",
+      network: "host",
+      filesystem: "temporary-workspace-copy",
+      rootFilesystem: "host",
+      isolation: "workspace-copy",
+      detail: "Safe execution selected: commands use a temporary workspace copy with conflict-checked synchronization and host process/network authority.",
+    };
+  }
+  return {
+    ...status,
+    executionProfile: "isolated",
+    dockerAvailable,
+    backend: "docker",
+    localAvailable: false,
+    autoApprovalSafe: dockerAvailable,
+    fallbackAvailable: false,
+    executionMode: "container",
+    detail: dockerAvailable
+      ? status.detail
+      : `Isolated execution selected, but Docker is not ready. ${status?.detail || ""}`.trim(),
+  };
+}
+
+export async function getSandboxStatus() {
+  const status = await getSandboxEngineStatus();
+  return projectSandboxStatusForExecutionMode(status, currentExecutionMode());
+}
+
 export async function prepareSandbox({
   dataDirectory,
   signal,
@@ -311,7 +374,7 @@ export async function prepareSandbox({
   if (!dataDirectory) {
     throw new Error("Sandbox data directory is required.");
   }
-  const status = await getSandboxStatus();
+  const status = await getSandboxEngineStatus();
   if (status.state === "cli-missing") {
     throw new Error("未找到 Docker CLI。请先安装 Docker Desktop。");
   }
@@ -493,6 +556,7 @@ export async function runSandboxedCommand({
       ...result,
       sandbox: {
         backend: "docker",
+        executionProfile: "isolated",
         container: containerName,
         image: SANDBOX_IMAGE,
         imageId: status.imageId,
@@ -517,6 +581,7 @@ const UNSAFE_RUNTIME_ENVIRONMENT_NAME =
 
 export function createHostFallbackEnvironment(
   sourceEnvironment = process.env,
+  executionMarker = "local-workspace-sandbox",
 ) {
   const environment = {};
   const normalizedNames = new Set();
@@ -533,7 +598,7 @@ export function createHostFallbackEnvironment(
     normalizedNames.add(normalizedName);
     environment[name] = value;
   }
-  environment.APORIAX_EXECUTION_MODE = "local-workspace-sandbox";
+  environment.APORIAX_EXECUTION_MODE = executionMarker;
   environment.CI = environment.CI || "1";
   environment.NO_COLOR = environment.NO_COLOR || "1";
   return environment;
@@ -802,6 +867,7 @@ export async function runLocalSandboxedCommand({
       ...result,
       sandbox: {
         backend: "local-workspace",
+        executionProfile: "safe",
         fallback: true,
         isolation: "workspace-copy",
         network: "host",
@@ -841,7 +907,7 @@ export async function runHostFallbackCommand({
   const result = await runProcess({
     ...shell,
     cwd,
-    env: createHostFallbackEnvironment(),
+    env: createHostFallbackEnvironment(process.env, "host-direct"),
     signal,
     timeoutMs,
     onOutput,
@@ -852,6 +918,7 @@ export async function runHostFallbackCommand({
     ...result,
     sandbox: {
       backend: "host",
+      executionProfile: "direct",
       fallback: true,
       isolation: "none",
       network: "host",
@@ -868,8 +935,32 @@ export async function runHostFallbackCommand({
 }
 
 export async function runCommandWithFallback(options) {
-  const status =
-    options.sandboxStatus || (await getSandboxStatus());
+  const status = options.sandboxStatus || (await getSandboxStatus());
+  const mode = currentExecutionMode() || status?.executionProfile || null;
+  if (mode === "direct") {
+    return runHostFallbackCommand({
+      ...options,
+      sandboxStatus: status,
+    });
+  }
+  if (mode === "safe") {
+    return runLocalSandboxedCommand({
+      ...options,
+      sandboxStatus: status,
+    });
+  }
+  if (mode === "isolated") {
+    if (!status.available) {
+      throw new Error(
+        `Isolated execution requires a ready Docker sandbox. ${status?.detail || ""}`.trim(),
+      );
+    }
+    return runSandboxedCommand({
+      ...options,
+      sandboxStatus: status,
+    });
+  }
+  // Compatibility path for callers outside a task-scoped execution context.
   if (status.available) {
     return runSandboxedCommand({
       ...options,

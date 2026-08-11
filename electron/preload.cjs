@@ -1,5 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+const taskExecutionModes = new Map();
+const normalizeExecutionMode = (value) =>
+  ["direct", "safe", "isolated"].includes(value) ? value : "safe";
+const rememberTaskExecutionModes = (tasks) => {
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    if (!task?.id) continue;
+    taskExecutionModes.set(task.id, normalizeExecutionMode(task.executionMode));
+  }
+  return tasks;
+};
+
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
   selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
@@ -9,8 +20,12 @@ contextBridge.exposeInMainWorld("desktop", {
     set: (theme) => ipcRenderer.invoke("desktop:set-theme", theme),
   },
   tasks: {
-    load: () => ipcRenderer.invoke("tasks:load"),
-    save: (tasks) => ipcRenderer.invoke("tasks:save", tasks),
+    load: () =>
+      ipcRenderer.invoke("tasks:load").then((tasks) => rememberTaskExecutionModes(tasks)),
+    save: (tasks) => {
+      rememberTaskExecutionModes(tasks);
+      return ipcRenderer.invoke("tasks:save", tasks);
+    },
   },
   workspace: {
     listTree: (workspacePath, requestedDirectory = ".") =>
@@ -109,7 +124,13 @@ contextBridge.exposeInMainWorld("desktop", {
     saveApiKey: (apiKey) =>
       ipcRenderer.invoke("harness:save-api-key", apiKey),
     clearApiKey: () => ipcRenderer.invoke("harness:clear-api-key"),
-    run: (request) => ipcRenderer.invoke("harness:run", request),
+    run: (request) =>
+      ipcRenderer.invoke("harness:run", {
+        ...request,
+        executionMode: normalizeExecutionMode(
+          request?.executionMode || taskExecutionModes.get(request?.taskId),
+        ),
+      }),
     interrupt: (runId) =>
       ipcRenderer.invoke("harness:interrupt", runId),
     pause: (runId) => ipcRenderer.invoke("harness:pause", runId),

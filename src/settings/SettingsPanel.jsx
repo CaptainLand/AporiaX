@@ -8,7 +8,7 @@ import {
   PanelRightClose,
 } from "lucide-react";
 import { LanguageSwitch, useI18n } from "../i18n";
-import { IconButton, Switch } from "../components/Controls.jsx";
+import { IconButton, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { TaskCapabilityCards } from "./TaskCapabilityCards.jsx";
 
 export function SettingsPanel({
@@ -27,6 +27,9 @@ export function SettingsPanel({
   const provider =
     providers.find((candidate) => candidate.id === task.providerId) ||
     providers[0];
+  const executionMode = ["direct", "safe", "isolated"].includes(task.executionMode)
+    ? task.executionMode
+    : "safe";
   return (
     <aside className="settings-panel" style={style}>
       <div className="settings-panel-header">
@@ -66,7 +69,24 @@ export function SettingsPanel({
       </section>
 
       <section className="settings-section">
-        <div className="settings-label">{tr("命令沙箱", "Command sandbox")}</div>
+        <div className="settings-label">{tr("执行模式", "Execution mode")}</div>
+        <SegmentedControl
+          value={executionMode}
+          ariaLabel={tr("命令执行模式", "Command execution mode")}
+          options={[
+            { value: "direct", label: tr("直接", "Direct") },
+            { value: "safe", label: tr("安全", "Safe") },
+            { value: "isolated", label: tr("隔离", "Isolated") },
+          ]}
+          onChange={(nextMode) => onUpdateTask({ executionMode: nextMode })}
+        />
+        <p className="settings-language-note">
+          {executionMode === "direct"
+            ? tr("直接在真实工作区执行，速度最快；智能 Permission 会拦截未知或高风险命令。", "Runs in the real workspace for maximum speed; smart Permission gates unknown and high-risk commands.")
+            : executionMode === "safe"
+              ? tr("在临时工作区副本执行并冲突检查后同步；仍使用本机网络与进程权限。", "Runs in a temporary workspace copy and conflict-checks synchronization; host network and process authority remain available.")
+              : tr("只在 Docker 强隔离环境执行；Docker 未就绪时不会静默降级到 Host。", "Runs only inside the Docker isolation profile; it never silently falls back to Host when Docker is unavailable.")}
+        </p>
         <div className="sandbox-status-card">
           <span
             className={`sandbox-status-icon ${
@@ -84,20 +104,26 @@ export function SettingsPanel({
           <div>
             <strong>
               {!sandboxStatus
-                ? tr("正在检测沙箱", "Checking sandbox")
-                : sandboxStatus.available
-                  ? tr("Docker 强隔离已就绪", "Docker strong isolation ready")
-                  : sandboxStatus.localAvailable
-                    ? tr("本地沙箱已就绪", "Local sandbox ready")
-                    : tr("沙箱暂不可用", "Sandbox unavailable")}
+                ? tr("正在检测执行环境", "Checking execution environment")
+                : executionMode === "direct"
+                  ? tr("Direct · 真实工作区", "Direct · real workspace")
+                  : executionMode === "safe"
+                    ? tr("Safe · 临时工作区副本", "Safe · temporary workspace copy")
+                    : sandboxStatus.available
+                      ? tr("Isolated · Docker 已就绪", "Isolated · Docker ready")
+                      : tr("Isolated · Docker 尚未就绪", "Isolated · Docker not ready")}
             </strong>
             <span>
-              {sandboxStatus?.detail ||
-                tr("正在检测 Docker 与 AporiaX 沙箱镜像", "Checking Docker and the AporiaX sandbox image")}
+              {executionMode === "direct"
+                ? tr("命令直接使用 Host 工作区；敏感环境变量仍会过滤。", "Commands use the Host workspace directly; sensitive environment variables are still filtered.")
+                : executionMode === "safe"
+                  ? tr("命令在临时副本执行，结束后进行 Hash 冲突检查与同步。", "Commands run in a temporary copy, followed by hash-based conflict checks and synchronization.")
+                  : sandboxStatus?.detail ||
+                    tr("正在检测 Docker 与 AporiaX 沙箱镜像", "Checking Docker and the AporiaX sandbox image")}
             </span>
           </div>
         </div>
-        {!sandboxStatus?.available && (
+        {executionMode === "isolated" && !sandboxStatus?.available && (
           <button
             className="workspace-settings-button"
             type="button"
@@ -112,7 +138,7 @@ export function SettingsPanel({
               : tr("启用 Docker 加强隔离（可选）", "Enable stronger Docker isolation (optional)")}
           </button>
         )}
-        {sandboxStatus?.available && (
+        {executionMode === "isolated" && sandboxStatus?.available && (
           <div className="sandbox-constraints">
             <span>{tr("断网", "Offline")}</span>
             <span>{tr("只读系统", "Read-only system")}</span>
@@ -120,12 +146,12 @@ export function SettingsPanel({
             <span>{tr("{count} 进程", "{count} processes", { count: sandboxStatus.pidsLimit || 256 })}</span>
           </div>
         )}
-        {sandboxStatus && !sandboxStatus.available && (
+        {sandboxStatus && executionMode !== "isolated" && (
           <div className="sandbox-constraints fallback">
-            <span>{tr("临时工作区", "Temporary workspace")}</span>
-            <span>{tr("自动执行", "Automatic execution")}</span>
+            <span>{executionMode === "direct" ? tr("真实工作区", "Real workspace") : tr("临时工作区", "Temporary workspace")}</span>
+            <span>{tr("智能审批", "Smart approval")}</span>
             <span>{tr("使用本机网络", "Host network")}</span>
-            <span>{tr("Docker 可选", "Docker optional")}</span>
+            <span>{executionMode === "direct" ? tr("无隔离", "No isolation") : tr("冲突检查同步", "Conflict-checked sync")}</span>
           </div>
         )}
         <div className="sandbox-auto-approval">
@@ -133,8 +159,8 @@ export function SettingsPanel({
             <strong>{tr("命令自动执行", "Automatic command execution")}</strong>
             <span>
               {tr(
-                "本地临时工作区与 Docker 沙箱内的命令不再逐条确认；关闭后恢复手动审批。",
-                "Commands in the local temporary workspace and Docker sandbox run without repeated prompts. Turn this off to restore manual approval.",
+                "开启后，仅命中智能 Permission 低风险规则的命令自动执行；依赖安装、网络写入、破坏性操作等仍会询问或拒绝。",
+                "When enabled, only commands recognized as low risk by smart Permission auto-run; dependency mutation, remote writes, destructive operations, and similar risks still ask or deny.",
               )}
             </span>
           </div>

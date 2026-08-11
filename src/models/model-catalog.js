@@ -20,6 +20,7 @@ export const DEFAULT_TASK_OPTIONS = {
   effort: "high",
   permission: "workspace-write",
   approvalMode: "sandbox-auto",
+  executionMode: "safe",
 };
 
 export function getAvailableModels(providers) {
