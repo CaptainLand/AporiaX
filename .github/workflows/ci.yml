@@ -36,6 +36,9 @@ jobs:
       - name: Execution wiring smoke
         run: npm run test:execution-wiring
 
+      - name: LSP smoke
+        run: npm run test:lsp
+
       - name: Tool permission smoke
         run: npm run test:tool-permissions
 
