@@ -42,6 +42,33 @@ try {
   assert.equal(search.results.length, 1);
   assert.equal(search.results[0].path, "src/a.js");
   assert.equal(search.results[0].line, 1);
+  assert.equal(search.engine, "ripgrep");
+
+  const regexSearch = await searchWorkspaceText({
+    workspaceRoot: root,
+    requestedPath: ".",
+    query: "const\\s+(Alpha|beta)",
+    mode: "regex",
+    caseSensitive: true,
+    includeGlobs: ["src/**/*.js", "src/*.js"],
+    excludeGlobs: ["**/*.test.js"],
+    maxResults: 20,
+    signal: new AbortController().signal,
+  });
+  assert.equal(regexSearch.engine, "ripgrep");
+  assert.equal(regexSearch.results.length, 2);
+
+  const definitionSearch = await searchWorkspaceText({
+    workspaceRoot: root,
+    requestedPath: "src",
+    query: "Alpha",
+    mode: "definition",
+    caseSensitive: true,
+    maxResults: 20,
+    signal: new AbortController().signal,
+  });
+  assert.equal(definitionSearch.results.length, 1);
+  assert.equal(definitionSearch.heuristic, true);
 
   const git = await runGitCommand({
     args: ["--version"],

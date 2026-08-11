@@ -24,7 +24,7 @@ export function parseWorkspaceMentions(text) {
     if (
       !path ||
       path === "." ||
-      path.toLowerCase() === "skill" ||
+      ["skill", "mcp"].includes(path.toLowerCase()) ||
       matches.includes(path)
     ) {
       continue;

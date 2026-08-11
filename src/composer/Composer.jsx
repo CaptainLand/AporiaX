@@ -155,7 +155,7 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
   ".log",
 ].join(",");
 
-function isImageAttachment(attachment) {
+export function isImageAttachment(attachment) {
   return (
     attachment?.kind === "image" ||
     typeof attachment?.dataUrl === "string"

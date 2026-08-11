@@ -11,7 +11,12 @@ const names = TOOL_DEFINITIONS.map((definition) => definition.function.name);
 for (const required of [
   "delegate_subagent",
   "read_file",
+  "read_external_file",
   "write_file",
+  "start_process",
+  "read_process",
+  "write_stdin",
+  "kill_process",
   "run_command",
   "browser_open",
   "browser_click",
@@ -31,5 +36,16 @@ assert.equal(TOOL_RISKS.browser_click, "control");
 assert.equal(TOOL_RISKS.request_self_check, "control");
 assert.equal(TOOL_REGISTRY.get("run_command")?.risk, "execute");
 assert.equal(TOOL_REGISTRY.get("read_file")?.risk, "read");
+assert.equal(TOOL_REGISTRY.get("read_external_file")?.risk, "read");
+assert.equal(TOOL_REGISTRY.get("start_process")?.risk, "execute");
+
+const readFileTool = TOOL_DEFINITIONS.find((definition) => definition.function.name === "read_file");
+assert(readFileTool.function.parameters.properties.start_line);
+assert(readFileTool.function.parameters.properties.offset);
+const searchTool = TOOL_DEFINITIONS.find((definition) => definition.function.name === "search_text");
+assert(searchTool.function.parameters.properties.mode);
+assert(searchTool.function.parameters.properties.include_glob);
+const patchTool = TOOL_DEFINITIONS.find((definition) => definition.function.name === "apply_patch");
+assert(patchTool.function.parameters.properties.patch);
 
 console.log("native tool catalog smoke: PASS");

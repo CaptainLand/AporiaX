@@ -195,6 +195,9 @@ export function formatWorkspaceMentionToken(path) {
     .trim()
     .replace(/\\/g, "/");
   if (!normalized) return "@";
+  if (/^(?:skill|mcp):[a-z][a-z0-9_-]{1,63}$/u.test(normalized)) {
+    return `@${normalized}`;
+  }
   return /^[A-Za-z0-9_.\-/]+$/u.test(normalized)
     ? `@${normalized}`
     : `@{${normalized}}`;
@@ -233,4 +236,33 @@ export function rankWorkspaceFiles(paths, query, limit = 12) {
     .sort((left, right) => left.score - right.score || left.path.length - right.path.length || left.path.localeCompare(right.path))
     .slice(0, Math.max(1, limit))
     .map((item) => item.path);
+}
+
+const DISPLAY_MENTION_PATTERN = /(^|[\s（(【[])(@(?:(?:skill|mcp):[a-z][a-z0-9_-]{1,63}|\{[^}\r\n]{1,260}\}|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./@()-]+)+|[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,12}))(?=$|[\s,，。!?！？;；:：)）\]】])/giu;
+
+export function tokenizeDisplayMentions(content) {
+  const source = String(content || "");
+  const parts = [];
+  let cursor = 0;
+
+  for (const match of source.matchAll(DISPLAY_MENTION_PATTERN)) {
+    const boundary = match[1] || "";
+    const token = match[2] || "";
+    const tokenStart = (match.index || 0) + boundary.length;
+    if (tokenStart > cursor) {
+      parts.push({ type: "text", value: source.slice(cursor, tokenStart) });
+    }
+    const kind = token.toLowerCase().startsWith("@skill:")
+      ? "skill"
+      : token.toLowerCase().startsWith("@mcp:")
+        ? "mcp"
+        : "file";
+    parts.push({ type: "mention", kind, value: token });
+    cursor = tokenStart + token.length;
+  }
+
+  if (cursor < source.length) {
+    parts.push({ type: "text", value: source.slice(cursor) });
+  }
+  return parts.length ? parts : [{ type: "text", value: source }];
 }

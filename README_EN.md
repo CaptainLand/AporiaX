@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -34,7 +34,7 @@ evidence, changes, and deliverables visible instead of reducing the work to a
 chat response.
 
 > [!IMPORTANT]
-> AporiaX `v0.6.0` is still a preview and currently ships for Windows x64.
+> AporiaX `v0.6.1` is still a preview and currently ships for Windows x64.
 > `run_command` runs automatically in a temporary local workspace copy and
 > conflict-checks project changes before synchronizing them back. Docker is
 > entirely optional; enabling it upgrades execution to an offline,
@@ -104,8 +104,20 @@ yet. Image delivery depends on the vision capability of the selected model.
 
 | Windows x64 | Use case |
 | --- | --- |
-| [Installer 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe) | Standard installation, desktop shortcut, and Start menu |
-| [Portable 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Portable-0.6.0-x64.exe) | Run and evaluate without installation |
+| [Installer 0.6.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | Standard installation, desktop shortcut, and Start menu |
+| [Portable 0.6.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | Run and evaluate without installation |
+
+### What's new in 0.6.1: Agent-native tools and practical extensions
+
+- **Continue large-file reads** — `read_file` now supports line ranges, character offsets, continuation metadata, totals, and SHA-256 evidence.
+- **Search real repositories** — bundled ripgrep adds regex, globs, symbols, and heuristic definition/reference modes.
+- **Apply safer changes** — multi-file unified patches support multiple hunks, create/delete, dry runs, optimistic hashes, and rollback.
+- **Keep processes alive** — task-scoped terminals can run development servers, watchers, REPLs, and stdin-driven programs while the Agent continues working.
+- **Approve external reads explicitly** — each read-only access outside the workspace requires a fresh approval; external writes remain unavailable.
+- **Install and mention extensions** — import Skill folders and common MCP JSON from Settings, then select files, `@skill:<name>`, or `@mcp:<id>` from one composer menu.
+- **More reliable recovery** — retrying a stopped turn now reconciles stale runs, starts one replacement transaction, and surfaces actionable failures instead of silently doing nothing.
+
+[Read the 0.6.1 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.6.1) · [Read the complete 0.6.1 notes](docs/releases/v0.6.1.md)
 
 ### What's new in 0.6.0: from accumulated features to an extensible local Agent platform
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createNativeToolExecutor } from "../electron/runtime/native-tool-executor.js";
@@ -7,7 +7,9 @@ import { createNativeToolExecutor } from "../electron/runtime/native-tool-execut
 const root = await mkdtemp(join(tmpdir(), "aporiax-native-executor-"));
 try {
   await mkdir(join(root, "src"), { recursive: true });
-  await writeFile(join(root, "src", "a.js"), "const a = 1;\n", "utf8");
+  await writeFile(join(root, "src", "a.js"), "const a = 1;\nconst shared = true;\n", "utf8");
+  await writeFile(join(root, "src", "b.js"), "export const b = 1;\n", "utf8");
+  await writeFile(join(root, "src", "obsolete.js"), "obsolete\n", "utf8");
 
   const inside = (requested) => {
     const target = resolve(root, requested || ".");
@@ -56,6 +58,31 @@ try {
 
   const read = await executor({ ...base, toolName: "read_file", input: { path: "src/a.js" } });
   assert.match(read.modelResult.content, /const a = 1/);
+  assert.equal(read.modelResult.sha256.length, 64);
+
+  const readLines = await executor({
+    ...base,
+    toolName: "read_file",
+    input: { path: "src/a.js", start_line: 2, end_line: 2 },
+  });
+  assert.equal(readLines.modelResult.content, "const shared = true;");
+  assert.equal(readLines.modelResult.startLine, 2);
+
+  const readPage = await executor({
+    ...base,
+    toolName: "read_file",
+    input: { path: "src/a.js", offset: 0, limit: 7 },
+  });
+  assert.equal(readPage.modelResult.content, "const a");
+  assert.equal(readPage.modelResult.nextOffset, 7);
+
+  const externalRead = await executor({
+    ...base,
+    toolName: "read_external_file",
+    input: { path: join(root, "src", "a.js"), reason: "Test approved external read", limit: 12 },
+  });
+  assert.equal(externalRead.modelResult.external, true);
+  assert.equal(externalRead.modelResult.content.length, 12);
 
   const search = await executor({
     ...base,
@@ -71,6 +98,38 @@ try {
   });
   assert.equal(patched.change.path, "src/a.js");
   assert.match(await readFile(join(root, "src", "a.js"), "utf8"), /a = 2/);
+
+  const unified = await executor({
+    ...base,
+    toolName: "apply_patch",
+    input: {
+      patch: [
+        "--- a/src/a.js",
+        "+++ b/src/a.js",
+        "@@ -1,2 +1,2 @@",
+        " const a = 2;",
+        "-const shared = true;",
+        "+const shared = false;",
+        "--- a/src/b.js",
+        "+++ b/src/b.js",
+        "@@ -1 +1 @@",
+        "-export const b = 1;",
+        "+export const b = 2;",
+        "",
+      ].join("\n"),
+    },
+  });
+  assert.equal(unified.changes.length, 2);
+  assert.match(await readFile(join(root, "src", "a.js"), "utf8"), /shared = false/);
+  assert.match(await readFile(join(root, "src", "b.js"), "utf8"), /b = 2/);
+
+  const deleted = await executor({
+    ...base,
+    toolName: "apply_patch",
+    input: { patch: "--- a/src/obsolete.js\n+++ /dev/null\n@@ -1 +0,0 @@\n-obsolete\n" },
+  });
+  assert.equal(deleted.changes[0].afterMissing, true);
+  await assert.rejects(() => access(join(root, "src", "obsolete.js")));
 
   const command = await executor({
     ...base,

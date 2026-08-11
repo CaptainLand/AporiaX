@@ -4,7 +4,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { FileText, LoaderCircle } from "lucide-react";
+import { Box, FileText, LoaderCircle, Sparkles } from "lucide-react";
 import {
   extractWorkspaceMentionQuery,
   rankWorkspaceFiles,
@@ -14,6 +14,7 @@ import { useI18n } from "../i18n";
 import "../agent-process-mentions.css";
 
 const workspaceFileIndexes = new Map();
+const extensionMentionIndexes = new Map();
 const EMPTY_STATE = Object.freeze({
   query: null,
   suggestions: [],
@@ -65,6 +66,54 @@ async function buildWorkspaceFileIndex(workspacePath) {
   }
 }
 
+async function buildExtensionMentionIndex(workspacePath) {
+  const cached = extensionMentionIndexes.get(workspacePath);
+  if (cached && Date.now() - cached.createdAt < 10_000) return cached.promise;
+  const promise = Promise.all([
+    window.desktop?.core?.skills?.({ workspacePath }) || Promise.resolve({ skills: [] }),
+    window.desktop?.core?.mcp?.({ workspacePath }) || Promise.resolve({ servers: [] }),
+  ]).then(([skills, mcp]) => [
+    ...(skills?.skills || []).map((skill) => ({
+      key: `skill:${skill.name}`,
+      kind: "skill",
+      label: skill.title || skill.name,
+      token: `skill:${skill.name}`,
+      description: skill.description || skill.source || "Skill",
+    })),
+    ...(mcp?.servers || []).map((server) => ({
+      key: `mcp:${server.id}`,
+      kind: "mcp",
+      label: server.name || server.id,
+      token: `mcp:${server.id}`,
+      description: `${server.id} · ${server.transport}`,
+    })),
+  ]);
+  extensionMentionIndexes.set(workspacePath, { createdAt: Date.now(), promise });
+  return promise;
+}
+
+function rankMentionSuggestions(paths, extensions, query, limit = 12) {
+  const source = String(query || "").toLowerCase();
+  const explicitKind = source.startsWith("skill:")
+    ? "skill"
+    : source.startsWith("mcp:") ? "mcp" : "";
+  const needle = explicitKind ? source.slice(explicitKind.length + 1) : source;
+  const extensionMatches = extensions
+    .filter((item) => !explicitKind || item.kind === explicitKind)
+    .filter((item) => !needle || `${item.label} ${item.token} ${item.description}`.toLowerCase().includes(needle))
+    .slice(0, explicitKind ? limit : 4);
+  if (explicitKind) return extensionMatches;
+  const files = rankWorkspaceFiles(paths, needle, Math.max(1, limit - extensionMatches.length))
+    .map((path) => ({
+      key: `file:${path}`,
+      kind: "file",
+      label: path,
+      token: path,
+      description: "",
+    }));
+  return [...extensionMatches, ...files].slice(0, limit);
+}
+
 function WorkspaceMentionMenu({ state, onSelect }) {
   const { tr } = useI18n();
   return (
@@ -73,10 +122,10 @@ function WorkspaceMentionMenu({ state, onSelect }) {
         <div className="aporiax-workspace-mention-title">
           <span>
             <FileText size={13} />
-            {tr("引用工作区文件", "Mention workspace file")}
+            {tr("引用文件、Skill 或 MCP", "Mention a file, Skill, or MCP")}
           </span>
           <small>
-            {tr("@ 文件会作为本轮上下文", "@ files become turn context")}
+            {tr("输入 @skill: 或 @mcp: 可直接筛选", "Type @skill: or @mcp: to filter")}
           </small>
         </div>
         {state.loading ? (
@@ -86,24 +135,24 @@ function WorkspaceMentionMenu({ state, onSelect }) {
           </div>
         ) : state.suggestions.length ? (
           <div className="aporiax-workspace-mention-results">
-            {state.suggestions.map((path, index) => (
+            {state.suggestions.map((suggestion, index) => (
               <button
                 className={index === state.selectedIndex ? "active" : ""}
-                key={path}
+                key={suggestion.key}
                 type="button"
                 role="option"
                 aria-selected={index === state.selectedIndex}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onSelect(path)}
+                onClick={() => onSelect(suggestion)}
               >
-                <FileText size={13} />
-                <span>{path}</span>
+                {suggestion.kind === "skill" ? <Sparkles size={13} /> : suggestion.kind === "mcp" ? <Box size={13} /> : <FileText size={13} />}
+                <span><strong>{suggestion.label}</strong>{suggestion.description ? <small>{suggestion.description}</small> : null}</span>
               </button>
             ))}
           </div>
         ) : (
           <div className="aporiax-workspace-mention-empty">
-            {tr("没有匹配的文件", "No matching files")}
+            {tr("没有匹配的文件或扩展", "No matching files or extensions")}
           </div>
         )}
         <div className="aporiax-workspace-mention-footer">
@@ -155,8 +204,11 @@ export function useWorkspaceMentionAutocomplete({
       loading: true,
     });
 
-    void buildWorkspaceFileIndex(workspacePath)
-      .then((paths) => {
+    void Promise.all([
+      buildWorkspaceFileIndex(workspacePath),
+      buildExtensionMentionIndex(workspacePath),
+    ])
+      .then(([paths, extensions]) => {
         if (requestRevision.current !== revision) return;
         const liveValue = valueRef.current;
         const liveCursor = textareaRef.current?.selectionStart ?? liveValue.length;
@@ -171,7 +223,7 @@ export function useWorkspaceMentionAutocomplete({
         }
         setState({
           query: liveQuery,
-          suggestions: rankWorkspaceFiles(paths, liveQuery.query, 12),
+          suggestions: rankMentionSuggestions(paths, extensions, liveQuery.query, 12),
           selectedIndex: 0,
           loading: false,
         });
@@ -192,7 +244,7 @@ export function useWorkspaceMentionAutocomplete({
   }, [workspacePath, close]);
 
   const select = useCallback(
-    (path) => {
+    (suggestion) => {
       const textarea = textareaRef.current;
       const liveValue = valueRef.current;
       const query =
@@ -201,8 +253,8 @@ export function useWorkspaceMentionAutocomplete({
           liveValue,
           textarea?.selectionStart ?? liveValue.length,
         );
-      if (!query || !path) return false;
-      const result = replaceWorkspaceMentionQuery(liveValue, query, path);
+      if (!query || !suggestion?.token) return false;
+      const result = replaceWorkspaceMentionQuery(liveValue, query, suggestion.token);
       setValue(result.value);
       close();
       window.requestAnimationFrame(() => {

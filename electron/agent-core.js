@@ -19,6 +19,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
+    read_external_file: "ask",
     search_text: "allow",
     git_status: "allow",
     git_diff: "allow",
@@ -40,6 +41,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
+    read_external_file: "ask",
     search_text: "allow",
     git_status: "allow",
     git_diff: "allow",
@@ -53,6 +55,10 @@ const DEFAULT_PERMISSION_POLICIES = {
     // The runtime still requires approval for unsandboxed/manual execution and
     // only auto-runs when the current sandbox backend is marked safe.
     run_command: "allow",
+    start_process: "ask",
+    read_process: "allow",
+    write_stdin: "allow",
+    kill_process: "allow",
     browser_open: "allow",
     browser_snapshot: "allow",
     browser_screenshot: "allow",

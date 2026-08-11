@@ -58,7 +58,7 @@ export function buildToolApprovalRequest({
 } = {}) {
   const risk = descriptor?.risk || "control";
   const command =
-    toolName === "run_command"
+    toolName === "run_command" || toolName === "start_process"
       ? String(input.command || "").trim()
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
   return {
@@ -67,7 +67,11 @@ export function buildToolApprovalRequest({
     title:
       toolName === "run_command"
         ? "运行工作区命令"
-        : `允许工具：${toolName || "unknown"}`,
+        : toolName === "start_process"
+          ? "启动持久终端进程"
+          : toolName === "read_external_file"
+            ? "读取工作区外文件"
+            : `允许工具：${toolName || "unknown"}`,
     command,
     cwd: input.cwd || ".",
     reason:

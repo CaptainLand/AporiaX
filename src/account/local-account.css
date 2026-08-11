@@ -1,0 +1,189 @@
+.local-account-panel {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(113, 101, 131, 0.14);
+}
+
+.local-account-signin,
+.local-account-profile {
+  display: flex;
+  width: 100%;
+  min-height: 43px;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: #d9d5df;
+  background: transparent;
+  transition: 150ms ease;
+}
+
+.local-account-signin {
+  min-height: 37px;
+  padding: 6px 10px;
+}
+
+.local-account-signin:hover,
+.local-account-profile:hover {
+  border-color: rgba(82, 199, 255, 0.18);
+  background: rgba(63, 157, 213, 0.07);
+}
+
+.local-account-signin-label,
+.local-account-profile-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.local-account-signin-label {
+  justify-content: center;
+  padding-left: 2px;
+}
+
+.local-account-signin strong,
+.local-account-profile strong {
+  overflow: hidden;
+  color: #e5e1ea;
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-account-signin small,
+.local-account-profile small {
+  overflow: hidden;
+  color: #817b8b;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-account-signin > svg,
+.local-account-profile > svg {
+  margin-left: auto;
+  color: #6f6978;
+  transition: transform 150ms ease;
+}
+
+.local-account-quota-row {
+  display: grid;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  grid-template-columns: auto 1fr;
+}
+
+.local-account-quota-row small {
+  color: #736d7e;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.local-account-quota-track {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(116, 105, 134, 0.2);
+}
+
+.local-account-quota-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4cbcf2, #79d9ff);
+  box-shadow: 0 0 8px rgba(79, 196, 246, 0.42);
+}
+
+.local-account-popover {
+  position: absolute;
+  z-index: 25;
+  right: 10px;
+  bottom: calc(100% - 3px);
+  left: 10px;
+  display: flex;
+  padding: 12px;
+  border: 1px solid rgba(88, 200, 250, 0.18);
+  border-radius: 12px;
+  flex-direction: column;
+  gap: 7px;
+  color: #dcd8e3;
+  background: rgba(18, 15, 25, 0.98);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+}
+
+.local-account-popover span { display: flex; align-items: center; gap: 6px; color: #75d6ff; font-size: 11.5px; font-weight: 650; }
+.local-account-popover small { color: #8a8493; font-size: 10.5px; line-height: 1.5; }
+.local-account-popover button { display: flex; align-items: center; gap: 6px; padding: 7px 8px; cursor: pointer; border-radius: 7px; color: #a9a3b2; background: rgba(255, 255, 255, 0.035); font-size: 11px; }
+.local-account-popover button:hover { color: #f2eef6; background: rgba(255, 255, 255, 0.07); }
+
+.local-account-modal-backdrop {
+  position: fixed;
+  z-index: 180;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(4, 4, 8, 0.7);
+  backdrop-filter: blur(13px);
+}
+
+.local-account-modal {
+  width: min(440px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid rgba(92, 204, 255, 0.24);
+  border-radius: 17px;
+  color: #e8e5ed;
+  background: linear-gradient(160deg, rgba(22, 18, 30, 0.99), rgba(12, 12, 18, 0.99));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.58), 0 0 40px rgba(40, 171, 235, 0.06);
+}
+
+.local-account-modal header { display: flex; align-items: center; gap: 11px; padding: 18px 20px 15px; border-bottom: 1px solid rgba(120, 106, 142, 0.15); }
+.local-account-modal-mark { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 11px; color: #69d2ff; background: rgba(44, 159, 222, 0.12); }
+.local-account-modal header div { flex: 1; }
+.local-account-modal header small { color: #58c9fb; font-size: 9px; font-weight: 750; letter-spacing: 0.16em; }
+.local-account-modal h2 { margin: 2px 0 0; font-size: 17px; }
+.local-account-modal header button { display: grid; width: 31px; height: 31px; cursor: pointer; place-items: center; border-radius: 8px; color: #837d8d; background: transparent; }
+.local-account-modal header button:hover { color: #e6e1eb; background: rgba(255, 255, 255, 0.05); }
+
+.local-account-prototype-note { display: flex; align-items: center; gap: 9px; margin: 16px 20px 0; padding: 10px 11px; border: 1px solid rgba(92, 204, 255, 0.13); border-radius: 10px; color: #6fd1fb; background: rgba(45, 153, 211, 0.055); }
+.local-account-prototype-note span { display: flex; flex-direction: column; gap: 2px; }
+.local-account-prototype-note strong { font-size: 11.5px; }
+.local-account-prototype-note span { font-size: 10.5px; }
+
+.local-account-tabs { display: grid; margin: 16px 20px 4px; padding: 3px; border-radius: 9px; grid-template-columns: 1fr 1fr; background: rgba(255, 255, 255, 0.035); }
+.local-account-tabs button { padding: 8px; cursor: pointer; border-radius: 7px; color: #817b89; background: transparent; font-size: 11.5px; }
+.local-account-tabs button.active { color: #8edfff; background: rgba(51, 160, 218, 0.12); box-shadow: inset 0 0 0 1px rgba(91, 204, 255, 0.1); }
+
+.local-account-modal form { display: flex; padding: 13px 20px 20px; flex-direction: column; gap: 11px; }
+.local-account-modal label { display: flex; flex-direction: column; gap: 6px; }
+.local-account-modal label span { color: #aaa4b1; font-size: 11px; font-weight: 600; }
+.local-account-modal input { height: 39px; padding: 0 11px; border: 1px solid rgba(123, 109, 145, 0.28); outline: none; border-radius: 9px; color: #e8e4ed; background: rgba(7, 7, 11, 0.54); font-size: 12px; }
+.local-account-modal input:focus { border-color: rgba(84, 203, 255, 0.5); box-shadow: 0 0 0 3px rgba(57, 176, 231, 0.08); }
+.local-account-error { margin: 0; color: #ff8e99; font-size: 10.5px; line-height: 1.45; }
+.local-account-demo-fill { align-self: flex-start; padding: 0; cursor: pointer; color: #68c9f3; background: transparent; font-size: 10.5px; }
+.local-account-demo-fill:hover { color: #9ce3ff; }
+.local-account-submit { display: flex; height: 40px; align-items: center; justify-content: center; gap: 7px; margin-top: 2px; cursor: pointer; border-radius: 10px; color: #071018; background: linear-gradient(135deg, #5fd3ff, #59a9f4); box-shadow: 0 8px 24px rgba(39, 158, 219, 0.18); font-size: 12px; font-weight: 720; }
+.local-account-submit:hover { filter: brightness(1.08); }
+
+:root[data-theme="light"] .local-account-panel { border-top-color: rgba(48, 78, 99, 0.12); }
+:root[data-theme="light"] .local-account-signin,
+:root[data-theme="light"] .local-account-profile { color: #25333d; }
+:root[data-theme="light"] .local-account-signin strong,
+:root[data-theme="light"] .local-account-profile strong { color: #27343c; }
+:root[data-theme="light"] .local-account-signin small,
+:root[data-theme="light"] .local-account-profile small { color: #77838b; }
+:root[data-theme="light"] .local-account-quota-track { background: rgba(53, 112, 146, 0.13); }
+
+@media (max-height: 650px) {
+  .local-account-modal-backdrop { align-items: start; overflow: auto; }
+}

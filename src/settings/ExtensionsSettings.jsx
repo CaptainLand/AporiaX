@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { Switch } from "../components/Controls.jsx";
@@ -198,11 +199,17 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
   };
 
   const configureTemplate = (entry = null) => {
+    const template = entry?.template || {};
     setMcpDraft({
       ...EMPTY_MCP,
-      transport: entry?.template?.transport || "streamable-http",
-      url: entry?.template?.url === "https://" ? "" : entry?.template?.url || "",
-      command: entry?.template?.command || "",
+      id: template.id || "",
+      name: template.name || entry?.displayTitle || "",
+      transport: template.transport || "streamable-http",
+      url: template.url === "https://" ? "" : template.url || "",
+      command: template.command || "",
+      argsText: (template.args || [])
+        .map((argument) => argument === "{workspace}" ? workspacePath : argument)
+        .join("\n"),
     });
     setShowMcpForm(true);
   };
@@ -238,6 +245,34 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
     }
   };
 
+  const importSkill = async () => {
+    setBusyId("import:skill");
+    try {
+      const result = await window.desktop.core.importLibrarySkill();
+      if (result?.canceled) return;
+      await refresh();
+      onNotice(tr("Skill 已导入", "Skill imported"));
+    } catch (error) {
+      onNotice(String(error?.message || error));
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const importMcp = async () => {
+    setBusyId("import:mcp");
+    try {
+      const result = await window.desktop.core.importLibraryMcp();
+      if (result?.canceled) return;
+      await refresh();
+      onNotice(tr("已导入 {count} 个 MCP Server", "Imported {count} MCP server(s)", { count: result?.imported?.length || 0 }));
+    } catch (error) {
+      onNotice(String(error?.message || error));
+    } finally {
+      setBusyId("");
+    }
+  };
+
   return (
     <section className="extensions-center">
       <div className="application-settings-intro extensions-heading">
@@ -265,6 +300,22 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
         <>
           {tab === "discover" && (
             <div className="extensions-library-view">
+              <div className="extensions-import-actions">
+                <div>
+                  <strong>{tr("从本机导入", "Import from this computer")}</strong>
+                  <small>{tr("选择包含 SKILL.md 的文件夹，或常见格式的 MCP JSON 配置。", "Choose a folder containing SKILL.md, or an MCP JSON configuration in a common format.")}</small>
+                </div>
+                <span>
+                  <button type="button" disabled={busyId === "import:skill"} onClick={() => void importSkill()}>
+                    {busyId === "import:skill" ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
+                    {tr("导入 Skill 文件夹", "Import Skill folder")}
+                  </button>
+                  <button type="button" disabled={busyId === "import:mcp"} onClick={() => void importMcp()}>
+                    {busyId === "import:mcp" ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
+                    {tr("导入 MCP JSON", "Import MCP JSON")}
+                  </button>
+                </span>
+              </div>
               <label className="extensions-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("搜索 Skill、MCP 或用途", "Search Skills, MCP, or a use case")} /></label>
               <div className="extensions-library-section">
                 <div className="extensions-library-section-heading">
@@ -316,7 +367,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
 
           {tab === "installed" && (
             <div className="extensions-installed-view">
-              <div className="extensions-section-title"><div><Sparkles size={16} /><strong>Skills</strong></div><span>{state.skills.length}</span></div>
+              <div className="extensions-section-title"><div><Sparkles size={16} /><strong>Skills</strong></div><button type="button" disabled={busyId === "import:skill"} onClick={() => void importSkill()}><Upload size={14} />{tr("导入", "Import")}</button></div>
               <div className="extensions-item-list">
                 {state.skills.length ? state.skills.map((skill) => {
                   const catalogSkill = catalogSkillByName.get(skill.name);
@@ -329,7 +380,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                 }) : <div className="extensions-empty"><PackageOpen size={20} />{tr("还没有安装 Skill", "No Skills installed yet")}</div>}
               </div>
 
-              <div className="extensions-section-title"><div><Box size={16} /><strong>MCP Servers</strong></div><button type="button" onClick={() => configureTemplate()}><Plus size={14} />{tr("添加", "Add")}</button></div>
+              <div className="extensions-section-title"><div><Box size={16} /><strong>MCP Servers</strong></div><span className="extensions-title-actions"><button type="button" disabled={busyId === "import:mcp"} onClick={() => void importMcp()}><Upload size={14} />{tr("导入", "Import")}</button><button type="button" onClick={() => configureTemplate()}><Plus size={14} />{tr("添加", "Add")}</button></span></div>
               <div className="extensions-item-list">
                 {configuredMcp.length ? configuredMcp.map((server) => (
                   <div className="extensions-item" key={server.id}>

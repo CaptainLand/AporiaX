@@ -4,6 +4,8 @@ node_modules/
 # Generated web and desktop artifacts
 dist/
 release/
+output/
+electron.zip
 
 # Local runtime and test artifacts
 .runtime-smoke-*/

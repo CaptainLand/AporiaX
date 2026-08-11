@@ -60,6 +60,7 @@ import {
 } from "./runtime/subagent-model.js";
 import { runSubagentTask } from "./runtime/subagent-loop.js";
 import { createNativeToolExecutor } from "./runtime/native-tool-executor.js";
+import { createPersistentProcessManager } from "./runtime/process-runtime.js";
 import {
   MAX_COMMAND_OUTPUT_CHARS,
   TREE_IGNORES,
@@ -589,6 +590,9 @@ const MUTATING_TOOLS = new Set([
   "write_file",
   "apply_patch",
   "run_command",
+  "start_process",
+  "write_stdin",
+  "kill_process",
   ...OFFICE_CREATE_TOOL_NAMES,
 ]);
 
@@ -901,7 +905,7 @@ function requestedPathsForToolCall(toolCall) {
     }
   }
   if (typeof input.path === "string") return [input.path];
-  if (toolName === "run_command") return [input.cwd || "."];
+  if (toolName === "run_command" || toolName === "start_process") return [input.cwd || "."];
   return [];
 }
 
@@ -1100,6 +1104,7 @@ export async function runHarness({
     );
   const browserEnabled = extensionPolicy?.browser !== false;
   const browserRuntime = createBrowserRuntime();
+  const processManager = createPersistentProcessManager({ emit });
   witness = createWitnessMonitor({ emit: forwardEvent });
   const commandSandboxExecutor = async (request = {}) => {
     const command = String(request.command || "").trim();
@@ -1229,6 +1234,7 @@ export async function runHarness({
         `Reply to the user in ${responseLanguage}. Keep file paths, command names, source code, API identifiers, and user-provided proper nouns unchanged.`,
         "Inspect the authorized workspace with tools before making claims about its contents.",
         "Use search_text to locate relevant code before reading many files.",
+        "Use read_file line ranges or offset continuation when a file is truncated. Use read_external_file only when the user task genuinely needs a specific file outside the workspace; every call requires fresh approval and remains read-only.",
         "Use workspace-relative paths only.",
         "Never claim a file was changed unless write_file or apply_patch succeeded.",
         "Prefer apply_patch for localized edits and write_file for new files or complete rewrites.",
@@ -1262,6 +1268,9 @@ export async function runHarness({
             : commandToolAvailable
               ? "Use run_command only when it materially verifies the result. No sandbox backend is available, so commands require explicit user approval. Keep commands scoped to the authorized workspace and never claim isolation."
             : "Command execution is disabled for this task. Never claim that a build or test was run.",
+        canRunCommands
+          ? "For dev servers, watchers, REPLs, or commands requiring stdin, use start_process and manage it with read_process, write_stdin, and kill_process instead of keeping run_command alive. Persistent processes are task-scoped, use the host environment with sensitive variables removed, require approval to start, and are stopped automatically when the task ends."
+          : "Persistent terminal processes are disabled for this task.",
         "When Harness reports staged review findings, fix them before finishing. If Harness explicitly starts the fallback mandatory self-check, re-read the listed current file versions and call complete_self_check before answering.",
         "The desktop UI already presents changed files, verification, Route history, and deliverables. Do not repeat them as Markdown inventory tables or tool-call logs in the final answer.",
         !hasWorkspace
@@ -2414,6 +2423,7 @@ export async function runHarness({
                     sandboxExecutor: commandSandboxExecutor,
                     sandboxStatus,
                     browserRuntime,
+                    processManager,
                   },
                 });
               }
@@ -2792,24 +2802,28 @@ export async function runHarness({
                 sandboxExecutor: commandSandboxExecutor,
                 sandboxStatus,
                 browserRuntime,
+                processManager,
               },
             });
-            if (result.change) {
-              mergeFileChange(changeMap, result.change);
+            const directChanges = Array.isArray(result.changes)
+              ? result.changes
+              : result.change ? [result.change] : [];
+            for (const directChange of directChanges) {
+              mergeFileChange(changeMap, directChange);
               emit({
                 type: "file.changed",
-                path: result.change.path,
-                additions: result.change.additions,
-                deletions: result.change.deletions,
-                binary: Boolean(result.change.binary),
-                artifact: result.change.artifact || null,
-                created: result.change.created,
+                path: directChange.path,
+                additions: directChange.additions,
+                deletions: directChange.deletions,
+                binary: Boolean(directChange.binary),
+                artifact: directChange.artifact || null,
+                created: directChange.created,
               });
-              if (selfCheck.started) {
-                selfCheck.completed = false;
-                selfCheck.report = null;
-                selfCheck.seal = null;
-              }
+            }
+            if (directChanges.length && selfCheck.started) {
+              selfCheck.completed = false;
+              selfCheck.report = null;
+              selfCheck.seal = null;
             }
             if (toolCall.function.name === "run_command") {
               const snapshotChanges = await refreshAnchorSnapshot();
@@ -2941,7 +2955,7 @@ export async function runHarness({
           additions: modelResult?.additions || 0,
           deletions: modelResult?.deletions || 0,
           created: Boolean(modelResult?.created),
-          binary: Boolean(result.change?.binary),
+          binary: Boolean(result.change?.binary || result.changes?.some((change) => change.binary)),
           artifact:
             modelResult?.artifact ||
             modelResult?.inspection ||
@@ -3086,6 +3100,7 @@ export async function runHarness({
     failedResult.witness = witness.snapshot();
     return failedResult;
   } finally {
+    await processManager.closeAll().catch(() => undefined);
     await mcpRuntime.close().catch(() => undefined);
     await browserRuntime.close().catch(() => undefined);
     witness?.dispose();

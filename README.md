@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -27,7 +27,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX `v0.6.0` 仍处于 Preview 阶段，当前提供 Windows x64 构建。
+> AporiaX 当前源码版本为 `v0.6.1`，仍处于 Preview 阶段；最新公开 Windows x64 安装包请见 Releases。
 > `run_command` 默认在本地临时工作区副本中自动执行，结束后通过冲突检查同步项目变更，
 > 不需要逐条批准。Docker 完全可选；启用后会升级为默认断网、只读系统的 OS 级强隔离。
 > 本地沙箱主要隔离工作区改动，仍使用当前用户的本机网络与进程权限。
@@ -67,7 +67,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 
 | 能力 | 当前实现 |
 | --- | --- |
-| 代码与工作区 | 文件树、搜索、预览、编辑、`Ctrl+S`、精确 Patch、Git 状态与 Diff |
+| 代码与工作区 | 分页/按行读取、ripgrep 正则与 Glob 搜索、文件树、预览、编辑、`Ctrl+S`、多文件 Unified Patch、Git 状态与 Diff |
 | 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
 | 自适应多 Agent | Adaptive Agent Budget 按任务复杂度分配额外 Agent；简单任务保持 Main-only，复杂任务受限扩展 |
 | Builder 编排 | 大型可写任务最多使用 2 个 Builder；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
@@ -81,7 +81,18 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 | 多模型 API | 多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
 | 中英双语 | 开屏与设置页即时切换；界面和新回复跟随语言，历史消息与文件保持原样 |
 | 附件与解析 | PDF、Office、Markdown、代码和图片附件；PDF 本地文本提取 |
-| 权限与执行 | `allow` / `ask` / `deny` 策略；本地工作区沙箱自动执行，Docker 可选加强隔离 |
+| 权限与执行 | `allow` / `ask` / `deny` 策略；工作区外文件逐次审批只读；前台命令与任务级常驻终端；本地工作区沙箱自动执行，Docker 可选加强隔离 |
+
+### 0.6.1 更新：更像 Agent 的原生工具链
+
+- **读大文件不再截断即结束**：`read_file` 支持行范围、字符 offset、续读位置、总量与 SHA-256，模型可以可靠地继续后半段。
+- **真正的仓库搜索**：内置 ripgrep，支持 literal、regex、symbol、definition/reference 启发式模式和 include/exclude Glob。
+- **更可靠的修改**：`apply_patch` 支持多 Hunk、多文件、新建/删除、dry-run、内容哈希前置条件和失败回滚。
+- **Agent Terminal**：开发服务器、watcher、REPL 与需要 stdin 的程序可在任务内常驻；模型能继续读日志、写入输入和结束进程树。
+- **边界外只读**：需要读取工作区外的指定文件时，每次都向用户单独申请批准，不提供外部写权限。
+- **扩展更容易使用**：设置页可直接导入 Skill 文件夹和常见 MCP JSON；输入 `@` 可选择文件、`@skill:<name>` 或 `@mcp:<id>`。
+
+[查看 0.6.1 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.6.1) · [查看完整 0.6.1 更新记录](docs/releases/v0.6.1.md)
 
 扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。图片是否发送由每个
 Provider 模型的视觉能力决定。
@@ -90,8 +101,8 @@ Provider 模型的视觉能力决定。
 
 | Windows x64 | 适合场景 |
 | --- | --- |
-| [下载安装版 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Setup-0.6.0-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
-| [下载便携版 0.6.0](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.0/AporiaX-Portable-0.6.0-x64.exe) | 不安装，直接运行和试用 |
+| [下载安装版 0.6.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | 正常安装、桌面快捷方式与开始菜单 |
+| [下载便携版 0.6.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | 不安装，直接运行和试用 |
 
 ### 0.6.0 更新：从功能累积到可扩展的本地 Agent 平台
 

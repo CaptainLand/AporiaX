@@ -192,13 +192,34 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a UTF-8 text file or extract text from a PDF inside the authorized workspace. Scanned PDFs may require OCR.",
+        "Read a UTF-8 text file or extract text from a PDF inside the authorized workspace. Supports line ranges and character continuation for large files. Scanned PDFs may require OCR.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description: "Workspace-relative file path.",
+          },
+          start_line: {
+            type: "integer",
+            minimum: 1,
+            description: "Optional 1-based first line to read from a text file.",
+          },
+          end_line: {
+            type: "integer",
+            minimum: 1,
+            description: "Optional inclusive 1-based last line. Use with start_line.",
+          },
+          offset: {
+            type: "integer",
+            minimum: 0,
+            description: "Optional character offset for continuation reads.",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 120000,
+            description: "Maximum characters returned. Defaults to 60000.",
           },
         },
         required: ["path"],
@@ -211,13 +232,13 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "search_text",
       description:
-        "Search UTF-8 text files recursively inside the authorized workspace before deciding which files to read or edit.",
+        "Search workspace text with bundled ripgrep using literal, regex, symbol, definition, or reference modes plus include/exclude globs.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "Literal text to search for.",
+            description: "Text, regular expression, or symbol name to search for.",
           },
           path: {
             type: "string",
@@ -233,6 +254,23 @@ export const TOOL_DEFINITIONS = [
             minimum: 1,
             maximum: MAX_SEARCH_RESULTS,
             description: "Maximum number of matching lines to return.",
+          },
+          mode: {
+            type: "string",
+            enum: ["literal", "regex", "symbol", "definition", "references"],
+            description: "Search mode. Definition/reference modes are language-agnostic heuristics.",
+          },
+          include_glob: {
+            type: "array",
+            maxItems: 32,
+            items: { type: "string" },
+            description: "Optional ripgrep globs to include, for example src/** or *.js.",
+          },
+          exclude_glob: {
+            type: "array",
+            maxItems: 32,
+            items: { type: "string" },
+            description: "Optional globs to exclude.",
           },
         },
         required: ["query", "path"],
@@ -268,7 +306,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "apply_patch",
       description:
-        "Precisely edit an existing UTF-8 file by replacing exact text. Prefer this over rewriting an entire file when making a localized change.",
+        "Apply an exact replacement or a preflighted unified diff containing multiple hunks or files, including creates and deletes.",
       parameters: {
         type: "object",
         properties: {
@@ -290,8 +328,19 @@ export const TOOL_DEFINITIONS = [
             description:
               "Replace every exact occurrence. Defaults to false.",
           },
+          patch: {
+            type: "string",
+            description: "Optional unified diff. When supplied, exact replacement fields are ignored.",
+          },
+          expected_sha256: {
+            type: "string",
+            description: "Optional SHA-256 of the current content for a single-file patch.",
+          },
+          dry_run: {
+            type: "boolean",
+            description: "Validate and report changes without writing files.",
+          },
         },
-        required: ["path", "old_text", "new_text"],
         additionalProperties: false,
       },
     },
@@ -322,6 +371,71 @@ export const TOOL_DEFINITIONS = [
           },
         },
         required: ["command", "cwd"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "start_process",
+      description:
+        "Start a managed persistent terminal process for a dev server, watcher, REPL, or interactive command. It is scoped to this task and requires approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          cwd: { type: "string", description: "Workspace-relative working directory." },
+          reason: { type: "string" },
+        },
+        required: ["command", "cwd", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_process",
+      description: "Read new stdout/stderr from a managed persistent process without blocking.",
+      parameters: {
+        type: "object",
+        properties: {
+          process_id: { type: "string" },
+          cursor: { type: "integer", minimum: 0 },
+          max_chars: { type: "integer", minimum: 1, maximum: 80000 },
+        },
+        required: ["process_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_stdin",
+      description: "Write text to a managed process stdin, optionally closing stdin afterward.",
+      parameters: {
+        type: "object",
+        properties: {
+          process_id: { type: "string" },
+          data: { type: "string" },
+          close: { type: "boolean" },
+        },
+        required: ["process_id", "data"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "kill_process",
+      description: "Stop a managed persistent process and its child process tree.",
+      parameters: {
+        type: "object",
+        properties: { process_id: { type: "string" } },
+        required: ["process_id"],
         additionalProperties: false,
       },
     },
@@ -393,6 +507,27 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "read_external_file",
+      description:
+        "Read a user-approved UTF-8 text file or PDF outside the workspace. Every call requires explicit approval and never grants write access.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Absolute external file path." },
+          start_line: { type: "integer", minimum: 1 },
+          end_line: { type: "integer", minimum: 1 },
+          offset: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1, maximum: 120000 },
+          reason: { type: "string", description: "Why this external file is needed." },
+        },
+        required: ["path", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "complete_self_check",
       description:
         "Finish an active fallback self-check phase. This succeeds only after every changed text file has been re-read and every changed Office file has been structurally inspected after its latest write.",
@@ -442,6 +577,7 @@ export const TOOL_RISKS = {
   update_plan: "control",
   list_directory: "read",
   read_file: "read",
+  read_external_file: "read",
   search_text: "read",
   git_status: "read",
   git_diff: "read",
@@ -452,6 +588,10 @@ export const TOOL_RISKS = {
   create_presentation: "write",
   create_spreadsheet: "write",
   run_command: "execute",
+  start_process: "execute",
+  read_process: "read",
+  write_stdin: "control",
+  kill_process: "control",
   ...BROWSER_TOOL_RISKS,
   request_self_check: "control",
   complete_self_check: "control",
