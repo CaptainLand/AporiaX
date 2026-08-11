@@ -1,52 +1,78 @@
+import {
+  classifyCommandPermission,
+  isAutomaticApprovalMode,
+  normalizeExecutionMode,
+  resolveExecutionBackend,
+} from "./execution-policy.js";
+
 export function resolveToolExecutionPermission({
   toolName,
   permissionAction,
   approvalMode = "manual",
   sandboxStatus = null,
+  executionMode = "safe",
+  input = {},
 } = {}) {
-  const denied = permissionAction === "deny";
-  const sandboxSafe = Boolean(
-    sandboxStatus?.autoApprovalSafe ||
-      sandboxStatus?.available ||
-      sandboxStatus?.localAvailable,
+  const mode = normalizeExecutionMode(executionMode);
+  const backend = resolveExecutionBackend({
+    executionMode: mode,
+    sandboxStatus,
+  });
+  const commandPolicy =
+    toolName === "run_command"
+      ? classifyCommandPermission(input?.command, { executionMode: mode })
+      : null;
+  const denied =
+    permissionAction === "deny" || commandPolicy?.action === "deny";
+  const explicitAsk = permissionAction === "ask";
+  const automaticMode = isAutomaticApprovalMode(approvalMode);
+  const commandPolicyAllowsAuto = commandPolicy?.action === "allow";
+  const backendReady = backend.available;
+  const autoApproved = Boolean(
+    !denied &&
+      !explicitAsk &&
+      toolName === "run_command" &&
+      automaticMode &&
+      commandPolicyAllowsAuto &&
+      backendReady,
   );
-  const sandboxAutoApproved =
-    !denied &&
+  const commandNeedsApproval = Boolean(
     toolName === "run_command" &&
-    approvalMode === "sandbox-auto" &&
-    sandboxSafe;
-
-  const commandNeedsManualBoundary =
-    toolName === "run_command" &&
-    !sandboxAutoApproved &&
-    (approvalMode === "manual" || !sandboxSafe);
-
-  const requiresApproval =
+      !denied &&
+      (explicitAsk ||
+        commandPolicy?.action === "ask" ||
+        !automaticMode ||
+        !backendReady),
+  );
+  const requiresApproval = Boolean(
     !denied &&
-    ((permissionAction === "ask" && !sandboxAutoApproved) ||
-      commandNeedsManualBoundary);
+      (toolName === "run_command"
+        ? commandNeedsApproval && !autoApproved
+        : explicitAsk),
+  );
 
-  let executionMode = "direct";
+  let resolvedExecutionMode = "direct";
   if (toolName === "run_command") {
-    executionMode = sandboxAutoApproved
-      ? sandboxStatus?.available
-        ? "container-auto-approval"
-        : "local-workspace-auto-approval"
+    resolvedExecutionMode = autoApproved
+      ? `${mode}-auto-approval`
       : requiresApproval
-        ? sandboxSafe
-          ? "sandbox-manual-approval"
-          : "host-manual-approval"
-        : "sandbox-permitted";
+        ? `${mode}-manual-approval`
+        : `${mode}-permitted`;
   } else if (requiresApproval) {
-    executionMode = "manual-approval";
+    resolvedExecutionMode = "manual-approval";
   }
 
   return Object.freeze({
     denied,
     requiresApproval,
-    sandboxAutoApproved,
-    sandboxSafe,
-    executionMode,
+    autoApproved,
+    // Compatibility field for existing UI/runtime consumers. In v0.6.5 this
+    // means policy-aware automatic approval, not merely "a sandbox exists".
+    sandboxAutoApproved: autoApproved,
+    sandboxSafe: backend.workspaceIsolation || backend.osIsolation,
+    backend,
+    commandPolicy,
+    executionMode: resolvedExecutionMode,
   });
 }
 
@@ -55,12 +81,14 @@ export function buildToolApprovalRequest({
   descriptor,
   input = {},
   sandboxStatus = null,
+  permissionDecision = null,
 } = {}) {
   const risk = descriptor?.risk || "control";
   const command =
     toolName === "run_command" || toolName === "start_process"
       ? String(input.command || "").trim()
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
+  const commandPolicy = permissionDecision?.commandPolicy || null;
   return {
     toolName: toolName || "unknown",
     kind: risk,
@@ -77,9 +105,16 @@ export function buildToolApprovalRequest({
     reason:
       typeof input.reason === "string" && input.reason.trim()
         ? input.reason.trim()
-        : risk === "read"
-          ? "Agent 请求读取工作区信息。"
-          : "Agent 请求执行可能改变工作区或运行进程的操作。",
+        : commandPolicy?.reason ||
+          (risk === "read"
+            ? "Agent 请求读取工作区信息。"
+            : "Agent 请求执行可能改变工作区或运行进程的操作。"),
+    ...(commandPolicy
+      ? {
+          riskLevel: commandPolicy.risk,
+          riskCategory: commandPolicy.category,
+        }
+      : {}),
     ...(toolName === "run_command" ? { sandbox: sandboxStatus } : {}),
   };
 }
