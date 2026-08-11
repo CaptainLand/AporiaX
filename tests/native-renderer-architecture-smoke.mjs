@@ -16,6 +16,10 @@ const settings = await readFile(
   "src/settings/SettingsPanel.jsx",
   "utf8",
 ).catch(() => main);
+const runRetryCore = await readFile(
+  "src/state/run-retry-core.js",
+  "utf8",
+);
 
 assert.doesNotMatch(index, /runtime-ui-enhancements\.jsx/);
 assert.doesNotMatch(index, /live-agent-status\.jsx/);
@@ -44,7 +48,13 @@ assert.match(electronMain, /app\.requestSingleInstanceLock\(\)/);
 assert.match(electronMain, /taskId: request\?\.taskId \|\| ""/);
 assert.match(preload, /activeRuns: \(\) => ipcRenderer\.invoke\("harness:active-runs"\)/);
 assert.match(main, /const retryMessage = async \(assistantMessage\)/);
-assert.match(main, /window\.desktop\.harness\.interrupt\(taskRunId\)/);
+assert.match(main, /executeTaskRetry\(\{/);
+assert.match(main, /\(\) => window\.desktop\.harness\.activeRuns\(\)/);
+assert.match(main, /无法重试本轮/);
+assert.match(main, /Composer,\s+isImageAttachment,/);
+assert.match(main, /force: true/);
+assert.match(runRetryCore, /main-confirmed-idle/);
+assert.match(runRetryCore, /removeRendererTaskRuns\(rendererRuns, taskId\)/);
 assert.match(electronMain, /approvalGrants/);
 assert.match(
   conversation,

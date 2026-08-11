@@ -69,10 +69,14 @@ import {
   LanguageSwitch,
   useI18n,
 } from "./i18n";
-import { Composer } from "./composer/Composer.jsx";
+import {
+  Composer,
+  isImageAttachment,
+} from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
+import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
   getAvailableModels,
@@ -83,6 +87,10 @@ import {
   replaceAssistantForRetry,
   serializeTaskCache,
 } from "./state/task-store-core.js";
+import {
+  executeTaskRetry,
+  hasRendererTaskRun,
+} from "./state/run-retry-core.js";
 import { useTaskStore } from "./state/useTaskStore.js";
 import { useHarnessEvents } from "./hooks/useHarnessEvents.js";
 import "./styles.css";
@@ -543,6 +551,7 @@ function Sidebar({
           </div>
         )}
       </div>
+      <LocalAccountPanel />
       {contextTask && contextMenu && (
         <div
           ref={contextMenuRef}
@@ -3597,24 +3606,31 @@ function App() {
       })
       .finally(() => {
         runsRef.current.delete(runId);
-        setRunningTaskIds((current) => {
-          const next = new Set(current);
-          next.delete(targetTask.id);
-          return next;
-        });
+        const replacementRunActive = hasRendererTaskRun(
+          runsRef.current,
+          targetTask.id,
+        );
+        if (!replacementRunActive) {
+          setRunningTaskIds((current) => {
+            const next = new Set(current);
+            next.delete(targetTask.id);
+            return next;
+          });
+        }
         setActiveRunIdsByTask((current) => {
           if (current[targetTask.id] !== runId) return current;
           const next = { ...current };
           delete next[targetTask.id];
           return next;
         });
-        setTaskPaused(targetTask.id, false);
+        if (!replacementRunActive) setTaskPaused(targetTask.id, false);
         setApprovalsByTask((current) => {
           if (current[targetTask.id]?.runId !== runId) return current;
           const next = { ...current };
           delete next[targetTask.id];
           return next;
         });
+        if (replacementRunActive) return;
         const nextQueued = tasksRef.current
           .filter((task) => task.id === targetTask.id)
           .flatMap((task) =>
@@ -3752,105 +3768,118 @@ function App() {
       );
       return false;
     }
-    const taskRunEntry = [...runsRef.current.entries()].find(
-      ([, run]) => run.taskId === task.id,
+    const hasRecordedRun = [...runsRef.current.values()].some(
+      (run) => run.taskId === task.id,
     );
-    const taskRunId = taskRunEntry?.[0] || null;
-    if (taskRunId) {
-      if (!assistantMessage.recoverable || !window.desktop?.harness?.interrupt) {
-        setNotice(
-          tr(
-            "请等待当前任务结束后再重试这一轮",
-            "Wait for the current task to finish before retrying this turn",
-          ),
-        );
-        return false;
-      }
-      setNotice(
-        tr(
-          "正在停止残留任务并准备恢复…",
-          "Stopping the stale run before recovery…",
-        ),
-      );
-      await window.desktop.harness.interrupt(taskRunId).catch(() => false);
-      const deadline = Date.now() + 8_000;
-      let stopped = false;
-      while (Date.now() < deadline) {
-        const localActive = [...runsRef.current.values()].some(
-          (run) => run.taskId === task.id,
-        );
-        const mainRuns = window.desktop?.harness?.activeRuns
-          ? await window.desktop.harness.activeRuns().catch(() => [])
-          : [];
-        const mainActive = mainRuns.some(
-          (run) => run.runId === taskRunId || run.taskId === task.id,
-        );
-        if (!localActive && !mainActive) {
-          stopped = true;
-          break;
-        }
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
-      }
-      if (!stopped) {
-        setNotice(
-          tr(
-            "旧任务仍在退出，请稍后再次点击恢复任务",
-            "The previous run is still exiting. Try Resume task again shortly.",
-          ),
-        );
-        return false;
-      }
-    }
-    if (runningTaskIds.has(task.id)) {
-      // A synchronous IPC/bridge failure in an older build could leave the
-      // renderer marked as running even though no Harness run exists. Retrying
-      // is also the recovery path for that stale state.
-      setRunningTaskIds((current) => {
-        const next = new Set(current);
-        next.delete(task.id);
-        return next;
-      });
-      setActiveRunIdsByTask((current) => {
-        const next = { ...current };
-        delete next[task.id];
-        return next;
-      });
-      setTaskPaused(task.id, false);
-      setTaskApproval(task.id, null);
-    }
     const retryRequest = {
       taskId: task.id,
       retryAssistantId: assistantMessage.id,
       retrySourceUserId: sourceMessage?.id || assistantMessage.sourceUserId,
       recoveryRunId: assistantMessage.recoverable?.runId || "",
+      force: true,
     };
     const retryAttachments =
       sourceMessage?.attachments ||
       assistantMessage.inputAttachments ||
       [];
-    const retryImages = retryAttachments.filter(isImageAttachment);
-    if (
-      retryImages.length &&
-      !getModel(
-        providers,
-        task?.providerId,
-        task?.modelId,
-      ).supportsImages
-    ) {
-      setNotice(tr("当前模型不支持识图，已移除图片并按文字内容重试", "This model cannot read images. Images were removed before retrying the text."));
-      return sendMessage(
-        retryContent,
-        retryAttachments.filter(
-          (attachment) => !isImageAttachment(attachment),
-        ),
-        retryRequest,
-      );
-    }
-    return sendMessage(
-      retryContent,
-      retryAttachments,
-      retryRequest,
+    setNotice(
+      hasRecordedRun
+        ? tr(
+            "正在清理残留任务并准备重试…",
+            "Clearing the stale run before retrying…",
+          )
+        : tr("正在准备重试本轮…", "Preparing to retry this turn…"),
     );
+
+    const retryResult = await executeTaskRetry({
+      taskId: task.id,
+      rendererRuns: runsRef.current,
+      // Invoke contextBridge functions through their owning object. Passing a
+      // detached bridge proxy into a helper can fail without useful renderer
+      // diagnostics on some Electron versions.
+      listActiveRuns: window.desktop?.harness?.activeRuns
+        ? () => window.desktop.harness.activeRuns()
+        : undefined,
+      interruptRun: window.desktop?.harness?.interrupt
+        ? (runId) => window.desktop.harness.interrupt(runId)
+        : undefined,
+      interruptActive: Boolean(assistantMessage.recoverable),
+      onReady: () => {
+        // Electron has confirmed that this task is idle. Clear renderer-only
+        // flags before creating the replacement run.
+        setRunningTaskIds((current) => {
+          const next = new Set(current);
+          next.delete(task.id);
+          return next;
+        });
+        setActiveRunIdsByTask((current) => {
+          const next = { ...current };
+          delete next[task.id];
+          return next;
+        });
+        setTaskPaused(task.id, false);
+        setTaskApproval(task.id, null);
+      },
+      startRetry: () => {
+        const retryImages = retryAttachments.filter(isImageAttachment);
+        if (
+          retryImages.length &&
+          !getModel(
+            providers,
+            task?.providerId,
+            task?.modelId,
+          ).supportsImages
+        ) {
+          setNotice(tr("当前模型不支持识图，已移除图片并按文字内容重试", "This model cannot read images. Images were removed before retrying the text."));
+          return sendMessage(
+            retryContent,
+            retryAttachments.filter(
+              (attachment) => !isImageAttachment(attachment),
+            ),
+            retryRequest,
+          );
+        }
+        return sendMessage(retryContent, retryAttachments, retryRequest);
+      },
+    });
+
+    if (retryResult.started) {
+      setNotice(tr("已重新启动本轮任务", "This turn has been restarted"));
+      return true;
+    }
+    if (retryResult.reason === "retry-error") {
+      const detail = cleanIpcError(
+        retryResult.error,
+        tr("未知错误", "Unknown error"),
+      );
+      console.error("AporiaX retry failed", retryResult.error);
+      setNotice(
+        tr(
+          `无法重试本轮：${detail}`,
+          `Unable to retry this turn: ${detail}`,
+        ),
+      );
+      return false;
+    }
+    if (
+      retryResult.reason === "start-rejected" ||
+      retryResult.reason === "start-unavailable"
+    ) {
+      setNotice(
+        tr(
+          "重试未能启动，请检查模型 Provider 后再试",
+          "The retry could not start. Check the model provider and try again.",
+        ),
+      );
+      return false;
+    }
+    setNotice(
+      tr(
+        "旧任务仍在退出，请稍后再次点击重试本轮",
+        "The previous run is still exiting. Try retrying this turn again shortly.",
+      ),
+    );
+    return false;
   };
 
   const revertMessageChanges = async (messageId, paths) => {
@@ -4152,7 +4181,7 @@ function App() {
   return (
     <div className="app-shell" data-theme={theme}>
       <AppTitlebar onOpenSettings={() => openApplicationSettings("general")} />
-      <div className="app-content">
+      {!welcomeOpen && <div className="app-content">
         {!sidebarCollapsed && (
           <Sidebar
             tasks={tasks}
@@ -4235,9 +4264,9 @@ function App() {
             <EmptyState onNewTask={requestNewTask} />
           )}
         </section>
-      </div>
+      </div>}
 
-      {newTaskOpen && (
+      {!welcomeOpen && newTaskOpen && (
         <NewTaskModal
           providers={providers}
           projects={projects}

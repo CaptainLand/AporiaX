@@ -10,7 +10,13 @@ Open **Settings → Extensions**:
 - **Installed** shows active project/user Skills and configured MCP servers. User Skills and MCP records can be removed here.
 - **Sources & policy** controls whether optional extension sources are available. These switches do not grant tool permission.
 
+Use **Import Skill folder** to select a local package whose root contains `SKILL.md`. AporiaX validates the manifest, rejects symbolic links, caps packages at 500 files / 20 MB, and atomically installs the complete folder so referenced assets remain available.
+
+Use **Import MCP JSON** for either AporiaX `{ "servers": [...] }` configuration or the common `{ "mcpServers": { "name": {...} } }` shape. Imported servers remain disabled by normal extension, trust, and permission boundaries; importing does not start a process.
+
 For a custom MCP server, choose **Add a custom MCP server**, select `Streamable HTTP` or `Local stdio`, and save the configuration. Prefer `${ENV_NAME}` references for credentials. AporiaX stores the reference, not a resolved secret value.
+
+In the task composer, type `@` to search workspace files and installed/configured extensions. `@skill:<name>` explicitly activates a Skill. `@mcp:<id>` scopes MCP discovery for that turn to the named configured server, which helps avoid connecting unrelated services.
 
 ## Trust model
 

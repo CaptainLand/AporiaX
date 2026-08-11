@@ -14,6 +14,7 @@ import {
   formatWorkspaceMentionToken,
   rankWorkspaceFiles,
   replaceWorkspaceMentionQuery,
+  tokenizeDisplayMentions,
 } from "../src/agent-process-model.js";
 
 assert.deepEqual(
@@ -45,6 +46,19 @@ assert.deepEqual(
   ["docs/runtime.md", "src/runtime.jsx"],
   "equal-score and equal-length paths use the deterministic lexical tiebreaker",
 );
+
+const displayMentions = tokenizeDisplayMentions(
+  "Check @src/main.jsx with @skill:frontend-review and @mcp:docs; keep user@example.com plain.",
+);
+assert.deepEqual(
+  displayMentions.filter((part) => part.type === "mention").map((part) => [part.kind, part.value]),
+  [
+    ["file", "@src/main.jsx"],
+    ["skill", "@skill:frontend-review"],
+    ["mcp", "@mcp:docs"],
+  ],
+);
+assert.match(displayMentions.map((part) => part.value).join(""), /user@example\.com/);
 
 const runningMessage = {
   id: "assistant-1",

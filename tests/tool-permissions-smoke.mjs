@@ -16,6 +16,9 @@ const workspaceWrite = createPermissionPolicy("workspace-write");
 assert.equal(getToolPermission(workspaceWrite, "run_command"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "write_file"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "browser_click"), "ask");
+assert.equal(getToolPermission(workspaceWrite, "read_external_file"), "ask");
+assert.equal(getToolPermission(workspaceWrite, "start_process"), "ask");
+assert.equal(getToolPermission(workspaceWrite, "read_process"), "allow");
 
 const builderWrite = createPermissionPolicy("builder-write");
 assert.equal(getToolPermission(builderWrite, "run_command"), "allow");
@@ -102,6 +105,14 @@ const browserApproval = buildToolApprovalRequest({
 });
 assert.equal(browserApproval.toolName, "browser_click");
 assert.equal(browserApproval.kind, "control");
+
+const externalApproval = buildToolApprovalRequest({
+  toolName: "read_external_file",
+  descriptor: { risk: "read" },
+  input: { path: "C:\\Users\\demo\\notes.md", reason: "Read the requested notes" },
+});
+assert.equal(externalApproval.title, "读取工作区外文件");
+assert.match(externalApproval.command, /notes\.md/);
 
 const genericCompletedMessage = {
   id: "assistant-generic",

@@ -35,6 +35,70 @@
       "skillFile": "skills/release-readiness/SKILL.md"
     },
     {
+      "id": "skill.repository-onboarding",
+      "type": "skill",
+      "name": "repository-onboarding",
+      "title": "Repository Onboarding",
+      "titleEn": "Repository Onboarding",
+      "titleZh": "仓库理解",
+      "description": "Build a concise, evidence-backed mental model of an unfamiliar repository before making changes.",
+      "descriptionEn": "Build a concise, evidence-backed mental model of an unfamiliar repository before making changes.",
+      "descriptionZh": "在修改陌生项目之前，先建立简洁且有代码证据支撑的仓库理解。",
+      "version": "1.0.0",
+      "author": "AporiaX",
+      "tags": ["repository", "architecture", "onboarding"],
+      "trust": "bundled",
+      "skillFile": "skills/repository-onboarding/SKILL.md"
+    },
+    {
+      "id": "skill.bug-investigation",
+      "type": "skill",
+      "name": "bug-investigation",
+      "title": "Bug Investigation",
+      "titleEn": "Bug Investigation",
+      "titleZh": "故障定位",
+      "description": "Reproduce, isolate, and fix defects with a falsifiable hypothesis and targeted regression evidence.",
+      "descriptionEn": "Reproduce, isolate, and fix defects with a falsifiable hypothesis and targeted regression evidence.",
+      "descriptionZh": "用可证伪假设复现、隔离并修复问题，同时留下针对性的回归证据。",
+      "version": "1.0.0",
+      "author": "AporiaX",
+      "tags": ["debugging", "regression", "evidence"],
+      "trust": "bundled",
+      "skillFile": "skills/bug-investigation/SKILL.md"
+    },
+    {
+      "id": "skill.test-strategy",
+      "type": "skill",
+      "name": "test-strategy",
+      "title": "Test Strategy",
+      "titleEn": "Test Strategy",
+      "titleZh": "测试策略",
+      "description": "Select high-value tests around changed behavior, boundaries, failure modes, and regressions.",
+      "descriptionEn": "Select high-value tests around changed behavior, boundaries, failure modes, and regressions.",
+      "descriptionZh": "围绕变更行为、边界、失败模式与回归风险选择高价值验证。",
+      "version": "1.0.0",
+      "author": "AporiaX",
+      "tags": ["test", "verification", "quality"],
+      "trust": "bundled",
+      "skillFile": "skills/test-strategy/SKILL.md"
+    },
+    {
+      "id": "skill.documentation-delivery",
+      "type": "skill",
+      "name": "documentation-delivery",
+      "title": "Documentation Delivery",
+      "titleEn": "Documentation Delivery",
+      "titleZh": "文档交付",
+      "description": "Produce concise, structured documentation whose claims match the implementation and intended audience.",
+      "descriptionEn": "Produce concise, structured documentation whose claims match the implementation and intended audience.",
+      "descriptionZh": "面向目标读者制作结构清晰、内容与实现一致并可验证的文档。",
+      "version": "1.0.0",
+      "author": "AporiaX",
+      "tags": ["documentation", "office", "delivery"],
+      "trust": "bundled",
+      "skillFile": "skills/documentation-delivery/SKILL.md"
+    },
+    {
       "id": "mcp.remote-http",
       "type": "mcp-template",
       "name": "remote-http",
@@ -65,6 +129,50 @@
       "tags": ["mcp", "local", "stdio"],
       "trust": "template",
       "template": { "transport": "stdio", "command": "npx" }
+    },
+    {
+      "id": "mcp.filesystem",
+      "type": "mcp-template",
+      "name": "filesystem",
+      "title": "Filesystem MCP",
+      "titleEn": "Filesystem MCP",
+      "titleZh": "文件系统 MCP",
+      "description": "Official reference filesystem server, pre-scoped to the current workspace. Review the path before saving.",
+      "descriptionEn": "Official reference filesystem server, pre-scoped to the current workspace. Review the path before saving.",
+      "descriptionZh": "官方参考文件系统服务，默认限定为当前工作区；保存前请确认路径。",
+      "version": "2026",
+      "author": "Model Context Protocol",
+      "tags": ["mcp", "filesystem", "official"],
+      "trust": "template",
+      "template": {
+        "id": "filesystem",
+        "name": "Filesystem",
+        "transport": "stdio",
+        "command": "cmd",
+        "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "{workspace}"]
+      }
+    },
+    {
+      "id": "mcp.playwright",
+      "type": "mcp-template",
+      "name": "playwright",
+      "title": "Playwright MCP",
+      "titleEn": "Playwright MCP",
+      "titleZh": "浏览器自动化 MCP",
+      "description": "Official Microsoft Playwright MCP preset for browser inspection and automation. Browser actions retain approval boundaries.",
+      "descriptionEn": "Official Microsoft Playwright MCP preset for browser inspection and automation. Browser actions retain approval boundaries.",
+      "descriptionZh": "微软官方 Playwright MCP 预设，用于浏览器检查与自动化；浏览器操作仍受审批边界约束。",
+      "version": "latest",
+      "author": "Microsoft",
+      "tags": ["mcp", "browser", "playwright", "official"],
+      "trust": "template",
+      "template": {
+        "id": "playwright",
+        "name": "Playwright",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest"]
+      }
     }
   ]
 }

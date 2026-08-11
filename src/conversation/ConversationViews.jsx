@@ -878,9 +878,13 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
             if (retrying) return;
             setRetrying(true);
             try {
-              const started = await onRetry(message);
-              if (!started) setRetrying(false);
-            } catch {
+              await onRetry(message);
+            } catch (error) {
+              // retryMessage normally converts failures into visible notices.
+              // Keep an observable fallback instead of silently discarding an
+              // unexpected render-layer exception.
+              console.error("AporiaX retry action failed", error);
+            } finally {
               setRetrying(false);
             }
           }}

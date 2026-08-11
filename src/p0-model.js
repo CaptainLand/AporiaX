@@ -39,6 +39,7 @@ const ROUTE_TOOL_META = {
   },
   list_directory: { stage: "lens", zh: "浏览工作区", en: "Browse workspace" },
   read_file: { stage: "lens", zh: "读取文件", en: "Read file" },
+  read_external_file: { stage: "lens", zh: "读取外部文件", en: "Read external file" },
   search_text: { stage: "lens", zh: "定位相关内容", en: "Locate relevant content" },
   git_status: { stage: "lens", zh: "检查 Git 状态", en: "Inspect Git status" },
   git_diff: { stage: "lens", zh: "检查代码差异", en: "Inspect code diff" },
@@ -49,6 +50,10 @@ const ROUTE_TOOL_META = {
   create_spreadsheet: { stage: "forge", zh: "创建电子表格", en: "Create spreadsheet" },
   inspect_office_file: { stage: "trial", zh: "检查 Office 文件", en: "Inspect Office file" },
   run_command: { stage: "trial", zh: "运行验证命令", en: "Run verification command" },
+  start_process: { stage: "trial", zh: "启动常驻进程", en: "Start persistent process" },
+  read_process: { stage: "trial", zh: "读取进程输出", en: "Read process output" },
+  write_stdin: { stage: "trial", zh: "写入进程输入", en: "Write process input" },
+  kill_process: { stage: "trial", zh: "停止常驻进程", en: "Stop persistent process" },
   complete_self_check: { stage: "trial", zh: "提交自检结果", en: "Submit self-check result" },
 };
 

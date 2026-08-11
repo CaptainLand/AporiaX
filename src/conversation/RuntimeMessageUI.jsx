@@ -12,6 +12,7 @@ import {
   buildAgentProcessSummary,
   currentProcessSummary,
   deriveLiveAgentStatus,
+  tokenizeDisplayMentions,
 } from "../agent-process-model.js";
 import { formatTaskDuration } from "../runtime-ui-core.js";
 import { useI18n } from "../i18n";
@@ -249,6 +250,7 @@ export function FoldableUserPrompt({ content }) {
 
   if (!text) return null;
   const foldable = staticOverflow || heightOverflow;
+  const displayParts = tokenizeDisplayMentions(text);
   return (
     <>
       <div
@@ -257,7 +259,25 @@ export function FoldableUserPrompt({ content }) {
           foldable && !expanded ? "native-prompt-collapsed" : ""
         }`}
       >
-        {text}
+        {displayParts.map((part, index) =>
+          part.type === "mention" ? (
+            <span
+              className={`aporiax-message-mention ${part.kind}`}
+              key={`${part.value}-${index}`}
+              title={
+                part.kind === "file"
+                  ? tr("工作区文件引用", "Workspace file reference")
+                  : part.kind === "skill"
+                    ? tr("Skill 引用", "Skill reference")
+                    : tr("MCP 引用", "MCP reference")
+              }
+            >
+              {part.value}
+            </span>
+          ) : (
+            <React.Fragment key={`text-${index}`}>{part.value}</React.Fragment>
+          ),
+        )}
       </div>
       {foldable && (
         <button

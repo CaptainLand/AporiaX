@@ -63,10 +63,14 @@ contextBridge.exposeInMainWorld("desktop", {
     library: (request = {}) => ipcRenderer.invoke("core:library", request),
     installLibrarySkill: (request) =>
       ipcRenderer.invoke("core:library:install-skill", request),
+    importLibrarySkill: () =>
+      ipcRenderer.invoke("core:library:import-skill"),
     removeLibrarySkill: (request) =>
       ipcRenderer.invoke("core:library:remove-skill", request),
     saveLibraryMcp: (request) =>
       ipcRenderer.invoke("core:library:save-mcp", request),
+    importLibraryMcp: () =>
+      ipcRenderer.invoke("core:library:import-mcp"),
     removeLibraryMcp: (request) =>
       ipcRenderer.invoke("core:library:remove-mcp", request),
     extensionPolicy: (request = {}) =>

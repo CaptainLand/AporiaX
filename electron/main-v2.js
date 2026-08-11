@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
 import { installDesktopBackground } from "./desktop-background.js";
 import { createHarnessKernel } from "./harness/kernel.js";
@@ -33,8 +33,11 @@ import {
   loadMcpConfiguration,
   publicMcpServerSummary,
 } from "./mcp-config.js";
+import { selectMentionedMcpServers } from "./mcp-mentions.js";
 import {
   extensionLibrarySnapshot,
+  importMcpConfiguration,
+  importUserSkill,
   installCatalogSkill,
   removeMcpServer,
   removeUserSkill,
@@ -196,12 +199,20 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       const mcpConfiguration = await loadMcpConfiguration(
         mcpConfigurationOptions(workspacePath),
       );
+      const mcpSelection = selectMentionedMcpServers(
+        skillPreparedRequest,
+        mcpConfiguration.servers,
+      );
       const preparedRequest = {
         ...skillPreparedRequest,
         mcpServers: extensionSourceEnabled(policy, "mcp")
-          ? mcpConfiguration.servers
+          ? mcpSelection.servers
           : [],
-        mcpConfigErrors: mcpConfiguration.errors,
+        mcpConfigErrors: [
+          ...mcpConfiguration.errors,
+          ...mcpSelection.unresolved.map((id) => `Mentioned MCP server is not available: ${id}`),
+        ],
+        activatedMcpServers: mcpSelection.mentions,
         extensionPolicy: policy.effective,
         capabilityRegistry: kernel?.capabilitiesRegistry || null,
       };
@@ -297,7 +308,7 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
     policy,
     userSkillsDirectory,
     projectSkillsDirectory,
-    manualInvocation: "/skill:name",
+    manualInvocation: "@skill:name or /skill:name",
   };
 });
 ipcMain.handle("core:mcp", async (_event, request = {}) => {
@@ -331,6 +342,17 @@ ipcMain.handle("core:library:install-skill", async (_event, request = {}) =>
     catalogId: request?.catalogId,
   }),
 );
+ipcMain.handle("core:library:import-skill", async () => {
+  const selection = await dialog.showOpenDialog({
+    title: "Import AporiaX Skill folder",
+    properties: ["openDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
+  return importUserSkill({
+    userDataDirectory: app.getPath("userData"),
+    sourceDirectory: selection.filePaths[0],
+  });
+});
 ipcMain.handle("core:library:remove-skill", async (_event, request = {}) =>
   removeUserSkill({
     userDataDirectory: app.getPath("userData"),
@@ -343,6 +365,18 @@ ipcMain.handle("core:library:save-mcp", async (_event, request = {}) =>
     server: request?.server,
   }),
 );
+ipcMain.handle("core:library:import-mcp", async () => {
+  const selection = await dialog.showOpenDialog({
+    title: "Import MCP configuration",
+    properties: ["openFile"],
+    filters: [{ name: "JSON configuration", extensions: ["json"] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
+  return importMcpConfiguration({
+    userDataDirectory: app.getPath("userData"),
+    sourcePath: selection.filePaths[0],
+  });
+});
 ipcMain.handle("core:library:remove-mcp", async (_event, request = {}) =>
   removeMcpServer({
     userDataDirectory: app.getPath("userData"),

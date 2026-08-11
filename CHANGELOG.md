@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.1 — 2026-08-12
+
+AporiaX 0.6.1 upgrades the native Agent toolchain and makes user-managed Skills and MCP servers practical from the desktop UI.
+
+### Agent-native file and code tools
+
+- Added paged `read_file` reads with line ranges, character offsets, continuation metadata, total size information, and SHA-256 preconditions for safe follow-up edits.
+- Replaced recursive literal-only search with bundled ripgrep, including literal, regular-expression, symbol, heuristic definition/reference modes, and include/exclude globs. A portable Node fallback remains available.
+- Upgraded `apply_patch` to accept preflighted multi-hunk, multi-file unified diffs with create/delete support, dry runs, optimistic SHA-256 checks, atomic rollback, and per-file change evidence.
+- Added task-scoped persistent terminal processes: start a server/watcher/REPL, incrementally read logs, write stdin, and stop the full process tree. Processes are bounded and automatically cleaned up at task end.
+
+### Approval and extensions
+
+- Added read-only access to a specific file outside the workspace through `read_external_file`. Every invocation requires a fresh user approval and never grants external write access.
+- Added native folder import for user Skills, including package validation, symlink rejection, bounded size/file counts, and atomic installation.
+- Added MCP JSON import for AporiaX and common `mcpServers` configuration shapes.
+- Extended the composer `@` menu to discover files, `@skill:<name>`, and `@mcp:<id>`. Explicit MCP mentions scope a run to the named configured servers.
+- Added bilingual import controls and activity presentation for the new tools.
+
+### Validation
+
+- Added focused smoke coverage for ranged reads, ripgrep modes/globs, multi-file and delete patches, external-read approval policy, Skill/MCP import, MCP mentions, and interactive persistent processes.
+- Added retry-transaction coverage for stale-run reconciliation, replacement acceptance, rejected starts, and visible renderer errors.
+- Verified the production renderer build after the toolchain and Extensions Center changes.
+
+### Desktop reliability and polish
+
+- Reworked stopped-turn retry into one observable transaction and fixed the detached attachment classifier that could make the retry button appear inert.
+- Added more first-party Skill presets and bilingual extension discovery/import presentation.
+- Reduced welcome-screen particle cost with adaptive sampling, visibility pausing, and a 120 FPS cap.
+- Added a local account and weekly-quota UI prototype without server or password persistence.
+
 ## 0.6.0 — 2026-08-11
 
 AporiaX 0.6.0 is a major architecture release. It replaces accumulated renderer and runtime bridges with explicit state, lifecycle, capability, extension, review, and execution boundaries while adding a substantially broader local Agent platform.
