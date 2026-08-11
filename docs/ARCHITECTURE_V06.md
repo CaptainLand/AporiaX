@@ -1,67 +1,76 @@
 # AporiaX v0.6 Architecture Consolidation
 
-AporiaX v0.6 is an incremental architecture consolidation, not a rewrite. The goal is to preserve current product behavior while replacing the duplicated renderer/runtime paths that made small changes expensive and fragile.
+AporiaX v0.6 is an incremental architecture consolidation, not a rewrite. Its architecture-debt phase is now considered **frozen**: future Browser, Computer Use, MCP, Plugin, Skill and cloud work should extend the boundaries below instead of reopening the old duplicated renderer/runtime paths.
 
-## Core invariants
+## Frozen invariants
 
 1. **One live renderer truth** — TaskStore owns live task state.
-2. **Persistence is not state** — desktop JSON is durable storage; localStorage is a debounced startup cache only.
-3. **Native React message UI** — elapsed time, Live Agent Status, process trace, prompt folding, Witness and streamed Markdown receive the same message object.
-4. **No DOM reverse lookup for application state** — renderer logic no longer discovers tasks/messages through MutationObserver/index matching.
-5. **One Harness event boundary** — renderer protocol handling enters through `useHarnessEvents()`.
-6. **Runtime modules own stable boundaries** — Provider streaming, tool permissions/dispatch, workspace safety, native execution, self-check and subagents no longer live as one monolithic implementation.
-7. **Capabilities share one registry** — Native, Browser, Plugin, Skill and MCP metadata enter the Harness Capability Registry.
-8. **Safety follows the execution boundary** — sandboxed workspace commands can auto-run; unsafe host/external side effects remain approval-gated.
-9. **Behavior before movement** — focused tests plus broad runtime/Harness/build gates protect each extraction.
+2. **Persistence is not state** — desktop JSON is durable storage; localStorage is only a debounced startup cache.
+3. **Native React message UI** — elapsed time, Live Agent Status, process trace, prompt folding, Witness and streamed Markdown consume the same message object.
+4. **No DOM reverse lookup for application state** — no MutationObserver/index matching is used to discover the current task/message.
+5. **One renderer protocol boundary** — Harness events enter through `useHarnessEvents()`; high-frequency deterministic task transforms live in the pure Harness event reducer.
+6. **Explicit run lifecycle** — `TurnCoordinator` owns round/phase/terminal lifecycle while domain modules own model, tool, self-check and subagent behavior.
+7. **Runtime modules own stable boundaries** — Provider streaming, conversation, tool catalog/permission/dispatch/execution, workspace safety, self-check and subagents are separate modules.
+8. **Capabilities share one registry** — Native, Browser, Plugin, Skill and MCP publish public metadata through the Harness Capability Registry.
+9. **Observable UI follows capability metadata** — Route/Witness prefer capability presentation metadata; hardcoded renderer maps are compatibility fallback for old persisted history.
+10. **Extension availability is not permission** — Extension Policy can remove optional sources from availability but can never elevate Tool Permission or Approval.
+11. **Project policy can only tighten** — `.aporiax/extensions.json` may disable Browser/Plugin/Skill/MCP sources but cannot re-enable a source disabled by the user.
+12. **Safety follows the execution boundary** — sandboxed workspace commands may auto-run; host/external side effects remain approval-gated.
 
-## Renderer architecture
+## Renderer
 
 ```text
 Harness events
-     ↓
+      ↓
 useHarnessEvents()
-     ↓
-TaskStore ───────────────→ desktop checkpoint
-     │
-     ├─ ConversationViews
-     │    ├─ RunDuration
-     │    ├─ LiveAgentStatus
-     │    ├─ streaming Markdown
-     │    ├─ meaningful Agent Process
-     │    └─ Witness
-     ├─ Composer
-     │    └─ @workspace autocomplete
-     ├─ RouteView
-     └─ Settings
-          ├─ Vision / Skill task capabilities
-          └─ Extensions Center
+      ├─ side effects / streaming buffer / approval UI
+      ↓
+Pure Harness Event Reducer
+      ↓
+TaskStore ───────────────→ durable desktop checkpoint
+      │
+      ├─ ConversationViews
+      │    ├─ RunDuration
+      │    ├─ LiveAgentStatus
+      │    ├─ streaming Markdown
+      │    ├─ meaningful Agent Process
+      │    └─ Witness
+      ├─ Composer
+      │    └─ @workspace autocomplete
+      ├─ RouteView
+      └─ Settings
+           ├─ Vision / Skill task capability cards
+           └─ Extensions Center
 ```
 
-Successful turns no longer retain generic `Run completed` presentation or bookkeeping-only process steps. Compact process UI is for concrete files, commands, changes, specific plan steps, subagent work and attention states.
+Successful turns do not keep bookkeeping-only `Run completed` / generic process rows. Compact process UI is reserved for concrete files, commands, changes, specific plan steps, subagent work and attention states.
 
-## Runtime architecture
+## Runtime
 
 ```text
 runHarness()
-   │
-   ├─ Provider Stream
-   ├─ Conversation Runtime
-   ├─ Tool Catalog
-   ├─ Tool Dispatcher / Permissions
-   │       ↓
-   │   Native Tool Executor
-   │       ↓
-   │   Workspace Runtime / Sandbox / Browser / Office
-   │
-   ├─ Self-check Coordinator
-   │       ├─ Self-check Evidence
-   │       └─ Subagent Loop
-   │              └─ Subagent Model / Scope
-   │
-   └─ Harness event/result coordination
+    ↓
+TurnCoordinator
+    ├─ round / phase / terminal lifecycle
+    ├─ control boundary
+    └─ model-response classification
+         │
+         ├─ Provider Stream
+         ├─ Conversation Runtime
+         ├─ Tool Catalog
+         ├─ Tool Dispatcher / Permissions
+         │      ↓
+         │   Native Tool Executor
+         │      ↓
+         │   Workspace Runtime / Sandbox / Browser / Office
+         ├─ SelfCheckCoordinator
+         │      ├─ Self-check Evidence
+         │      └─ Subagent Loop
+         │             └─ Subagent Model / Scope
+         └─ final result / Harness protocol
 ```
 
-Current runtime modules:
+Runtime modules:
 
 ```text
 electron/runtime/
@@ -75,10 +84,65 @@ electron/runtime/
 ├─ self-check-evidence.js
 ├─ self-check-coordinator.js
 ├─ subagent-model.js
-└─ subagent-loop.js
+├─ subagent-loop.js
+└─ turn-coordinator.js
 ```
 
-The remaining `agent-runtime-core.js` is increasingly coordination code rather than the implementation home for every subsystem.
+`agent-runtime-core.js` remains the composition/orchestration layer. It should not become the implementation home for a new capability when an existing runtime/registry boundary can own it.
+
+## Capability and extension layer
+
+```text
+Native ──┐
+Browser ─┤
+Plugin ──┼─→ Capability Registry ─→ presentation / observability
+Skill ───┤              │
+MCP ─────┘              ↓
+                  Extension Policy
+                         │
+                         ↓
+                availability filtering
+                         │
+                         ↓
+                  Tool Permission
+                         ↓
+                     Approval
+                         ↓
+                     Executor
+                         ↓
+                     Witness
+```
+
+A capability stores public metadata only: kind/source/name/title/risk/scope/provider/plugin/server, observability tags and presentation metadata. MCP tool/resource/prompt capabilities are run-scoped and removed when the MCP runtime closes. Tokens, auth headers, resource bodies, prompt results and Tool results are never stored in the capability catalog.
+
+### Extension Policy
+
+User policy:
+
+```text
+<Electron userData>/aporiax-extensions.json
+```
+
+Managed optional sources:
+
+```text
+browser
+plugin
+skill
+mcp
+```
+
+Native core capabilities are not disable-able through Extension Policy.
+
+Project policy:
+
+```text
+<workspace>/.aporiax/extensions.json
+```
+
+may contain only a `disabled` list. Project configuration cannot enable a user-disabled source and cannot grant Tool permission.
+
+The Extensions Center exposes safe user-level enable/disable switches. Enabling a source only makes already installed/configured/trusted capabilities eligible again. Browser control and side-effecting MCP calls still follow their existing Permission/Approval rules; MCP server commands remain governed by the user-level MCP trust file.
 
 ## Sandbox and approval semantics
 
@@ -106,38 +170,11 @@ read-only task
     → remains read-only
 ```
 
-Repository configuration may make permissions stricter but cannot elevate the UI-selected policy.
-
-`run_command.reason` is optional. A missing cosmetic explanation no longer rejects a valid command; the approval layer supplies a safe fallback explanation when approval is needed.
-
-## Unified Capability Registry
-
-```text
-Native ──┐
-Browser ─┤
-Plugin ──┼─→ Harness Capability Registry
-Skill ───┤
-MCP ─────┘
-```
-
-A capability records public metadata such as kind, source, name/title, risk, scope, provider/plugin/server id and observability tags.
-
-MCP capabilities are **run scoped**. Tool/resource/prompt metadata is registered after MCP discovery and removed when that MCP runtime closes. Tokens, headers, resource bodies, prompt results and tool results are not stored in the capability catalog.
-
-The catalog is available through:
-
-```text
-kernel.capabilitiesRegistry
-kernel.snapshot()
-window.desktop.core.capabilities(...)
-GET /v1/capabilities
-```
-
-Application Settings now includes an **Extensions** section backed by this registry. It surfaces capability counts, Skills, trusted/configured MCP servers and loaded plugins without turning a project into an implicit executable-install trust boundary.
+Repository configuration may make permissions stricter but cannot elevate the UI-selected policy. `run_command.reason` is optional; the approval layer supplies a safe fallback description when one is needed.
 
 ## Migration status
 
-### Phase 1 — State and Conversation
+### Phase 1 — State and Conversation — COMPLETE
 
 - [x] TaskStore live state and persistence boundary.
 - [x] Native React runtime-message UI.
@@ -146,70 +183,58 @@ Application Settings now includes an **Extensions** section backed by this regis
 - [x] Native Vision/Skill capability cards.
 - [x] Streaming performance batching and debounced local cache.
 
-### Phase 2 — Renderer modules
+### Phase 2 — Renderer modules — COMPLETE
 
 - [x] Move Conversation/Composer/Route/Settings out of `main.jsx`.
 - [x] Move model catalog/common controls out of `main.jsx`.
 - [x] Extract Harness event subscription into `useHarnessEvents()`.
-- [ ] Convert selected high-value event branches into pure reducer helpers where it materially simplifies tests.
-- [ ] Continue shrinking app-level modal/shell orchestration when useful; no rewrite target is required.
+- [x] Extract high-value deterministic task/message event transforms into a pure reducer.
+- [x] Preserve side effects in the hook instead of mixing them into state reducers.
 
-### Phase 3 — Runtime modules
+Further shell/modal decomposition is ordinary maintenance, not architecture debt.
+
+### Phase 3 — Runtime modules — COMPLETE
 
 - [x] Provider streaming/retry/SSE.
 - [x] Conversation normalization.
 - [x] Native Tool catalog/risk metadata.
 - [x] Tool permission/approval decisions.
-- [x] Native Tool dispatcher.
-- [x] Native Tool executor.
+- [x] Native Tool dispatcher and executor.
 - [x] Workspace realpath/search/Git safety runtime.
-- [x] Self-check evidence model.
-- [x] Progressive SelfCheckCoordinator.
-- [x] Subagent scope/evidence model.
-- [x] Actual subagent model/tool loop.
-- [x] Preserve public compatibility exports and Harness event shapes.
-- [ ] Further reduce the remaining `runHarness()` body only when a new stable coordination boundary is identifiable.
+- [x] Self-check evidence model and progressive coordinator.
+- [x] Subagent scope/evidence model and actual model/tool loop.
+- [x] Explicit Run/Turn lifecycle coordinator.
+- [x] Preserve public compatibility exports and existing Harness event shapes.
 
-### Phase 4 — Unified capability layer
+Further shrinking `runHarness()` is optional composition cleanup unless a new stable domain boundary appears.
 
-- [x] Add Harness Capability Registry.
-- [x] Bridge Native/Browser/Plugin ToolHost registrations.
-- [x] Publish discovered Skills as scoped capability metadata.
-- [x] Publish per-run MCP tools/resources/prompts and clean them up on close.
-- [x] Expose capability catalog through Core/IPC.
-- [x] Build Extensions settings surface from the unified registry.
-- [ ] Derive more Route/Witness labels and UI metadata from capability metadata instead of feature-specific maps.
-- [ ] Add safe enable/disable/edit flows on top of Extensions Center where the underlying trust model supports them.
+### Phase 4 — Unified capability and extension layer — COMPLETE
 
-## Validation strategy
+- [x] Harness Capability Registry.
+- [x] Native/Browser/Plugin ToolHost capability registrations.
+- [x] Scoped Skill capability metadata.
+- [x] Per-run MCP tools/resources/prompts with scope cleanup.
+- [x] Core/IPC capability catalog.
+- [x] Capability metadata drives current Route/Witness tool presentation with legacy fallback.
+- [x] Extensions Center.
+- [x] Safe Extension Policy lifecycle with user enable/disable and project-only tightening.
 
-The v0.6 stack now has focused regressions for:
+## Architecture freeze gate
 
-```text
-TaskStore / renderer architecture
-streaming performance
-Provider streaming
-Tool permissions
-Tool dispatcher
-Self-check evidence/coordinator
-Subagent model/loop
-Native Tool executor
-Workspace runtime
-Conversation runtime
-Native Tool catalog
-Capability Registry
-Scoped MCP capabilities
-Extensions Center
-```
+`npm run test:v06-architecture` guards the module boundaries and prevents accidental return to the old renderer bridges or feature-prefix UI routing.
 
-Each architecture PR also runs a relevant subset of the broader runtime, Harness v2, Browser/MCP and Vite build checks before its generated extraction is committed.
+The final closeout regression set includes focused TaskStore/renderer, event reducer, streaming, runtime, Tool, Self-check, Subagent, Capability, MCP, Browser, Extension Policy and Vite build tests.
 
-## Non-goals
+## What is feature work after the freeze
 
-- rewrite AporiaX from scratch
-- move the local Agent runtime to a server
-- remove local-first/BYOK support
-- make Browser/MCP external side effects silently auto-approved
-- use the Capability Registry as a cache for secret or large external data
+The following are **not** unfinished v0.6 architecture debt:
 
-The v0.6 consolidation succeeds when the next capability can be added through explicit runtime/capability boundaries instead of touching five unrelated state and rendering paths merely to become usable and observable.
+- Computer Use
+- richer Browser automation
+- MCP OAuth / editor / server marketplace
+- Plugin installation and distribution UX
+- Skill marketplace / sharing
+- cloud accounts, billing and model gateway
+- additional Provider/model integrations
+
+Those should now enter through the frozen runtime, capability, policy and observability boundaries.
