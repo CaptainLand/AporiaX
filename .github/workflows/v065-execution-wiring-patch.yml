@@ -1,0 +1,70 @@
+name: v0.6.5 execution wiring patch
+
+on:
+  push:
+    branches:
+      - agent/0.6.5-execution-permissions
+    paths:
+      - scripts/patch-v065-execution.mjs
+      - .github/workflows/v065-execution-wiring-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/0.6.5-execution-permissions
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply deterministic patch
+        run: node scripts/patch-v065-execution.mjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify execution policy
+        run: npm run test:execution-policy
+
+      - name: Verify execution wiring
+        run: npm run test:execution-wiring
+
+      - name: Verify permission dispatcher
+        run: npm run test:tool-permissions && npm run test:tool-dispatcher
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Commit generated wiring changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No patch changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/models/model-catalog.js \
+            src/settings/SettingsPanel.jsx \
+            electron/preload.cjs \
+            electron/harness/agent-budget.js \
+            electron/sandbox-runtime.js \
+            electron/runtime/tool-permissions.js \
+            electron/runtime/process-runtime.js \
+            package.json \
+            tests/execution-mode-wiring-smoke.mjs \
+            docs/releases/v0.6.5.md
+          git commit -m "feat: wire selectable execution modes end to end"
+          git push origin HEAD:agent/0.6.5-execution-permissions
