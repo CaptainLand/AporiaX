@@ -51,6 +51,20 @@ assert.equal(
   classifyCommandPermission("npm test", { executionMode: "direct" }).action,
   "allow",
 );
+
+assert.equal(
+  classifyCommandPermission("npm test && echo done", { executionMode: "direct" }).action,
+  "ask",
+);
+assert.equal(
+  classifyCommandPermission("git status | cat", { executionMode: "safe" }).action,
+  "ask",
+);
+assert.equal(
+  classifyCommandPermission("npm test > result.txt", { executionMode: "safe" }).action,
+  "ask",
+);
+
 assert.equal(
   classifyCommandPermission("node scripts/custom.js", { executionMode: "direct" }).action,
   "ask",
