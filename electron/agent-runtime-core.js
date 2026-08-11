@@ -76,6 +76,7 @@ import {
   sanitizeFinalAnswer,
 } from "./runtime/conversation.js";
 import { createSelfCheckCoordinator } from "./runtime/self-check-coordinator.js";
+import { createTurnCoordinator } from "./runtime/turn-coordinator.js";
 import {
   MAX_SEARCH_RESULTS,
   TOOL_REGISTRY,
@@ -902,6 +903,7 @@ export async function runHarness({
     forwardEvent(event);
     witness?.observe(event);
   };
+  const turnCoordinator = createTurnCoordinator({ runId, emit });
   const isEnglish = language === "en";
   const responseLanguage =
     isEnglish ? "English" : "Simplified Chinese";
@@ -1661,8 +1663,10 @@ export async function runHarness({
       }
     }
     for (let step = 0; ; step += 1) {
-      throwIfAborted(signal);
-      await applyRuntimeControlBoundary();
+      await turnCoordinator.beginRound({
+        signal,
+        applyControlBoundary: applyRuntimeControlBoundary,
+      });
       const completedReviewFeedback = await consumeProgressiveReviewJob();
       if (completedReviewFeedback) {
         conversation.push({
@@ -1741,10 +1745,8 @@ export async function runHarness({
         contextWindowTokens,
       });
 
-      if (
-        !Array.isArray(message.tool_calls) ||
-        message.tool_calls.length === 0
-      ) {
+      const turnDecision = turnCoordinator.observeModelResponse(message);
+      if (turnDecision.kind === "final") {
         const finalBackgroundReviewFeedback =
           await consumeProgressiveReviewJob({ wait: true });
         if (finalBackgroundReviewFeedback) {
@@ -1795,6 +1797,7 @@ export async function runHarness({
           !selfCheck.completed &&
           progressiveEligible
         ) {
+          turnCoordinator.beginReview({ reason: "progressive-self-check" });
           if (!selfCheck.started) {
             selfCheck.started = true;
             selfCheck.mode = "progressive";
@@ -2046,6 +2049,10 @@ export async function runHarness({
           })),
         };
         completedResult.content = finalContent;
+        turnCoordinator.complete({
+          changedFiles: completedResult.changes.length,
+          toolSteps: steps.length,
+        });
         emit({
           type: "turn.completed",
           status: completedResult.status,
@@ -2073,6 +2080,7 @@ export async function runHarness({
         await loadScopedContextForToolCalls(message.tool_calls);
 
       if (mainToolBatchCanRunInParallel(message.tool_calls)) {
+        turnCoordinator.beginToolBatch(message.tool_calls, { parallel: true });
         emit({
           type: "parallel_batch.started",
           count: message.tool_calls.length,
@@ -2209,6 +2217,7 @@ export async function runHarness({
         continue;
       }
 
+      turnCoordinator.beginToolBatch(message.tool_calls, { parallel: false });
       for (const toolCall of message.tool_calls) {
         throwIfAborted(signal);
         await control?.waitIfPaused?.(signal);
@@ -2696,6 +2705,10 @@ export async function runHarness({
           background: record.background,
         })),
       };
+      turnCoordinator.interrupt({
+        changedFiles: interruptedResult.changes.length,
+        toolSteps: steps.length,
+      });
       emit({
         type: "turn.cancelled",
         status: interruptedResult.status,
@@ -2739,6 +2752,7 @@ export async function runHarness({
         background: record.background,
       })),
     };
+    turnCoordinator.fail(error);
     emit({
       type: "turn.failed",
       status: failedResult.status,
