@@ -2,6 +2,8 @@ export const EXECUTION_MODES = Object.freeze(["direct", "safe", "isolated"]);
 
 const AUTO_APPROVAL_MODES = new Set(["sandbox-auto", "smart-auto"]);
 
+const SHELL_COMPOSITION = /(?:&&|\|\||[;&|><`\r\n]|\$\()/;
+
 const RULES = Object.freeze([
   {
     action: "deny",
@@ -148,7 +150,9 @@ export function classifyCommandPermission(command, { executionMode = "safe" } = 
     });
   }
 
+  const composed = SHELL_COMPOSITION.test(normalizedCommand);
   for (const rule of RULES) {
+    if (rule.action === "allow" && composed) continue;
     if (rule.patterns.some((pattern) => pattern.test(normalizedCommand))) {
       return Object.freeze({
         action: rule.action,
