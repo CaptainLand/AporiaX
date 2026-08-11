@@ -15,7 +15,11 @@ assert.match(hook, /event\.type === "tool\.started"/);
 assert.match(hook, /event\.type === "witness\.updated"/);
 assert.match(hook, /event\.type === "approval\.required"/);
 assert.match(hook, /event\.type === "skill\.activated"/);
-assert.match(hook, /browser_open/);
-assert.match(hook, /mcp__/);
+assert.match(hook, /event\.capability/);
+assert.match(hook, /getRouteToolMeta/);
+// Tool presentation must no longer depend on feature-specific MCP/browser name
+// prefixes in the renderer. Older events remain supported by getRouteToolMeta.
+assert.doesNotMatch(hook, /startsWith\("mcp__"\)/);
+assert.doesNotMatch(hook, /startsWith\("browser_"\)/);
 
 console.log("Harness event hook smoke: PASS");
