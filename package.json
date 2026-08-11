@@ -59,7 +59,9 @@
     "test:extensions": "node tests/extensions-center-smoke.mjs",
     "test:capability-observability": "node tests/capability-observability-smoke.mjs",
     "test:harness-event-reducer": "node tests/harness-event-reducer-smoke.mjs",
-    "test:turn-coordinator": "node tests/turn-coordinator-smoke.mjs"
+    "test:turn-coordinator": "node tests/turn-coordinator-smoke.mjs",
+    "test:extension-policy": "node tests/extension-policy-smoke.mjs",
+    "test:v06-architecture": "node tests/v06-architecture-freeze-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
