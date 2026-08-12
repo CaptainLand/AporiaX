@@ -17,12 +17,14 @@
   cursor: pointer;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
-  transition: max-height 180ms ease;
 }
 
+/* Expanded means expanded: never cap the retained journal at an arbitrary
+   pixel height. A click reveals the complete progress history in one shot. */
 .assistant-message:not(:has(.aporiax-run-duration.running))
   .assistant-progress-journal.manual-expanded {
-  max-height: 1400px;
+  max-height: none !important;
+  overflow: visible !important;
   -webkit-mask-image: none;
   mask-image: none;
 }
