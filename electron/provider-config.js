@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
-export const APORIA_CLOUD_MODEL_ID = "aporia-cloud-default";
+export const APORIA_CLOUD_FLASH_MODEL_ID = "aporia-cloud-default";
+export const APORIA_CLOUD_PRO_MODEL_ID = "aporia-cloud-pro";
+// Backwards-compatible alias used by existing task defaults and integrations.
+export const APORIA_CLOUD_MODEL_ID = APORIA_CLOUD_FLASH_MODEL_ID;
 export const DEFAULT_APORIA_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
 
 export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY_URL) {
@@ -17,9 +20,22 @@ export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY
     baseUrl: normalizeProviderBaseUrl(baseUrl),
     models: [
       {
-        id: APORIA_CLOUD_MODEL_ID,
+        id: APORIA_CLOUD_FLASH_MODEL_ID,
         name: "DeepSeek V4 Flash",
         shortName: "V4 Flash",
+        family: "DeepSeek V4",
+        source: "aporia-cloud",
+        billing: "weekly-quota",
+        supportsImages: false,
+        supportsThinking: true,
+        thinkingMode: "deepseek",
+        supportsTools: true,
+        contextWindow: 1_000_000,
+      },
+      {
+        id: APORIA_CLOUD_PRO_MODEL_ID,
+        name: "DeepSeek V4 Pro",
+        shortName: "V4 Pro",
         family: "DeepSeek V4",
         source: "aporia-cloud",
         billing: "weekly-quota",
