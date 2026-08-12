@@ -28,11 +28,14 @@ import {
 } from "./agent-runtime.js";
 import { parseAttachment } from "./attachment-parser.js";
 import {
+  APORIA_CLOUD_PROVIDER_ID,
   DEFAULT_DEEPSEEK_PROVIDER,
+  createAporiaCloudProvider,
   discoverProviderModels,
   normalizeProviderInput,
   publicProviderSummary,
 } from "./provider-config.js";
+import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
 import {
   getSandboxStatus,
   prepareSandbox,
@@ -303,13 +306,29 @@ function decryptProviderKey(record) {
   );
 }
 
+function publicAporiaCloudProvider() {
+  const account = getDesktopAccountRuntime();
+  return publicProviderSummary(
+    createAporiaCloudProvider(account.modelGatewayBaseUrl),
+  );
+}
+
 async function resolveProvider(providerId) {
+  if (providerId === APORIA_CLOUD_PROVIDER_ID) {
+    const account = getDesktopAccountRuntime();
+    return {
+      ...publicAporiaCloudProvider(),
+      authenticatedFetch: (path, init) =>
+        account.fetchModelGateway(path, init),
+    };
+  }
+
   const providers = await loadProviderRecords();
   const selected =
     providers.find((provider) => provider.id === providerId) ||
     providers[0];
   if (!selected) {
-    throw new Error("尚未配置模型 API，请先添加一个 Provider。");
+    throw new Error("尚未配置模型 API，请先添加一个 Provider，或登录 Aporia Account 使用 Aporia Cloud。");
   }
   return {
     ...publicProviderSummary(selected),
@@ -318,6 +337,9 @@ async function resolveProvider(providerId) {
 }
 
 async function saveProvider(input) {
+  if (input?.id === APORIA_CLOUD_PROVIDER_ID || input?.kind === "aporia-cloud") {
+    throw new Error("Aporia Cloud 由 Aporia Account 管理，不能作为自定义 Provider 修改。");
+  }
   const storedProviders = await readStoredProviders();
   const existing = storedProviders.find(
     (provider) => provider.id === input?.id,
@@ -355,6 +377,7 @@ async function saveProvider(input) {
 }
 
 async function removeProvider(providerId) {
+  if (providerId === APORIA_CLOUD_PROVIDER_ID) return false;
   const providers = await readStoredProviders();
   const nextProviders = providers.filter(
     (provider) => provider.id !== providerId,
@@ -730,11 +753,17 @@ ipcMain.handle("attachments:parse", async (event, request) => {
 
 ipcMain.handle("providers:list", async (event) => {
   assertTrustedSender(event);
-  return (await loadProviderRecords()).map(publicProviderSummary);
+  return [
+    publicAporiaCloudProvider(),
+    ...(await loadProviderRecords()).map(publicProviderSummary),
+  ];
 });
 
 ipcMain.handle("providers:discover", async (event, request) => {
   assertTrustedSender(event);
+  if (request?.id === APORIA_CLOUD_PROVIDER_ID) {
+    throw new Error("Aporia Cloud 模型目录由 Aporia Account 管理，无需手动发现。");
+  }
   let apiKey = String(request?.apiKey || "").trim();
   if (!apiKey && request?.id) {
     const existing = (await loadProviderRecords()).find(
@@ -772,7 +801,9 @@ ipcMain.handle("sandbox:prepare", async (event) => {
 
 ipcMain.handle("harness:has-api-key", async (event) => {
   assertTrustedSender(event);
-  return (await loadProviderRecords()).length > 0;
+  if ((await loadProviderRecords()).length > 0) return true;
+  const account = await getDesktopAccountRuntime().getSnapshot().catch(() => null);
+  return account?.status === "authenticated";
 });
 
 ipcMain.handle("harness:save-api-key", async (event, apiKey) => {
