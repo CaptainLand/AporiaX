@@ -311,8 +311,9 @@ export function createDesktopAccountRuntime(options = {}) {
       }
       await storeRefreshToken(tokenResult.refreshToken);
       accessToken = tokenResult.accessToken;
-      bootstrapPromise = Promise.resolve(currentSnapshot);
-      return hydrateAccount();
+      const hydrated = await hydrateAccount();
+      bootstrapPromise = Promise.resolve(hydrated);
+      return hydrated;
     })().catch((error) => {
       currentSnapshot = {
         ...currentSnapshot,
@@ -328,8 +329,13 @@ export function createDesktopAccountRuntime(options = {}) {
 
   async function refresh() {
     const refreshed = await rotateRefreshToken();
-    if (!refreshed) return currentSnapshot;
-    return hydrateAccount();
+    if (!refreshed) {
+      bootstrapPromise = Promise.resolve(currentSnapshot);
+      return currentSnapshot;
+    }
+    const hydrated = await hydrateAccount();
+    bootstrapPromise = Promise.resolve(hydrated);
+    return hydrated;
   }
 
   async function signOut() {
