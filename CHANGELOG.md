@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.6.5 — 2026-08-12
+
+AporiaX 0.6.5 strengthens the Coding Agent runtime around explicit execution boundaries, deterministic permissions, persistent language intelligence, and end-to-end Git/GitHub workflows.
+
+### Execution and Smart Permission
+
+- Added explicit **Direct / Safe / Isolated** execution profiles and kept execution location separate from permission decisions.
+- Direct operates on the authorized workspace with host process/network authority.
+- Safe runs against a temporary workspace copy and synchronizes changes back only after conflict checks.
+- Isolated requires the Docker sandbox and never silently falls back to Host when selected.
+- Added deterministic Smart Permission classification for low-, medium-, high-, and critical-risk command patterns.
+- Low-risk Git inspection and bounded build/test/lint/type-check workflows can run automatically; dependency mutation, explicit network access, remote writes, and destructive workspace operations remain approval-gated.
+- Clearly system-destructive command patterns are denied at the policy boundary.
+- Explicit tool-level `ask` policies cannot be bypassed merely because a sandbox backend exists.
+
+### Persistent LSP and managed language servers
+
+- Added a persistent native LSP runtime with `status`, `diagnostics`, `definition`, `references`, `hover`, `document_symbols`, and `workspace_symbols`.
+- Bundled TypeScript / JavaScript language intelligence.
+- Added approval-gated `lsp_install` for supported missing language servers.
+- Python can install Pyright into AporiaX-managed storage.
+- Go can install gopls into AporiaX-managed storage.
+- Rust can resolve/install rust-analyzer through rustup.
+- C/C++ can install clangd through winget on Windows, Homebrew on macOS, or apt-get on Linux.
+- `lsp status` now exposes availability, source, installer, and managed-install state so the Agent can recover from missing language tooling without sending the user to manual setup instructions.
+
+### Native Git / GitHub workflow
+
+- Added `git_init` so a normal project folder can be initialized by the Agent instead of requiring the user to run Git manually first.
+- Added native `git_stage`, `git_commit`, `git_create_branch`, `git_remote_list`, `git_remote_add`, `git_pull`, and `git_push` workflows.
+- Added `github_repo_create`, `github_pr_create`, `github_pr_view`, and `github_pr_checks`.
+- Local Git lifecycle operations can run autonomously under workspace-write policy, while remote routing and writes remain explicit approval boundaries.
+- Staging requires explicit workspace-relative paths; commits use staged changes only.
+- Pull requires a clean working tree and defaults to fast-forward-only behavior.
+- Force push is intentionally not exposed.
+- GitHub credentials remain inside the authenticated GitHub CLI process and are not serialized into model context.
+
+### Release metadata and validation
+
+- Updated the package version to `0.6.5` and Node.js engine requirement to `>=22.12.0`.
+- Added focused smoke coverage for execution policy/wiring, LSP runtime, LSP installation, GitHub workflow, tool permissions, and tool dispatch.
+- The integrated 0.6.5 pull request passed the full validation matrix and production renderer build before merge.
+
+### Known boundaries
+
+- Windows x64 remains the packaged desktop target for this preview release.
+- Safe protects workspace mutations but still has host process/network authority; Isolated is the stronger OS-level boundary.
+- Persistent Host processes are supported in Direct/Safe. Isolated intentionally blocks silent Host fallback until persistent isolated-process support is implemented.
+- Workspace Trust and more granular secret/environment policies remain follow-up work.
+- Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet.
+
 ## 0.6.1 — 2026-08-12
 
 AporiaX 0.6.1 upgrades the native Agent toolchain and makes user-managed Skills and MCP servers practical from the desktop UI.
