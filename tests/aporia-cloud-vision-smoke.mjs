@@ -31,7 +31,8 @@ assert.ok(runIndex > prepareIndex, "vision preprocessing must finish before the 
 assert.match(accountRuntime, /fetchModelGateway/);
 assert.match(accountRuntime, /Authorization/);
 assert.match(accountRuntime, /accessToken/);
-assert.match(accountRuntime, /gatewayUrl/);
+assert.match(accountRuntime, /modelGatewayBaseUrl/);
+assert.match(accountRuntime, /APORIAX_MODEL_GATEWAY_URL/);
 
 const desktopSources = [visionProxy, visionCore, mainV2, accountRuntime, providerConfig].join("\n");
 assert.doesNotMatch(desktopSources, /QWEN_VISION_API_KEY/);
