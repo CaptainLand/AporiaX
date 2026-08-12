@@ -27,6 +27,7 @@ export function SettingsPanel({
   const provider =
     providers.find((candidate) => candidate.id === task.providerId) ||
     providers[0];
+  const cloudProvider = provider?.source === "aporia-cloud" || provider?.kind === "aporia-cloud";
   const executionMode = ["direct", "safe", "isolated"].includes(task.executionMode)
     ? task.executionMode
     : "safe";
@@ -57,14 +58,23 @@ export function SettingsPanel({
                   : tr("需要添加模型 API", "Add a model API")}
               </strong>
               <span>
-                {provider?.baseUrl ||
-                  tr("支持多个 OpenAI-compatible Provider", "Supports multiple OpenAI-compatible providers")}
+                {cloudProvider
+                  ? tr(
+                      "Aporia Account · 使用每周额度 · 无需 API Key",
+                      "Aporia Account · Weekly quota · No API key required",
+                    )
+                  : provider?.source === "local"
+                    ? tr("本地 Endpoint · 不消耗 Aporia Cloud 额度", "Local endpoint · Does not use Aporia Cloud quota")
+                    : provider?.baseUrl ||
+                      tr("支持多个 OpenAI-compatible Provider", "Supports multiple OpenAI-compatible providers")}
               </span>
             </div>
           </div>
-          <button className="settings-link" onClick={onManageProviders}>
-            {provider ? tr("管理", "Manage") : tr("添加", "Add")}
-          </button>
+          {!provider?.managed && (
+            <button className="settings-link" onClick={onManageProviders}>
+              {provider ? tr("管理", "Manage") : tr("添加", "Add")}
+            </button>
+          )}
         </div>
       </section>
 
@@ -220,4 +230,3 @@ export function SettingsPanel({
     </aside>
   );
 }
-
