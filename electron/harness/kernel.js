@@ -11,6 +11,9 @@ import { createCapabilityRegistry } from "./capability-registry.js";
 import { planAgentBudget } from "./agent-budget.js";
 import { BuilderWorkspaceManager } from "./builder-workspace.js";
 import { createTaskGraph } from "./task-graph.js";
+import { applyRuntimeToolDefinitionOverrides } from "../runtime/tool-definition-overrides.js";
+
+applyRuntimeToolDefinitionOverrides();
 
 export function createHarnessKernel({
   onEvent = null,
