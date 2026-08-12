@@ -1,4 +1,5 @@
 import { app, safeStorage, shell } from "electron";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -17,6 +18,7 @@ import {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const LOGIN_TIMEOUT_MS = 150_000;
+const INSTALLATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function emptySnapshot(extra = {}) {
   return {
@@ -63,7 +65,9 @@ export function createDesktopAccountRuntime(options = {}) {
     options.modelGatewayBaseUrl || process.env.APORIAX_MODEL_GATEWAY_URL,
     DEFAULT_APORIAX_MODEL_GATEWAY_URL,
   );
-  const sessionPath = join(app.getPath("userData"), "aporiax-account-session.json");
+  const userDataPath = app.getPath("userData");
+  const sessionPath = join(userDataPath, "aporiax-account-session.json");
+  const installationPath = join(userDataPath, "aporiax-installation.json");
 
   let accessToken = "";
   let currentSnapshot = emptySnapshot();
@@ -71,6 +75,7 @@ export function createDesktopAccountRuntime(options = {}) {
   let refreshPromise = null;
   let loginPromise = null;
   let activeServer = null;
+  let installationIdPromise = null;
 
   async function request(path, { method = "GET", body, token = "", timeout = REQUEST_TIMEOUT_MS } = {}) {
     const headers = new Headers({ Accept: "application/json" });
@@ -85,6 +90,35 @@ export function createDesktopAccountRuntime(options = {}) {
     const payload = await parseJson(response);
     if (!response.ok) throw responseError(payload, response.status, "APORIAX_CLOUD_REQUEST_FAILED");
     return payload;
+  }
+
+  async function getOrCreateInstallationId() {
+    if (installationIdPromise) return installationIdPromise;
+    installationIdPromise = (async () => {
+      try {
+        const record = JSON.parse(await readFile(installationPath, "utf8"));
+        if (INSTALLATION_ID_PATTERN.test(String(record?.installationId || ""))) {
+          return String(record.installationId).toLowerCase();
+        }
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          // Invalid/corrupt local identity is replaced with a fresh random id.
+        }
+      }
+
+      const installationId = randomUUID();
+      await mkdir(dirname(installationPath), { recursive: true });
+      await writeFile(
+        installationPath,
+        JSON.stringify({ version: 1, installationId }),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      return installationId;
+    })().catch((error) => {
+      installationIdPromise = null;
+      throw error;
+    });
+    return installationIdPromise;
   }
 
   function decryptStoredRefresh(record) {
@@ -128,7 +162,7 @@ export function createDesktopAccountRuntime(options = {}) {
     try {
       await rm(sessionPath, { force: true });
     } catch {
-      // Local sign-out must still complete when cleanup is already satisfied.
+      // Installation identity deliberately survives sign-out.
     }
   }
 
@@ -206,9 +240,6 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   function fetchModelGateway(path, init = {}) {
-    // The caller chooses only a path. The authenticated origin remains pinned to
-    // APORIAX_MODEL_GATEWAY_URL so a renderer-controlled URL cannot exfiltrate
-    // the in-memory Aporia Access Token.
     return authenticatedFetch(modelGatewayBaseUrl, path, init, true);
   }
 
@@ -333,6 +364,7 @@ export function createDesktopAccountRuntime(options = {}) {
   async function startBrowserLogin() {
     if (loginPromise) return loginPromise;
     loginPromise = (async () => {
+      const installationId = await getOrCreateInstallationId();
       const { codeVerifier, codeChallenge, state } = createDesktopPkce();
       const callback = await waitForBrowserCallback({ state, codeChallenge });
       if (callback.canceled) return { ...currentSnapshot, canceled: true };
@@ -343,6 +375,7 @@ export function createDesktopAccountRuntime(options = {}) {
           code: callback.code,
           codeVerifier,
           redirectUri: callback.redirectUri,
+          installationId,
         },
       });
       if (!tokenResult?.accessToken || !tokenResult?.refreshToken) {
