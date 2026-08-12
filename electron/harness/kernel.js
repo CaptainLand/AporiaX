@@ -6,6 +6,7 @@ import { HarnessToolHost } from "./tool-host.js";
 import { ReviewCoordinator } from "./review-coordinator.js";
 import { HarnessPluginHost } from "./plugin-api.js";
 import { createSkillRegistry } from "./skills/registry.js";
+import { BUNDLED_OFFICE_SKILLS } from "./skills/bundled-office-skills.js";
 import { createCapabilityRegistry } from "./capability-registry.js";
 import { planAgentBudget } from "./agent-budget.js";
 import { BuilderWorkspaceManager } from "./builder-workspace.js";
@@ -36,6 +37,9 @@ export function createHarnessKernel({
     toolHost: tools,
   });
   const skills = createSkillRegistry({ eventBus: events });
+  for (const bundledSkill of BUNDLED_OFFICE_SKILLS) {
+    skills.register(bundledSkill, { builtin: true });
+  }
   const builders = new BuilderWorkspaceManager({ eventBus: events });
 
   const kernel = {
