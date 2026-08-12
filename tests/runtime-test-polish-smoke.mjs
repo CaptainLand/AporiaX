@@ -57,9 +57,20 @@ assert.ok(excelMatch.skills.some((skill) => skill.name === "spreadsheet-design")
 const pptMatch = kernel.skills.activate("制作一个答辩 PPT 演示文稿");
 assert.ok(pptMatch.skills.some((skill) => skill.name === "presentation-design"));
 
-const css = await readFile(new URL("../src/test-feedback-polish.css", import.meta.url), "utf8");
+const [css, progressToggle, indexHtml] = await Promise.all([
+  readFile(new URL("../src/test-feedback-polish.css", import.meta.url), "utf8"),
+  readFile(new URL("../src/progress-journal-toggle.js", import.meta.url), "utf8"),
+  readFile(new URL("../index.html", import.meta.url), "utf8"),
+]);
 assert.match(css, /\.self-check-card\s*\{[\s\S]*display:\s*none\s*!important/);
 assert.match(css, /assistant-message:not\(:has\(\.aporiax-run-duration\.running\)\)[\s\S]*assistant-progress-journal/);
+assert.match(css, /\.assistant-progress-journal\.manual-expanded/);
+assert.doesNotMatch(css, /assistant-progress-journal:hover/);
+assert.doesNotMatch(css, /assistant-progress-journal:focus-within/);
+assert.match(progressToggle, /classList\.toggle\(EXPANDED_CLASS\)/);
+assert.match(progressToggle, /document\.addEventListener\("click"/);
+assert.match(progressToggle, /assistant\.querySelector\(RUNNING_SELECTOR\)/);
+assert.match(indexHtml, /src\/progress-journal-toggle\.js/);
 assert.match(css, /@container\s*\(max-width:\s*720px\)/);
 assert.match(css, /\.model-menu-source-note/);
 
