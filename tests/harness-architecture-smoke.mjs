@@ -85,7 +85,13 @@ assert.equal(pluginHost.tools()[0].name, "plugin_echo");
 const kernel = createHarnessKernel();
 assert.equal(kernel.capabilities().skills, true);
 assert.equal(kernel.capabilities().progressiveSkillDisclosure, true);
-assert.deepEqual(kernel.skills.list(), []);
+const bundledSkillNames = kernel.skills.list().map((skill) => skill.name).sort();
+assert.deepEqual(bundledSkillNames, [
+  "presentation-design",
+  "spreadsheet-design",
+  "word-design",
+]);
+assert(kernel.skills.list().every((skill) => skill.source === "builtin"));
 const core = createHarnessCoreServer({ kernel });
 await core.listen();
 const client = createHarnessCoreClient({ baseUrl: core.url, token: core.token });
@@ -97,7 +103,11 @@ assert.equal(health.capabilities.taskRpc, false);
 const agents = await client.agents();
 assert(agents.agents.some((agent) => agent.name === "review"));
 const skills = await client.skills();
-assert.deepEqual(skills.skills, []);
+assert.deepEqual(
+  skills.skills.map((skill) => skill.name).sort(),
+  bundledSkillNames,
+);
+assert(skills.skills.every((skill) => skill.source === "builtin"));
 await core.close();
 await rm(workspace, { recursive: true, force: true });
 
