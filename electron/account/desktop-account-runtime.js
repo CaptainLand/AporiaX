@@ -7,6 +7,7 @@ import {
   APORIAX_DESKTOP_CLIENT_ID,
   DEFAULT_APORIAX_ACCOUNT_WEB_URL,
   DEFAULT_APORIAX_CLOUD_API_URL,
+  DEFAULT_APORIAX_MODEL_GATEWAY_URL,
   buildDesktopAuthorizationUrl,
   createDesktopPkce,
   normalizeHttpBaseUrl,
@@ -57,6 +58,10 @@ export function createDesktopAccountRuntime(options = {}) {
   const webBaseUrl = normalizeHttpBaseUrl(
     options.webBaseUrl || process.env.APORIAX_ACCOUNT_WEB_URL,
     DEFAULT_APORIAX_ACCOUNT_WEB_URL,
+  );
+  const modelGatewayBaseUrl = normalizeHttpBaseUrl(
+    options.modelGatewayBaseUrl || process.env.APORIAX_MODEL_GATEWAY_URL,
+    DEFAULT_APORIAX_MODEL_GATEWAY_URL,
   );
   const sessionPath = join(app.getPath("userData"), "aporiax-account-session.json");
 
@@ -171,6 +176,40 @@ export function createDesktopAccountRuntime(options = {}) {
       }
       throw error;
     }
+  }
+
+  async function authenticatedFetch(baseUrl, path, init = {}, retry = true) {
+    if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
+      throw new Error("APORIAX_AUTHENTICATED_PATH_INVALID");
+    }
+    if (!accessToken) {
+      const refreshed = await rotateRefreshToken();
+      if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
+    }
+    const headers = new Headers(init.headers || {});
+    headers.set("Authorization", `Bearer ${accessToken}`);
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers,
+    });
+    if (response.status === 401 && retry) {
+      try {
+        await response.body?.cancel();
+      } catch {
+        // The response may already be fully consumed by the runtime.
+      }
+      const refreshed = await rotateRefreshToken();
+      if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
+      return authenticatedFetch(baseUrl, path, init, false);
+    }
+    return response;
+  }
+
+  function fetchModelGateway(path, init = {}) {
+    // The caller chooses only a path. The authenticated origin remains pinned to
+    // APORIAX_MODEL_GATEWAY_URL so a renderer-controlled URL cannot exfiltrate
+    // the in-memory Aporia Access Token.
+    return authenticatedFetch(modelGatewayBaseUrl, path, init, true);
   }
 
   async function hydrateAccount() {
@@ -354,8 +393,10 @@ export function createDesktopAccountRuntime(options = {}) {
   return {
     apiBaseUrl,
     webBaseUrl,
+    modelGatewayBaseUrl,
     getSnapshot: bootstrap,
     startBrowserLogin,
+    fetchModelGateway,
     refresh,
     signOut,
     close: closeActiveServer,
