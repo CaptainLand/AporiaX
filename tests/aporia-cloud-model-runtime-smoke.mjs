@@ -76,10 +76,19 @@ assert.deepEqual(
   ["aporia-cloud", "user-provider", "local"],
 );
 assert.equal(groups[0].models.length, 2);
-assert.equal(groups[0].models[0].descriptionZh.includes("每周额度"), true);
+assert.equal(groups[0].models[0].descriptionZh, "Aporia Cloud · 每周额度");
+assert.equal(groups[0].models[0].descriptionEn, "Aporia Cloud · Weekly quota");
 assert.equal(groups[0].models[1].name, "DeepSeek V4 Pro");
-assert.equal(groups[1].models[0].descriptionEn.includes("Your API"), true);
-assert.equal(groups[2].models[0].descriptionEn.includes("Local"), true);
+assert.equal(groups[1].models[0].descriptionZh, "My DeepSeek · 你的 API");
+assert.equal(groups[1].models[0].descriptionEn, "My DeepSeek · Your API");
+assert.equal(groups[2].models[0].descriptionZh, "Local Model · 本地");
+assert.equal(groups[2].models[0].descriptionEn, "Local Model · Local");
+for (const group of groups) {
+  for (const model of group.models) {
+    assert.doesNotMatch(model.descriptionZh, /支持工具|不支持工具|支持图片|仅文本|无需 API Key/);
+    assert.doesNotMatch(model.descriptionEn, /Tool use|No tools|Vision|Text only|No API key required/);
+  }
+}
 
 const observedRequests = [];
 const cloudRuntimeProvider = {
