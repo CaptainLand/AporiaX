@@ -1,0 +1,100 @@
+name: Materialize v0.6.5 integration
+
+on:
+  push:
+    branches:
+      - agent/0.6.5-integrated-workflows
+    paths:
+      - scripts/maintenance/integrate-v065-workflows.mjs
+      - .github/workflows/materialize-v065-integration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out integration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch validated GitHub workflow branch
+        run: git fetch origin agent/0.6.5-github-workflow:refs/remotes/origin/agent/0.6.5-github-workflow
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Apply deterministic integration patch
+        run: node scripts/maintenance/integrate-v065-workflows.mjs
+
+      - name: Refresh package lock
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Runtime smoke
+        run: npm run test:runtime
+
+      - name: Architecture smoke
+        run: npm run test:architecture
+
+      - name: Execution policy smoke
+        run: npm run test:execution-policy
+
+      - name: Execution wiring smoke
+        run: npm run test:execution-wiring
+
+      - name: LSP smoke
+        run: npm run test:lsp
+
+      - name: LSP installer smoke
+        run: npm run test:lsp-installer
+
+      - name: GitHub workflow smoke
+        run: npm run test:github-workflow
+
+      - name: Tool permission smoke
+        run: npm run test:tool-permissions
+
+      - name: Tool dispatcher smoke
+        run: npm run test:tool-dispatcher
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Commit materialized integration
+        shell: bash
+        run: |
+          git config user.name "aporiax-integration-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            electron/agent-core.js \
+            electron/agent-runtime-core.js \
+            electron/runtime/github-runtime.js \
+            electron/runtime/lsp-installer.js \
+            electron/runtime/lsp-runtime.js \
+            electron/runtime/native-tool-catalog.js \
+            electron/runtime/native-tool-executor.js \
+            electron/runtime/tool-permissions.js \
+            tests/github-workflow-smoke.mjs \
+            tests/lsp-installer-smoke.mjs \
+            tests/lsp-runtime-smoke.mjs \
+            docs/releases/v0.6.5-github-workflow.md \
+            docs/releases/v0.6.5-integrated-workflows.md \
+            .github/workflows/ci.yml \
+            package.json \
+            package-lock.json
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit."
+            exit 0
+          fi
+          git commit -m "feat: integrate LSP installs and GitHub agent workflow"
+          git push origin HEAD:agent/0.6.5-integrated-workflows
