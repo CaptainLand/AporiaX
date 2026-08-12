@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld("desktop", {
   theme: {
     set: (theme) => ipcRenderer.invoke("desktop:set-theme", theme),
   },
+  account: {
+    get: () => ipcRenderer.invoke("account:get"),
+    signIn: () => ipcRenderer.invoke("account:sign-in"),
+    refresh: () => ipcRenderer.invoke("account:refresh"),
+    signOut: () => ipcRenderer.invoke("account:sign-out"),
+  },
   tasks: {
     load: () =>
       ipcRenderer.invoke("tasks:load").then((tasks) => rememberTaskExecutionModes(tasks)),

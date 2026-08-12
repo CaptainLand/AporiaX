@@ -75,6 +75,25 @@ assert.equal(exposedQwen.nativeSupportsImages, true);
 assert.equal(exposedQwen.supportsImageProxy, false);
 assert.equal(exposedQwen.visionProxy, null);
 
+const cloudProviders = exposeVisionProxyCapabilities([
+  {
+    id: "aporia-cloud",
+    name: "Aporia Cloud",
+    kind: "aporia-cloud",
+    source: "aporia-cloud",
+    hasApiKey: false,
+    models: [{ id: "aporia-cloud-default", name: "DeepSeek V4 Flash", supportsImages: false }],
+  },
+]);
+const cloudDeepSeek = cloudProviders[0].models[0];
+assert.equal(cloudDeepSeek.supportsImages, true);
+assert.equal(cloudDeepSeek.nativeSupportsImages, false);
+assert.equal(cloudDeepSeek.supportsImageProxy, true);
+assert.equal(cloudDeepSeek.visionProxy.providerId, "aporia-cloud");
+assert.equal(cloudDeepSeek.visionProxy.providerName, "Aporia Cloud");
+assert.equal(cloudDeepSeek.visionProxy.modelId, "aporia-cloud-vision");
+assert.equal(cloudDeepSeek.visionProxy.modelName, "Qwen3.5 Flash Vision");
+
 const noKeyProviders = exposeVisionProxyCapabilities([
   {
     id: "deepseek",
@@ -105,6 +124,15 @@ const messages = buildVisionMessages({
 });
 assert.equal(messages[1].content[1].type, "image_url");
 assert.equal(messages[1].content[1].image_url.url, image.dataUrl);
+
+const oneImageMessages = buildVisionMessages(
+  {
+    content: "What is wrong in this screenshot?",
+    attachments: [image],
+  },
+  [image],
+);
+assert.equal(oneImageMessages[1].content.filter((part) => part.type === "image_url").length, 1);
 
 const merged = mergeVisionObservation(
   {

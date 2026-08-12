@@ -1,5 +1,38 @@
 import { randomUUID } from "node:crypto";
 
+export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
+export const APORIA_CLOUD_MODEL_ID = "aporia-cloud-default";
+export const DEFAULT_APORIA_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
+
+export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY_URL) {
+  return {
+    id: APORIA_CLOUD_PROVIDER_ID,
+    name: "Aporia Cloud",
+    vendor: "aporia",
+    kind: "aporia-cloud",
+    source: "aporia-cloud",
+    billing: "weekly-quota",
+    managed: true,
+    requiresAccount: true,
+    baseUrl: normalizeProviderBaseUrl(baseUrl),
+    models: [
+      {
+        id: APORIA_CLOUD_MODEL_ID,
+        name: "DeepSeek V4 Flash",
+        shortName: "V4 Flash",
+        family: "DeepSeek V4",
+        source: "aporia-cloud",
+        billing: "weekly-quota",
+        supportsImages: false,
+        supportsThinking: true,
+        thinkingMode: "deepseek",
+        supportsTools: true,
+        contextWindow: 1_000_000,
+      },
+    ],
+  };
+}
+
 export const DEFAULT_DEEPSEEK_PROVIDER = Object.freeze({
   id: "deepseek",
   name: "DeepSeek",
@@ -172,7 +205,24 @@ export function normalizeProviderModels(models, vendor) {
   return normalized;
 }
 
+function sourceForProvider(record, vendor) {
+  if (record?.kind === "aporia-cloud" || record?.source === "aporia-cloud") {
+    return "aporia-cloud";
+  }
+  if (record?.source === "local" || vendor === "local") return "local";
+  return "user-provider";
+}
+
+function billingForSource(source) {
+  if (source === "aporia-cloud") return "weekly-quota";
+  if (source === "local") return "none";
+  return "user-provider";
+}
+
 export function normalizeProviderInput(input, existing = null) {
+  if (input?.id === APORIA_CLOUD_PROVIDER_ID || input?.kind === "aporia-cloud") {
+    throw new Error("Aporia Cloud 由 Aporia Account 管理，不能作为自定义 Provider 修改。");
+  }
   const baseUrl = normalizeProviderBaseUrl(input?.baseUrl);
   const inferred = inferProviderIdentity(baseUrl);
   const name = String(input?.name || inferred.suggestedName)
@@ -189,11 +239,15 @@ export function normalizeProviderInput(input, existing = null) {
       : typeof input?.id === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(input.id)
         ? input.id
         : randomUUID();
+  const source = inferred.vendor === "local" ? "local" : "user-provider";
   return {
     id,
     name,
     kind: "openai-compatible",
     vendor: inferred.vendor,
+    source,
+    billing: billingForSource(source),
+    managed: false,
     baseUrl,
     models,
     createdAt: existing?.createdAt || new Date().toISOString(),
@@ -271,16 +325,25 @@ export async function discoverProviderModels({
 export function publicProviderSummary(record) {
   const vendor =
     record.vendor || inferProviderIdentity(record.baseUrl).vendor;
+  const source = sourceForProvider(record, vendor);
   return {
     id: record.id,
     name: record.name,
     kind: record.kind,
     vendor,
+    source,
+    billing: record.billing || billingForSource(source),
+    managed: Boolean(record.managed || source === "aporia-cloud"),
+    requiresAccount: Boolean(record.requiresAccount || source === "aporia-cloud"),
     baseUrl: record.baseUrl,
-    models: normalizeProviderModels(record.models, vendor),
+    models: normalizeProviderModels(record.models, vendor).map((model) => ({
+      ...model,
+      source,
+      billing: record.billing || billingForSource(source),
+    })),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    hasApiKey: Boolean(record.encryptedKey || record.environmentKey),
-    environmentKey: Boolean(record.environmentKey),
+    hasApiKey: source === "aporia-cloud" ? false : Boolean(record.encryptedKey || record.environmentKey),
+    environmentKey: source === "aporia-cloud" ? false : Boolean(record.environmentKey),
   };
 }

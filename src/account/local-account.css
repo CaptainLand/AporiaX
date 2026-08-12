@@ -9,9 +9,9 @@
 .local-account-profile {
   display: flex;
   width: 100%;
-  min-height: 43px;
+  min-height: 42px;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 6px 8px;
   cursor: pointer;
   text-align: left;
@@ -22,15 +22,33 @@
   transition: 150ms ease;
 }
 
-.local-account-signin {
-  min-height: 37px;
-  padding: 6px 10px;
-}
-
-.local-account-signin:hover,
+.local-account-signin:hover:not(:disabled),
 .local-account-profile:hover {
   border-color: rgba(82, 199, 255, 0.18);
   background: rgba(63, 157, 213, 0.07);
+}
+
+.local-account-signin:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.local-account-signin-icon,
+.local-account-avatar {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(96, 205, 255, 0.14);
+  border-radius: 9px;
+  color: #71d5ff;
+  background: rgba(55, 164, 220, 0.08);
+}
+
+.local-account-avatar--compact {
+  width: 29px;
+  height: 29px;
 }
 
 .local-account-signin-label,
@@ -39,18 +57,13 @@
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: 5px;
-}
-
-.local-account-signin-label {
-  justify-content: center;
-  padding-left: 2px;
+  gap: 4px;
 }
 
 .local-account-signin strong,
 .local-account-profile strong {
   overflow: hidden;
-  color: #e5e1ea;
+  color: #e7e3eb;
   font-size: 12.5px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -61,16 +74,14 @@
 .local-account-profile small {
   overflow: hidden;
   color: #817b8b;
-  font-size: 10.5px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.local-account-signin > svg,
-.local-account-profile > svg {
+.local-account-signin > svg {
   margin-left: auto;
-  color: #6f6978;
-  transition: transform 150ms ease;
+  color: #756f80;
 }
 
 .local-account-quota-row {
@@ -81,12 +92,6 @@
   grid-template-columns: auto 1fr;
 }
 
-.local-account-quota-row small {
-  color: #736d7e;
-  font-size: 9px;
-  line-height: 1;
-}
-
 .local-account-quota-track {
   position: relative;
   height: 3px;
@@ -95,13 +100,17 @@
   background: rgba(116, 105, 134, 0.2);
 }
 
+.local-account-quota-track--large {
+  height: 5px;
+}
+
 .local-account-quota-track i {
   position: absolute;
   inset: 0 auto 0 0;
   display: block;
   border-radius: inherit;
   background: linear-gradient(90deg, #4cbcf2, #79d9ff);
-  box-shadow: 0 0 8px rgba(79, 196, 246, 0.42);
+  box-shadow: 0 0 9px rgba(79, 196, 246, 0.4);
 }
 
 .local-account-popover {
@@ -113,77 +122,194 @@
   display: flex;
   padding: 12px;
   border: 1px solid rgba(88, 200, 250, 0.18);
-  border-radius: 12px;
+  border-radius: 13px;
+  flex-direction: column;
+  gap: 10px;
+  color: #dcd8e3;
+  background: rgba(18, 15, 25, 0.985);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.38), 0 0 28px rgba(60, 182, 240, 0.035);
+  backdrop-filter: blur(18px);
+}
+
+.local-account-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.local-account-popover-head > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.local-account-popover-head strong {
+  overflow: hidden;
+  color: #eeeaf2;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-account-popover-head small {
+  overflow: hidden;
+  color: #888190;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-account-connected {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #7ddaff;
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.local-account-quota-card {
+  display: flex;
+  padding: 9px 10px;
+  border: 1px solid rgba(96, 199, 244, 0.12);
+  border-radius: 10px;
   flex-direction: column;
   gap: 7px;
-  color: #dcd8e3;
-  background: rgba(18, 15, 25, 0.98);
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+  background: rgba(52, 153, 204, 0.045);
 }
 
-.local-account-popover span { display: flex; align-items: center; gap: 6px; color: #75d6ff; font-size: 11.5px; font-weight: 650; }
-.local-account-popover small { color: #8a8493; font-size: 10.5px; line-height: 1.5; }
-.local-account-popover button { display: flex; align-items: center; gap: 6px; padding: 7px 8px; cursor: pointer; border-radius: 7px; color: #a9a3b2; background: rgba(255, 255, 255, 0.035); font-size: 11px; }
-.local-account-popover button:hover { color: #f2eef6; background: rgba(255, 255, 255, 0.07); }
+.local-account-quota-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #8c8793;
+  font-size: 10px;
+}
 
-.local-account-modal-backdrop {
-  position: fixed;
-  z-index: 180;
-  inset: 0;
+.local-account-quota-card strong {
+  color: #8bdfff;
+  font-size: 11.5px;
+}
+
+.local-account-meta {
   display: grid;
-  padding: 24px;
-  place-items: center;
-  background: rgba(4, 4, 8, 0.7);
-  backdrop-filter: blur(13px);
+  gap: 6px;
 }
 
-.local-account-modal {
-  width: min(440px, calc(100vw - 32px));
+.local-account-meta > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #918b98;
+  font-size: 10px;
+}
+
+.local-account-meta svg {
+  flex: 0 0 auto;
+  color: #62caef;
+}
+
+.local-account-meta span {
   overflow: hidden;
-  border: 1px solid rgba(92, 204, 255, 0.24);
-  border-radius: 17px;
-  color: #e8e5ed;
-  background: linear-gradient(160deg, rgba(22, 18, 30, 0.99), rgba(12, 12, 18, 0.99));
-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.58), 0 0 40px rgba(40, 171, 235, 0.06);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.local-account-modal header { display: flex; align-items: center; gap: 11px; padding: 18px 20px 15px; border-bottom: 1px solid rgba(120, 106, 142, 0.15); }
-.local-account-modal-mark { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 11px; color: #69d2ff; background: rgba(44, 159, 222, 0.12); }
-.local-account-modal header div { flex: 1; }
-.local-account-modal header small { color: #58c9fb; font-size: 9px; font-weight: 750; letter-spacing: 0.16em; }
-.local-account-modal h2 { margin: 2px 0 0; font-size: 17px; }
-.local-account-modal header button { display: grid; width: 31px; height: 31px; cursor: pointer; place-items: center; border-radius: 8px; color: #837d8d; background: transparent; }
-.local-account-modal header button:hover { color: #e6e1eb; background: rgba(255, 255, 255, 0.05); }
+.local-account-local-note {
+  margin: 0;
+  padding: 8px 9px;
+  border-radius: 9px;
+  color: #817a88;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
 
-.local-account-prototype-note { display: flex; align-items: center; gap: 9px; margin: 16px 20px 0; padding: 10px 11px; border: 1px solid rgba(92, 204, 255, 0.13); border-radius: 10px; color: #6fd1fb; background: rgba(45, 153, 211, 0.055); }
-.local-account-prototype-note span { display: flex; flex-direction: column; gap: 2px; }
-.local-account-prototype-note strong { font-size: 11.5px; }
-.local-account-prototype-note span { font-size: 10.5px; }
+.local-account-actions {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 1fr 1fr;
+}
 
-.local-account-tabs { display: grid; margin: 16px 20px 4px; padding: 3px; border-radius: 9px; grid-template-columns: 1fr 1fr; background: rgba(255, 255, 255, 0.035); }
-.local-account-tabs button { padding: 8px; cursor: pointer; border-radius: 7px; color: #817b89; background: transparent; font-size: 11.5px; }
-.local-account-tabs button.active { color: #8edfff; background: rgba(51, 160, 218, 0.12); box-shadow: inset 0 0 0 1px rgba(91, 204, 255, 0.1); }
+.local-account-actions button {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  border-radius: 8px;
+  color: #aaa4b2;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 10.5px;
+}
 
-.local-account-modal form { display: flex; padding: 13px 20px 20px; flex-direction: column; gap: 11px; }
-.local-account-modal label { display: flex; flex-direction: column; gap: 6px; }
-.local-account-modal label span { color: #aaa4b1; font-size: 11px; font-weight: 600; }
-.local-account-modal input { height: 39px; padding: 0 11px; border: 1px solid rgba(123, 109, 145, 0.28); outline: none; border-radius: 9px; color: #e8e4ed; background: rgba(7, 7, 11, 0.54); font-size: 12px; }
-.local-account-modal input:focus { border-color: rgba(84, 203, 255, 0.5); box-shadow: 0 0 0 3px rgba(57, 176, 231, 0.08); }
-.local-account-error { margin: 0; color: #ff8e99; font-size: 10.5px; line-height: 1.45; }
-.local-account-demo-fill { align-self: flex-start; padding: 0; cursor: pointer; color: #68c9f3; background: transparent; font-size: 10.5px; }
-.local-account-demo-fill:hover { color: #9ce3ff; }
-.local-account-submit { display: flex; height: 40px; align-items: center; justify-content: center; gap: 7px; margin-top: 2px; cursor: pointer; border-radius: 10px; color: #071018; background: linear-gradient(135deg, #5fd3ff, #59a9f4); box-shadow: 0 8px 24px rgba(39, 158, 219, 0.18); font-size: 12px; font-weight: 720; }
-.local-account-submit:hover { filter: brightness(1.08); }
+.local-account-actions button:hover:not(:disabled) {
+  color: #f1edf5;
+  background: rgba(255, 255, 255, 0.07);
+}
 
-:root[data-theme="light"] .local-account-panel { border-top-color: rgba(48, 78, 99, 0.12); }
+.local-account-actions button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.local-account-inline-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: #ff929d;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.local-account-inline-error svg {
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.local-account-inline-error--panel {
+  padding: 3px 7px 0;
+}
+
+.spin {
+  animation: local-account-spin 0.8s linear infinite;
+}
+
+@keyframes local-account-spin {
+  to { transform: rotate(360deg); }
+}
+
+:root[data-theme="light"] .local-account-panel {
+  border-top-color: rgba(48, 78, 99, 0.12);
+}
+
 :root[data-theme="light"] .local-account-signin,
-:root[data-theme="light"] .local-account-profile { color: #25333d; }
-:root[data-theme="light"] .local-account-signin strong,
-:root[data-theme="light"] .local-account-profile strong { color: #27343c; }
-:root[data-theme="light"] .local-account-signin small,
-:root[data-theme="light"] .local-account-profile small { color: #77838b; }
-:root[data-theme="light"] .local-account-quota-track { background: rgba(53, 112, 146, 0.13); }
+:root[data-theme="light"] .local-account-profile {
+  color: #25333d;
+}
 
-@media (max-height: 650px) {
-  .local-account-modal-backdrop { align-items: start; overflow: auto; }
+:root[data-theme="light"] .local-account-signin strong,
+:root[data-theme="light"] .local-account-profile strong,
+:root[data-theme="light"] .local-account-popover-head strong {
+  color: #27343c;
+}
+
+:root[data-theme="light"] .local-account-popover {
+  color: #27343c;
+  background: rgba(250, 252, 253, 0.985);
+  box-shadow: 0 18px 44px rgba(39, 61, 75, 0.16);
+}
+
+:root[data-theme="light"] .local-account-quota-track {
+  background: rgba(53, 112, 146, 0.13);
+}
+
+:root[data-theme="light"] .local-account-local-note,
+:root[data-theme="light"] .local-account-actions button {
+  background: rgba(43, 94, 123, 0.045);
 }

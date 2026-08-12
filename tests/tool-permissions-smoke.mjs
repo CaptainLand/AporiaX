@@ -16,14 +16,18 @@ const workspaceWrite = createPermissionPolicy("workspace-write");
 assert.equal(getToolPermission(workspaceWrite, "run_command"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "write_file"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "browser_click"), "ask");
-assert.equal(getToolPermission(workspaceWrite, "read_external_file"), "ask");
+assert.equal(getToolPermission(workspaceWrite, "read_external_file"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "start_process"), "ask");
 assert.equal(getToolPermission(workspaceWrite, "read_process"), "allow");
+
+const readOnly = createPermissionPolicy("read-only");
+assert.equal(getToolPermission(readOnly, "read_external_file"), "allow");
 
 const builderWrite = createPermissionPolicy("builder-write");
 assert.equal(getToolPermission(builderWrite, "run_command"), "allow");
 assert.equal(getToolPermission(builderWrite, "browser_click"), "deny");
 assert.equal(getToolPermission(builderWrite, "delegate_subagent"), "deny");
+assert.equal(getToolPermission(builderWrite, "read_external_file"), "deny");
 
 const dockerAuto = resolveToolExecutionPermission({
   toolName: "run_command",
@@ -37,6 +41,15 @@ assert.equal(dockerAuto.denied, false);
 assert.equal(dockerAuto.requiresApproval, false);
 assert.equal(dockerAuto.autoApproved, true);
 assert.equal(dockerAuto.executionMode, "isolated-auto-approval");
+
+const externalRead = resolveToolExecutionPermission({
+  toolName: "read_external_file",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  input: { path: "C:\\Users\\demo\\notes.md", reason: "Read the requested notes" },
+});
+assert.equal(externalRead.denied, false);
+assert.equal(externalRead.requiresApproval, false);
 
 const localAuto = resolveToolExecutionPermission({
   toolName: "run_command",
@@ -148,7 +161,7 @@ const approvalDecision = resolveToolExecutionPermission({
   permissionAction: "allow",
   approvalMode: "sandbox-auto",
   executionMode: "safe",
-  input: { command: "npm install lodash" },
+  input: { command: "npm install lodash", cwd: "." },
   sandboxStatus: { backend: "local-workspace", localAvailable: true },
 });
 const approvalRequest = buildToolApprovalRequest({
@@ -170,6 +183,8 @@ const browserApproval = buildToolApprovalRequest({
 assert.equal(browserApproval.toolName, "browser_click");
 assert.equal(browserApproval.kind, "control");
 
+// Approval-card formatting is still supported for project policies that make
+// external reads more restrictive than the Desktop default.
 const externalApproval = buildToolApprovalRequest({
   toolName: "read_external_file",
   descriptor: { risk: "read" },

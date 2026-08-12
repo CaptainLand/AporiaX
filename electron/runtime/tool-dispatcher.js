@@ -1,4 +1,5 @@
 import { getToolPermission } from "../agent-core.js";
+import { tryReadExternalDirectory } from "./external-read.js";
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -76,6 +77,16 @@ export async function dispatchNativeTool({
     assertNotAborted(signal);
     if (!approval?.approved) {
       throw new Error(`The user rejected tool: ${toolName}`);
+    }
+  }
+
+  if (toolName === "read_external_file") {
+    const directoryResult = await tryReadExternalDirectory(input?.path, {
+      signal,
+    });
+    if (directoryResult) {
+      assertNotAborted(signal);
+      return directoryResult;
     }
   }
 

@@ -33,6 +33,70 @@ function appendToolCallDelta(toolCalls, incomingCall) {
   toolCalls[index] = current;
 }
 
+function cloudErrorMessage(code) {
+  if (code === "WEEKLY_QUOTA_EXHAUSTED") {
+    return "Aporia Cloud 本周额度已用完。请切换到 Your Providers 或 Local 模型继续使用。";
+  }
+  if (code === "DESKTOP_ACCOUNT_SIGNED_OUT" || code === "APORIA_DEVICE_SESSION_REQUIRED") {
+    return "请先登录 Aporia Account，再使用 Aporia Cloud 模型。";
+  }
+  if (code === "APORIA_RATE_LIMITED") {
+    return "Aporia Cloud 当前并发请求较多，请稍后重试。";
+  }
+  if (code === "APORIA_MODEL_BUSY") {
+    return "Aporia Cloud 模型当前繁忙，请稍后重试。";
+  }
+  if (code === "APORIA_PROVIDER_DAILY_BUDGET_EXHAUSTED") {
+    return "Aporia Cloud 今日模型服务暂时不可用，你仍可切换到自己的 Provider 或本地模型。";
+  }
+  if (code === "APORIA_PROVIDER_TIMEOUT") {
+    return "Aporia Cloud 模型响应超时，请稍后重试。";
+  }
+  if (code?.startsWith("APORIA_PROVIDER_")) {
+    return "Aporia Cloud 上游模型服务暂时不可用，你仍可切换到自己的 Provider 或本地模型。";
+  }
+  return String(code || "APORIA_CLOUD_MODEL_FAILED");
+}
+
+function createProviderError(provider, code, status = 0) {
+  const normalizedCode = String(code || "PROVIDER_REQUEST_FAILED");
+  const error = new Error(
+    provider.kind === "aporia-cloud"
+      ? cloudErrorMessage(normalizedCode)
+      : normalizedCode,
+  );
+  error.code = normalizedCode;
+  error.status = status;
+  error.retryable =
+    status === 408 ||
+    status === 409 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500;
+  if (
+    provider.kind === "aporia-cloud" &&
+    [
+      "WEEKLY_QUOTA_EXHAUSTED",
+      "DESKTOP_ACCOUNT_SIGNED_OUT",
+      "APORIA_DEVICE_SESSION_REQUIRED",
+      "APORIA_PROVIDER_DAILY_BUDGET_EXHAUSTED",
+    ].includes(normalizedCode)
+  ) {
+    error.retryable = false;
+  }
+  return error;
+}
+
+async function fetchProviderResponse(provider, init) {
+  if (provider.kind === "aporia-cloud") {
+    if (typeof provider.authenticatedFetch !== "function") {
+      throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
+    }
+    return provider.authenticatedFetch("/v1/chat/completions", init);
+  }
+  return fetch(providerChatEndpoint(provider.baseUrl), init);
+}
+
 export async function callModelProvider({
   provider,
   body,
@@ -136,11 +200,11 @@ export async function callModelProviderOnce({
   resetIdleTimeout();
 
   try {
-    const response = await fetch(providerChatEndpoint(provider.baseUrl), {
+    const response = await fetchProviderResponse(provider, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(provider.apiKey
+        ...(provider.kind !== "aporia-cloud" && provider.apiKey
           ? { Authorization: `Bearer ${provider.apiKey}` }
           : {}),
       },
@@ -158,17 +222,10 @@ export async function callModelProviderOnce({
       const payload = await response.json().catch(() => null);
       const detail =
         payload?.error?.message ||
+        payload?.error ||
         payload?.message ||
         `${provider.name} API returned HTTP ${response.status}.`;
-      const error = new Error(detail);
-      error.retryable =
-        response.status === 408 ||
-        response.status === 409 ||
-        response.status === 425 ||
-        response.status === 429 ||
-        response.status >= 500;
-      error.status = response.status;
-      throw error;
+      throw createProviderError(provider, detail, response.status);
     }
     if (!response.body) {
       throw new Error(
@@ -196,6 +253,13 @@ export async function callModelProviderOnce({
         const data = trimmed.slice(5).trim();
         if (!data || data === "[DONE]") continue;
         const payload = JSON.parse(data);
+        const streamError =
+          typeof payload?.error === "string"
+            ? payload.error
+            : payload?.error?.message;
+        if (streamError) {
+          throw createProviderError(provider, streamError, 0);
+        }
         if (payload.usage) usage = payload.usage;
         const delta = payload?.choices?.[0]?.delta;
         if (!delta) continue;
@@ -229,9 +293,16 @@ export async function callModelProviderOnce({
     };
   } catch (error) {
     if (signal?.aborted) throw createAbortError();
+    if (provider.kind === "aporia-cloud" && error?.message === "DESKTOP_ACCOUNT_SIGNED_OUT") {
+      throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
+    }
     if (idleTimedOut) {
-      const timeoutError = new Error(
-        `${provider.name} connection was idle for 180 seconds.`,
+      const timeoutError = createProviderError(
+        provider,
+        provider.kind === "aporia-cloud"
+          ? "APORIA_PROVIDER_TIMEOUT"
+          : `${provider.name} connection was idle for 180 seconds.`,
+        504,
       );
       timeoutError.retryable = true;
       throw timeoutError;

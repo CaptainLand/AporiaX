@@ -39,6 +39,7 @@
     "test:renderer-modules": "node tests/renderer-modules-smoke.mjs",
     "test:harness-events-ui": "node tests/harness-event-hook-smoke.mjs",
     "test:provider-stream": "node tests/provider-stream-smoke.mjs",
+    "test:cloud-model": "node tests/aporia-cloud-model-runtime-smoke.mjs",
     "test:skills": "node tests/skill-system-smoke.mjs",
     "test:browser": "node tests/browser-runtime-smoke.mjs",
     "test:mcp": "node tests/mcp-runtime-smoke.mjs",

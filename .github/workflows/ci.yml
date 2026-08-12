@@ -45,11 +45,26 @@ jobs:
       - name: GitHub workflow smoke
         run: npm run test:github-workflow
 
+      - name: Desktop account auth smoke
+        run: npm run test:account-ui
+
+      - name: Aporia Cloud model runtime smoke
+        run: npm run test:cloud-model
+
+      - name: Vision proxy smoke
+        run: npm run test:vision
+
+      - name: Aporia Cloud vision security smoke
+        run: node tests/aporia-cloud-vision-smoke.mjs
+
       - name: Tool permission smoke
         run: npm run test:tool-permissions
 
       - name: Tool dispatcher smoke
         run: npm run test:tool-dispatcher
+
+      - name: Production test feedback smoke
+        run: node tests/runtime-test-polish-smoke.mjs
 
       - name: Build renderer
         run: npm run build

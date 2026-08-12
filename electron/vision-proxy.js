@@ -2,6 +2,8 @@ import { app, safeStorage } from "electron";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { providerChatEndpoint } from "./provider-config.js";
+import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
+import { callModelProviderOnce } from "./runtime/provider-stream.js";
 import {
   buildVisionMessages,
   hasImageAttachments,
@@ -12,6 +14,11 @@ import {
 
 const VISION_TIMEOUT_MS = 60_000;
 const VISION_MAX_OUTPUT_TOKENS = 1_600;
+const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
+const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
+const APORIA_CLOUD_VISION_MODEL_NAME = "Qwen3.5 Flash Vision";
+const APORIA_CLOUD_MAX_IMAGE_DATA_URL_CHARS = 7_500_000;
+const APORIA_CLOUD_VISION_OUTPUT_TOKENS = 900;
 
 function getProviderStorePath() {
   return join(app.getPath("userData"), "aporiax-providers.json");
@@ -112,6 +119,89 @@ async function callVisionProvider({ provider, model, message, signal }) {
   }
 }
 
+async function callAporiaCloudVision({ message, image, signal, onEvent }) {
+  if (String(image?.dataUrl || "").length > APORIA_CLOUD_MAX_IMAGE_DATA_URL_CHARS) {
+    throw new Error(
+      "Aporia Cloud Vision 当前单张图片过大，请压缩到约 5.5 MB 以下后重试。",
+    );
+  }
+  const accountRuntime = getDesktopAccountRuntime();
+  const provider = {
+    id: APORIA_CLOUD_PROVIDER_ID,
+    name: "Aporia Cloud Vision",
+    vendor: "aporia",
+    kind: "aporia-cloud",
+    authenticatedFetch: (path, init) => accountRuntime.fetchModelGateway(path, init),
+  };
+  const result = await callModelProviderOnce({
+    provider,
+    body: {
+      model: APORIA_CLOUD_VISION_MODEL_ID,
+      messages: buildVisionMessages(message, [image]),
+      max_completion_tokens: APORIA_CLOUD_VISION_OUTPUT_TOKENS,
+    },
+    signal,
+    onEvent,
+  });
+  const observation = String(result?.message?.content || "").trim();
+  if (!observation) throw new Error("Aporia Cloud Vision returned an empty observation.");
+  return observation;
+}
+
+async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}) {
+  const messages = Array.isArray(request?.messages) ? request.messages : [];
+  const nextMessages = [];
+  let imageCount = 0;
+
+  for (const message of messages) {
+    const images = imageAttachments(message);
+    if (!images.length) {
+      nextMessages.push(message);
+      continue;
+    }
+
+    const observations = [];
+    for (let index = 0; index < images.length; index += 1) {
+      onEvent?.({
+        type: "vision.proxy.started",
+        provider: "Aporia Cloud",
+        model: APORIA_CLOUD_VISION_MODEL_NAME,
+        imageIndex: index + 1,
+        imageCount: images.length,
+      });
+      const observation = await callAporiaCloudVision({
+        message,
+        image: images[index],
+        signal,
+        onEvent,
+      });
+      observations.push(
+        images.length > 1 ? `Image ${index + 1}:\n${observation}` : observation,
+      );
+      imageCount += 1;
+    }
+
+    nextMessages.push(
+      mergeVisionObservation(message, observations.join("\n\n"), {
+        providerName: "Aporia Cloud",
+        modelId: APORIA_CLOUD_VISION_MODEL_NAME,
+      }),
+    );
+  }
+
+  return {
+    ...request,
+    messages: nextMessages,
+    visionProxy: {
+      used: imageCount > 0,
+      providerId: APORIA_CLOUD_PROVIDER_ID,
+      modelId: APORIA_CLOUD_VISION_MODEL_ID,
+      imageCount,
+      billing: "weekly-quota",
+    },
+  };
+}
+
 function resolveMainModel(records, request) {
   const providerId = String(request?.providerId || "").trim();
   const modelId = String(request?.modelId || "").trim();
@@ -122,9 +212,17 @@ function resolveMainModel(records, request) {
   return { provider, model };
 }
 
-export async function prepareVisionProxyRequest(request, { signal } = {}) {
+export async function prepareVisionProxyRequest(request, { signal, onEvent } = {}) {
   const messages = Array.isArray(request?.messages) ? request.messages : [];
   if (!hasImageAttachments(messages)) return request;
+
+  // Aporia Cloud's public main model remains DeepSeek V4 Flash. Images are
+  // materialized once, before the Agent loop, through the hidden Qwen vision
+  // model. The resulting text observation replaces raw images so tool-call
+  // rounds cannot repeatedly send or repeatedly bill the same attachment.
+  if (String(request?.providerId || "") === APORIA_CLOUD_PROVIDER_ID) {
+    return prepareAporiaCloudVisionRequest(request, { signal, onEvent });
+  }
 
   const records = await readProviderRecords();
   const main = resolveMainModel(records, request);
