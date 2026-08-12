@@ -48,6 +48,9 @@ jobs:
       - name: Desktop account auth smoke
         run: npm run test:account-ui
 
+      - name: Aporia Cloud model runtime smoke
+        run: npm run test:cloud-model
+
       - name: Tool permission smoke
         run: npm run test:tool-permissions
 
