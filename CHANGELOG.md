@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.7.0 — 2026-08-13
+
+AporiaX 0.7.0 introduces the first complete Aporia Account + Aporia Cloud desktop path while keeping the existing local-first Harness, BYOK providers, and local model workflows intact.
+
+### Aporia Account and Desktop authorization
+
+- Added native browser sign-in with PKCE S256, exact state validation, and a loopback callback on `127.0.0.1`.
+- Access Tokens remain inside Electron Main memory and are not exposed to renderer/provider configuration.
+- Refresh Tokens are encrypted with Electron `safeStorage`, rotated through the Cloud refresh flow, and cleared on invalid sessions/sign-out.
+- Account hydration now covers identity, rolling weekly quota, Cloud model catalog, usage summary, and bound Desktop device state.
+- Account sign-in does not upload local workspaces, project source, or local conversation history.
+
+### Aporia Cloud managed models
+
+- Added first-party `Aporia Cloud` as a managed model source beside user providers and local models.
+- Added managed **DeepSeek V4 Flash** as the default Cloud model.
+- Added managed **DeepSeek V4 Pro** as a second selectable Cloud model.
+- Cloud traffic uses the authenticated Aporia Model Gateway rather than a user-supplied DeepSeek API key.
+- BYOK and local providers remain independent; weekly-quota exhaustion does not silently fall back to a paid user API.
+- Added stable source/billing metadata and dedicated Desktop smoke coverage for managed Cloud routing.
+
+### Cloud Vision
+
+- Added first-party image understanding for Aporia Cloud through hidden Qwen3.5 Flash Vision routing while DeepSeek remains the main Agent model.
+- Explicit image attachments are materialized before the Harness loop into compact textual observations.
+- Raw image attachments are removed after materialization so later tool rounds do not repeatedly resend/rebill the same image.
+- Multiple images are analyzed independently.
+- Qwen credentials/provider URLs remain Cloud-side and are never bundled into Desktop.
+
+### Privacy-preserving free-tier identity
+
+- Added one persistent random Desktop installation UUID under Electron `userData` for free-tier anti-abuse coordination.
+- The identifier survives sign-out/session rotation and is sent only during native Desktop token exchange.
+- No hardware serials, MAC addresses, MachineGuid, disk IDs, or similar hardware fingerprints are read for this mechanism.
+- Cloud stores only the HMAC-hashed installation identity.
+
+### Production-test polish
+
+- Simplified model rows to source-specific labels for Aporia Cloud, Your API, and Local.
+- Removed redundant capability copy such as `No API key required`, `Tool use`, `Vision`, and `Text only` from model cards.
+- Stopped presenting local/offline models as automatically image-capable.
+- Stabilized model-row widths so Flash / Pro / BYOK entries use the same full-width layout.
+- Completed blue progress journals remain compact by default but now expand to the complete retained progress history with one click and no arbitrary pixel-height cap.
+- Cloud connectivity failures no longer fill the lower-left account area with repeated red network errors.
+- Preserved the production-test additions for bounded external read-only references and built-in Word / Spreadsheet / Presentation design skills.
+
+### Release metadata and validation
+
+- Updated Desktop package version to `0.7.0`.
+- Node.js `>=22.12.0` remains the source requirement.
+- Windows x64 remains the packaged target.
+- Account, Cloud model, vision, runtime, execution, permission, LSP, GitHub workflow, and production renderer checks remain part of the release validation path.
+
+### Known boundaries
+
+- Aporia Cloud features require a reachable Cloud deployment; BYOK/local providers remain usable independently.
+- Local/offline image understanding requires a user-configured visual model/runtime and is not automatic.
+- Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet.
+- Windows 0.7.0 installer/portable binaries are published separately from the source/version presentation update.
+
 ## 0.6.5 — 2026-08-12
 
 AporiaX 0.6.5 strengthens the Coding Agent runtime around explicit execution boundaries, deterministic permissions, persistent language intelligence, and end-to-end Git/GitHub workflows.
