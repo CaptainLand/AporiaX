@@ -348,6 +348,68 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "lsp",
+      description:
+        "Use a persistent Language Server Protocol session for semantic code intelligence. Prefer LSP definition/references/hover/symbols over heuristic text search when semantic precision matters, and use diagnostics after code edits before final build/test verification.",
+      parameters: {
+        type: "object",
+        properties: {
+          operation: {
+            type: "string",
+            enum: ["status", "diagnostics", "definition", "references", "hover", "document_symbols", "workspace_symbols"],
+          },
+          path: {
+            type: "string",
+            description: "Workspace-relative source file. Required for every operation except status; workspace_symbols uses it to select the language server.",
+          },
+          line: {
+            type: "integer",
+            minimum: 1,
+            description: "1-based line for definition, references, or hover.",
+          },
+          character: {
+            type: "integer",
+            minimum: 1,
+            description: "1-based character for definition, references, or hover.",
+          },
+          query: {
+            type: "string",
+            maxLength: 500,
+            description: "Workspace symbol query. Empty string requests the server's broadest supported result.",
+          },
+          include_declaration: {
+            type: "boolean",
+            description: "Whether references should include the declaration. Defaults to true.",
+          },
+        },
+        required: ["operation"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lsp_install",
+      description:
+        "Install a missing language server for AporiaX. This is a host-level dependency/network mutation and requires approval. Python and Go are installed into AporiaX-managed storage; Rust uses rustup; clangd uses the platform package manager.",
+      parameters: {
+        type: "object",
+        properties: {
+          language: {
+            type: "string",
+            enum: ["python", "rust", "go", "clangd"],
+          },
+          reason: { type: "string" },
+        },
+        required: ["language", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_command",
       description:
         "Run one foreground workspace command. Prefer the network-disabled Docker sandbox; when Docker is unavailable, use the explicitly approved host fallback without OS isolation.",
@@ -476,6 +538,163 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "git_log",
+      description: "Read recent Git commit history without modifying the repository.",
+      parameters: { type: "object", properties: { max_count: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_init",
+      description: "Initialize the authorized workspace as a Git repository. Local repository bootstrap is safe to perform autonomously when workspace-write permission allows it.",
+      parameters: {
+        type: "object",
+        properties: {
+          initial_branch: { type: "string", maxLength: 240, description: "Initial branch name. Defaults to main." },
+          reason: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_stage",
+      description: "Stage explicit workspace-relative paths for a future commit. Never stages the whole repository implicitly.",
+      parameters: {
+        type: "object",
+        properties: { paths: { type: "array", minItems: 1, maxItems: 100, items: { type: "string" } }, reason: { type: "string" } },
+        required: ["paths"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_commit",
+      description: "Create a Git commit from currently staged changes. This tool never auto-stages files.",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string", minLength: 1, maxLength: 4000 }, reason: { type: "string" } },
+        required: ["message"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_create_branch",
+      description: "Create and switch to a new Git branch after validating its ref name.",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string", minLength: 1, maxLength: 240 }, reason: { type: "string" } },
+        required: ["name"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_remote_list",
+      description: "Read configured Git remotes without modifying the repository.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_remote_add",
+      description: "Add a named Git remote. Requires approval because it changes repository routing to an external destination.",
+      parameters: {
+        type: "object",
+        properties: { remote: { type: "string", maxLength: 120 }, url: { type: "string", maxLength: 2048 }, reason: { type: "string" } },
+        required: ["remote", "url", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_pull",
+      description: "Pull remote Git changes into a clean workspace. Defaults to --ff-only; rebase is available explicitly. Requires approval.",
+      parameters: {
+        type: "object",
+        properties: { remote: { type: "string", maxLength: 120 }, branch: { type: "string", maxLength: 240 }, strategy: { type: "string", enum: ["ff-only", "rebase"] }, reason: { type: "string" } },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_push",
+      description: "Push the current or named branch to a remote. Force push is intentionally unsupported. Requires approval.",
+      parameters: {
+        type: "object",
+        properties: { remote: { type: "string", maxLength: 120 }, branch: { type: "string", maxLength: 240 }, set_upstream: { type: "boolean" }, reason: { type: "string" } },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_repo_create",
+      description: "Create a GitHub repository from the current local Git workspace through authenticated GitHub CLI and attach it as a remote. Does not push commits automatically. Requires approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", maxLength: 240, description: "Optional repository name or owner/name. Defaults to the workspace directory name." },
+          visibility: { type: "string", enum: ["private", "public", "internal"] },
+          description: { type: "string", maxLength: 500 },
+          remote: { type: "string", maxLength: 120 },
+          reason: { type: "string" },
+        },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_pr_create",
+      description: "Create a GitHub pull request through the authenticated GitHub CLI. Requires approval and never exposes GitHub credentials to the model.",
+      parameters: {
+        type: "object",
+        properties: { title: { type: "string", minLength: 1, maxLength: 240 }, body: { type: "string", maxLength: 20000 }, base: { type: "string", maxLength: 240 }, head: { type: "string", maxLength: 240 }, draft: { type: "boolean" }, reason: { type: "string" } },
+        required: ["title", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_pr_view",
+      description: "Read the current or numbered GitHub pull request through GitHub CLI.",
+      parameters: { type: "object", properties: { number: { type: "integer", minimum: 1 } }, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_pr_checks",
+      description: "Read GitHub checks for the current or numbered pull request. A failing check is returned as evidence rather than treated as a tool failure.",
+      parameters: { type: "object", properties: { number: { type: "integer", minimum: 1 } }, additionalProperties: false },
+    },
+  },
   ...OFFICE_TOOL_DEFINITIONS,
   ...BROWSER_TOOL_DEFINITIONS,
   {
@@ -581,9 +800,24 @@ export const TOOL_RISKS = {
   search_text: "read",
   git_status: "read",
   git_diff: "read",
+  git_log: "read",
+  git_init: "write",
+  git_stage: "write",
+  git_commit: "write",
+  git_create_branch: "write",
+  git_remote_list: "read",
+  git_remote_add: "control",
+  git_pull: "write",
+  git_push: "control",
+  github_repo_create: "control",
+  github_pr_create: "control",
+  github_pr_view: "read",
+  github_pr_checks: "read",
   inspect_office_file: "read",
   write_file: "write",
   apply_patch: "write",
+  lsp: "read",
+  lsp_install: "control",
   create_word_document: "write",
   create_presentation: "write",
   create_spreadsheet: "write",

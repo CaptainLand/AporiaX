@@ -10,7 +10,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.12.0
           cache: npm
 
       - name: Install dependencies
@@ -35,6 +35,15 @@ jobs:
 
       - name: Execution wiring smoke
         run: npm run test:execution-wiring
+
+      - name: LSP smoke
+        run: npm run test:lsp
+
+      - name: LSP installer smoke
+        run: npm run test:lsp-installer
+
+      - name: GitHub workflow smoke
+        run: npm run test:github-workflow
 
       - name: Tool permission smoke
         run: npm run test:tool-permissions

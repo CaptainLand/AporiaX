@@ -83,7 +83,7 @@ const RULES = Object.freeze([
     action: "allow",
     risk: "low",
     category: "verification",
-    reason: "The command matches a bounded build, test, lint, or type-check workflow.",
+    reason: "The command matches a bounded build, test, lint, type-check, or read-only runtime inspection workflow.",
     patterns: [
       /^\s*(?:npm|pnpm|yarn|bun)\s+(?:test|run\s+(?:test|build|lint|typecheck|check))(?:\s|$)/i,
       /^\s*npx\s+tsc\b[^\n]*--noEmit\b/i,
@@ -91,6 +91,7 @@ const RULES = Object.freeze([
       /^\s*go\s+test(?:\s|$)/i,
       /^\s*cargo\s+(?:test|check)(?:\s|$)/i,
       /^\s*node\s+--check(?:\s|$)/i,
+      /^\s*node\s+(?:--version|-v)\s*$/i,
     ],
   },
 ]);

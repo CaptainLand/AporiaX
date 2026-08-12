@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.5",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -44,6 +44,7 @@
     "test:mcp": "node tests/mcp-runtime-smoke.mjs",
     "test:execution-policy": "node tests/execution-policy-smoke.mjs",
     "test:execution-wiring": "node tests/execution-mode-wiring-smoke.mjs",
+    "test:lsp": "node tests/lsp-runtime-smoke.mjs",
     "test:tool-permissions": "node tests/tool-permissions-smoke.mjs",
     "test:harness-v2": "node tests/harness-v2-smoke.mjs && node tests/harness-collaboration-smoke.mjs && node tests/harness-v2-orchestration-smoke.mjs",
     "test:streaming-performance": "node tests/streaming-performance-smoke.mjs",
@@ -71,7 +72,9 @@
     "test:v061-capabilities": "node tests/v061-capabilities-smoke.mjs",
     "test:account-ui": "node tests/local-account-ui-smoke.mjs",
     "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs",
-    "test:run-retry": "node tests/run-retry-core-smoke.mjs"
+    "test:run-retry": "node tests/run-retry-core-smoke.mjs",
+    "test:github-workflow": "node tests/github-workflow-smoke.mjs",
+    "test:lsp-installer": "node tests/lsp-installer-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -88,6 +91,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "typescript-language-server": "^5.3.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
@@ -95,7 +99,7 @@
     "concurrently": "^9.2.1",
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3",
-    "typescript": "^5.7.2",
+    "typescript": "^5.9.3",
     "vite": "^6.1.0",
     "wait-on": "^8.0.3"
   },
@@ -105,7 +109,9 @@
     "copyright": "Copyright © 2026 SeaLandX",
     "asar": true,
     "asarUnpack": [
-      "node_modules/@vscode/ripgrep-*/**/*"
+      "node_modules/@vscode/ripgrep-*/**/*",
+      "node_modules/typescript-language-server/**/*",
+      "node_modules/typescript/**/*"
     ],
     "npmRebuild": false,
     "electronDist": "node_modules/electron/dist",
@@ -147,5 +153,8 @@
     "portable": {
       "artifactName": "AporiaX-Portable-${version}-${arch}.${ext}"
     }
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }
