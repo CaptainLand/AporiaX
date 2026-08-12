@@ -1,0 +1,221 @@
+/* Production-test polish: keep the dialogue compact after a run completes. */
+
+/* Self-check remains mandatory in the Harness and Witness ledger. The large
+   duplicate result card is intentionally removed from the conversation. */
+.self-check-card {
+  display: none !important;
+}
+
+/* During a live run, progress stays fully visible. Once the run is no longer
+   live, keep a compact preview and let desktop users deliberately reveal the
+   retained journal by hovering/focusing it. Route remains the full audit view. */
+.assistant-message:not(:has(.aporiax-run-duration.running))
+  .assistant-progress-journal {
+  position: relative;
+  max-height: 78px;
+  overflow: hidden;
+  cursor: zoom-in;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
+  transition: max-height 180ms ease;
+}
+
+.assistant-message:not(:has(.aporiax-run-duration.running))
+  .assistant-progress-journal:hover,
+.assistant-message:not(:has(.aporiax-run-duration.running))
+  .assistant-progress-journal:focus-within {
+  max-height: 1400px;
+  cursor: zoom-out;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Model source labels are secondary metadata, not another headline. */
+.model-menu {
+  width: min(320px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+}
+
+.model-menu > .model-menu-heading {
+  font-size: 11.2px !important;
+  font-weight: 620 !important;
+}
+
+.model-menu-source-group > .model-menu-heading {
+  margin-top: 1px;
+  font-size: 10.7px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.01em;
+}
+
+.model-menu-source-note {
+  margin: 2px 8px 7px !important;
+  color: #8d8795 !important;
+  font-size: 9.5px !important;
+  font-weight: 450 !important;
+  line-height: 1.35 !important;
+}
+
+.model-menu .model-choice.compact {
+  min-width: 0;
+  min-height: 48px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.model-menu .model-choice.compact .model-choice-copy {
+  min-width: 0;
+}
+
+.model-menu .model-choice.compact .model-choice-name {
+  font-size: 12px !important;
+  line-height: 1.25;
+}
+
+.model-menu .model-choice.compact small {
+  overflow: hidden;
+  color: #88818f !important;
+  font-size: 9.4px !important;
+  line-height: 1.35 !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Provider settings must respond to the editor's real content width. The app
+   window can be wide while the settings content column is narrow, so viewport
+   media queries alone are insufficient. */
+.application-settings-content.models-section {
+  container-type: inline-size;
+}
+
+.provider-manager-modal.embedded,
+.provider-manager-modal.embedded .provider-manager-body,
+.provider-manager-modal.embedded .provider-list,
+.provider-manager-modal.embedded .provider-editor,
+.provider-manager-modal.embedded .provider-form-grid,
+.provider-manager-modal.embedded label,
+.provider-manager-modal.embedded .provider-model-heading,
+.provider-manager-modal.embedded .modal-footer,
+.provider-manager-modal.embedded .modal-footer-actions {
+  min-width: 0;
+}
+
+.provider-manager-modal.embedded .provider-editor .text-field,
+.provider-manager-modal.embedded .provider-models-input {
+  width: 100%;
+  min-width: 0;
+  font-size: 12.1px !important;
+}
+
+.provider-manager-modal.embedded .provider-form-grid label > span,
+.provider-manager-modal.embedded .provider-presets > span,
+.provider-manager-modal.embedded .provider-model-heading > div > span,
+.provider-manager-modal.embedded .provider-detection-summary,
+.provider-manager-modal.embedded .provider-list small {
+  font-size: 10.1px !important;
+  line-height: 1.4 !important;
+}
+
+.provider-manager-modal.embedded .provider-model-heading {
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.provider-manager-modal.embedded .provider-model-heading > div {
+  min-width: 180px;
+  flex: 1 1 240px;
+}
+
+.provider-manager-modal.embedded .provider-model-heading .secondary-button {
+  flex: 0 0 auto;
+}
+
+.provider-manager-modal.embedded .modal-footer {
+  gap: 10px;
+}
+
+.provider-manager-modal.embedded .modal-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@container (max-width: 720px) {
+  .provider-manager-modal.embedded .provider-manager-body {
+    grid-template-columns: 132px minmax(0, 1fr) !important;
+  }
+
+  .provider-manager-modal.embedded .provider-list {
+    padding: 14px 7px 10px !important;
+  }
+
+  .provider-manager-modal.embedded .provider-editor {
+    padding: 18px 15px 22px !important;
+  }
+
+  .provider-manager-modal.embedded .provider-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 12px !important;
+  }
+
+  .provider-manager-modal.embedded .provider-models-input {
+    height: 118px !important;
+  }
+}
+
+@container (max-width: 520px) {
+  .provider-manager-modal.embedded .provider-manager-body {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .provider-manager-modal.embedded .provider-list {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    border-right: 0 !important;
+    border-bottom: 1px solid rgba(100, 120, 145, 0.18);
+    gap: 6px;
+  }
+
+  .provider-manager-modal.embedded .provider-list-heading {
+    display: none;
+  }
+
+  .provider-manager-modal.embedded .provider-list > button {
+    min-width: 112px;
+    flex: 0 0 auto;
+  }
+
+  .provider-manager-modal.embedded .provider-editor {
+    padding: 15px 13px 18px !important;
+  }
+
+  .provider-manager-modal.embedded > .modal-footer {
+    min-height: 0 !important;
+    padding: 10px 13px !important;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-manager-modal.embedded .modal-footer-actions {
+    width: 100%;
+  }
+
+  .provider-manager-modal.embedded .modal-footer-actions > button {
+    flex: 1 1 130px;
+  }
+}
+
+:root[data-theme="dark"] .model-menu-source-note,
+:root[data-theme="dark"] .model-menu .model-choice.compact small {
+  color: #817989 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-progress-journal {
+    transition: none !important;
+  }
+}
