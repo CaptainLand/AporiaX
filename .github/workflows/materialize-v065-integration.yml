@@ -51,6 +51,35 @@ jobs:
       - name: Refresh package lock
         run: npm install --package-lock-only --ignore-scripts
 
+      - name: Persist materialized integration candidate
+        shell: bash
+        run: |
+          git config user.name "aporiax-integration-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            electron/agent-core.js \
+            electron/agent-runtime-core.js \
+            electron/runtime/github-runtime.js \
+            electron/runtime/lsp-installer.js \
+            electron/runtime/lsp-runtime.js \
+            electron/runtime/native-tool-catalog.js \
+            electron/runtime/native-tool-executor.js \
+            electron/runtime/tool-permissions.js \
+            tests/github-workflow-smoke.mjs \
+            tests/lsp-installer-smoke.mjs \
+            tests/lsp-runtime-smoke.mjs \
+            docs/releases/v0.6.5-github-workflow.md \
+            docs/releases/v0.6.5-integrated-workflows.md \
+            .github/workflows/ci.yml \
+            package.json \
+            package-lock.json
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit."
+          else
+            git commit -m "feat: integrate LSP installs and GitHub agent workflow"
+            git push origin HEAD:agent/0.6.5-integrated-workflows
+          fi
+
       - name: Install dependencies
         run: npm ci
 
@@ -83,32 +112,3 @@ jobs:
 
       - name: Build renderer
         run: npm run build
-
-      - name: Commit materialized integration
-        shell: bash
-        run: |
-          git config user.name "aporiax-integration-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add \
-            electron/agent-core.js \
-            electron/agent-runtime-core.js \
-            electron/runtime/github-runtime.js \
-            electron/runtime/lsp-installer.js \
-            electron/runtime/lsp-runtime.js \
-            electron/runtime/native-tool-catalog.js \
-            electron/runtime/native-tool-executor.js \
-            electron/runtime/tool-permissions.js \
-            tests/github-workflow-smoke.mjs \
-            tests/lsp-installer-smoke.mjs \
-            tests/lsp-runtime-smoke.mjs \
-            docs/releases/v0.6.5-github-workflow.md \
-            docs/releases/v0.6.5-integrated-workflows.md \
-            .github/workflows/ci.yml \
-            package.json \
-            package-lock.json
-          if git diff --cached --quiet; then
-            echo "No generated changes to commit."
-            exit 0
-          fi
-          git commit -m "feat: integrate LSP installs and GitHub agent workflow"
-          git push origin HEAD:agent/0.6.5-integrated-workflows
