@@ -93,6 +93,8 @@ assert.doesNotMatch(preload, /accessToken|refreshToken/);
 const accountPanel = await readFile("src/account/LocalAccountPanel.jsx", "utf8");
 assert.match(accountPanel, /window\.desktop\?\.account/);
 assert.match(accountPanel, /Continue in browser/);
+assert.match(accountPanel, /Aporia Cloud 未连接/);
+assert.doesNotMatch(accountPanel, /local-account-inline-error--panel/);
 assert.doesNotMatch(accountPanel, /landx|111111|Local UI prototype/);
 
 console.log("desktop account auth smoke: PASS");

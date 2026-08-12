@@ -57,29 +57,20 @@ function providerSource(provider) {
   return "user-provider";
 }
 
-function modelDescription(provider, model, source, language) {
-  const capability = language === "zh"
-    ? [
-        model.supportsImages ? "支持图片" : "仅文本",
-        model.supportsTools === false ? "不支持工具" : "支持工具",
-      ]
-    : [
-        model.supportsImages ? "Vision" : "Text only",
-        model.supportsTools === false ? "No tools" : "Tool use",
-      ];
+function modelDescription(provider, source, language) {
   if (source === "aporia-cloud") {
     return language === "zh"
-      ? ["Aporia Cloud", "每周额度", "无需 API Key", ...capability].join(" · ")
-      : ["Aporia Cloud", "Weekly quota", "No API key required", ...capability].join(" · ");
+      ? "Aporia Cloud · 每周额度"
+      : "Aporia Cloud · Weekly quota";
   }
   if (source === "local") {
     return language === "zh"
-      ? [provider.name, "本地", ...capability].join(" · ")
-      : [provider.name, "Local", ...capability].join(" · ");
+      ? `${provider.name} · 本地`
+      : `${provider.name} · Local`;
   }
   return language === "zh"
-    ? [provider.name, "你的 API", ...capability].join(" · ")
-    : [provider.name, "Your API", ...capability].join(" · ");
+    ? `${provider.name} · 你的 API`
+    : `${provider.name} · Your API`;
 }
 
 export function getAvailableModels(providers) {
@@ -100,9 +91,9 @@ export function getAvailableModels(providers) {
       source,
       billing,
       managed: Boolean(provider.managed),
-      description: modelDescription(provider, model, source, "zh"),
-      descriptionZh: modelDescription(provider, model, source, "zh"),
-      descriptionEn: modelDescription(provider, model, source, "en"),
+      description: modelDescription(provider, source, "zh"),
+      descriptionZh: modelDescription(provider, source, "zh"),
+      descriptionEn: modelDescription(provider, source, "en"),
       icon: model.supportsThinking ? Brain : Zap,
     }));
   });

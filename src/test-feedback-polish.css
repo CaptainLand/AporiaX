@@ -17,12 +17,14 @@
   cursor: pointer;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
-  transition: max-height 180ms ease;
 }
 
+/* Expanded means expanded: never cap the retained journal at an arbitrary
+   pixel height. A click reveals the complete progress history in one shot. */
 .assistant-message:not(:has(.aporiax-run-duration.running))
   .assistant-progress-journal.manual-expanded {
-  max-height: 1400px;
+  max-height: none !important;
+  overflow: visible !important;
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -44,6 +46,10 @@
   font-weight: 620 !important;
 }
 
+.model-menu-source-group {
+  width: 100%;
+}
+
 .model-menu-source-group > .model-menu-heading {
   margin-top: 1px;
   font-size: 10.7px !important;
@@ -59,7 +65,13 @@
   line-height: 1.35 !important;
 }
 
+/* Keep every model row visually stable regardless of title/subtitle length.
+   The whole source column is the click target, so Flash/Pro/BYOK rows do not
+   jump between content-sized widths. */
 .model-menu .model-choice.compact {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   min-width: 0;
   min-height: 48px;
   padding-top: 7px;

@@ -64,7 +64,9 @@ const [css, progressToggle, indexHtml] = await Promise.all([
 ]);
 assert.match(css, /\.self-check-card\s*\{[\s\S]*display:\s*none\s*!important/);
 assert.match(css, /assistant-message:not\(:has\(\.aporiax-run-duration\.running\)\)[\s\S]*assistant-progress-journal/);
-assert.match(css, /\.assistant-progress-journal\.manual-expanded/);
+assert.match(css, /\.assistant-progress-journal\.manual-expanded[\s\S]*max-height:\s*none\s*!important/);
+assert.match(css, /\.assistant-progress-journal\.manual-expanded[\s\S]*overflow:\s*visible\s*!important/);
+assert.doesNotMatch(css, /manual-expanded[\s\S]{0,160}max-height:\s*\d+px/);
 assert.doesNotMatch(css, /assistant-progress-journal:hover/);
 assert.doesNotMatch(css, /assistant-progress-journal:focus-within/);
 assert.match(progressToggle, /classList\.toggle\(EXPANDED_CLASS\)/);
@@ -73,5 +75,8 @@ assert.match(progressToggle, /assistant\.querySelector\(RUNNING_SELECTOR\)/);
 assert.match(indexHtml, /src\/progress-journal-toggle\.js/);
 assert.match(css, /@container\s*\(max-width:\s*720px\)/);
 assert.match(css, /\.model-menu-source-note/);
+assert.match(css, /\.model-menu-source-group\s*\{[\s\S]*width:\s*100%/);
+assert.match(css, /\.model-menu \.model-choice\.compact\s*\{[\s\S]*width:\s*100%/);
+assert.match(css, /\.model-menu \.model-choice\.compact\s*\{[\s\S]*box-sizing:\s*border-box/);
 
 console.log("runtime production-test polish smoke: PASS");
