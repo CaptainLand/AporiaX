@@ -7,27 +7,30 @@
 }
 
 /* During a live run, progress stays fully visible. Once the run is no longer
-   live, keep a compact preview and let desktop users deliberately reveal the
-   retained journal by hovering/focusing it. Route remains the full audit view. */
+   live, keep a compact preview. Completed journals expand only after an
+   explicit click; hover/focus alone must never reveal the retained journal. */
 .assistant-message:not(:has(.aporiax-run-duration.running))
   .assistant-progress-journal {
   position: relative;
   max-height: 78px;
   overflow: hidden;
-  cursor: zoom-in;
+  cursor: pointer;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
   transition: max-height 180ms ease;
 }
 
 .assistant-message:not(:has(.aporiax-run-duration.running))
-  .assistant-progress-journal:hover,
-.assistant-message:not(:has(.aporiax-run-duration.running))
-  .assistant-progress-journal:focus-within {
+  .assistant-progress-journal.manual-expanded {
   max-height: 1400px;
-  cursor: zoom-out;
   -webkit-mask-image: none;
   mask-image: none;
+}
+
+.assistant-message:not(:has(.aporiax-run-duration.running))
+  .assistant-progress-journal:focus-visible {
+  outline: 2px solid rgba(87, 148, 190, 0.42);
+  outline-offset: 2px;
 }
 
 /* Model source labels are secondary metadata, not another headline. */
