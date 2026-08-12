@@ -51,6 +51,12 @@ jobs:
       - name: Aporia Cloud model runtime smoke
         run: npm run test:cloud-model
 
+      - name: Vision proxy smoke
+        run: npm run test:vision
+
+      - name: Aporia Cloud vision security smoke
+        run: node tests/aporia-cloud-vision-smoke.mjs
+
       - name: Tool permission smoke
         run: npm run test:tool-permissions
 
