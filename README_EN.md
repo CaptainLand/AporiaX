@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/CaptainLand/AporiaX?color=59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v0.6.5"><img alt="Source v0.6.5" src="https://img.shields.io/badge/source-v0.6.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
@@ -27,26 +27,18 @@
   <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
 </p>
 
-AporiaX is a local-first desktop agent that turns ambiguous requests into
-observable, verifiable, and reversible routes. It works directly inside an
-authorized workspace, edits code, creates real Office files, and keeps actions,
-evidence, changes, and deliverables visible instead of reducing the work to a
-chat response.
+AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> AporiaX `v0.6.1` is still a preview and currently ships for Windows x64.
-> `run_command` runs automatically in a temporary local workspace copy and
-> conflict-checks project changes before synchronizing them back. Docker is
-> entirely optional; enabling it upgrades execution to an offline,
-> read-only-root OS-level container. The local sandbox isolates workspace
-> changes but still uses the current user's host network and process permissions.
+> The current AporiaX source version is **`v0.6.5`**. The project is still in Preview, with Windows x64 as the current packaged target.
+> The `v0.6.5` source tag is already published; until the matching 0.6.5 GitHub Release is published, the newest public Windows binaries in Releases may still be `v0.6.1`.
+> In 0.6.5, Permission and Execution Mode are separate boundaries: Smart Permission decides whether an operation may run, while Direct / Safe / Isolated decide where it runs.
 
 ## Why AporiaX
 
 - **Route** shows the steps that actually occurred during every task.
 - **Evidence** preserves tool calls, file changes, verification, and failures.
-- **Anchor** brings restorable checkpoints beside each turn, with diff preview,
-  conflict detection, and safe rollback.
+- **Anchor** brings restorable checkpoints beside each turn, with diff preview, conflict detection, and safe rollback.
 
 ## See the work happen
 
@@ -77,60 +69,81 @@ chat response.
   </tr>
 </table>
 
+## What's new in 0.6.5: execution, LSP, and complete GitHub Agent workflows
+
+### Direct / Safe / Isolated
+
+AporiaX now separates **whether** an operation can run from **where** it runs:
+
+- **Direct** — executes directly in the authorized workspace with host process and network authority.
+- **Safe** — executes in a temporary workspace copy and synchronizes changes back only after conflict checks. It protects workspace mutations but still uses host process/network authority.
+- **Isolated** — executes in the Docker sandbox with stronger OS-level isolation. A selected Isolated run never silently falls back to Host.
+
+Smart Permission applies deterministic risk classification before execution. Low-risk inspection and common build/test/lint/type-check workflows can be automatic; dependency mutation, explicit network access, remote writes, and destructive operations require approval; clearly system-destructive commands are denied.
+
+### Persistent LSP
+
+AporiaX now includes a persistent native LSP runtime with:
+
+- diagnostics
+- definition
+- references
+- hover
+- document symbols
+- workspace symbols
+
+TypeScript / JavaScript language intelligence is bundled. If supported external language servers are missing, the Agent can inspect availability and request approval to install Pyright, gopls, rust-analyzer, or clangd through `lsp_install`.
+
+### Git / GitHub Agent workflow
+
+AporiaX can now move from a normal folder to a reviewable GitHub pull request without asking the user to bootstrap Git manually:
+
+1. `git_init`
+2. `git_status` / `git_diff` / `git_log`
+3. explicit `git_stage`
+4. `git_commit`
+5. `git_create_branch`
+6. `git_remote_list` / `git_remote_add`
+7. `git_pull` / `git_push`
+8. `github_repo_create`
+9. `github_pr_create`
+10. `github_pr_view` / `github_pr_checks`
+
+Local Git lifecycle operations may run autonomously under workspace-write policy. Remote add, pull/push, GitHub repository creation, and PR creation remain approval-gated. Force push is intentionally not exposed as a native workflow.
+
+[Read the complete 0.6.5 notes](docs/releases/v0.6.5.md) · [Browse the v0.6.5 source tag](https://github.com/CaptainLand/AporiaX/tree/v0.6.5)
+
 ## What it can do today
 
 | Capability | Current implementation |
 | --- | --- |
-| Code and workspace | File tree, search, preview, editing, `Ctrl+S`, precise patches, Git status and diff |
+| Code and workspace | Paged/ranged reads, bundled ripgrep, file tree, preview/editing, multi-file Unified Patch, Git status and diff |
+| Language intelligence | Persistent LSP diagnostics, definition, references, hover, document symbols, workspace symbols, plus approval-gated language-server installation |
+| Git / GitHub | `git_init`, stage/commit/branch, remotes, pull/push, repository creation, PR creation, PR inspection, and CI checks |
+| Permissions and execution | Smart Permission plus Direct / Safe / Isolated execution; remote and higher-risk side effects remain explicit approval boundaries |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
 | Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents only when task complexity needs them |
-| Builder orchestration | Eligible large write tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and conflict-safe merge |
-| Agent collaboration | Shared Contracts, deterministic Plan Approval, structured handoffs, semantic disagreement checks, and a bounded mailbox; Main remains final integration authority |
-| Observable execution | Witness reports the current main/subagent action, duration, failures, and self-check phase in Dialogue; Route preserves the full trace |
+| Builder orchestration | Eligible large writable tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and conflict-safe merge |
+| Agent collaboration | Shared Contracts, deterministic Plan Approval, structured handoffs, and a bounded mailbox; Main remains final integration authority |
+| Observable execution | Witness reports main/subagent activity, duration, failures, and self-check stages while Route preserves the full trace |
 | Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and atomic conflict checks |
-| Mandatory self-check | Review/Verify subagents inspect current file versions in stages, followed by a lightweight final seal over tests, risks, and deliverables |
-| Subagents and context | Parallel reads and search; isolated Explore, Review, Verify, Curator, and scope-bounded Builder roles; scoped rules, structured compaction, and relevant-history recall |
-| Desktop background lifecycle | Closing the main window can keep tasks running in the system tray, with tray restore/exit, Windows completion notifications, and live task runtime display |
-| Project understanding | One workspace forms one project; versioned Understanding shares architecture, conventions, commands, preferences, and debugging knowledge across its tasks |
-| Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, task-level model selection |
-| Bilingual interface | Switch Chinese and English from the welcome screen or settings; new replies follow the interface language |
-| Attachments | PDF, Office, Markdown, code, and image attachments with local PDF text extraction |
-| Permissions and execution | `allow` / `ask` / `deny` policy, automatic local workspace sandbox, optional stronger Docker isolation |
+| Mandatory self-check | Review/Verify subagents inspect current file versions before a lightweight final seal over tests, risks, and deliverables |
+| Project understanding | Understanding stores reusable architecture, conventions, commands, preferences, and debugging knowledge for the workspace |
+| Extensions | Skills, MCP, Browser, Office, and native tools share the same capability system |
+| Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, and task-level model selection |
+| Desktop background lifecycle | Tasks may continue in the Windows system tray with restore/exit, completion notifications, and live runtime display |
 
-Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled
-yet. Image delivery depends on the vision capability of the selected model.
+Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet. Image delivery depends on the vision capability of the selected model.
 
 ## Download
 
-| Windows x64 | Use case |
+The `v0.6.5` source is already fixed by tag. The Windows 0.6.5 binaries will be linked here once the matching GitHub Release is published.
+
+| Windows x64 | Current public package |
 | --- | --- |
-| [Installer 0.6.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | Standard installation, desktop shortcut, and Start menu |
-| [Portable 0.6.1](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | Run and evaluate without installation |
-
-### What's new in 0.6.1: Agent-native tools and practical extensions
-
-- **Continue large-file reads** — `read_file` now supports line ranges, character offsets, continuation metadata, totals, and SHA-256 evidence.
-- **Search real repositories** — bundled ripgrep adds regex, globs, symbols, and heuristic definition/reference modes.
-- **Apply safer changes** — multi-file unified patches support multiple hunks, create/delete, dry runs, optimistic hashes, and rollback.
-- **Keep processes alive** — task-scoped terminals can run development servers, watchers, REPLs, and stdin-driven programs while the Agent continues working.
-- **Approve external reads explicitly** — each read-only access outside the workspace requires a fresh approval; external writes remain unavailable.
-- **Install and mention extensions** — import Skill folders and common MCP JSON from Settings, then select files, `@skill:<name>`, or `@mcp:<id>` from one composer menu.
-- **More reliable recovery** — retrying a stopped turn now reconciles stale runs, starts one replacement transaction, and surfaces actionable failures instead of silently doing nothing.
-
-[Read the 0.6.1 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.6.1) · [Read the complete 0.6.1 notes](docs/releases/v0.6.1.md)
-
-### What's new in 0.6.0: from accumulated features to an extensible local Agent platform
-
-- **Architecture reconstruction** — native React conversation UI, a single-source TaskStore, pure event reducers, explicit run/turn coordination, and testable runtime modules replace migration-era bridges.
-- **Unified capability system** — native tools, Office, Browser, Skills, and MCP share one Capability Registry that drives permissions, Route presentation, and extension visibility.
-- **Skill / MCP Extensions center** — a bilingual library, install/configure flows, source policies, lifecycle controls, and trusted local or remote MCP server connections.
-- **More reliable multi-agent work** — scoped Builder, Explore, Review, Verify, and Curator roles; bounded parallel preflight review; version-matched findings; and evidence-based final sealing.
-- **Witness and long-command governance** — durable progress records, slow-command warnings, strategy-adjustment signals, and bounded process-tree cleanup.
-- **Autonomous Understanding** — Curator decides whether task evidence is durable enough to update shared architecture, conventions, commands, preferences, or debugging knowledge.
-- **Local sandbox and recovery** — Docker is optional; temporary workspace execution adds secret filtering, conflict checks, and safe synchronization while task isolation, stopped-run recovery, and retries are hardened.
-- **Browser, vision, and workspace context** — isolated Browser tools, vision proxy routing, ordered file mentions, stable live status, prompt folding, and lower-overhead streaming.
-
-[Read the 0.6.0 GitHub Release](https://github.com/CaptainLand/AporiaX/releases/tag/v0.6.0) · [Read the complete changelog](CHANGELOG.md)
+| [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | Installer and portable downloads; this becomes the 0.6.5 binary entry point after release publication |
+| [0.6.1 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | Current published installer |
+| [0.6.1 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | Current published portable build |
 
 After the first launch:
 
@@ -138,17 +151,11 @@ After the first launch:
 2. Add an OpenAI-compatible API provider and model.
 3. Describe the outcome, then inspect Route, file changes, self-check, and deliverables.
 
-Docker Desktop is optional. Without it, commands run automatically in a
-temporary workspace copy and project changes are conflict-checked before they
-are synchronized back. With Docker enabled, commands use a network-disabled
-container with stronger OS-level isolation.
-
 ## Run from source
 
-Node.js 20 or newer is required. Start Docker Desktop only if you want stronger
-containerized `run_command`; the in-app **Enable stronger Docker isolation**
-action builds the local `aporiax-sandbox:0.1` image. Commands work without
-Docker and do not require per-command approval in automatic mode.
+**Node.js 22.12.0 or newer is required.**
+
+Docker Desktop is required only for Isolated execution. Direct and Safe work without Docker: Safe uses a temporary workspace copy with conflict-checked synchronization, while Direct operates on the authorized workspace directly.
 
 ```powershell
 git clone https://github.com/CaptainLand/AporiaX.git
@@ -157,106 +164,48 @@ npm install
 npm run dev
 ```
 
-On first use, add an API base URL and API key in **Model providers**. AporiaX
-supports OpenAI-compatible Chat Completions APIs, attempts model discovery
-through `/models`, and also accepts manually entered model IDs. Multiple
-providers can coexist, and each task can use a different model.
+On first use, add an API base URL and API key in **Model providers**. AporiaX supports OpenAI-compatible Chat Completions APIs, attempts model discovery through `/models`, and also accepts manually entered model IDs. Multiple providers can coexist, and each task can use a different model.
 
-For backward compatibility, DeepSeek can also be configured through an
-environment variable:
+For backward compatibility, DeepSeek can also be configured through an environment variable:
 
 ```powershell
 $env:DEEPSEEK_API_KEY="your-api-key"
 npm start
 ```
 
-API keys are encrypted with Electron `safeStorage` and are never returned to
-the renderer. Never put real credentials in source code, `.env`, issues, or
-logs.
+API keys are encrypted with Electron `safeStorage` and are never returned to the renderer. Never put real credentials in source code, `.env`, issues, or logs.
 
 ## Common commands
 
 ```powershell
-# Development: Vite and Electron
+# Development
 npm run dev
 
-# Runtime and P0 data model tests
+# 0.6.5 core validation
 npm run test:runtime
-npm run test:p0
-
-# Harness / Collaboration / Desktop smoke tests
 npm run test:architecture
-npm run test:collaboration
-npm run test:harness-v2
-npm run test:desktop-background
+npm run test:execution-policy
+npm run test:execution-wiring
+npm run test:lsp
+npm run test:lsp-installer
+npm run test:github-workflow
+npm run test:tool-permissions
+npm run test:tool-dispatcher
 
-# Production web build
+# Production build
 npm run build
 
 # Windows installer and portable package
 npm run dist:win
 ```
 
-## Creating Office files
-
-Create a task with workspace write access, bind a workspace, and describe the
-deliverable:
-
-```text
-Create project-weekly-report.docx with a title, progress highlights, risks,
-and a milestone table.
-```
-
-```text
-Create a six-slide quarterly review.pptx and a sales-dashboard.xlsx with
-growth formulas.
-```
-
-Harness uses structured Office tools, then re-parses document blocks, slides,
-worksheets, and formulas. Structural inspection does not replace a final visual
-review in Word, PowerPoint, or Excel.
-
 ## Subagents and project context
 
-AporiaX runs independent read tools concurrently and delegates larger
-exploration, review, and verification work to isolated Explore, Review, and
-Verify subagents with their own context and path scope. Curator handles explicit
-durable project understanding. For eligible large writable Git tasks, Harness
-can plan up to two Builders that work inside isolated Git worktrees under Scope
-Leases before Main integrates their changes after conflict checks. Builders
-cannot broaden write scope, run arbitrary commands, or recursively delegate agents.
+AporiaX runs independent read tools concurrently and delegates larger exploration, review, and verification work to isolated Explore, Review, and Verify subagents. Curator handles durable project understanding. For eligible large writable Git tasks, Harness can plan up to two Builders that work inside isolated Git worktrees under Scope Leases before Main integrates their changes after conflict checks.
 
-Parallel Builders must pass a Shared Contract and Plan Approval first, sharing
-cross-module invariants, acceptance criteria, and Main-owned shared-file
-boundaries. They report results through structured handoffs and a bounded
-mailbox. Main keeps final integration authority, while Witness only observes
-and records.
+Parallel Builders must pass a Shared Contract and Plan Approval first, sharing cross-module invariants, acceptance criteria, and Main-owned shared-file boundaries. Main keeps final integration authority, while Witness remains observation-only.
 
-Harness recognizes these project rules:
-
-- `AGENTS.md`, `APORIAX.md`, and `DEEPAGENT.md` at the workspace root or in nested directories.
-- Path-scoped Markdown files under `.aporiax/rules/`, with optional `paths` globs in frontmatter.
-- App-local project memory for verified commands, architecture conventions, and explicit preferences; credentials are rejected.
-
-```markdown
----
-paths:
-  - src/**/*.js
----
-Run the project syntax check after changing JavaScript.
-```
-
-Near the model context limit, Harness preserves system and scoped rules,
-compacts older content into a structured checkpoint, and retrieves relevant
-constraints, evidence, and project memory for the current work. When a
-provider reports actual token usage, the estimator calibrates itself. Model
-configuration may also provide `contextWindow`.
-
-While a task is running, **Witness** at the bottom of Dialogue subscribes to
-the Harness event stream and reports what the main agent and subagents are
-doing. Witness is observation-only and never edits files. It surfaces
-long-running actions and repeated tool failures while Route retains the full
-tool evidence.
+Harness recognizes `AGENTS.md`, `APORIAX.md`, and `DEEPAGENT.md` in the workspace as well as path-scoped `.aporiax/rules/*.md`. Project Understanding stores verified commands, architecture conventions, and explicit preferences; credentials are rejected.
 
 ## Project-level permissions
 
@@ -277,27 +226,23 @@ Add `.aporiax.json` to the workspace root:
 }
 ```
 
-Project configuration can only restrict task permissions. It cannot elevate a
-read-only task or disable Harness control tools used by mandatory self-check.
+Project configuration can only restrict task permissions. It cannot elevate a read-only task or disable Harness control tools used by mandatory self-check.
 
 ## Repository layout
 
 ```text
 electron/   Electron main process, Harness, tools, and security boundaries
-src/        React UI, Route, Workspace, and review experience
-tests/      Runtime and P0 behavior tests
-docs/       Architecture and Harness roadmap
+src/        React UI, Route/Workspace, and review experience
+tests/      Runtime and behavior validation
+docs/       Architecture, release notes, and Harness roadmap
 build/      Application icons and build resources
 ```
 
-See [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) for current Harness
-architecture and plans. See [CHANGELOG.md](CHANGELOG.md) for this release.
+See [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) for current Harness architecture and plans. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as
-described in [SECURITY.md](SECURITY.md); never disclose real credentials or
-vulnerability details publicly.
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md); never disclose real credentials or vulnerability details publicly.
 
 ## License
 
