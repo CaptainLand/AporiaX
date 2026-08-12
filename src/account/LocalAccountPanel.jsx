@@ -176,6 +176,7 @@ export function LocalAccountPanel() {
 
   const booting = account?.status === "booting";
   const unavailable = account?.status === "unavailable";
+  const cloudUnavailable = account?.status === "error" || Boolean(error);
 
   return (
     <div className="local-account-panel">
@@ -194,11 +195,14 @@ export function LocalAccountPanel() {
                 ? tr("等待浏览器确认", "Waiting for browser")
                 : tr("登录 AporiaX", "Sign in to AporiaX")}
           </strong>
-          <small>{tr("在浏览器中继续", "Continue in browser")}</small>
+          <small>
+            {cloudUnavailable
+              ? tr("Aporia Cloud 未连接", "Aporia Cloud unavailable")
+              : tr("在浏览器中继续", "Continue in browser")}
+          </small>
         </span>
         {busy ? <RefreshCw className="spin" size={14} /> : <ExternalLink size={14} />}
       </button>
-      {error && <p className="local-account-inline-error local-account-inline-error--panel"><AlertCircle size={12} />{error}</p>}
     </div>
   );
 }
