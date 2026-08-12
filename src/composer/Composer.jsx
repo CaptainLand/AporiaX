@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
-import { getAvailableModels, getModel } from "../models/model-catalog.js";
+import { getModel, getModelGroups } from "../models/model-catalog.js";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
 
 function ModelMenu({ task, providers, onUpdate, onClose }) {
@@ -24,6 +24,7 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
     task.providerId,
     task.modelId,
   );
+  const modelGroups = getModelGroups(providers);
 
   useEffect(() => {
     const handlePointerDown = (event) => {
@@ -44,25 +45,36 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
     <div className="model-menu" ref={menuRef}>
       <div className="model-menu-heading">{tr("选择模型", "Choose a model")}</div>
       <div className="model-menu-options">
-        {getAvailableModels(providers).map((model) => (
-          <ModelChoice
-            key={`${model.providerId}:${model.id}`}
-            compact
-            model={model}
-            selected={
-              task.providerId === model.providerId &&
-              task.modelId === model.id
-            }
-            onSelect={(selection) =>
-              onUpdate({
-                providerId: selection.providerId,
-                modelId: selection.id,
-                thinking: selection.supportsThinking
-                  ? task.thinking
-                  : false,
-              })
-            }
-          />
+        {modelGroups.map((group, groupIndex) => (
+          <div className="model-menu-source-group" key={group.source}>
+            {groupIndex > 0 && <div className="model-menu-divider" />}
+            <div className="model-menu-heading">
+              {tr(group.titleZh, group.titleEn)}
+            </div>
+            <div className="model-menu-source-note">
+              {tr(group.noteZh, group.noteEn)}
+            </div>
+            {group.models.map((model) => (
+              <ModelChoice
+                key={`${model.providerId}:${model.id}`}
+                compact
+                model={model}
+                selected={
+                  task.providerId === model.providerId &&
+                  task.modelId === model.id
+                }
+                onSelect={(selection) =>
+                  onUpdate({
+                    providerId: selection.providerId,
+                    modelId: selection.id,
+                    thinking: selection.supportsThinking
+                      ? task.thinking
+                      : false,
+                  })
+                }
+              />
+            ))}
+          </div>
         ))}
       </div>
       <div className="model-menu-divider" />
@@ -606,4 +618,3 @@ export function Composer({
     </div>
   );
 }
-
