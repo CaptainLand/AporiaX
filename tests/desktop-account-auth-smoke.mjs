@@ -78,6 +78,13 @@ for (const file of [
   assert.equal(checked.status, 0, `${file} syntax check failed: ${checked.stderr}`);
 }
 
+const runtime = await readFile("electron/account/desktop-account-runtime.js", "utf8");
+assert.match(runtime, /aporiax-installation\.json/);
+assert.match(runtime, /randomUUID\(\)/);
+assert.match(runtime, /installationId,/);
+assert.match(runtime, /Installation identity deliberately survives sign-out/);
+assert.doesNotMatch(runtime, /machineGuid|wmic|MAC address|serialnumber/i);
+
 const preload = await readFile("electron/preload.cjs", "utf8");
 assert.match(preload, /account:\s*\{/);
 assert.match(preload, /account:sign-in/);
