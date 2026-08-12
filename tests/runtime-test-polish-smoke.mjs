@@ -75,5 +75,8 @@ assert.match(progressToggle, /assistant\.querySelector\(RUNNING_SELECTOR\)/);
 assert.match(indexHtml, /src\/progress-journal-toggle\.js/);
 assert.match(css, /@container\s*\(max-width:\s*720px\)/);
 assert.match(css, /\.model-menu-source-note/);
+assert.match(css, /\.model-menu-source-group\s*\{[\s\S]*width:\s*100%/);
+assert.match(css, /\.model-menu \.model-choice\.compact\s*\{[\s\S]*width:\s*100%/);
+assert.match(css, /\.model-menu \.model-choice\.compact\s*\{[\s\S]*box-sizing:\s*border-box/);
 
 console.log("runtime production-test polish smoke: PASS");
