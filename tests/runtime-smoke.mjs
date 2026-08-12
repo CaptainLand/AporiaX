@@ -851,7 +851,7 @@ try {
 
   const localSandboxResponses = [
     createToolDelta("local-sandbox-command", "run_command", {
-      command: "node --version",
+      command: "npm test",
       cwd: ".",
       reason: "验证运行环境。",
     }),
@@ -917,7 +917,7 @@ try {
   assert.equal(localSandboxHarnessResult.steps[0]?.success, true);
   assert.equal(
     localSandboxHarnessResult.steps[0]?.command,
-    "node --version",
+    "npm test",
   );
   assert.match(
     englishSystemPrompt,

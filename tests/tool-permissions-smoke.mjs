@@ -29,39 +29,100 @@ const dockerAuto = resolveToolExecutionPermission({
   toolName: "run_command",
   permissionAction: "allow",
   approvalMode: "sandbox-auto",
+  executionMode: "isolated",
+  input: { command: "npm test" },
   sandboxStatus: { available: true, autoApprovalSafe: true },
 });
 assert.equal(dockerAuto.denied, false);
 assert.equal(dockerAuto.requiresApproval, false);
-assert.equal(dockerAuto.sandboxAutoApproved, true);
-assert.equal(dockerAuto.executionMode, "container-auto-approval");
+assert.equal(dockerAuto.autoApproved, true);
+assert.equal(dockerAuto.executionMode, "isolated-auto-approval");
 
 const localAuto = resolveToolExecutionPermission({
   toolName: "run_command",
   permissionAction: "allow",
   approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "npm run build" },
   sandboxStatus: { available: false, localAvailable: true, autoApprovalSafe: true },
 });
 assert.equal(localAuto.requiresApproval, false);
-assert.equal(localAuto.executionMode, "local-workspace-auto-approval");
+assert.equal(localAuto.executionMode, "safe-auto-approval");
+
+const unknownLocalCommand = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "node scripts/custom.js" },
+  sandboxStatus: { localAvailable: true, autoApprovalSafe: true },
+});
+assert.equal(unknownLocalCommand.requiresApproval, true);
+assert.equal(unknownLocalCommand.commandPolicy.category, "host-authority-unknown");
+
+const directSafeCommand = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "direct",
+  input: { command: "git status" },
+});
+assert.equal(directSafeCommand.requiresApproval, false);
+assert.equal(directSafeCommand.executionMode, "direct-auto-approval");
+
+const directUnknownCommand = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "direct",
+  input: { command: "node scripts/custom.js" },
+});
+assert.equal(directUnknownCommand.requiresApproval, true);
+assert.equal(directUnknownCommand.executionMode, "direct-manual-approval");
+
+const dependencyMutation = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "isolated",
+  input: { command: "npm install lodash" },
+  sandboxStatus: { available: true },
+});
+assert.equal(dependencyMutation.requiresApproval, true);
+assert.equal(dependencyMutation.commandPolicy.category, "dependency-mutation");
+
+const explicitAskCannotBeBypassed = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "ask",
+  approvalMode: "sandbox-auto",
+  executionMode: "isolated",
+  input: { command: "npm test" },
+  sandboxStatus: { available: true },
+});
+assert.equal(explicitAskCannotBeBypassed.requiresApproval, true);
+assert.equal(explicitAskCannotBeBypassed.autoApproved, false);
+
+const criticalCommand = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "isolated",
+  input: { command: "rm -rf /" },
+  sandboxStatus: { available: true },
+});
+assert.equal(criticalCommand.denied, true);
+assert.equal(criticalCommand.commandPolicy.risk, "critical");
 
 const manualSandbox = resolveToolExecutionPermission({
   toolName: "run_command",
   permissionAction: "allow",
   approvalMode: "manual",
+  executionMode: "safe",
+  input: { command: "npm test" },
   sandboxStatus: { localAvailable: true, autoApprovalSafe: true },
 });
 assert.equal(manualSandbox.requiresApproval, true);
-assert.equal(manualSandbox.executionMode, "sandbox-manual-approval");
-
-const noSandbox = resolveToolExecutionPermission({
-  toolName: "run_command",
-  permissionAction: "allow",
-  approvalMode: "sandbox-auto",
-  sandboxStatus: null,
-});
-assert.equal(noSandbox.requiresApproval, true);
-assert.equal(noSandbox.executionMode, "host-manual-approval");
+assert.equal(manualSandbox.executionMode, "safe-manual-approval");
 
 const browserControl = resolveToolExecutionPermission({
   toolName: "browser_click",
@@ -75,28 +136,31 @@ const denied = resolveToolExecutionPermission({
   toolName: "run_command",
   permissionAction: "deny",
   approvalMode: "sandbox-auto",
+  executionMode: "isolated",
+  input: { command: "npm test" },
   sandboxStatus: { available: true },
 });
 assert.equal(denied.denied, true);
 assert.equal(denied.requiresApproval, false);
 
-assert.deepEqual(
-  buildToolApprovalRequest({
-    toolName: "run_command",
-    descriptor: { risk: "execute" },
-    input: { command: "npm test", cwd: "." },
-    sandboxStatus: { backend: "local-workspace" },
-  }),
-  {
-    toolName: "run_command",
-    kind: "execute",
-    title: "运行工作区命令",
-    command: "npm test",
-    cwd: ".",
-    reason: "Agent 请求执行可能改变工作区或运行进程的操作。",
-    sandbox: { backend: "local-workspace" },
-  },
-);
+const approvalDecision = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "npm install lodash" },
+  sandboxStatus: { backend: "local-workspace", localAvailable: true },
+});
+const approvalRequest = buildToolApprovalRequest({
+  toolName: "run_command",
+  descriptor: { risk: "execute" },
+  input: { command: "npm install lodash", cwd: "." },
+  sandboxStatus: { backend: "local-workspace" },
+  permissionDecision: approvalDecision,
+});
+assert.equal(approvalRequest.riskLevel, "medium");
+assert.equal(approvalRequest.riskCategory, "dependency-mutation");
+assert.match(approvalRequest.reason, /dependencies/i);
 
 const browserApproval = buildToolApprovalRequest({
   toolName: "browser_click",

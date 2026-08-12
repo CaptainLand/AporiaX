@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const budgetStorage = new AsyncLocalStorage();
+const EXECUTION_MODES = new Set(["direct", "safe", "isolated"]);
+const normalizeExecutionMode = (value, fallback = "safe") =>
+  EXECUTION_MODES.has(value) ? value : fallback;
 const PROFILE_ORDER = ["direct", "read", "light", "standard", "large"];
 const PROFILE_LIMITS = Object.freeze({
   direct: Object.freeze({
@@ -138,9 +141,11 @@ export function planAgentBudget(options = {}) {
   const requestedProfile = String(options?.agentBudget?.profile || "").toLowerCase();
   const profile = PROFILE_LIMITS[requestedProfile] ? requestedProfile : classified.profile;
   const limits = mergeLimits(PROFILE_LIMITS[profile], options?.agentBudget || {});
+  const executionMode = normalizeExecutionMode(options?.executionMode);
   return Object.freeze({
     version: 1,
     profile,
+    executionMode,
     reason: requestedProfile ? "explicit-override" : classified.reason,
     score: classified.score,
     limits,
@@ -153,6 +158,7 @@ function publicPlan(context) {
   return {
     ...context.plan,
     profile: context.profile,
+    executionMode: context.executionMode,
     limits: context.limits,
     state: {
       totalStarted: context.state.totalStarted,
@@ -282,12 +288,20 @@ export function currentAgentBudget() {
   return publicPlan(budgetStorage.getStore());
 }
 
+export function currentExecutionMode() {
+  return budgetStorage.getStore()?.executionMode || null;
+}
+
 export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
   if (typeof fn !== "function") throw new Error("runWithAgentBudget requires a function.");
   const normalized = plan?.limits ? plan : planAgentBudget({});
+  const parentContext = budgetStorage.getStore();
   const context = {
     plan: normalized,
     profile: normalized.profile,
+    executionMode: normalized.executionMode
+      ? normalizeExecutionMode(normalized.executionMode)
+      : parentContext?.executionMode || "safe",
     limits: normalized.limits,
     onEvent,
     state: {
@@ -301,6 +315,7 @@ export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
   notify(context, {
     type: "agent_budget.planned",
     profile: context.profile,
+    executionMode: context.executionMode,
     reason: normalized.reason,
     score: normalized.score,
     limits: context.limits,

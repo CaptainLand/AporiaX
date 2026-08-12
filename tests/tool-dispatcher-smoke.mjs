@@ -52,7 +52,8 @@ const result = await dispatchNativeTool({
   executeAuthorized: async ({ input, permissionDecision }) => {
     executions += 1;
     assert.equal(input.command, "npm test");
-    assert.equal(permissionDecision.executionMode, "local-workspace-auto-approval");
+    assert.equal(permissionDecision.executionMode, "safe-auto-approval");
+    assert.equal(permissionDecision.commandPolicy.category, "verification");
     return { modelResult: { exitCode: 0 } };
   },
 });
@@ -69,6 +70,7 @@ await dispatchNativeTool({
   requestApproval: async (request) => {
     approvals += 1;
     assert.equal(request.command, "npm test");
+    assert.equal(request.riskCategory, "verification");
     return { approved: true };
   },
   parseArguments,
@@ -94,12 +96,16 @@ await assert.rejects(
 const catalog = projectNativeToolCatalog({
   catalog: registry.catalog(createPermissionPolicy("workspace-write")),
   approvalMode: "sandbox-auto",
-  sandboxStatus: { available: true, autoApprovalSafe: true },
+  sandboxStatus: { available: true, localAvailable: true, autoApprovalSafe: true },
 });
-assert.equal(catalog.find((tool) => tool.name === "run_command").permission, "allow");
+assert.equal(catalog.find((tool) => tool.name === "run_command").permission, "ask");
 assert.equal(
   catalog.find((tool) => tool.name === "run_command").executionMode,
-  "container-auto-approval",
+  "isolated-manual-approval",
+);
+assert.match(
+  catalog.find((tool) => tool.name === "run_command").warning,
+  /Docker isolation profile/,
 );
 assert.equal(catalog.find((tool) => tool.name === "write_file").permission, "allow");
 

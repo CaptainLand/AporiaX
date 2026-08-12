@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { createHostFallbackEnvironment } from "../sandbox-runtime.js";
+import { currentExecutionMode } from "../harness/agent-budget.js";
 
 const MAX_LOG_CHARS = 400_000;
 const MAX_INPUT_CHARS = 64_000;
@@ -63,6 +64,8 @@ function publicState(record) {
     signal: record.signal,
     startedAt: record.startedAt,
     finishedAt: record.finishedAt,
+    requestedExecutionMode: record.requestedExecutionMode,
+    executionBackend: "host",
     cursor: record.baseOffset + record.output.length,
   };
 }
@@ -103,10 +106,16 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
       if (activeCount >= MAX_PROCESSES) {
         throw new Error(`At most ${MAX_PROCESSES} persistent processes may run in one task.`);
       }
+      const requestedExecutionMode = currentExecutionMode() || "safe";
+      if (requestedExecutionMode === "isolated") {
+        throw new Error(
+          "Persistent terminal processes do not silently fall back to Host in Isolated mode. Use a bounded run_command or switch this task to Direct/Safe mode.",
+        );
+      }
       const shell = shellCommand(normalized);
       const child = spawn(shell.program, shell.args, {
         cwd,
-        env: createHostFallbackEnvironment(),
+        env: createHostFallbackEnvironment(process.env, "persistent-host"),
         shell: false,
         detached: process.platform !== "win32",
         windowsHide: true,
@@ -124,6 +133,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         baseOffset: 0,
         startedAt: new Date().toISOString(),
         finishedAt: null,
+        requestedExecutionMode,
       };
       processes.set(record.id, record);
       child.stdout.on("data", (chunk) => append(record, "stdout", chunk));

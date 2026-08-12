@@ -29,6 +29,7 @@ export async function dispatchNativeTool({
   approvalMode = "manual",
   requestApproval,
   sandboxStatus = null,
+  executionMode = null,
   signal,
   parseArguments,
   executeAuthorized,
@@ -52,6 +53,8 @@ export async function dispatchNativeTool({
     permissionAction,
     approvalMode,
     sandboxStatus,
+    executionMode,
+    input,
   });
   if (decision.denied) {
     throw new Error(`Permission denied for tool: ${toolName}`);
@@ -67,6 +70,7 @@ export async function dispatchNativeTool({
         descriptor,
         input,
         sandboxStatus,
+        permissionDecision: decision,
       }),
     );
     assertNotAborted(signal);
@@ -92,6 +96,7 @@ export function projectNativeToolCatalog({
   catalog = [],
   approvalMode = "manual",
   sandboxStatus = null,
+  executionMode = null,
 } = {}) {
   return (catalog || []).map((tool) => {
     if (tool?.name !== "run_command" || tool.permission === "deny") return tool;
@@ -100,18 +105,22 @@ export function projectNativeToolCatalog({
       permissionAction: tool.permission,
       approvalMode,
       sandboxStatus,
+      executionMode,
+      input: {},
     });
+    const backend = decision.backend;
     return {
       ...tool,
       permission: decision.requiresApproval ? "ask" : "allow",
       executionMode: decision.executionMode,
-      warning: decision.sandboxAutoApproved
-        ? sandboxStatus?.available
-          ? "Commands run automatically inside the isolated Docker sandbox."
-          : "Commands run automatically in a temporary workspace copy with conflict-checked synchronization."
-        : decision.sandboxSafe
-          ? "Commands use the sandbox but require explicit approval for this task."
-          : "No safe sandbox backend is available. Host execution requires explicit approval.",
+      warning:
+        backend.mode === "direct"
+          ? "Direct execution uses the real workspace and host authority. Only recognized low-risk commands may auto-run; unknown commands require approval."
+          : backend.mode === "isolated"
+            ? backend.available
+              ? "Commands use the Docker isolation profile. Explicit destructive, dependency-mutating, and remote-write commands still require approval."
+              : "Docker isolation was selected but is not ready. Command execution remains behind an approval boundary until the isolated backend is available."
+            : "Safe execution protects workspace mutations with a temporary copy, but still uses host process and network authority. Unknown commands require approval.",
     };
   });
 }

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Runtime smoke
+        run: npm run test:runtime
+
+      - name: Architecture smoke
+        run: npm run test:architecture
+
+      - name: Execution policy smoke
+        run: npm run test:execution-policy
+
+      - name: Execution wiring smoke
+        run: npm run test:execution-wiring
+
+      - name: Tool permission smoke
+        run: npm run test:tool-permissions
+
+      - name: Tool dispatcher smoke
+        run: npm run test:tool-dispatcher
+
+      - name: Build renderer
+        run: npm run build
