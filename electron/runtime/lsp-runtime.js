@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createHostFallbackEnvironment } from "../sandbox-runtime.js";
+import { describeLanguageServers, resolveLanguageServerCommand } from "./lsp-installer.js";
 
 const require = createRequire(import.meta.url);
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -56,34 +57,19 @@ const LANGUAGE_SPECS = Object.freeze([
     id: "python",
     extensions: new Set([".py", ".pyi"]),
     languageId: () => "python",
-    command: () => ({
-      program: "pyright-langserver",
-      args: ["--stdio"],
-      env: createHostFallbackEnvironment(process.env, "lsp-server"),
-      source: "path",
-    }),
+    command: () => externalLanguageServerCommand("python", ["--stdio"]),
   },
   {
     id: "rust",
     extensions: new Set([".rs"]),
     languageId: () => "rust",
-    command: () => ({
-      program: "rust-analyzer",
-      args: [],
-      env: createHostFallbackEnvironment(process.env, "lsp-server"),
-      source: "path",
-    }),
+    command: () => externalLanguageServerCommand("rust", []),
   },
   {
     id: "go",
     extensions: new Set([".go"]),
     languageId: () => "go",
-    command: () => ({
-      program: "gopls",
-      args: ["serve"],
-      env: createHostFallbackEnvironment(process.env, "lsp-server"),
-      source: "path",
-    }),
+    command: () => externalLanguageServerCommand("go", ["serve"]),
   },
   {
     id: "clangd",
@@ -91,14 +77,25 @@ const LANGUAGE_SPECS = Object.freeze([
     languageId(extension) {
       return [".c", ".h"].includes(extension) ? "c" : "cpp";
     },
-    command: () => ({
-      program: "clangd",
-      args: ["--background-index"],
-      env: createHostFallbackEnvironment(process.env, "lsp-server"),
-      source: "path",
-    }),
+    command: () => externalLanguageServerCommand("clangd", ["--background-index"]),
   },
 ]);
+
+function externalLanguageServerCommand(language, args) {
+  const resolved = resolveLanguageServerCommand(language, args);
+  if (!resolved) {
+    throw new Error(`Language server for ${language} is not installed. Use lsp_install to install it.`);
+  }
+  return {
+    program: resolved.program,
+    args: resolved.args,
+    env: {
+      ...createHostFallbackEnvironment(process.env, "lsp-server"),
+      ...(resolved.electronRunAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+    },
+    source: resolved.source,
+  };
+}
 
 function createAbortError() {
   const error = new Error("The LSP operation was interrupted.");
@@ -468,11 +465,28 @@ export function createLspManager({ workspaceRoot, emit = () => {}, signal } = {}
       const operation = String(input.operation || "status");
       if (operation === "status") {
         return {
-          supported: LANGUAGE_SPECS.map((spec) => ({
-            id: spec.id,
-            extensions: [...spec.extensions],
-            bundled: spec.id === "typescript",
-          })),
+          supported: (() => {
+            const availability = new Map(describeLanguageServers().map((item) => [item.id, item]));
+            return LANGUAGE_SPECS.map((spec) => {
+              if (spec.id === "typescript") {
+                return {
+                  id: spec.id,
+                  extensions: [...spec.extensions],
+                  bundled: true,
+                  available: true,
+                  source: "bundled",
+                  installable: false,
+                  installer: null,
+                };
+              }
+              return {
+                id: spec.id,
+                extensions: [...spec.extensions],
+                bundled: false,
+                ...(availability.get(spec.id) || { available: false, installable: true }),
+              };
+            });
+          })(),
           sessions: [...sessions.values()].map((session) => session.status()),
         };
       }

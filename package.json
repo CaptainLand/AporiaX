@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.5",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -72,7 +72,9 @@
     "test:v061-capabilities": "node tests/v061-capabilities-smoke.mjs",
     "test:account-ui": "node tests/local-account-ui-smoke.mjs",
     "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs",
-    "test:run-retry": "node tests/run-retry-core-smoke.mjs"
+    "test:run-retry": "node tests/run-retry-core-smoke.mjs",
+    "test:github-workflow": "node tests/github-workflow-smoke.mjs",
+    "test:lsp-installer": "node tests/lsp-installer-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -151,5 +153,8 @@
     "portable": {
       "artifactName": "AporiaX-Portable-${version}-${arch}.${ext}"
     }
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

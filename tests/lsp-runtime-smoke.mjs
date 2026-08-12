@@ -23,7 +23,8 @@ const manager = createLspManager({
 });
 try {
   const initial = await manager.execute({ operation: "status" });
-  assert.ok(initial.supported.some((server) => server.id === "typescript" && server.bundled));
+  assert.ok(initial.supported.some((server) => server.id === "typescript" && server.bundled && server.available));
+  assert.ok(initial.supported.some((server) => server.id === "python" && server.installable));
 
   const diagnostics = await manager.execute({ operation: "diagnostics", path: "sample.ts" });
   assert.equal(diagnostics.server, "typescript");
