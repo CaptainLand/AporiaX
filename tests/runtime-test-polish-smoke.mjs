@@ -64,7 +64,9 @@ const [css, progressToggle, indexHtml] = await Promise.all([
 ]);
 assert.match(css, /\.self-check-card\s*\{[\s\S]*display:\s*none\s*!important/);
 assert.match(css, /assistant-message:not\(:has\(\.aporiax-run-duration\.running\)\)[\s\S]*assistant-progress-journal/);
-assert.match(css, /\.assistant-progress-journal\.manual-expanded/);
+assert.match(css, /\.assistant-progress-journal\.manual-expanded[\s\S]*max-height:\s*none\s*!important/);
+assert.match(css, /\.assistant-progress-journal\.manual-expanded[\s\S]*overflow:\s*visible\s*!important/);
+assert.doesNotMatch(css, /manual-expanded[\s\S]{0,160}max-height:\s*\d+px/);
 assert.doesNotMatch(css, /assistant-progress-journal:hover/);
 assert.doesNotMatch(css, /assistant-progress-journal:focus-within/);
 assert.match(progressToggle, /classList\.toggle\(EXPANDED_CLASS\)/);
