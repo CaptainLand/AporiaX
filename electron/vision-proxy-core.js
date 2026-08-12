@@ -15,6 +15,8 @@ const PREFERRED_VISION_MODELS = [
 
 const MAX_VISION_IMAGES_PER_MESSAGE = 8;
 const MAX_VISION_DATA_URL_CHARS = 28_000_000;
+const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
+const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
 
 export function modelSupportsVision(model = {}) {
   const id = String(model?.id || model?.name || "").trim();
@@ -34,7 +36,31 @@ function preferredVisionCandidate(candidates) {
   return candidates[0] || null;
 }
 
+function aporiaCloudVisionCandidate(records) {
+  const provider = records.find(
+    (record) =>
+      record?.id === APORIA_CLOUD_PROVIDER_ID ||
+      record?.kind === "aporia-cloud" ||
+      record?.source === "aporia-cloud",
+  );
+  if (!provider) return null;
+  return {
+    provider,
+    model: {
+      id: APORIA_CLOUD_VISION_MODEL_ID,
+      name: "Qwen3.5 Flash Vision",
+      supportsImages: true,
+    },
+  };
+}
+
 function rendererVisionCandidate(records) {
+  // Aporia Cloud is a first-party managed proxy: it uses the Account session,
+  // not a renderer-visible API key. Prefer it when present, then fall back to
+  // the existing user-configured vision Provider selection.
+  const cloud = aporiaCloudVisionCandidate(records);
+  if (cloud) return cloud;
+
   const candidates = [];
   for (const provider of records) {
     if (provider?.hasApiKey !== true) continue;
@@ -67,9 +93,6 @@ export function exposeVisionProxyCapabilities(providers) {
     ...provider,
     models: (Array.isArray(provider?.models) ? provider.models : []).map(
       (model) => {
-        // This is the model's real/native capability, not the renderer's
-        // effective capability after AporiaX routing. Pattern inference is
-        // important for older saved Qwen records that predate image metadata.
         const nativeSupportsImages = modelSupportsVision(model);
         const supportsImageProxy =
           !nativeSupportsImages && Boolean(proxyMetadata);
@@ -78,8 +101,6 @@ export function exposeVisionProxyCapabilities(providers) {
           nativeSupportsImages,
           supportsImageProxy,
           visionProxy: supportsImageProxy ? proxyMetadata : null,
-          // Renderer-level capability: a text-only main model can accept image
-          // attachments when AporiaX has a usable Vision Proxy configured.
           supportsImages: nativeSupportsImages || supportsImageProxy,
         };
       },
@@ -145,7 +166,6 @@ export function selectVisionCandidate(
   }
 
   if (!candidates.length) return null;
-
   if (explicitProvider || explicitModel) return candidates[0];
 
   const nonMain = candidates.filter(
@@ -162,7 +182,7 @@ export function buildVisionMessages(message, images = imageAttachments(message))
     {
       type: "text",
       text: [
-        "Analyze the attached image(s) for another coding agent that cannot see images.",
+        "Analyze the attached image for another coding agent that cannot see images.",
         "Be precise and factual. Preserve exact visible error text, labels, numbers, filenames, line numbers, UI states, layout relationships, and other details that may affect the user's task.",
         "Do not invent content that is not visible. If something is uncertain, say so.",
         "Return a compact structured observation with these headings when applicable: Summary, Visible text, UI/Layout, Errors/Warnings, Relevant details, Uncertainty.",
