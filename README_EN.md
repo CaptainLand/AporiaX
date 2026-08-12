@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v0.6.5"><img alt="Source v0.6.5" src="https://img.shields.io/badge/source-v0.6.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.0" src="https://img.shields.io/badge/source-v0.7.0-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,9 +30,9 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source version is **`v0.6.5`**. The project is still in Preview, with Windows x64 as the current packaged target.
-> The `v0.6.5` source tag is already published; until the matching 0.6.5 GitHub Release is published, the newest public Windows binaries in Releases may still be `v0.6.1`.
-> In 0.6.5, Permission and Execution Mode are separate boundaries: Smart Permission decides whether an operation may run, while Direct / Safe / Isolated decide where it runs.
+> The current AporiaX source version is **`v0.7.0`**. The project is still in Preview, with Windows x64 as the current packaged target.
+> `main` now represents the 0.7.0 source state. The matching Windows installer and portable package will be published separately after packaging.
+> 0.7.0 connects Aporia Account, Aporia Cloud, DeepSeek V4 Flash / Pro, and Cloud Vision into one Desktop path while preserving BYOK and local model workflows.
 
 ## Why AporiaX
 
@@ -69,49 +69,48 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
   </tr>
 </table>
 
-## What's new in 0.6.5: execution, LSP, and complete GitHub Agent workflows
+## What's new in 0.7.0: Aporia Account, Cloud models, and native Cloud vision
 
-### Direct / Safe / Isolated
+### Aporia Account
 
-AporiaX now separates **whether** an operation can run from **where** it runs:
+Desktop can now sign in to Aporia Account through the system browser:
 
-- **Direct** — executes directly in the authorized workspace with host process and network authority.
-- **Safe** — executes in a temporary workspace copy and synchronizes changes back only after conflict checks. It protects workspace mutations but still uses host process/network authority.
-- **Isolated** — executes in the Docker sandbox with stronger OS-level isolation. A selected Isolated run never silently falls back to Host.
+- PKCE S256 plus a validated local loopback callback completes Desktop authorization;
+- Access Tokens remain in Electron Main memory only;
+- Refresh Tokens are encrypted with Electron `safeStorage` before persistence;
+- renderer/preload receive projected Account state instead of raw credentials;
+- signing in does not automatically upload workspaces, project source, or local conversations.
 
-Smart Permission applies deterministic risk classification before execution. Low-risk inspection and common build/test/lint/type-check workflows can be automatic; dependency mutation, explicit network access, remote writes, and destructive operations require approval; clearly system-destructive commands are denied.
+### Aporia Cloud
 
-### Persistent LSP
+The model picker now separates model sources into **Aporia Cloud / Your Providers / Local**.
 
-AporiaX now includes a persistent native LSP runtime with:
+Aporia Cloud currently includes:
 
-- diagnostics
-- definition
-- references
-- hover
-- document symbols
-- workspace symbols
+- **DeepSeek V4 Flash** as the default managed model;
+- **DeepSeek V4 Pro** as an optional higher-capability managed model;
+- both use the authenticated Aporia Model Gateway and require no DeepSeek API key in Desktop;
+- Cloud, BYOK, and Local remain independent paths, and weekly-quota exhaustion never silently switches to a user-paid API.
 
-TypeScript / JavaScript language intelligence is bundled. If supported external language servers are missing, the Agent can inspect availability and request approval to install Pyright, gopls, rust-analyzer, or clangd through `lsp_install`.
+### Cloud Vision
 
-### Git / GitHub Agent workflow
+Aporia Cloud image understanding uses a hidden Qwen3.5 Flash Vision path while DeepSeek remains the main Agent model:
 
-AporiaX can now move from a normal folder to a reviewable GitHub pull request without asking the user to bootstrap Git manually:
+```text
+image attachment -> Qwen3.5 Flash Vision -> compact observation -> DeepSeek V4 -> Harness / tool loop
+```
 
-1. `git_init`
-2. `git_status` / `git_diff` / `git_log`
-3. explicit `git_stage`
-4. `git_commit`
-5. `git_create_branch`
-6. `git_remote_list` / `git_remote_add`
-7. `git_pull` / `git_push`
-8. `github_repo_create`
-9. `github_pr_create`
-10. `github_pr_view` / `github_pr_checks`
+Images are materialized once before the main Agent loop. Raw image attachments are removed afterward, so later tool rounds reuse the textual observation instead of repeatedly resending the same image. Qwen provider credentials remain Cloud-side.
 
-Local Git lifecycle operations may run autonomously under workspace-write policy. Remote add, pull/push, GitHub repository creation, and PR creation remain approval-gated. Force push is intentionally not exposed as a native workflow.
+### Privacy and production polish
 
-[Read the complete 0.6.5 notes](docs/releases/v0.6.5.md) · [Browse the v0.6.5 source tag](https://github.com/CaptainLand/AporiaX/tree/v0.6.5)
+- Desktop creates one persistent random installation UUID for free-tier anti-abuse without reading MachineGuid, MAC addresses, disk serials, or similar hardware fingerprints; Cloud stores only its HMAC hash.
+- Model rows are now compact, stable-width, and source-specific instead of repeating `No API key required`, `Tool use`, `Vision`, or `Text only` labels.
+- Local models are no longer presented as automatically image-capable; offline vision requires a user-configured local vision model/runtime.
+- Completed blue progress journals stay compact by default and expand to the complete retained process with one click, without a fixed pixel ceiling.
+- When Cloud is temporarily unreachable, the normal lower-left account area shows a quiet availability state instead of stacking red network errors.
+
+[Read the complete 0.7.0 notes](docs/releases/v0.7.0.md)
 
 ## What it can do today
 
@@ -121,6 +120,9 @@ Local Git lifecycle operations may run autonomously under workspace-write policy
 | Language intelligence | Persistent LSP diagnostics, definition, references, hover, document symbols, workspace symbols, plus approval-gated language-server installation |
 | Git / GitHub | `git_init`, stage/commit/branch, remotes, pull/push, repository creation, PR creation, PR inspection, and CI checks |
 | Permissions and execution | Smart Permission plus Direct / Safe / Isolated execution; remote and higher-risk side effects remain explicit approval boundaries |
+| Aporia Account | Browser authorization, PKCE, Main-only Access Token, safeStorage Refresh Token, account/quota/device state |
+| Aporia Cloud | Managed DeepSeek V4 Flash / Pro, rolling weekly quota, Main-process Gateway, isolated from BYOK / Local paths |
+| Cloud Vision | Explicit image attachments are analyzed once by Qwen3.5 Flash and passed to the DeepSeek Agent as compact text observations |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
 | Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents only when task complexity needs them |
 | Builder orchestration | Eligible large writable tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and conflict-safe merge |
@@ -130,25 +132,25 @@ Local Git lifecycle operations may run autonomously under workspace-write policy
 | Mandatory self-check | Review/Verify subagents inspect current file versions before a lightweight final seal over tests, risks, and deliverables |
 | Project understanding | Understanding stores reusable architecture, conventions, commands, preferences, and debugging knowledge for the workspace |
 | Extensions | Skills, MCP, Browser, Office, and native tools share the same capability system |
-| Multiple model APIs | Multiple OpenAI-compatible providers and keys, `/models` discovery, and task-level model selection |
+| Multiple model APIs | Aporia Cloud plus multiple OpenAI-compatible providers/keys, `/models` discovery, and task-level model selection |
 | Desktop background lifecycle | Tasks may continue in the Windows system tray with restore/exit, completion notifications, and live runtime display |
 
-Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet. Image delivery depends on the vision capability of the selected model.
+Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet. Aporia Cloud image attachments can use Cloud Vision; BYOK/local image support depends on the user's own model and runtime configuration.
 
 ## Download
 
-The `v0.6.5` source is already fixed by tag. The Windows 0.6.5 binaries will be linked here once the matching GitHub Release is published.
+`main` is now the **v0.7.0 source state**. The Windows x64 installer and portable build will be uploaded to GitHub Releases after packaging.
 
 | Windows x64 | Current public package |
 | --- | --- |
-| [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | Installer and portable downloads; this becomes the 0.6.5 binary entry point after release publication |
+| [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | Installer and portable downloads; 0.7.0 will become the newest binary release after publication |
 | [0.6.1 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | Current published installer |
 | [0.6.1 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | Current published portable build |
 
 After the first launch:
 
 1. Create a task and choose a local workspace.
-2. Add an OpenAI-compatible API provider and model.
+2. Sign in to AporiaX for Aporia Cloud, or add your own OpenAI-compatible / local provider.
 3. Describe the outcome, then inspect Route, file changes, self-check, and deliverables.
 
 ## Run from source
@@ -164,7 +166,7 @@ npm install
 npm run dev
 ```
 
-On first use, add an API base URL and API key in **Model providers**. AporiaX supports OpenAI-compatible Chat Completions APIs, attempts model discovery through `/models`, and also accepts manually entered model IDs. Multiple providers can coexist, and each task can use a different model.
+On first use, sign in to Aporia Account for Aporia Cloud or add an API base URL and API key in **Model providers**. AporiaX supports OpenAI-compatible Chat Completions APIs, attempts model discovery through `/models`, and also accepts manually entered model IDs. Multiple providers can coexist, and each task can use a different model.
 
 For backward compatibility, DeepSeek can also be configured through an environment variable:
 
@@ -181,14 +183,16 @@ API keys are encrypted with Electron `safeStorage` and are never returned to the
 # Development
 npm run dev
 
-# 0.6.5 core validation
+# 0.7.0 core validation
 npm run test:runtime
 npm run test:architecture
 npm run test:execution-policy
 npm run test:execution-wiring
 npm run test:lsp
-npm run test:lsp-installer
 npm run test:github-workflow
+npm run test:account-ui
+npm run test:cloud-model
+npm run test:vision
 npm run test:tool-permissions
 npm run test:tool-dispatcher
 
