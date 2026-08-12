@@ -1,5 +1,6 @@
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
+import "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
