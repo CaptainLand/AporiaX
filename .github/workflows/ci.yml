@@ -45,6 +45,9 @@ jobs:
       - name: GitHub workflow smoke
         run: npm run test:github-workflow
 
+      - name: Desktop account auth smoke
+        run: npm run test:account-ui
+
       - name: Tool permission smoke
         run: npm run test:tool-permissions
 
