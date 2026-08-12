@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 export const APORIAX_DESKTOP_CLIENT_ID = "aporiax-desktop";
 export const DEFAULT_APORIAX_ACCOUNT_WEB_URL = "https://captainland.github.io/AporiaX_web/";
 export const DEFAULT_APORIAX_CLOUD_API_URL = "http://127.0.0.1:4100";
+export const DEFAULT_APORIAX_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
 
 function base64urlRandom(bytes) {
   return randomBytes(bytes).toString("base64url");
@@ -20,7 +21,7 @@ export function createDesktopPkce() {
 export function normalizeHttpBaseUrl(value, fallback) {
   const raw = String(value || fallback || "").trim();
   const url = new URL(raw);
-  if (!['http:', 'https:'].includes(url.protocol)) {
+  if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("APORIAX_ACCOUNT_URL_INVALID");
   }
   url.hash = "";
