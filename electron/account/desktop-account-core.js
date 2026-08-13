@@ -45,7 +45,11 @@ export function buildDesktopAuthorizationUrl({
     throw new Error("DESKTOP_STATE_INVALID");
   }
 
-  const url = new URL(`${normalizeHttpBaseUrl(webBaseUrl)}/authorize/desktop`);
+  // CloudBase static hosting does not provide an SPA fallback for deep links.
+  // Keep the authorization entry on the deployable root document and let the
+  // Web app select the Desktop authorization screen through a query flag.
+  const url = new URL(`${normalizeHttpBaseUrl(webBaseUrl)}/`);
+  url.searchParams.set("desktop_authorize", "1");
   url.searchParams.set("client_id", APORIAX_DESKTOP_CLIENT_ID);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("code_challenge", codeChallenge);

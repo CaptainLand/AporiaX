@@ -28,7 +28,8 @@ const authorizationUrl = new URL(buildDesktopAuthorizationUrl({
   appVersion: "0.6.5",
 }));
 assert.equal(authorizationUrl.origin, "https://aporiax-preview-ecutg2r-d0gdndswo0a18e7b3.webapps.tcloudbase.com");
-assert.equal(authorizationUrl.pathname, "/authorize/desktop");
+assert.equal(authorizationUrl.pathname, "/");
+assert.equal(authorizationUrl.searchParams.get("desktop_authorize"), "1");
 assert.equal(authorizationUrl.searchParams.get("client_id"), APORIAX_DESKTOP_CLIENT_ID);
 assert.equal(authorizationUrl.searchParams.get("redirect_uri"), redirectUri);
 assert.equal(authorizationUrl.searchParams.get("code_challenge_method"), "S256");
