@@ -10,6 +10,7 @@ import {
   normalizeSubagentInput,
   normalizeWorkspaceScope,
   pathIsInsideScope,
+  resolveSubagentReasoningPolicy,
   subagentEvidence,
   subagentToolPaths,
   subagentToolsAreParallel,
@@ -18,6 +19,22 @@ import {
 assert.equal(MAX_SUBAGENT_RESULT_CHARS, 24_000);
 assert(SUBAGENT_ROLE_CONFIG.verify.tools.has("run_command"));
 assert(!SUBAGENT_ROLE_CONFIG.review.tools.has("run_command"));
+assert.deepEqual(
+  resolveSubagentReasoningPolicy({
+    role: "curator",
+    thinking: true,
+    effort: "max",
+  }),
+  { thinking: false, effort: "low", source: "role-default" },
+);
+assert.deepEqual(
+  resolveSubagentReasoningPolicy({
+    role: "review",
+    thinking: true,
+    effort: "max",
+  }),
+  { thinking: true, effort: "max", source: "parent" },
+);
 
 assert.deepEqual(normalizeWorkspaceScope([]), ["."]);
 assert.deepEqual(normalizeWorkspaceScope(["./src/", "src", "docs"]), ["src", "docs"]);

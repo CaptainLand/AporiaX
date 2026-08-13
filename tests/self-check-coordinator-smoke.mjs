@@ -28,13 +28,26 @@ assert.equal(
 assert.equal(
   evaluateAdaptiveSelfCheck({
     changes: [
-      { path: "a.js", beforeContent: "a", afterContent: "b" },
-      { path: "b.js", beforeContent: "a", afterContent: "b" },
-      { path: "c.js", beforeContent: "a", afterContent: "b" },
+      { path: "src/a.js", beforeContent: "a", afterContent: "b" },
+      { path: "src/b.js", beforeContent: "a", afterContent: "b" },
+      { path: "src/c.js", beforeContent: "a", afterContent: "b" },
+    ],
+  }).required,
+  false,
+  "three ordinary same-module files should not force an expensive review",
+);
+assert.equal(
+  evaluateAdaptiveSelfCheck({
+    changes: [
+      {
+        path: "src/auth/session.js",
+        beforeContent: "a",
+        afterContent: "b",
+      },
     ],
   }).required,
   true,
-  "Harness keeps a multi-file safety fallback",
+  "a security-sensitive change must trigger independent review",
 );
 const optionalChangeMap = new Map([
   [

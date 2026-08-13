@@ -180,7 +180,12 @@ export async function runSubagentTask({
           provider.thinkingMode === "deepseek"
             ? {
                 thinking: { type: thinking ? "enabled" : "disabled" },
-                reasoning_effort: effort === "max" ? "max" : "high",
+                ...(thinking
+                  ? {
+                      reasoning_effort:
+                        effort === "max" ? "max" : "high",
+                    }
+                  : {}),
               }
             : {}),
           ...(provider.supportsThinking &&

@@ -57,6 +57,7 @@ import {
   MAX_SUBAGENT_TASK_CHARS,
   normalizeSubagentInput,
   normalizeWorkspaceScope,
+  resolveSubagentReasoningPolicy,
 } from "./runtime/subagent-model.js";
 import { runSubagentTask } from "./runtime/subagent-loop.js";
 import { createNativeToolExecutor } from "./runtime/native-tool-executor.js";
@@ -684,6 +685,43 @@ export function fallbackUnderstandingChangesFromCandidates({
   return changes;
 }
 
+const HIGH_VALUE_UNDERSTANDING_PATH = /(?:^|\/)(?:auth|api|core|runtime|server|stores?|schema|migrations?|config)(?:\/|$)|(?:^|\/)(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|dockerfile|docker-compose[^/]*\.ya?ml)$/i;
+
+function normalizeUnderstandingText(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+export function shouldCurateProjectUnderstanding({
+  changes = [],
+  candidates = [],
+  currentFacts = [],
+} = {}) {
+  const existing = new Set(
+    (currentFacts || []).map((fact) =>
+      normalizeUnderstandingText(fact?.content),
+    ),
+  );
+  const hasNovelCandidate = (candidates || []).some((candidate) => {
+    const content = normalizeUnderstandingText(candidate?.content);
+    return content && !existing.has(content);
+  });
+  if (hasNovelCandidate) return true;
+  const changeList = Array.isArray(changes) ? changes : [];
+  if (
+    changeList.some((change) =>
+      HIGH_VALUE_UNDERSTANDING_PATH.test(
+        String(change?.path || "").replace(/\\/g, "/"),
+      ),
+    )
+  ) {
+    return true;
+  }
+  return changeList.length >= 8;
+}
+
 function createUnderstandingCuratorTask({
   request,
   finalAnswer,
@@ -966,6 +1004,7 @@ export async function runHarness({
   capabilityRegistry = null,
   extensionPolicy = {},
   recoveryContext = null,
+  deferUnderstandingCuration = true,
 }) {
   if (
     !providerConfig ||
@@ -1533,6 +1572,11 @@ export async function runHarness({
     { systemOwned = false } = {},
   ) => {
     const input = normalizeSubagentInput(rawInput);
+    const reasoningPolicy = resolveSubagentReasoningPolicy({
+      role: input.role,
+      thinking,
+      effort,
+    });
     subagentCounter += 1;
     const agentId = `${runId || "run"}-sub-${subagentCounter}`;
     const relevantMemory = [
@@ -1558,8 +1602,8 @@ export async function runHarness({
       provider,
       modelId,
       modelConfig,
-      thinking,
-      effort,
+      thinking: reasoningPolicy.thinking,
+      effort: reasoningPolicy.effort,
       workspaceRoot,
       parentPermissionPolicy: permissionPolicy,
       approvalMode: effectiveApprovalMode,
@@ -1993,7 +2037,12 @@ export async function runHarness({
                 thinking: {
                   type: thinking ? "enabled" : "disabled",
                 },
-                reasoning_effort: effort === "max" ? "max" : "high",
+                ...(thinking
+                  ? {
+                      reasoning_effort:
+                        effort === "max" ? "max" : "high",
+                    }
+                  : {}),
               }
             : {}),
           ...(provider.supportsThinking &&
@@ -2278,12 +2327,40 @@ export async function runHarness({
             : isEnglish
               ? "The task completed, but the model returned no text."
               : "任务已完成，但模型没有返回文本结果。";
-        const curatedUnderstanding = await curateProjectUnderstanding({
+        const curationInput = {
           finalAnswer: finalContent,
           changes: finalizedAnchor.changes,
-        });
-        const understanding =
-          curatedUnderstanding ||
+        };
+        const shouldCurate = Boolean(understandingDirectory && workspaceRoot) &&
+          shouldCurateProjectUnderstanding({
+            changes: finalizedAnchor.changes,
+            candidates: understandingCandidates,
+            currentFacts: projectUnderstanding.snapshot().facts,
+          });
+        let curationPromise = null;
+        let curatedUnderstanding = null;
+        if (shouldCurate) {
+          curationPromise = curateProjectUnderstanding(curationInput);
+          if (!deferUnderstandingCuration) {
+            curatedUnderstanding = await curationPromise;
+            curationPromise = null;
+          }
+        } else if (understandingDirectory && workspaceRoot) {
+          emit({
+            type: "understanding.skipped",
+            reason: "no-high-value-delta",
+          });
+        }
+        const understanding = curatedUnderstanding ||
+          (curationPromise
+            ? {
+                committed: false,
+                pending: true,
+                currentRevision:
+                  projectUnderstanding.snapshot().currentRevision,
+                source: "background-curator",
+              }
+            : null) ||
           (legacyUnderstandingImport?.committed
             ? {
                 committed: true,
@@ -2347,7 +2424,14 @@ export async function runHarness({
           toolSteps: steps.length,
         });
         completedResult.witness = witness.snapshot();
-        subagentController.abort();
+        if (curationPromise) {
+          void curationPromise.then(
+            () => subagentController.abort(),
+            () => subagentController.abort(),
+          );
+        } else {
+          subagentController.abort();
+        }
         signal?.removeEventListener("abort", abortSubagents);
         return completedResult;
       }

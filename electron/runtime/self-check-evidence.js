@@ -15,6 +15,31 @@ export function reviewableChanges(changeMap) {
   );
 }
 
+const LOW_RISK_CHANGE_PATTERN = /\.(?:md|mdx|txt|css|scss|sass|less|svg|png|jpe?g|gif|webp|ico)$/i;
+const HIGH_RISK_CHANGE_PATTERN = /(?:^|\/)(?:auth|security|permissions?|database|db|migrations?|schema|billing|payments?|cloud|deploy|runtime)(?:\/|$)|(?:^|\/)(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|dockerfile|docker-compose[^/]*\.ya?ml|\.github\/workflows\/[^/]+\.ya?ml)$/i;
+
+export function scoreAdaptiveSelfCheckRisk(changes = []) {
+  const changeList = Array.isArray(changes) ? changes : [];
+  let score = 0;
+  const modules = new Set();
+  for (const change of changeList) {
+    const path = String(change?.path || "").replace(/\\/g, "/");
+    modules.add(path.includes("/") ? path.split("/")[0] : ".");
+    if (HIGH_RISK_CHANGE_PATTERN.test(path)) score += 4;
+    else if (LOW_RISK_CHANGE_PATTERN.test(path)) score += 0.25;
+    else score += 1;
+    if (change?.beforeMissing) {
+      score += LOW_RISK_CHANGE_PATTERN.test(path) ? 0.25 : 0.5;
+    }
+    const changedLines =
+      Number(change?.additions || 0) + Number(change?.deletions || 0);
+    if (changedLines >= 300) score += 1;
+  }
+  if (modules.size >= 3) score += 1;
+  if (changeList.length >= 8) score += 2;
+  return Math.round(score * 100) / 100;
+}
+
 export function evaluateAdaptiveSelfCheck({
   requested = false,
   requestReason = "",
@@ -39,8 +64,11 @@ export function evaluateAdaptiveSelfCheck({
   ) {
     reasons.push("A binary or Office artifact requires structural review.");
   }
-  if (changeList.length >= 3) {
-    reasons.push("The task changed three or more files.");
+  const riskScore = scoreAdaptiveSelfCheckRisk(changeList);
+  if (riskScore >= 4) {
+    reasons.push(
+      `The change risk score (${riskScore}) requires independent review.`,
+    );
   }
   if (
     (Array.isArray(steps) ? steps : []).some(

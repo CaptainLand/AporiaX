@@ -3,7 +3,31 @@ import {
   collectAutomaticUnderstandingCandidates,
   extractAutomaticUnderstandingCandidates,
   fallbackUnderstandingChangesFromCandidates,
+  shouldCurateProjectUnderstanding,
 } from "../electron/agent-runtime-core.js";
+
+assert.equal(
+  shouldCurateProjectUnderstanding({
+    changes: [{ path: "src/components/Button.jsx" }],
+  }),
+  false,
+  "an ordinary one-off component edit should not start Curator",
+);
+assert.equal(
+  shouldCurateProjectUnderstanding({
+    changes: [{ path: "electron/runtime/provider-stream.js" }],
+  }),
+  true,
+  "runtime architecture changes should start Curator",
+);
+assert.equal(
+  shouldCurateProjectUnderstanding({
+    candidates: [{ content: "Use pnpm for this project." }],
+    currentFacts: [{ content: "Use pnpm for this project." }],
+  }),
+  false,
+  "an exact existing durable fact should not invoke Curator again",
+);
 
 assert.deepEqual(
   extractAutomaticUnderstandingCandidates("你好"),

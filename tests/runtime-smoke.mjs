@@ -115,6 +115,7 @@ async function testSandboxExecutor({ command, cwd, signal }) {
 
 function runTestHarness(request) {
   return runHarness({
+    deferUnderstandingCuration: false,
     ...request,
     provider: testProvider,
     sandboxExecutor: testSandboxExecutor,
@@ -1543,6 +1544,91 @@ try {
     ),
     new Set(["architecture", "preference"]),
   );
+
+  const deferredUnderstandingRoot = join(testRoot, "deferred-understanding");
+  const deferredUnderstandingDirectory = join(
+    testRoot,
+    "deferred-understanding-store",
+  );
+  await mkdir(deferredUnderstandingRoot, { recursive: true });
+  let releaseCurator;
+  const curatorGate = new Promise((resolve) => {
+    releaseCurator = resolve;
+  });
+  let resolveUnderstandingUpdated;
+  const understandingUpdated = new Promise((resolve) => {
+    resolveUnderstandingUpdated = resolve;
+  });
+  let deferredParentRound = 0;
+  const deferredEvents = [];
+  globalThis.fetch = async (_url, options) => {
+    const payload = JSON.parse(String(options?.body || "{}"));
+    const systemPrompt = String(payload?.messages?.[0]?.content || "");
+    if (/AporiaX curator subagent/.test(systemPrompt)) {
+      await curatorGate;
+      return createSseResponse({
+        content: JSON.stringify({
+          summary: "Record the explicit durable preference",
+          changes: [],
+        }),
+      });
+    }
+    deferredParentRound += 1;
+    return createSseResponse(
+      deferredParentRound === 1
+        ? createToolDelta("deferred-memory", "remember_project_fact", {
+            category: "preference",
+            content: "Use concise release notes for this project.",
+            evidence: "Current user request",
+          })
+        : { content: "The durable preference has been staged." },
+    );
+  };
+  const deferredResult = await runTestHarness({
+    runId: "deferred-understanding-run",
+    taskId: "deferred-understanding-task",
+    workspacePath: deferredUnderstandingRoot,
+    modelId: "deepseek-v4-pro",
+    thinking: true,
+    effort: "max",
+    permission: "workspace-write",
+    understandingDirectory: deferredUnderstandingDirectory,
+    deferUnderstandingCuration: true,
+    messages: [
+      {
+        role: "user",
+        content: "Remember that this project should use concise release notes.",
+      },
+    ],
+    onEvent: (event) => {
+      deferredEvents.push(event);
+      if (event.type === "understanding.updated") {
+        resolveUnderstandingUpdated(event);
+      }
+    },
+  });
+  assert.equal(deferredResult.status, "completed");
+  assert.equal(deferredResult.understanding?.pending, true);
+  assert.equal(
+    deferredEvents.some((event) => event.type === "understanding.updated"),
+    false,
+    "the main result must be delivered before background Curator completes",
+  );
+  releaseCurator();
+  await Promise.race([
+    understandingUpdated,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("background Curator did not persist its revision")),
+        2_000,
+      ),
+    ),
+  ]);
+  const deferredUnderstanding = await createProjectUnderstandingStore({
+    baseDirectory: deferredUnderstandingDirectory,
+    workspaceRoot: deferredUnderstandingRoot,
+  });
+  assert.equal(deferredUnderstanding.snapshot().facts.length, 1);
 
   const autoSelfCheckRoot = join(testRoot, "auto-self-check");
   await mkdir(autoSelfCheckRoot, { recursive: true });

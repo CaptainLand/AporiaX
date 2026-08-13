@@ -30,9 +30,15 @@ try {
   let round = 0;
   const provider = {
     supportsTools: true,
-    supportsThinking: false,
-    thinkingMode: "none",
-    async complete() {
+    supportsThinking: true,
+    thinkingMode: "deepseek",
+    async complete({ body }) {
+      assert.equal(body.thinking?.type, "disabled");
+      assert.equal(
+        Object.hasOwn(body, "reasoning_effort"),
+        false,
+        "a non-thinking subagent must not request high reasoning effort",
+      );
       round += 1;
       if (round === 1) {
         return {

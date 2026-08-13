@@ -770,6 +770,7 @@ async function runOrchestratedHarness(options) {
                         workspacePath: workspace.workspaceRoot,
                         permission: "builder-write",
                         approvalMode: "manual",
+                        understandingDirectory: null,
                         messages: [
                           {
                             role: "user",

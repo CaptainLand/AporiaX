@@ -6,6 +6,28 @@ export const MAX_SUBAGENT_TASK_CHARS = 4_000;
 export const MAX_SUBAGENT_RESULT_CHARS = 24_000;
 const MAX_SUBAGENT_EVIDENCE_CHARS = 24_000;
 
+const LOW_COMPUTE_ROLES = new Set(["explore", "verify", "curator"]);
+
+export function resolveSubagentReasoningPolicy({
+  role,
+  thinking = false,
+  effort = "high",
+} = {}) {
+  const normalizedRole = String(role || "").trim().toLowerCase();
+  if (LOW_COMPUTE_ROLES.has(normalizedRole)) {
+    return {
+      thinking: false,
+      effort: "low",
+      source: "role-default",
+    };
+  }
+  return {
+    thinking: Boolean(thinking),
+    effort: String(effort || "high"),
+    source: "parent",
+  };
+}
+
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   explore: Object.freeze({
     description:
