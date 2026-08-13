@@ -2,6 +2,14 @@ import { providerChatEndpoint } from "../provider-config.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
+const PROVIDER_TIMEOUT_MAX_ATTEMPTS = 2;
+
+function isProviderTimeoutError(error) {
+  return (
+    Number(error?.status) === 504 ||
+    /(?:^|_)TIMEOUT(?:$|_)/i.test(String(error?.code || ""))
+  );
+}
 
 function createAbortError(message = "The run was interrupted.") {
   const error = new Error(message);
@@ -112,10 +120,13 @@ export async function callModelProvider({
         onEvent,
       });
     } catch (error) {
+      const maxAttempts = isProviderTimeoutError(error)
+        ? PROVIDER_TIMEOUT_MAX_ATTEMPTS
+        : PROVIDER_MAX_ATTEMPTS;
       if (
         signal?.aborted ||
         !error?.retryable ||
-        attempt >= PROVIDER_MAX_ATTEMPTS
+        attempt >= maxAttempts
       ) {
         throw error;
       }
@@ -123,7 +134,7 @@ export async function callModelProvider({
       onEvent?.({
         type: "response.retry",
         attempt: attempt + 1,
-        maxAttempts: PROVIDER_MAX_ATTEMPTS,
+        maxAttempts,
         delayMs,
         reason: error.message,
         provider: provider.name,
@@ -189,6 +200,7 @@ export async function callModelProviderOnce({
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });
   let idleTimedOut = false;
+  let receivedStreamBytes = false;
   let idleTimeout = null;
   const resetIdleTimeout = () => {
     clearTimeout(idleTimeout);
@@ -242,6 +254,7 @@ export async function callModelProviderOnce({
 
     for await (const chunk of response.body) {
       throwIfAborted(signal);
+      if (chunk?.byteLength) receivedStreamBytes = true;
       resetIdleTimeout();
       buffer += decoder.decode(chunk, { stream: true });
       const lines = buffer.split(/\r?\n/);
@@ -304,18 +317,18 @@ export async function callModelProviderOnce({
           : `${provider.name} connection was idle for 180 seconds.`,
         504,
       );
-      timeoutError.retryable = true;
+      timeoutError.retryable = !receivedStreamBytes;
       throw timeoutError;
     }
     if (error?.name === "AbortError") {
       const abortError = new Error(
         `${provider.name} request was interrupted.`,
       );
-      abortError.retryable = true;
+      abortError.retryable = !receivedStreamBytes;
       throw abortError;
     }
     if (error instanceof TypeError) {
-      error.retryable = true;
+      error.retryable = !receivedStreamBytes;
     }
     throw error;
   } finally {

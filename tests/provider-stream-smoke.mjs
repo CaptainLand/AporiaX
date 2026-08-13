@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  callModelProvider,
   callModelProviderOnce,
   createOpenAICompatibleProvider,
 } from "../electron/runtime/provider-stream.js";
@@ -141,6 +142,78 @@ try {
   assert.equal(provider.supportsImages, true);
   assert.equal(provider.supportsTools, true);
   assert.equal(provider.supportsThinking, true);
+
+  let timeoutAttempts = 0;
+  const timeoutRetryEvents = [];
+  globalThis.fetch = async () => {
+    timeoutAttempts += 1;
+    return sseResponse({ error: { message: "APORIA_PROVIDER_TIMEOUT" } }, 504);
+  };
+  await assert.rejects(
+    () =>
+      callModelProvider({
+        provider: {
+          name: "Timeout Provider",
+          vendor: "openai",
+          baseUrl: "https://example.com/v1",
+          apiKey: "",
+        },
+        body: { model: "test", messages: [] },
+        onEvent: (event) => timeoutRetryEvents.push(event),
+      }),
+    (error) => {
+      assert.equal(error.status, 504);
+      return true;
+    },
+  );
+  assert.equal(timeoutAttempts, 2, "a provider timeout should be retried only once");
+  assert.equal(timeoutRetryEvents.length, 1);
+  assert.equal(timeoutRetryEvents[0].maxAttempts, 2);
+
+  const partialEvents = [];
+  let partialAttempts = 0;
+  globalThis.fetch = async () => {
+    partialAttempts += 1;
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ choices: [{ delta: { content: "partial" } }] })}\n\n`,
+            ),
+          );
+          setTimeout(
+            () => controller.error(new TypeError("stream disconnected")),
+            0,
+          );
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    );
+  };
+  await assert.rejects(
+    () =>
+      callModelProvider({
+        provider: {
+          name: "Partial Provider",
+          vendor: "openai",
+          baseUrl: "https://example.com/v1",
+          apiKey: "",
+        },
+        body: { model: "test", messages: [] },
+        onEvent: (event) => partialEvents.push(event),
+      }),
+    (error) => {
+      assert.equal(error.retryable, false);
+      return true;
+    },
+  );
+  assert.equal(partialAttempts, 1, "a partially streamed answer must never be replayed");
+  assert.equal(
+    partialEvents.filter((event) => event.type === "response.retry").length,
+    0,
+  );
 } finally {
   globalThis.fetch = originalFetch;
 }
