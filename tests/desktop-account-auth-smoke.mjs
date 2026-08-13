@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
+  DEFAULT_APORIAX_ACCOUNT_WEB_URL,
   buildDesktopAuthorizationUrl,
   createDesktopPkce,
   parseDesktopLoopbackCallback,
@@ -18,7 +19,7 @@ assert.match(pkce.state, /^[A-Za-z0-9_-]{32}$/);
 
 const redirectUri = "http://127.0.0.1:49152/callback";
 const authorizationUrl = new URL(buildDesktopAuthorizationUrl({
-  webBaseUrl: "https://captainland.github.io/AporiaX_web/",
+  webBaseUrl: DEFAULT_APORIAX_ACCOUNT_WEB_URL,
   redirectUri,
   codeChallenge: pkce.codeChallenge,
   state: pkce.state,
@@ -26,7 +27,8 @@ const authorizationUrl = new URL(buildDesktopAuthorizationUrl({
   platform: "win32",
   appVersion: "0.6.5",
 }));
-assert.equal(authorizationUrl.pathname, "/AporiaX_web/authorize/desktop");
+assert.equal(authorizationUrl.origin, "https://aporiax-preview-ecutg2r-d0gdndswo0a18e7b3.webapps.tcloudbase.com");
+assert.equal(authorizationUrl.pathname, "/authorize/desktop");
 assert.equal(authorizationUrl.searchParams.get("client_id"), APORIAX_DESKTOP_CLIENT_ID);
 assert.equal(authorizationUrl.searchParams.get("redirect_uri"), redirectUri);
 assert.equal(authorizationUrl.searchParams.get("code_challenge_method"), "S256");

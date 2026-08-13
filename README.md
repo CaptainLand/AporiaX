@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.0" src="https://img.shields.io/badge/source-v0.7.0-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.1" src="https://img.shields.io/badge/source-v0.7.1-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,9 +25,9 @@
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX 当前源码版本为 **`v0.7.0`**，仍处于 Preview 阶段，Windows x64 为当前打包目标。
-> `main` 已进入 0.7.0 源码状态；0.7.0 Windows 安装版与便携版会在单独完成打包后发布到 GitHub Releases。
-> 0.7.0 首次把 Aporia Account、Aporia Cloud、DeepSeek V4 Flash / Pro 与 Cloud Vision 接成完整桌面链路，同时保留 BYOK 与本地模型路径。
+> AporiaX 当前源码与 Windows 发行版本为 **`v0.7.1`**，仍处于 Preview 阶段。
+> 0.7.1 聚焦 Harness 性能、按风险自检、低成本子 Agent 编排、Understanding 整理与流式重试可靠性，并将桌面登录入口切换到当前 AporiaX Web 服务。
+> Aporia Account、Aporia Cloud、BYOK 与本地模型路径继续保持相互独立。
 
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
 - **Evidence**：保留工具调用、文件修改、验证结果和失败原因。
@@ -60,7 +60,17 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
   </tr>
 </table>
 
-## 0.7.0 更新：Aporia Account、Cloud 模型与原生视觉
+## 0.7.1 更新：更快、更克制的 Harness
+
+- Explore、Verify 与 Understanding Curator 使用按角色分配的低计算强度，Review 仍可继承主任务的推理深度。
+- 强制自检改为按风险升级；认证、安全、运行时、依赖与部署等高影响路径继续严格检查。
+- Understanding 整理延后到主结果完成后，并跳过不值得沉淀的低价值轮次。
+- 流式输出一旦开始便不再重放请求，避免重复或损坏回复。
+- 桌面端 Aporia Account 登录默认打开当前腾讯云 Web 授权页，不再跳转旧 GitHub Pages。
+
+[查看完整 0.7.1 中英文更新记录](docs/releases/v0.7.1.md)
+
+## 0.7.0 基础架构：Aporia Account、Cloud 模型与原生视觉
 
 ### Aporia Account
 
@@ -130,13 +140,13 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 
 ## 下载
 
-`main` 当前已经是 **v0.7.0 源码状态**。Windows x64 的 0.7.0 安装版与便携版会在完成打包后上传到 GitHub Releases。
+`main` 当前是 **v0.7.1 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
-| [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 安装版与便携版下载入口；0.7.0 二进制发布后会成为最新版本 |
-| [0.6.1 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | 当前已公开的稳定安装包 |
-| [0.6.1 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | 当前已公开的便携包 |
+| [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 所有历史版本与发行说明 |
+| [0.7.1 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Setup-0.7.1-x64.exe) | 推荐的 Windows x64 安装包 |
+| [0.7.1 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Portable-0.7.1-x64.exe) | 无需安装的 Windows x64 便携包 |
 
 首次启动后：
 
@@ -174,7 +184,7 @@ API Key 使用 Electron `safeStorage` 加密，不返回渲染进程。不要把
 # 开发模式
 npm run dev
 
-# 0.7.0 核心验证
+# 0.7.1 核心验证
 npm run test:runtime
 npm run test:architecture
 npm run test:execution-policy

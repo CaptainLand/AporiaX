@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 export const APORIAX_DESKTOP_CLIENT_ID = "aporiax-desktop";
-export const DEFAULT_APORIAX_ACCOUNT_WEB_URL = "https://captainland.github.io/AporiaX_web/";
+export const DEFAULT_APORIAX_ACCOUNT_WEB_URL = "https://aporiax-preview-ecutg2r-d0gdndswo0a18e7b3.webapps.tcloudbase.com";
 export const DEFAULT_APORIAX_CLOUD_API_URL = "http://127.0.0.1:4100";
 export const DEFAULT_APORIAX_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
 

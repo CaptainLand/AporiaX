@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1 — 2026-08-14
+
+AporiaX 0.7.1 improves Harness performance and reliability while keeping high-risk verification strict.
+
+- Added role-aware low-compute defaults for Explore, Verify, and Understanding Curator; Review can retain deeper parent reasoning.
+- Made self-check escalation risk-aware instead of relying on file count alone.
+- Deferred Project Understanding curation until the main result is ready and skipped low-value turns.
+- Prevented provider retries after streamed output begins, avoiding duplicated or corrupted responses.
+- Switched the default Desktop account authorization entry from the legacy GitHub Pages site to the current AporiaX Web deployment.
+- Added focused regression coverage and refreshed Windows x64 installer, portable package, checksums, bilingual README, and bilingual release notes.
+
 ## 0.7.0 — 2026-08-13
 
 AporiaX 0.7.0 introduces the first complete Aporia Account + Aporia Cloud desktop path while keeping the existing local-first Harness, BYOK providers, and local model workflows intact.

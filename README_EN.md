@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.0" src="https://img.shields.io/badge/source-v0.7.0-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.1" src="https://img.shields.io/badge/source-v0.7.1-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,9 +30,9 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source version is **`v0.7.0`**. The project is still in Preview, with Windows x64 as the current packaged target.
-> `main` now represents the 0.7.0 source state. The matching Windows installer and portable package will be published separately after packaging.
-> 0.7.0 connects Aporia Account, Aporia Cloud, DeepSeek V4 Flash / Pro, and Cloud Vision into one Desktop path while preserving BYOK and local model workflows.
+> The current AporiaX source and Windows release version is **`v0.7.1`**. The project remains in Preview.
+> 0.7.1 focuses on Harness performance, risk-adaptive self-check, lower-cost subagent orchestration, Understanding curation, stream-safe retries, and the current AporiaX Web authorization entry.
+> Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
 
@@ -69,7 +69,17 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
   </tr>
 </table>
 
-## What's new in 0.7.0: Aporia Account, Cloud models, and native Cloud vision
+## What's new in 0.7.1: a faster, more deliberate Harness
+
+- Explore, Verify, and Understanding Curator use role-aware low-compute defaults, while Review can retain the parent task's reasoning depth.
+- Mandatory self-check escalates by risk; authentication, security, runtime, dependency, and deployment paths remain strict.
+- Understanding curation runs after the main result and skips turns that do not contain durable project knowledge.
+- Provider requests are never replayed after streamed output begins, preventing duplicated or corrupted replies.
+- Desktop Aporia Account sign-in now opens the current Tencent Cloud Web authorization page instead of the legacy GitHub Pages entry.
+
+[Read the complete bilingual 0.7.1 notes](docs/releases/v0.7.1.md)
+
+## 0.7.0 foundation: Aporia Account, Cloud models, and native Cloud vision
 
 ### Aporia Account
 
@@ -139,13 +149,13 @@ Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet
 
 ## Download
 
-`main` is now the **v0.7.0 source state**. The Windows x64 installer and portable build will be uploaded to GitHub Releases after packaging.
+`main` is now the **v0.7.1 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
-| [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | Installer and portable downloads; 0.7.0 will become the newest binary release after publication |
-| [0.6.1 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Setup-0.6.1-x64.exe) | Current published installer |
-| [0.6.1 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.6.1/AporiaX-Portable-0.6.1-x64.exe) | Current published portable build |
+| [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
+| [0.7.1 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Setup-0.7.1-x64.exe) | Recommended Windows x64 installer |
+| [0.7.1 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Portable-0.7.1-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 
@@ -183,7 +193,7 @@ API keys are encrypted with Electron `safeStorage` and are never returned to the
 # Development
 npm run dev
 
-# 0.7.0 core validation
+# 0.7.1 core validation
 npm run test:runtime
 npm run test:architecture
 npm run test:execution-policy
