@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
   DEFAULT_APORIAX_ACCOUNT_WEB_URL,
+  DEFAULT_APORIAX_CLOUD_API_URL,
+  DEFAULT_APORIAX_MODEL_GATEWAY_URL,
   buildDesktopAuthorizationUrl,
   createDesktopPkce,
   parseDesktopLoopbackCallback,
@@ -34,6 +36,9 @@ assert.equal(authorizationUrl.searchParams.get("client_id"), APORIAX_DESKTOP_CLI
 assert.equal(authorizationUrl.searchParams.get("redirect_uri"), redirectUri);
 assert.equal(authorizationUrl.searchParams.get("code_challenge_method"), "S256");
 assert.equal(authorizationUrl.searchParams.get("state"), pkce.state);
+assert.match(DEFAULT_APORIAX_CLOUD_API_URL, /^https:\/\//);
+assert.doesNotMatch(DEFAULT_APORIAX_CLOUD_API_URL, /(?:localhost|127\.0\.0\.1)/);
+assert.equal(DEFAULT_APORIAX_MODEL_GATEWAY_URL, "http://127.0.0.1:4200");
 
 const callback = parseDesktopLoopbackCallback(
   `${redirectUri}?code=${"a".repeat(43)}&state=${pkce.state}`,
@@ -86,6 +91,9 @@ assert.match(runtime, /aporiax-installation\.json/);
 assert.match(runtime, /randomUUID\(\)/);
 assert.match(runtime, /installationId,/);
 assert.match(runtime, /Installation identity deliberately survives sign-out/);
+assert.match(runtime, /Authorization returned to AporiaX Desktop/);
+assert.match(runtime, /AporiaX is completing sign-in/);
+assert.doesNotMatch(runtime, /AporiaX Desktop connected/);
 assert.doesNotMatch(runtime, /machineGuid|wmic|MAC address|serialnumber/i);
 
 const preload = await readFile("electron/preload.cjs", "utf8");
@@ -97,7 +105,8 @@ const accountPanel = await readFile("src/account/LocalAccountPanel.jsx", "utf8")
 assert.match(accountPanel, /window\.desktop\?\.account/);
 assert.match(accountPanel, /Continue in browser/);
 assert.match(accountPanel, /Aporia Cloud 未连接/);
-assert.doesNotMatch(accountPanel, /local-account-inline-error--panel/);
+assert.match(accountPanel, /local-account-inline-error--panel/);
+assert.match(accountPanel, /Sign-in did not complete/);
 assert.doesNotMatch(accountPanel, /landx|111111|Local UI prototype/);
 
 console.log("desktop account auth smoke: PASS");

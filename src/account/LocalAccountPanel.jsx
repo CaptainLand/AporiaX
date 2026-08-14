@@ -203,6 +203,12 @@ export function LocalAccountPanel() {
         </span>
         {busy ? <RefreshCw className="spin" size={14} /> : <ExternalLink size={14} />}
       </button>
+      {error && (
+        <p className="local-account-inline-error local-account-inline-error--panel" role="alert">
+          <AlertCircle size={13} />
+          <span>{tr("登录未完成：", "Sign-in did not complete: ")}{error}</span>
+        </p>
+      )}
     </div>
   );
 }

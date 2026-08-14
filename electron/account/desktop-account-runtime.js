@@ -325,7 +325,7 @@ export function createDesktopAccountRuntime(options = {}) {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
           });
-          response.end(`<!doctype html><meta charset="utf-8"><title>AporiaX</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}main{text-align:center;max-width:520px;padding:32px}h1{font-size:24px}p{color:#9da7b3}</style><main><h1>${result.canceled ? "Sign-in canceled" : "AporiaX Desktop connected"}</h1><p>${result.canceled ? "You can return to AporiaX Desktop." : "You can close this page and return to AporiaX Desktop."}</p></main>`);
+          response.end(`<!doctype html><meta charset="utf-8"><title>AporiaX</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}main{text-align:center;max-width:520px;padding:32px}h1{font-size:24px}p{color:#9da7b3}</style><main><h1>${result.canceled ? "Sign-in canceled" : "Authorization returned to AporiaX Desktop"}</h1><p>${result.canceled ? "You can return to AporiaX Desktop." : "AporiaX is completing sign-in. Return to the app to see the final result."}</p></main>`);
           finish(null, { ...result, redirectUri });
         } catch (error) {
           response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });

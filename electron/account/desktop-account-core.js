@@ -2,7 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 
 export const APORIAX_DESKTOP_CLIENT_ID = "aporiax-desktop";
 export const DEFAULT_APORIAX_ACCOUNT_WEB_URL = "https://aporiax-preview-ecutg2r-d0gdndswo0a18e7b3.webapps.tcloudbase.com";
-export const DEFAULT_APORIAX_CLOUD_API_URL = "http://127.0.0.1:4100";
+// Temporary public Account API endpoint used by the 0.7.1 preview build.
+// Keep the paid model gateway private until it has authenticated public ingress.
+export const DEFAULT_APORIAX_CLOUD_API_URL = "https://laptops-update-large-favorite.trycloudflare.com";
 export const DEFAULT_APORIAX_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
 
 function base64urlRandom(bytes) {
