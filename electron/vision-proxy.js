@@ -1,27 +1,66 @@
 import { app, safeStorage } from "electron";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { providerChatEndpoint } from "./provider-config.js";
 import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
 import { callModelProviderOnce } from "./runtime/provider-stream.js";
 import {
+  APORIA_CLOUD_PROVIDER_ID,
+  APORIA_CLOUD_VISION_MIN_REMAINING_RATIO,
+  APORIA_CLOUD_VISION_MODEL_ID,
   buildVisionMessages,
   hasImageAttachments,
   imageAttachments,
   mergeVisionObservation,
+  resolveAporiaCloudVisionAvailability,
   selectVisionCandidate,
 } from "./vision-proxy-core.js";
 
 const VISION_TIMEOUT_MS = 60_000;
 const VISION_MAX_OUTPUT_TOKENS = 1_600;
-const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
-const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
 const APORIA_CLOUD_VISION_MODEL_NAME = "Qwen3.5 Flash Vision";
 const APORIA_CLOUD_MAX_IMAGE_DATA_URL_CHARS = 7_500_000;
 const APORIA_CLOUD_VISION_OUTPUT_TOKENS = 900;
+const DEFAULT_VISION_PROXY_SETTINGS = Object.freeze({
+  cloudVisionEnabled: true,
+  cloudVisionQuotaGuard: true,
+});
 
 function getProviderStorePath() {
   return join(app.getPath("userData"), "aporiax-providers.json");
+}
+
+function getVisionSettingsPath() {
+  return join(app.getPath("userData"), "aporiax-vision-settings.json");
+}
+
+function normalizeVisionSettings(input = {}) {
+  return {
+    cloudVisionEnabled: input?.cloudVisionEnabled !== false,
+    cloudVisionQuotaGuard: input?.cloudVisionQuotaGuard !== false,
+    minRemainingRatio: APORIA_CLOUD_VISION_MIN_REMAINING_RATIO,
+  };
+}
+
+export async function loadVisionProxySettings() {
+  try {
+    const record = JSON.parse(await readFile(getVisionSettingsPath(), "utf8"));
+    return normalizeVisionSettings(record);
+  } catch (error) {
+    if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+    return normalizeVisionSettings(DEFAULT_VISION_PROXY_SETTINGS);
+  }
+}
+
+export async function saveVisionProxySettings(patch = {}) {
+  const current = await loadVisionProxySettings();
+  const next = normalizeVisionSettings({ ...current, ...patch });
+  await writeFile(
+    getVisionSettingsPath(),
+    JSON.stringify({ version: 1, ...next }, null, 2),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return next;
 }
 
 async function readProviderRecords() {
@@ -141,17 +180,29 @@ async function callAporiaCloudVision({ message, image, signal, onEvent }) {
       max_completion_tokens: APORIA_CLOUD_VISION_OUTPUT_TOKENS,
     },
     signal,
-    onEvent,
+    onEvent: (payload) => {
+      if (payload?.type !== "response.retry") return;
+      onEvent?.({
+        ...payload,
+        type: "vision.proxy.retry",
+        provider: "Aporia Cloud",
+        model: APORIA_CLOUD_VISION_MODEL_NAME,
+      });
+    },
   });
   const observation = String(result?.message?.content || "").trim();
   if (!observation) throw new Error("Aporia Cloud Vision returned an empty observation.");
-  return observation;
+  return { observation, usage: result?.usage || null };
 }
 
-async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}) {
+async function prepareAporiaCloudVisionRequest(
+  request,
+  { signal, onEvent, availability = null } = {},
+) {
   const messages = Array.isArray(request?.messages) ? request.messages : [];
   const nextMessages = [];
   let imageCount = 0;
+  let usage = null;
 
   for (const message of messages) {
     const images = imageAttachments(message);
@@ -169,16 +220,27 @@ async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}
         imageIndex: index + 1,
         imageCount: images.length,
       });
-      const observation = await callAporiaCloudVision({
+      const result = await callAporiaCloudVision({
         message,
         image: images[index],
         signal,
         onEvent,
       });
+      usage = result.usage || usage;
       observations.push(
-        images.length > 1 ? `Image ${index + 1}:\n${observation}` : observation,
+        images.length > 1
+          ? `Image ${index + 1}:\n${result.observation}`
+          : result.observation,
       );
       imageCount += 1;
+      onEvent?.({
+        type: "vision.proxy.completed",
+        provider: "Aporia Cloud",
+        model: APORIA_CLOUD_VISION_MODEL_NAME,
+        imageIndex: index + 1,
+        imageCount: images.length,
+        usage: result.usage || null,
+      });
     }
 
     nextMessages.push(
@@ -198,6 +260,8 @@ async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}
       modelId: APORIA_CLOUD_VISION_MODEL_ID,
       imageCount,
       billing: "weekly-quota",
+      remainingRatio: availability?.remainingRatio ?? null,
+      usage,
     },
   };
 }
@@ -212,30 +276,36 @@ function resolveMainModel(records, request) {
   return { provider, model };
 }
 
-export async function prepareVisionProxyRequest(request, { signal, onEvent } = {}) {
-  const messages = Array.isArray(request?.messages) ? request.messages : [];
-  if (!hasImageAttachments(messages)) return request;
+async function cloudVisionAvailability() {
+  const [settings, accountSnapshot] = await Promise.all([
+    loadVisionProxySettings(),
+    getDesktopAccountRuntime().getSnapshot().catch(() => null),
+  ]);
+  return {
+    settings,
+    accountSnapshot,
+    availability: resolveAporiaCloudVisionAvailability(
+      accountSnapshot || {},
+      settings,
+    ),
+  };
+}
 
-  // Aporia Cloud's public main model remains DeepSeek V4 Flash. Images are
-  // materialized once, before the Agent loop, through the hidden Qwen vision
-  // model. The resulting text observation replaces raw images so tool-call
-  // rounds cannot repeatedly send or repeatedly bill the same attachment.
-  if (String(request?.providerId || "") === APORIA_CLOUD_PROVIDER_ID) {
-    return prepareAporiaCloudVisionRequest(request, { signal, onEvent });
-  }
+function hasExplicitVisionSelection(request) {
+  return Boolean(
+    String(request?.visionProviderId || "").trim() ||
+    String(request?.visionModelId || "").trim(),
+  );
+}
 
-  const records = await readProviderRecords();
-  const main = resolveMainModel(records, request);
-  if (main.model?.supportsImages === true) return request;
-
-  const candidate = selectVisionCandidate(records, {
-    mainProviderId: request?.providerId,
-    mainModelId: request?.modelId,
-    visionProviderId: request?.visionProviderId,
-    visionModelId: request?.visionModelId,
-  });
+async function prepareCustomVisionRequest(
+  request,
+  records,
+  candidate,
+  { signal, onEvent } = {},
+) {
   if (!candidate) return request;
-
+  const messages = Array.isArray(request?.messages) ? request.messages : [];
   const nextMessages = [];
   let proxiedImages = 0;
   for (const message of messages) {
@@ -244,6 +314,12 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
       nextMessages.push(message);
       continue;
     }
+    onEvent?.({
+      type: "vision.proxy.started",
+      provider: candidate.provider?.name || candidate.provider?.id || "Vision Provider",
+      model: candidate.model?.name || candidate.model?.id || "vision-model",
+      imageCount: images.length,
+    });
     const observation = await callVisionProvider({
       provider: candidate.provider,
       model: candidate.model,
@@ -257,6 +333,12 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
         modelId: candidate.model?.id,
       }),
     );
+    onEvent?.({
+      type: "vision.proxy.completed",
+      provider: candidate.provider?.name || candidate.provider?.id || "Vision Provider",
+      model: candidate.model?.name || candidate.model?.id || "vision-model",
+      imageCount: images.length,
+    });
   }
 
   return {
@@ -267,6 +349,73 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
       providerId: candidate.provider?.id || "",
       modelId: candidate.model?.id || "",
       imageCount: proxiedImages,
+      billing: candidate.provider?.billing || "user-provider",
     },
   };
+}
+
+export async function prepareVisionProxyRequest(request, { signal, onEvent } = {}) {
+  const messages = Array.isArray(request?.messages) ? request.messages : [];
+  if (!hasImageAttachments(messages)) return request;
+
+  // Aporia Cloud's public main models remain text-first DeepSeek models. Their
+  // image attachments are materialized once through the hidden Qwen vision
+  // model before the Agent loop, so tool rounds never rebill the same image.
+  if (String(request?.providerId || "") === APORIA_CLOUD_PROVIDER_ID) {
+    return prepareAporiaCloudVisionRequest(request, { signal, onEvent });
+  }
+
+  const records = await readProviderRecords();
+  const main = resolveMainModel(records, request);
+  if (main.model?.supportsImages === true) return request;
+
+  // Explicit custom proxy selection wins over the managed automatic route.
+  if (hasExplicitVisionSelection(request)) {
+    const explicit = selectVisionCandidate(records, {
+      mainProviderId: request?.providerId,
+      mainModelId: request?.modelId,
+      visionProviderId: request?.visionProviderId,
+      visionModelId: request?.visionModelId,
+    });
+    if (explicit) {
+      return prepareCustomVisionRequest(request, records, explicit, {
+        signal,
+        onEvent,
+      });
+    }
+  }
+
+  // A signed-in Aporia Account gives any local/custom text model a managed pair
+  // of eyes. Only the image is sent to Cloud; the main reasoning/tool loop stays
+  // on the selected local/custom provider. The low-quota guard defaults to 20%.
+  const cloud = await cloudVisionAvailability();
+  if (cloud.availability.available) {
+    return prepareAporiaCloudVisionRequest(request, {
+      signal,
+      onEvent,
+      availability: cloud.availability,
+    });
+  }
+
+  onEvent?.({
+    type: "vision.proxy.skipped",
+    provider: "Aporia Cloud",
+    model: APORIA_CLOUD_VISION_MODEL_NAME,
+    reason: cloud.availability.reason,
+    remainingRatio: cloud.availability.remainingRatio,
+  });
+
+  // If Cloud Vision is disabled, signed out, or protected by the quota guard,
+  // preserve the previous behavior and fall back to a user-configured vision
+  // Provider when one exists.
+  const candidate = selectVisionCandidate(records, {
+    mainProviderId: request?.providerId,
+    mainModelId: request?.modelId,
+    visionProviderId: request?.visionProviderId,
+    visionModelId: request?.visionModelId,
+  });
+  return prepareCustomVisionRequest(request, records, candidate, {
+    signal,
+    onEvent,
+  });
 }
