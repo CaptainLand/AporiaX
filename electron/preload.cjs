@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld("desktop", {
     signIn: () => ipcRenderer.invoke("account:sign-in"),
     refresh: () => ipcRenderer.invoke("account:refresh"),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
+    onChanged: (listener) => {
+      const handler = (_event, snapshot) => listener(snapshot);
+      ipcRenderer.on("account:changed", handler);
+      return () => ipcRenderer.removeListener("account:changed", handler);
+    },
   },
   tasks: {
     load: () =>
@@ -91,7 +96,7 @@ contextBridge.exposeInMainWorld("desktop", {
     saveLibraryMcp: (request) =>
       ipcRenderer.invoke("core:library:save-mcp", request),
     importLibraryMcp: () =>
-      ipcRenderer.invoke("core:library:import-mcp"),
+      ipcRenderer.invoke("core:library:import-mcp", request),
     removeLibraryMcp: (request) =>
       ipcRenderer.invoke("core:library:remove-mcp", request),
     extensionPolicy: (request = {}) =>
