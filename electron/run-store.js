@@ -433,11 +433,21 @@ export async function getRunRecoveryContext(dataDirectory, runId) {
   return {
     runId: metadata.runId,
     taskId: metadata.taskId,
+    assistantId: metadata.assistantId,
     sourceUserId: metadata.sourceUserId,
     prompt: metadata.prompt,
     workspacePath: metadata.workspacePath,
+    providerId: metadata.providerId,
+    modelId: metadata.modelId,
+    recoveryOfRunId: metadata.recoveryOfRunId,
+    status: metadata.status,
     startedAt: metadata.startedAt,
+    updatedAt: metadata.updatedAt,
+    completedAt: metadata.completedAt || null,
     lastEventType: metadata.lastEventType,
+    resumedByRunId: metadata.resumedByRunId || null,
+    resumedAt: metadata.resumedAt || null,
+    recoveredAt: metadata.recoveredAt || null,
     events,
   };
 }
