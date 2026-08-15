@@ -116,6 +116,10 @@ export function resolveVisionCapability(providers, task) {
           providerName: String(proxy.providerName || ""),
           modelId: String(proxy.modelId || ""),
           modelName: String(proxy.modelName || proxy.modelId || ""),
+          billing: String(proxy.billing || ""),
+          quotaRemainingRatio: Number.isFinite(Number(proxy.quotaRemainingRatio))
+            ? Number(proxy.quotaRemainingRatio)
+            : null,
         }
       : null,
   };
