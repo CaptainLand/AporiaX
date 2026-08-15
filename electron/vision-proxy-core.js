@@ -19,6 +19,12 @@ export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
 export const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
 export const APORIA_CLOUD_VISION_MIN_REMAINING_RATIO = 0.2;
 
+function optionalFiniteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export function modelSupportsVision(model = {}) {
   const id = String(model?.id || model?.name || "").trim();
   if (KNOWN_VISION_MODEL_PATTERNS.some((pattern) => pattern.test(id))) {
@@ -33,21 +39,21 @@ export function resolveAporiaCloudVisionAvailability(
 ) {
   const enabled = settings?.cloudVisionEnabled !== false;
   const quotaGuard = settings?.cloudVisionQuotaGuard !== false;
-  const remainingRatio = Number(accountSnapshot?.quota?.remainingRatio);
-  const hasRemainingRatio = Number.isFinite(remainingRatio);
+  const remainingRatio = optionalFiniteNumber(accountSnapshot?.quota?.remainingRatio);
+  const hasRemainingRatio = remainingRatio !== null;
 
   if (!enabled) {
     return {
       available: false,
       reason: "disabled",
-      remainingRatio: hasRemainingRatio ? remainingRatio : null,
+      remainingRatio,
     };
   }
   if (accountSnapshot?.status !== "authenticated") {
     return {
       available: false,
       reason: "signed-out",
-      remainingRatio: hasRemainingRatio ? remainingRatio : null,
+      remainingRatio,
     };
   }
   if (
@@ -64,7 +70,7 @@ export function resolveAporiaCloudVisionAvailability(
   return {
     available: true,
     reason: "ready",
-    remainingRatio: hasRemainingRatio ? remainingRatio : null,
+    remainingRatio,
   };
 }
 
@@ -119,7 +125,7 @@ function rendererVisionCandidate(records) {
 
 function publicVisionProxyMetadata(candidate) {
   if (!candidate) return null;
-  const remainingRatio = Number(candidate.provider?.visionQuotaRemainingRatio);
+  const remainingRatio = optionalFiniteNumber(candidate.provider?.visionQuotaRemainingRatio);
   return {
     providerId: String(candidate.provider?.id || ""),
     providerName: String(
@@ -132,7 +138,7 @@ function publicVisionProxyMetadata(candidate) {
       candidate.provider?.kind === "aporia-cloud"
         ? "weekly-quota"
         : candidate.provider?.billing || "user-provider",
-    quotaRemainingRatio: Number.isFinite(remainingRatio) ? remainingRatio : null,
+    quotaRemainingRatio: remainingRatio,
   };
 }
 
