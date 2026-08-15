@@ -113,10 +113,52 @@ function emitSkillStatus(event, request, activatedSkills = [], unresolved = []) 
     skills: activatedSkills,
     unresolved,
   };
-  if (!event.sender.isDestroyed()) {
+  if (event?.sender && !event.sender.isDestroyed()) {
     event.sender.send("harness:event", { runId, ...payload });
   }
   kernel?.events.emit({ runId, ...payload });
+}
+
+async function prepareHarnessRunRequest(event, request = {}) {
+  const workspacePath = String(request?.workspacePath || "").trim();
+  const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
+  const seededRequest = seedSkillOriginalContent(request);
+  const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest);
+  const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest);
+  const skillPreparedRequest = extensionSourceEnabled(policy, "skill")
+    ? await prepareSkillRequest(
+        mentionPreparedRequest,
+        skillRuntimeOptions(workspacePath),
+      )
+    : mentionPreparedRequest;
+  emitSkillStatus(
+    event,
+    skillPreparedRequest,
+    skillActivationSummary(skillPreparedRequest),
+    skillPreparedRequest?.unresolvedSkills || [],
+  );
+  const mcpConfiguration = await loadMcpConfiguration(
+    mcpConfigurationOptions(workspacePath),
+  );
+  const mcpSelection = selectMentionedMcpServers(
+    skillPreparedRequest,
+    mcpConfiguration.servers,
+  );
+  return {
+    ...skillPreparedRequest,
+    mcpServers: extensionSourceEnabled(policy, "mcp")
+      ? mcpSelection.servers
+      : [],
+    mcpConfigErrors: [
+      ...mcpConfiguration.errors,
+      ...mcpSelection.unresolved.map(
+        (id) => `Mentioned MCP server is not available: ${id}`,
+      ),
+    ],
+    activatedMcpServers: mcpSelection.mentions,
+    extensionPolicy: policy.effective,
+    capabilityRegistry: kernel?.capabilitiesRegistry || null,
+  };
 }
 
 const nativeHandle = ipcMain.handle.bind(ipcMain);
@@ -181,42 +223,7 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       });
     }
     try {
-      const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
-      const seededRequest = seedSkillOriginalContent(request);
-      const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest);
-      const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest);
-      const skillPreparedRequest = extensionSourceEnabled(policy, "skill")
-        ? await prepareSkillRequest(
-            mentionPreparedRequest,
-            skillRuntimeOptions(workspacePath),
-          )
-        : mentionPreparedRequest;
-      emitSkillStatus(
-        event,
-        skillPreparedRequest,
-        skillActivationSummary(skillPreparedRequest),
-        skillPreparedRequest?.unresolvedSkills || [],
-      );
-      const mcpConfiguration = await loadMcpConfiguration(
-        mcpConfigurationOptions(workspacePath),
-      );
-      const mcpSelection = selectMentionedMcpServers(
-        skillPreparedRequest,
-        mcpConfiguration.servers,
-      );
-      const preparedRequest = {
-        ...skillPreparedRequest,
-        mcpServers: extensionSourceEnabled(policy, "mcp")
-          ? mcpSelection.servers
-          : [],
-        mcpConfigErrors: [
-          ...mcpConfiguration.errors,
-          ...mcpSelection.unresolved.map((id) => `Mentioned MCP server is not available: ${id}`),
-        ],
-        activatedMcpServers: mcpSelection.mentions,
-        extensionPolicy: policy.effective,
-        capabilityRegistry: kernel?.capabilitiesRegistry || null,
-      };
+      const preparedRequest = await prepareHarnessRunRequest(event, request);
       return await runWithAgentBudget(budget, {}, () =>
         listener(event, preparedRequest),
       );
@@ -227,11 +234,21 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
   });
 };
 
-await import("./main.js");
+const desktopMain = await import("./main.js");
 ipcMain.handle = originalHandle;
 
-kernel = createHarnessKernel({ toolDescriptors: nativeToolDescriptors() });
+kernel = createHarnessKernel({
+  toolDescriptors: nativeToolDescriptors(),
+  taskRuntime: desktopMain.harnessTaskRuntime,
+});
 setDefaultHarnessEventBus(kernel.events);
+desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
+  const budget = planAgentBudget(request || {});
+  const preparedRequest = await prepareHarnessRunRequest(null, request);
+  return runWithAgentBudget(budget, {}, () =>
+    desktopMain.startHarnessTask(preparedRequest, context),
+  );
+});
 const coreServer = createHarnessCoreServer({ kernel });
 
 ipcMain.handle("core:status", () => ({
@@ -388,6 +405,7 @@ ipcMain.handle("core:sessions", () => ({ sessions: kernel.sessions.list() }));
 ipcMain.handle("core:events", (_event, request = {}) => ({
   events: kernel.events.history(request),
 }));
+ipcMain.handle("core:tasks", () => desktopMain.harnessTaskRuntime.snapshot());
 ipcMain.handle("core:agent-budget", (_event, request = {}) => ({
   budget: planAgentBudget(request),
 }));

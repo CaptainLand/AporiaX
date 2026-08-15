@@ -30,6 +30,15 @@ jobs:
       - name: Architecture smoke
         run: npm run test:architecture
 
+      - name: SQLite run event store smoke
+        run: npm run test:run-store-sqlite
+
+      - name: Task runtime RPC smoke
+        run: npm run test:task-runtime-rpc
+
+      - name: Agent runtime broker smoke
+        run: npm run test:agent-runtime-broker
+
       - name: Execution policy smoke
         run: npm run test:execution-policy
 
