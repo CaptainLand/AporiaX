@@ -103,18 +103,29 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
   const cloudProxy =
     capability.mode === "proxy" &&
     capability.proxy?.providerId === APORIA_CLOUD_PROVIDER_ID;
-  const remainingRatio = Number(capability.proxy?.quotaRemainingRatio);
-  const hasRemainingRatio = Number.isFinite(remainingRatio);
+  const hybridCloudProxy =
+    cloudProxy && capability.providerId !== APORIA_CLOUD_PROVIDER_ID;
+  const rawRemainingRatio = capability.proxy?.quotaRemainingRatio;
+  const parsedRemainingRatio =
+    rawRemainingRatio === null ||
+    rawRemainingRatio === undefined ||
+    rawRemainingRatio === ""
+      ? null
+      : Number(rawRemainingRatio);
+  const hasRemainingRatio = Number.isFinite(parsedRemainingRatio);
+  const remainingRatio = hasRemainingRatio ? parsedRemainingRatio : null;
   const quotaProtected = Boolean(
-    cloudProxy &&
+    hybridCloudProxy &&
       cloudSettings.cloudVisionEnabled &&
       cloudSettings.cloudVisionQuotaGuard &&
       hasRemainingRatio &&
       remainingRatio <= CLOUD_VISION_GUARD_RATIO,
   );
-  const cloudDisabled = cloudProxy && !cloudSettings.cloudVisionEnabled;
+  const cloudDisabled =
+    hybridCloudProxy && !cloudSettings.cloudVisionEnabled;
   const nativeMode = capability.mode === "native";
-  const proxyMode = capability.mode === "proxy" && !cloudDisabled && !quotaProtected;
+  const proxyMode =
+    capability.mode === "proxy" && !cloudDisabled && !quotaProtected;
   const available = nativeMode || proxyMode;
   const mainModel =
     capability.mainModelName ||
@@ -198,15 +209,15 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
                   )}
         </p>
 
-        {cloudProxy && (
+        {hybridCloudProxy && (
           <div className="aporiax-vision-controls">
             <div className="aporiax-vision-control-row">
               <div>
                 <strong>{tr("Cloud 视觉增强", "Cloud vision enhancement")}</strong>
                 <span>
                   {tr(
-                    "仅在文本模型需要看图时调用 Qwen3.5 Flash",
-                    "Use Qwen3.5 Flash only when a text model needs to inspect an image",
+                    "仅在本地/自定义文本模型需要看图时调用 Qwen3.5 Flash",
+                    "Use Qwen3.5 Flash only when a local/custom text model needs to inspect an image",
                   )}
                 </span>
               </div>
@@ -225,12 +236,12 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
                 <span>
                   {hasRemainingRatio
                     ? tr(
-                        `当前 Cloud 剩余约 ${Math.round(remainingRatio * 100)}%；低于或等于 20% 时停止自动识图`,
-                        `About ${Math.round(remainingRatio * 100)}% Cloud quota remains; automatic vision pauses at or below 20%`,
+                        `最近同步 Cloud 剩余约 ${Math.round(remainingRatio * 100)}%；真正调用前会刷新额度，低于或等于 20% 时停止自动识图`,
+                        `Last synced Cloud quota is about ${Math.round(remainingRatio * 100)}%; AporiaX refreshes it before the actual call and pauses automatic vision at or below 20%`,
                       )
                     : tr(
-                        "低于或等于 20% Cloud 剩余额度时停止自动识图",
-                        "Pause automatic vision when Cloud quota reaches 20% or less",
+                        "真正调用前刷新 Cloud 额度；低于或等于 20% 时停止自动识图",
+                        "Refresh Cloud quota before the actual call; pause automatic vision at or below 20%",
                       )}
                 </span>
               </div>
