@@ -32,7 +32,8 @@ assert.match(visionProxy, /cloudVisionEnabled/);
 assert.match(visionProxy, /cloudVisionQuotaGuard/);
 assert.match(visionProxy, /accountRuntime\.refresh\(\)/);
 assert.match(visionProxy, /prepareAporiaCloudVisionRequest\(request,/);
-assert.match(visionProxy, /fallback to a user-configured vision/);
+assert.match(visionProxy, /const candidate = selectVisionCandidate\(records,/);
+assert.match(visionProxy, /return prepareCustomVisionRequest\(request, records, candidate,/);
 
 assert.match(visionCore, /APORIA_CLOUD_PROVIDER_ID\s*=\s*"aporia-cloud"/);
 assert.match(visionCore, /APORIA_CLOUD_VISION_MODEL_ID\s*=\s*"aporia-cloud-vision"/);
@@ -58,6 +59,7 @@ assert.match(capabilityCards, /Cloud 视觉增强/);
 assert.match(capabilityCards, /20% 低额度保护/);
 assert.match(capabilityCards, /cloudVisionEnabled/);
 assert.match(capabilityCards, /cloudVisionQuotaGuard/);
+assert.match(capabilityCards, /hybridCloudProxy/);
 
 assert.match(accountRuntime, /fetchModelGateway/);
 assert.match(accountRuntime, /Authorization/);
