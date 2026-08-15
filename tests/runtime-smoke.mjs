@@ -551,8 +551,9 @@ try {
     "runtime-resumed-by-2",
   );
   assert.equal((await listRecoverableRuns(journalRoot)).length, 0);
-  const resumedMetadata = JSON.parse(
-    await readFile(join(journalRoot, "aporiax-runs", "runtime-resume-1.json"), "utf8"),
+  const resumedMetadata = await getRunRecoveryContext(
+    journalRoot,
+    "runtime-resume-1",
   );
   assert.equal(resumedMetadata.resumedByRunId, "runtime-resumed-by-2");
   await acknowledgeRecoverableRun(journalRoot, "runtime-resume-1");
