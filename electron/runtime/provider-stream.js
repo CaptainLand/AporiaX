@@ -1,4 +1,5 @@
 import { providerChatEndpoint } from "../provider-config.js";
+import { emitCloudModelActivity } from "../account/account-events.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -113,12 +114,16 @@ export async function callModelProvider({
 }) {
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
     try {
-      return await callModelProviderOnce({
+      const result = await callModelProviderOnce({
         provider,
         body,
         signal,
         onEvent,
       });
+      if (provider.kind === "aporia-cloud") {
+        emitCloudModelActivity({ type: "completed" });
+      }
+      return result;
     } catch (error) {
       const maxAttempts = isProviderTimeoutError(error)
         ? PROVIDER_TIMEOUT_MAX_ATTEMPTS
@@ -128,6 +133,15 @@ export async function callModelProvider({
         !error?.retryable ||
         attempt >= maxAttempts
       ) {
+        if (provider.kind === "aporia-cloud") {
+          emitCloudModelActivity({
+            type:
+              error?.code === "WEEKLY_QUOTA_EXHAUSTED"
+                ? "quota-exhausted"
+                : "failed",
+            code: error?.code || "",
+          });
+        }
         throw error;
       }
       const delayMs = 750 * 2 ** (attempt - 1);

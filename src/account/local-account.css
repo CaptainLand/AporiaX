@@ -193,6 +193,39 @@
   font-size: 11.5px;
 }
 
+.local-account-quota-card--low {
+  border-color: rgba(255, 186, 92, 0.22);
+  background: rgba(255, 170, 70, 0.055);
+}
+
+.local-account-quota-card--low strong {
+  color: #ffc36c;
+}
+
+.local-account-quota-card--low .local-account-quota-track i {
+  background: linear-gradient(90deg, #ff9f58, #ffd27d);
+  box-shadow: 0 0 9px rgba(255, 173, 77, 0.32);
+}
+
+.local-account-quota-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 187, 88, 0.16);
+  border-radius: 9px;
+  color: #e8b76e;
+  background: rgba(255, 164, 58, 0.045);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.local-account-quota-warning svg {
+  margin-top: 1px;
+  flex: 0 0 auto;
+  color: #ffc36c;
+}
+
 .local-account-meta {
   display: grid;
   gap: 6px;
@@ -312,4 +345,9 @@
 :root[data-theme="light"] .local-account-local-note,
 :root[data-theme="light"] .local-account-actions button {
   background: rgba(43, 94, 123, 0.045);
+}
+
+:root[data-theme="light"] .local-account-quota-warning {
+  color: #94621f;
+  background: rgba(212, 138, 39, 0.07);
 }

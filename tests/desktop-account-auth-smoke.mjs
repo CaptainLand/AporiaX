@@ -11,6 +11,10 @@ import {
   parseDesktopLoopbackCallback,
   projectAccountSnapshot,
 } from "../electron/account/desktop-account-core.js";
+import {
+  emitCloudModelActivity,
+  onCloudModelActivity,
+} from "../electron/account/account-events.js";
 
 const pkce = createDesktopPkce();
 assert.equal(pkce.codeVerifier.length, 43);
@@ -77,10 +81,19 @@ assert.equal(snapshot.profile.email, "lan@example.com");
 assert.equal(snapshot.device.name, "CI Windows PC");
 assert.equal(snapshot.models[0].displayName, "DeepSeek V4 Flash");
 
+const modelActivity = [];
+const stopActivity = onCloudModelActivity((event) => modelActivity.push(event));
+emitCloudModelActivity({ type: "completed" });
+emitCloudModelActivity({ type: "quota-exhausted", code: "WEEKLY_QUOTA_EXHAUSTED" });
+stopActivity();
+assert.deepEqual(modelActivity.map((event) => event.type), ["completed", "quota-exhausted"]);
+assert.equal(modelActivity[1].code, "WEEKLY_QUOTA_EXHAUSTED");
+
 for (const file of [
   "electron/account/desktop-account-runtime.js",
   "electron/account/register-desktop-account-ipc.js",
   "electron/account/desktop-account-core.js",
+  "electron/account/account-events.js",
 ]) {
   const checked = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
   assert.equal(checked.status, 0, `${file} syntax check failed: ${checked.stderr}`);
@@ -96,13 +109,31 @@ assert.match(runtime, /AporiaX is completing sign-in/);
 assert.doesNotMatch(runtime, /AporiaX Desktop connected/);
 assert.doesNotMatch(runtime, /machineGuid|wmic|MAC address|serialnumber/i);
 
+const register = await readFile("electron/account/register-desktop-account-ipc.js", "utf8");
+assert.match(register, /LOW_QUOTA_RATIO = 0\.2/);
+assert.match(register, /AporiaX · Cloud 周额度偏低/);
+assert.match(register, /建议切换到本地模型/);
+assert.match(register, /runtime\s*\.refresh\(\)/);
+assert.match(register, /account:changed/);
+assert.match(register, /warnedQuotaCycle/);
+
+const providerStream = await readFile("electron/runtime/provider-stream.js", "utf8");
+assert.match(providerStream, /emitCloudModelActivity/);
+assert.match(providerStream, /quota-exhausted/);
+assert.match(providerStream, /WEEKLY_QUOTA_EXHAUSTED/);
+
 const preload = await readFile("electron/preload.cjs", "utf8");
 assert.match(preload, /account:\s*\{/);
 assert.match(preload, /account:sign-in/);
+assert.match(preload, /onChanged/);
+assert.match(preload, /account:changed/);
 assert.doesNotMatch(preload, /accessToken|refreshToken/);
 
 const accountPanel = await readFile("src/account/LocalAccountPanel.jsx", "utf8");
 assert.match(accountPanel, /window\.desktop\?\.account/);
+assert.match(accountPanel, /api\.onChanged/);
+assert.match(accountPanel, /remaining > 0 && remaining <= 20/);
+assert.match(accountPanel, /建议切换到本地模型继续长任务/);
 assert.match(accountPanel, /Continue in browser/);
 assert.match(accountPanel, /Aporia Cloud 未连接/);
 assert.match(accountPanel, /local-account-inline-error--panel/);

@@ -37,12 +37,18 @@ export function LocalAccountPanel() {
       setAccount({ status: "unavailable" });
       return undefined;
     }
+
+    const applySnapshot = (snapshot) => {
+      if (!active) return;
+      const next = snapshot || { status: "anonymous" };
+      setAccount(next);
+      setError(next?.error || "");
+      if (next?.status !== "authenticated") setMenuOpen(false);
+    };
+
+    const unsubscribe = api.onChanged?.(applySnapshot);
     api.get()
-      .then((snapshot) => {
-        if (!active) return;
-        setAccount(snapshot || { status: "anonymous" });
-        setError(snapshot?.error || "");
-      })
+      .then(applySnapshot)
       .catch((loadError) => {
         if (!active) return;
         setAccount({ status: "error" });
@@ -50,6 +56,7 @@ export function LocalAccountPanel() {
       });
     return () => {
       active = false;
+      unsubscribe?.();
     };
   }, [api]);
 
@@ -58,6 +65,7 @@ export function LocalAccountPanel() {
   const remaining = quotaPercent(account?.quota);
   const modelName = useMemo(() => primaryModel(account?.models), [account?.models]);
   const signedIn = account?.status === "authenticated" && profile;
+  const lowQuota = Boolean(signedIn && remaining > 0 && remaining <= 20);
 
   const signIn = async () => {
     if (!api?.signIn || busy) return;
@@ -119,7 +127,7 @@ export function LocalAccountPanel() {
               <span className="local-account-connected"><Check size={12} />{tr("已连接", "Connected")}</span>
             </div>
 
-            <div className="local-account-quota-card">
+            <div className={`local-account-quota-card${lowQuota ? " local-account-quota-card--low" : ""}`}>
               <div><span>{tr("每周额度", "Weekly quota")}</span><strong>{remaining}%</strong></div>
               <span
                 aria-label={tr(`周额度剩余 ${remaining}%`, `${remaining}% weekly quota remaining`)}
@@ -132,6 +140,18 @@ export function LocalAccountPanel() {
                 <i style={{ width: `${remaining}%` }} />
               </span>
             </div>
+
+            {lowQuota && (
+              <div className="local-account-quota-warning" role="status">
+                <AlertCircle size={14} />
+                <span>
+                  {tr(
+                    `Aporia Cloud 本周额度只剩 ${remaining}%，建议切换到本地模型继续长任务，避免中途耗尽。`,
+                    `Only ${remaining}% of your Aporia Cloud weekly quota remains. Consider switching to a local model for long tasks to avoid interruption.`,
+                  )}
+                </span>
+              </div>
+            )}
 
             <div className="local-account-meta">
               <div><Cloud size={13} /><span>{modelName}</span></div>
