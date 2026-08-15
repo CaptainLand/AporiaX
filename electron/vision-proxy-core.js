@@ -85,7 +85,10 @@ function aporiaCloudVisionCandidate(records) {
       record?.kind === "aporia-cloud" ||
       record?.source === "aporia-cloud",
   );
-  if (!provider || provider?.visionProxyAvailable === false) return null;
+  // A signed-out Account cannot offer the managed proxy at all. Disabled and
+  // quota-protected states remain visible so the renderer can explain them and
+  // let the user change the local policy without signing out/in again.
+  if (!provider || provider?.visionProxyReason === "signed-out") return null;
   return {
     provider,
     model: {
