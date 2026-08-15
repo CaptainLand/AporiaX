@@ -1,66 +1,99 @@
 # Vision Proxy
 
-AporiaX can use a separate OpenAI-compatible vision model when the selected main model cannot read images.
+AporiaX can use a separate vision model when the selected main model cannot read images. The main reasoning model does not need to change.
 
 ## Behavior
 
-- If the selected main model supports image input natively, AporiaX keeps the existing native multimodal path and sends the image directly to that model.
-- If the selected main model is text-only, AporiaX looks for a configured Provider with an image-capable model.
-- When a usable Vision Provider is configured, the renderer treats image attachments as available even for a text-only main model. This prevents the Composer from rejecting the image before the Vision Proxy can see it.
-- The runtime still keeps the main model's native image capability unchanged. A text-only model such as DeepSeek V4 never receives the raw image.
-- The image-capable model receives only the image attachment(s) and the accompanying user text. It returns a compact visual observation.
-- The original image attachment is then removed from the text-only model request and the visual observation is appended to the user message.
+- If the selected main model supports image input natively, AporiaX keeps the native multimodal path and sends the image directly to that model.
+- If the selected main model is text-only, AporiaX can use Aporia Cloud Vision or a configured image-capable Provider as a visual proxy.
+- A text-only local model can therefore keep all normal reasoning/tool turns on its local endpoint while borrowing only image understanding from Aporia Cloud.
+- Aporia Cloud Vision uses the signed-in Aporia Account session and the hidden `aporia-cloud-vision` model (`Qwen3.5 Flash Vision`). Desktop never receives the upstream Qwen API key.
+- Cloud Vision is invoked only when an image attachment is present. It converts the image to a compact structured text observation before the Harness Agent loop starts.
+- The raw image is removed from the text-only main-model request after visual analysis. The main model receives the user's text plus the visual observation.
 - Non-image attachments remain unchanged.
-- If no usable image-capable Provider with an API key is configured, the existing text-only behavior remains unchanged.
+- Aporia Cloud Vision processes one inline image per Cloud request. Messages with several images are processed sequentially, preventing the hidden Cloud endpoint from becoming a generic remote-image fetcher.
+- If Cloud Vision cannot be used, AporiaX falls back to an explicitly selected or configured user vision Provider when available.
 
-The proxy currently recognizes the existing AporiaX vision model patterns plus Qwen 3.5/3.6/3.7 model IDs. It prefers `qwen3.5-flash`, then dated Qwen3.5 Flash releases, Qwen3.6 Flash, and Qwen3-VL Flash when multiple visual models are exposed by one Provider.
+The proxy recognizes the existing AporiaX vision model patterns plus Qwen 3.5/3.6/3.7 model IDs. For user Providers it prefers `qwen3.5-flash`, then dated Qwen3.5 Flash releases, Qwen3.6 Flash, and Qwen3-VL Flash when multiple visual models are exposed.
+
+## Local model + Aporia Cloud Vision
+
+The intended hybrid route is:
+
+```text
+User + image
+    ↓
+Local/custom text model selected
+    ↓
+Aporia Cloud Vision (Qwen3.5 Flash)
+    ↓
+structured visual observation
+    ↓
+original local/custom model
+    ↓
+reasoning + tools + file changes stay on the selected main model
+```
+
+This route does not turn the whole task into an Aporia Cloud model request. Only the image-understanding call uses the Cloud weekly quota.
+
+The Desktop keeps two global controls in the Vision capability card:
+
+- **Cloud vision enhancement** — enabled by default. Disable it to prevent local/custom text models from automatically borrowing Aporia Cloud Vision.
+- **20% low-quota guard** — enabled by default. When the latest Account quota snapshot is at or below 20% remaining, automatic Cloud Vision is paused. The user can disable this guard if they deliberately want to continue using vision.
+
+If the Account is signed out, Aporia Cloud is not advertised as an available visual proxy. Existing user-configured vision Providers can still be used.
 
 ## Task settings feedback
 
 The task settings sidebar distinguishes native image support from effective image support:
 
 - **Native vision** means the selected main model can consume the image itself.
-- **Vision proxy** means the selected main model is text-only, but AporiaX has a configured visual model that can inspect the image first.
-- **Unavailable** means the current main model is text-only and there is no usable visual Provider yet.
+- **Vision proxy** means the selected main model is text-only, but AporiaX has a visual model that can inspect the image first.
+- **Unavailable** means the current main model is text-only and there is no usable visual route.
 
-When proxy vision is active, the sidebar shows the main model and the visual model used for the automatic route. When vision is unavailable, the sidebar explains that adding a visual model will automatically extend image handling to text-only main models such as DeepSeek and links back to Provider management.
+When Aporia Cloud is the proxy, the card shows the local/custom main model → Qwen3.5 Flash Vision route, the Cloud enhancement switch, the low-quota guard, and the latest known remaining quota percentage when available.
 
 Provider listings expose this distinction with `nativeSupportsImages`, `supportsImageProxy`, `supportsImages` (effective renderer capability), and a non-secret `visionProxy` descriptor. API keys remain main-process only.
 
-## Qwen3.5-Flash
+## User-configured Qwen3.5 Flash
 
-No dedicated Qwen SDK is required. Add Alibaba Cloud Model Studio as a normal AporiaX OpenAI-compatible Provider:
+Aporia Cloud is not required. A user can still add Alibaba Cloud Model Studio as a normal OpenAI-compatible Provider:
 
 1. Create a Model Studio API key.
-2. Add the OpenAI-compatible Base URL for your Model Studio region/workspace. The URL should end in `/compatible-mode/v1`.
+2. Add the OpenAI-compatible Base URL for the Model Studio region/workspace. The URL should end in `/compatible-mode/v1`.
 3. Add model ID `qwen3.5-flash`.
 4. Save the Provider.
-5. Keep DeepSeek V4 (or another text-only model) selected as the main model and attach an image to a task.
+5. Keep a text-only model selected as the main model and attach an image.
 
-AporiaX will automatically use the configured image-capable Provider as the visual fallback.
+When the managed Cloud route is unavailable or deliberately disabled, AporiaX can fall back to this configured visual Provider.
 
 ## Security and privacy
 
-Provider API keys remain in the Electron main process and continue to use the existing `safeStorage` encrypted Provider store. The renderer never receives the decrypted vision key.
+Aporia Cloud Vision authenticates through the Desktop Aporia Account session. The upstream Qwen credential remains server-side in AporiaX Cloud and is never stored in Desktop, exposed to the renderer, or returned by the model catalog.
 
-When the main model is text-only, image attachments may be sent to a different configured Provider for visual analysis. Only configure a vision Provider if sending those attachments to that service is acceptable for the project and data involved.
+User Provider API keys remain in the Electron main process and continue to use the existing `safeStorage` encrypted Provider store. The renderer never receives decrypted vision keys.
+
+When the main model is text-only, image attachments may be sent to the selected visual service for analysis. The main local model receives only the resulting text observation. Users should keep Cloud vision disabled for projects whose images must never leave the machine.
 
 ## Current scope
 
-This first implementation is deliberately small:
+Included:
 
+- local/custom text model → Aporia Cloud Vision → local/custom model hybrid route
+- signed-in Account gating
+- Cloud weekly-quota accounting through the existing model gateway
+- global Cloud Vision on/off control
+- default 20% low-quota protection
+- user-provider visual fallback
 - OpenAI-compatible Chat Completions vision requests
 - data-URL image attachments already accepted by AporiaX
-- up to 8 images from one message
-- 60 second vision request timeout
-- compact text observation returned to the main model
-- renderer capability exposure when a usable Vision Proxy is present
-- task-settings feedback for native, proxied, and unavailable image capability
+- compact text observations returned before the main Agent loop
+- renderer feedback for native, proxied, protected, disabled, and unavailable states
 
 Not included yet:
 
-- dedicated Vision Provider picker in Settings
 - per-project vision routing policy
+- user-adjustable quota-guard threshold
 - image-observation cache
 - OCR-specific routing
 - visual verification / screenshot test loop
