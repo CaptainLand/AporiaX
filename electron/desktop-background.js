@@ -13,6 +13,22 @@ import {
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
 
+function approvalNotificationText(event = {}) {
+  const approval = event?.approval || {};
+  const action = String(approval.title || "需要确认的高风险操作").trim();
+  const detail = String(
+    approval.command || approval.reason || "打开 AporiaX 查看并确认。",
+  )
+    .trim()
+    .replace(/\s+/g, " ");
+  return {
+    title: "AporiaX · 需要确认",
+    body: `${action}${detail ? ` · ${detail}` : ""}`.slice(0, 240),
+    icon: join(projectRoot, "build", "icon.ico"),
+    silent: false,
+  };
+}
+
 export function installDesktopBackground() {
   let tray = null;
   let mainWindow = null;
@@ -20,6 +36,7 @@ export function installDesktopBackground() {
   let disposed = false;
   let trayRefreshTimer = null;
   let trayHintHandledThisSession = false;
+  let unsubscribeApproval = null;
   const activeRunRefs = new Map();
 
   const activeRuns = () =>
@@ -36,6 +53,30 @@ export function installDesktopBackground() {
     mainWindow.focus();
     mainWindow.flashFrame(false);
     return true;
+  };
+
+  const focusTask = (taskId) => {
+    if (!showMainWindow()) return false;
+    const id = String(taskId || "").trim();
+    if (id && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send("desktop:task-requested", { taskId: id });
+    }
+    return true;
+  };
+
+  const showApprovalRequired = (event = {}) => {
+    if (disposed || !Notification.isSupported()) return false;
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.flashFrame(true);
+      }
+      const notification = new Notification(approvalNotificationText(event));
+      notification.on("click", () => focusTask(event?.taskId));
+      notification.show();
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const stopTrayRefreshTimer = () => {
@@ -145,6 +186,8 @@ export function installDesktopBackground() {
   };
   const handleWillQuit = () => {
     disposed = true;
+    unsubscribeApproval?.();
+    unsubscribeApproval = null;
     stopTrayRefreshTimer();
     if (tray && !tray.isDestroyed()) tray.destroy();
     tray = null;
@@ -160,6 +203,14 @@ export function installDesktopBackground() {
   void app.whenReady().then(createTray);
 
   return {
+    attachEventBus(eventBus) {
+      unsubscribeApproval?.();
+      unsubscribeApproval =
+        eventBus && typeof eventBus.on === "function"
+          ? eventBus.on("approval.required", showApprovalRequired)
+          : null;
+      return Boolean(unsubscribeApproval);
+    },
     runStarted(runId, { startedAt = Date.now() } = {}) {
       const id = String(runId || "").trim();
       if (!id) return status();
@@ -184,6 +235,7 @@ export function installDesktopBackground() {
       updateTray();
       return status();
     },
+    showApprovalRequired,
     show: showMainWindow,
     snapshot() {
       return {

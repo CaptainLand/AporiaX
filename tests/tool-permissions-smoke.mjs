@@ -15,9 +15,13 @@ import {
 const workspaceWrite = createPermissionPolicy("workspace-write");
 assert.equal(getToolPermission(workspaceWrite, "run_command"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "write_file"), "allow");
-assert.equal(getToolPermission(workspaceWrite, "browser_click"), "ask");
+assert.equal(getToolPermission(workspaceWrite, "browser_click"), "allow");
+assert.equal(getToolPermission(workspaceWrite, "browser_fill"), "allow");
+assert.equal(getToolPermission(workspaceWrite, "browser_press"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "read_external_file"), "allow");
-assert.equal(getToolPermission(workspaceWrite, "start_process"), "ask");
+assert.equal(getToolPermission(workspaceWrite, "start_process"), "allow");
+assert.equal(getToolPermission(workspaceWrite, "git_push"), "allow");
+assert.equal(getToolPermission(workspaceWrite, "github_pr_create"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "read_process"), "allow");
 
 const readOnly = createPermissionPolicy("read-only");
@@ -62,6 +66,52 @@ const localAuto = resolveToolExecutionPermission({
 assert.equal(localAuto.requiresApproval, false);
 assert.equal(localAuto.executionMode, "safe-auto-approval");
 
+const dependencyMutation = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "npm install lodash" },
+  sandboxStatus: { localAvailable: true, autoApprovalSafe: true },
+});
+assert.equal(dependencyMutation.requiresApproval, false);
+assert.equal(dependencyMutation.autoApproved, true);
+assert.equal(dependencyMutation.commandPolicy.category, "dependency-mutation");
+
+const networkRead = resolveToolExecutionPermission({
+  toolName: "run_command",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "curl https://example.com/schema.json" },
+  sandboxStatus: { localAvailable: true, autoApprovalSafe: true },
+});
+assert.equal(networkRead.requiresApproval, false);
+assert.equal(networkRead.commandPolicy.category, "network-read");
+
+const devServer = resolveToolExecutionPermission({
+  toolName: "start_process",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "npm run dev" },
+  sandboxStatus: { localAvailable: true, autoApprovalSafe: true },
+});
+assert.equal(devServer.requiresApproval, false);
+assert.equal(devServer.autoApproved, true);
+assert.equal(devServer.commandPolicy.category, "development-server");
+
+const unknownPersistentProcess = resolveToolExecutionPermission({
+  toolName: "start_process",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  executionMode: "safe",
+  input: { command: "node scripts/custom-daemon.js" },
+  sandboxStatus: { localAvailable: true, autoApprovalSafe: true },
+});
+assert.equal(unknownPersistentProcess.requiresApproval, true);
+assert.equal(unknownPersistentProcess.commandPolicy.category, "host-authority-unknown");
+
 const unknownLocalCommand = resolveToolExecutionPermission({
   toolName: "run_command",
   permissionAction: "allow",
@@ -93,16 +143,43 @@ const directUnknownCommand = resolveToolExecutionPermission({
 assert.equal(directUnknownCommand.requiresApproval, true);
 assert.equal(directUnknownCommand.executionMode, "direct-manual-approval");
 
-const dependencyMutation = resolveToolExecutionPermission({
-  toolName: "run_command",
+const featurePush = resolveToolExecutionPermission({
+  toolName: "git_push",
   permissionAction: "allow",
   approvalMode: "sandbox-auto",
-  executionMode: "isolated",
-  input: { command: "npm install lodash" },
-  sandboxStatus: { available: true },
+  input: { remote: "origin", branch: "agent/fix-login" },
 });
-assert.equal(dependencyMutation.requiresApproval, true);
-assert.equal(dependencyMutation.commandPolicy.category, "dependency-mutation");
+assert.equal(featurePush.requiresApproval, false);
+assert.equal(featurePush.effectPolicy.category, "remote-reversible");
+
+const protectedPush = resolveToolExecutionPermission({
+  toolName: "git_push",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  input: { remote: "origin", branch: "main" },
+});
+assert.equal(protectedPush.requiresApproval, true);
+assert.equal(protectedPush.effectPolicy.category, "protected-branch-write");
+
+const ambiguousPush = resolveToolExecutionPermission({
+  toolName: "git_push",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  input: { remote: "origin" },
+});
+assert.equal(ambiguousPush.requiresApproval, true);
+assert.equal(ambiguousPush.effectPolicy.category, "remote-destination-ambiguous");
+
+const destructivePatch = resolveToolExecutionPermission({
+  toolName: "apply_patch",
+  permissionAction: "allow",
+  approvalMode: "sandbox-auto",
+  input: {
+    patch: "diff --git a/src/old.js b/src/old.js\ndeleted file mode 100644\n--- a/src/old.js\n+++ /dev/null\n",
+  },
+});
+assert.equal(destructivePatch.requiresApproval, true);
+assert.equal(destructivePatch.effectPolicy.category, "destructive-workspace");
 
 const explicitAskCannotBeBypassed = resolveToolExecutionPermission({
   toolName: "run_command",
@@ -139,11 +216,11 @@ assert.equal(manualSandbox.executionMode, "safe-manual-approval");
 
 const browserControl = resolveToolExecutionPermission({
   toolName: "browser_click",
-  permissionAction: "ask",
+  permissionAction: "allow",
   approvalMode: "sandbox-auto",
   sandboxStatus: { localAvailable: true },
 });
-assert.equal(browserControl.requiresApproval, true);
+assert.equal(browserControl.requiresApproval, false);
 
 const denied = resolveToolExecutionPermission({
   toolName: "run_command",
@@ -156,24 +233,16 @@ const denied = resolveToolExecutionPermission({
 assert.equal(denied.denied, true);
 assert.equal(denied.requiresApproval, false);
 
-const approvalDecision = resolveToolExecutionPermission({
-  toolName: "run_command",
-  permissionAction: "allow",
-  approvalMode: "sandbox-auto",
-  executionMode: "safe",
-  input: { command: "npm install lodash", cwd: "." },
-  sandboxStatus: { backend: "local-workspace", localAvailable: true },
-});
 const approvalRequest = buildToolApprovalRequest({
-  toolName: "run_command",
-  descriptor: { risk: "execute" },
-  input: { command: "npm install lodash", cwd: "." },
-  sandboxStatus: { backend: "local-workspace" },
-  permissionDecision: approvalDecision,
+  toolName: "git_push",
+  descriptor: { risk: "control" },
+  input: { remote: "origin", branch: "main" },
+  permissionDecision: protectedPush,
 });
-assert.equal(approvalRequest.riskLevel, "medium");
-assert.equal(approvalRequest.riskCategory, "dependency-mutation");
-assert.match(approvalRequest.reason, /dependencies/i);
+assert.equal(approvalRequest.riskLevel, "high");
+assert.equal(approvalRequest.riskCategory, "protected-branch-write");
+assert.match(approvalRequest.reason, /main/i);
+assert.equal(approvalRequest.title, "推送 Git 分支");
 
 const browserApproval = buildToolApprovalRequest({
   toolName: "browser_click",

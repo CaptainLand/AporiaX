@@ -49,6 +49,8 @@ const DEFAULT_PERMISSION_POLICIES = {
     read_external_file: "allow",
     search_text: "allow",
     lsp: "allow",
+    // Host-level language-server installation may invoke system package managers,
+    // so it remains an explicit approval boundary.
     lsp_install: "ask",
     git_status: "allow",
     git_diff: "allow",
@@ -58,11 +60,14 @@ const DEFAULT_PERMISSION_POLICIES = {
     git_commit: "allow",
     git_create_branch: "allow",
     git_remote_list: "allow",
-    git_remote_add: "ask",
-    git_pull: "ask",
-    git_push: "ask",
+    // Local/reversible Git plumbing is autonomous. git_push receives an
+    // additional effect-policy check before execution, so protected/ambiguous
+    // destinations still require approval.
+    git_remote_add: "allow",
+    git_pull: "allow",
+    git_push: "allow",
     github_repo_create: "ask",
-    github_pr_create: "ask",
+    github_pr_create: "allow",
     github_pr_view: "allow",
     github_pr_checks: "allow",
     write_file: "allow",
@@ -71,23 +76,27 @@ const DEFAULT_PERMISSION_POLICIES = {
     create_presentation: "allow",
     create_spreadsheet: "allow",
     inspect_office_file: "allow",
-    // `run_command` is permitted at the policy layer for workspace-write.
-    // The runtime still requires approval for unsandboxed/manual execution and
-    // only auto-runs when the current sandbox backend is marked safe.
+    // Command/process tools are allowed at the policy layer. The runtime effect
+    // classifier decides whether each concrete command may auto-run, must ask,
+    // or is denied.
     run_command: "allow",
-    start_process: "ask",
+    start_process: "allow",
     read_process: "allow",
     write_stdin: "allow",
     kill_process: "allow",
+    // Browser runs in a fresh isolated Playwright context without the user's
+    // browser profile/cookies. Ordinary navigation and form interaction are
+    // therefore autonomous; high-impact external operations should use native
+    // tools with their own effect policy rather than relying on a click prompt.
     browser_open: "allow",
     browser_snapshot: "allow",
     browser_screenshot: "allow",
     browser_console: "allow",
     browser_network: "allow",
     browser_close: "allow",
-    browser_click: "ask",
-    browser_fill: "ask",
-    browser_press: "ask",
+    browser_click: "allow",
+    browser_fill: "allow",
+    browser_press: "allow",
     request_self_check: "allow",
     complete_self_check: "allow",
   },

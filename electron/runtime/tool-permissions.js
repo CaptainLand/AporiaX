@@ -5,6 +5,64 @@ import {
   resolveExecutionBackend,
 } from "./execution-policy.js";
 
+const COMMAND_TOOLS = new Set(["run_command", "start_process"]);
+const PROTECTED_BRANCHES = new Set(["main", "master"]);
+
+function permissionEffect(action, risk, category, reason) {
+  return Object.freeze({ action, risk, category, reason });
+}
+
+function patchDeletesFiles(input = {}) {
+  const patch = String(input?.patch || "");
+  return /(?:^|\n)(?:deleted file mode\s+\d+|\+\+\+\s+\/dev\/null(?:\r?\n|$))/m.test(
+    patch,
+  );
+}
+
+function classifyToolEffectPermission(toolName, input = {}) {
+  if (toolName === "apply_patch" && patchDeletesFiles(input)) {
+    return permissionEffect(
+      "ask",
+      "high",
+      "destructive-workspace",
+      "The patch deletes one or more workspace files and requires explicit confirmation.",
+    );
+  }
+
+  if (toolName === "git_push") {
+    const branch = String(input?.branch || "").trim();
+    if (!branch) {
+      return permissionEffect(
+        "ask",
+        "medium",
+        "remote-destination-ambiguous",
+        "Automatic push requires an explicit non-protected branch so the Harness can verify the remote effect.",
+      );
+    }
+    const normalizedBranch = branch
+      .replace(/^refs\/heads\//i, "")
+      .replace(/^HEAD:/i, "")
+      .trim()
+      .toLowerCase();
+    if (PROTECTED_BRANCHES.has(normalizedBranch)) {
+      return permissionEffect(
+        "ask",
+        "high",
+        "protected-branch-write",
+        `Pushing directly to ${normalizedBranch} changes a protected delivery branch.`,
+      );
+    }
+    return permissionEffect(
+      "allow",
+      "medium",
+      "remote-reversible",
+      "The push targets an explicit non-protected branch and force push is unsupported by the native tool.",
+    );
+  }
+
+  return null;
+}
+
 export function resolveToolExecutionPermission({
   toolName,
   permissionAction,
@@ -24,12 +82,15 @@ export function resolveToolExecutionPermission({
     executionMode: mode,
     sandboxStatus,
   });
-  const commandPolicy =
-    toolName === "run_command"
-      ? classifyCommandPermission(input?.command, { executionMode: mode })
-      : null;
+  const commandTool = COMMAND_TOOLS.has(toolName);
+  const commandPolicy = commandTool
+    ? classifyCommandPermission(input?.command, { executionMode: mode })
+    : null;
+  const effectPolicy = classifyToolEffectPermission(toolName, input);
   const denied =
-    permissionAction === "deny" || commandPolicy?.action === "deny";
+    permissionAction === "deny" ||
+    commandPolicy?.action === "deny" ||
+    effectPolicy?.action === "deny";
   const explicitAsk = permissionAction === "ask";
   const automaticMode = isAutomaticApprovalMode(approvalMode);
   const commandPolicyAllowsAuto = commandPolicy?.action === "allow";
@@ -37,28 +98,30 @@ export function resolveToolExecutionPermission({
   const autoApproved = Boolean(
     !denied &&
       !explicitAsk &&
-      toolName === "run_command" &&
+      commandTool &&
       automaticMode &&
       commandPolicyAllowsAuto &&
+      effectPolicy?.action !== "ask" &&
       backendReady,
   );
   const commandNeedsApproval = Boolean(
-    toolName === "run_command" &&
+    commandTool &&
       !denied &&
       (explicitAsk ||
         commandPolicy?.action === "ask" ||
+        effectPolicy?.action === "ask" ||
         !automaticMode ||
         !backendReady),
   );
   const requiresApproval = Boolean(
     !denied &&
-      (toolName === "run_command"
+      (commandTool
         ? commandNeedsApproval && !autoApproved
-        : explicitAsk),
+        : explicitAsk || effectPolicy?.action === "ask"),
   );
 
   let resolvedExecutionMode = "direct";
-  if (toolName === "run_command") {
+  if (commandTool) {
     resolvedExecutionMode = autoApproved
       ? `${mode}-auto-approval`
       : requiresApproval
@@ -78,6 +141,7 @@ export function resolveToolExecutionPermission({
     sandboxSafe: backend.workspaceIsolation || backend.osIsolation,
     backend,
     commandPolicy,
+    effectPolicy,
     executionMode: resolvedExecutionMode,
   });
 }
@@ -95,6 +159,7 @@ export function buildToolApprovalRequest({
       ? String(input.command || "").trim()
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
   const commandPolicy = permissionDecision?.commandPolicy || null;
+  const effectPolicy = permissionDecision?.effectPolicy || null;
   const approvalTitles = {
     lsp_install: "安装语言服务器",
     git_init: "初始化 Git 仓库",
@@ -106,7 +171,9 @@ export function buildToolApprovalRequest({
     git_push: "推送 Git 分支",
     github_repo_create: "创建 GitHub 仓库",
     github_pr_create: "创建 GitHub Pull Request",
+    apply_patch: "删除工作区文件",
   };
+  const policy = effectPolicy || commandPolicy;
   return {
     toolName: toolName || "unknown",
     kind: risk,
@@ -123,16 +190,20 @@ export function buildToolApprovalRequest({
     reason:
       typeof input.reason === "string" && input.reason.trim()
         ? input.reason.trim()
-        : commandPolicy?.reason ||
+        : policy?.reason ||
           (risk === "read"
             ? "Agent 请求读取工作区信息。"
             : "Agent 请求执行可能改变工作区或运行进程的操作。"),
-    ...(commandPolicy
+    ...(policy
       ? {
-          riskLevel: commandPolicy.risk,
-          riskCategory: commandPolicy.category,
+          riskLevel: policy.risk,
+          riskCategory: policy.category,
         }
       : {}),
-    ...(toolName === "run_command" ? { sandbox: sandboxStatus } : {}),
+    ...(commandToolApprovalSandbox(toolName) ? { sandbox: sandboxStatus } : {}),
   };
+}
+
+function commandToolApprovalSandbox(toolName) {
+  return COMMAND_TOOLS.has(toolName);
 }

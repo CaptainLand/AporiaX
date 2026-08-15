@@ -242,6 +242,7 @@ kernel = createHarnessKernel({
   taskRuntime: desktopMain.harnessTaskRuntime,
 });
 setDefaultHarnessEventBus(kernel.events);
+desktopBackground.attachEventBus(kernel.events);
 desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
   const budget = planAgentBudget(request || {});
   const preparedRequest = await prepareHarnessRunRequest(null, request);

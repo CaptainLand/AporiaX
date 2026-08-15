@@ -51,6 +51,30 @@ assert.equal(
   classifyCommandPermission("npm test", { executionMode: "direct" }).action,
   "allow",
 );
+assert.equal(
+  classifyCommandPermission("npm install lodash", { executionMode: "safe" }).action,
+  "allow",
+);
+assert.equal(
+  classifyCommandPermission("npm install lodash", { executionMode: "safe" }).category,
+  "dependency-mutation",
+);
+assert.equal(
+  classifyCommandPermission("npm run dev", { executionMode: "safe" }).category,
+  "development-server",
+);
+assert.equal(
+  classifyCommandPermission("curl https://example.com/schema.json", { executionMode: "safe" }).category,
+  "network-read",
+);
+assert.equal(
+  classifyCommandPermission("curl -X POST https://example.com/api -d x=1", { executionMode: "safe" }).action,
+  "ask",
+);
+assert.equal(
+  classifyCommandPermission("curl -H 'Authorization: Bearer secret' https://example.com/api", { executionMode: "safe" }).category,
+  "network-sensitive",
+);
 
 assert.equal(
   classifyCommandPermission("npm test && echo done", { executionMode: "direct" }).action,
@@ -77,13 +101,23 @@ assert.equal(
   classifyCommandPermission("node scripts/custom.js", { executionMode: "isolated" }).action,
   "allow",
 );
+
+const featurePush = classifyCommandPermission("git push origin feature/agent", {
+  executionMode: "safe",
+});
+assert.equal(featurePush.action, "allow");
+assert.equal(featurePush.category, "remote-reversible");
 assert.equal(
-  classifyCommandPermission("npm install lodash", { executionMode: "isolated" }).action,
-  "ask",
+  classifyCommandPermission("git push origin main", { executionMode: "safe" }).category,
+  "protected-branch-write",
 );
 assert.equal(
-  classifyCommandPermission("git push origin feature", { executionMode: "isolated" }).category,
-  "remote-write",
+  classifyCommandPermission("git push", { executionMode: "safe" }).category,
+  "remote-destination-ambiguous",
+);
+assert.equal(
+  classifyCommandPermission("git push --force origin feature/agent", { executionMode: "isolated" }).category,
+  "remote-destructive",
 );
 assert.equal(
   classifyCommandPermission("git reset --hard HEAD~1", { executionMode: "safe" }).risk,
