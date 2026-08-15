@@ -11,6 +11,10 @@ import { createCapabilityRegistry } from "./capability-registry.js";
 import { planAgentBudget } from "./agent-budget.js";
 import { BuilderWorkspaceManager } from "./builder-workspace.js";
 import { createTaskGraph } from "./task-graph.js";
+import {
+  createKernelAgentRuntimeBroker,
+  setDefaultAgentRuntimeBroker,
+} from "./agent-runtime-broker.js";
 import { applyRuntimeToolDefinitionOverrides } from "../runtime/tool-definition-overrides.js";
 
 applyRuntimeToolDefinitionOverrides();
@@ -19,10 +23,26 @@ export function createHarnessKernel({
   onEvent = null,
   schedulerConcurrency = 4,
   toolDescriptors = [],
+  taskRuntime = null,
 } = {}) {
   const events = createHarnessEventBus({ onEvent, maxHistory: 2_000 });
   const capabilitiesRegistry = createCapabilityRegistry({ eventBus: events });
   const agents = createAgentDefinitionRegistry();
+  if (!agents.has("main")) {
+    agents.register({
+      name: "main",
+      description:
+        "Own the user task, coordinate delegated agents, mutate the workspace within policy, and deliver the final verified result.",
+      tools: [],
+      permissions: {},
+      maxRounds: 20,
+      background: false,
+      triggers: [],
+      systemPrompt:
+        "Coordinate work through the Harness Kernel and keep delegated work evidence-backed.",
+      source: "builtin-kernel",
+    });
+  }
   const sessions = new HarnessSessionStore({ eventBus: events });
   const scheduler = new HarnessScheduler({
     concurrency: schedulerConcurrency,
@@ -44,6 +64,7 @@ export function createHarnessKernel({
     skills.register(bundledSkill, { builtin: true });
   }
   const builders = new BuilderWorkspaceManager({ eventBus: events });
+  taskRuntime?.attachEventBus?.(events);
 
   const kernel = {
     version: 2,
@@ -57,6 +78,7 @@ export function createHarnessKernel({
     skills,
     capabilitiesRegistry,
     builders,
+    taskRuntime,
     planAgentBudget,
     createTaskGraph,
     capabilities() {
@@ -100,8 +122,10 @@ export function createHarnessKernel({
         boundedCollaborationMailbox: true,
         contractAwareReviewVerify: true,
         collaborationWitnessAudit: true,
+        unifiedAgentRuntime: true,
+        durableEventStore: true,
         livePeerInterrupts: false,
-        taskRpc: false,
+        taskRpc: Boolean(taskRuntime),
       };
     },
     snapshot() {
@@ -142,9 +166,19 @@ export function createHarnessKernel({
         sessions: sessions.list(),
         scheduler: scheduler.snapshot(),
         builderLeases: builders.leases(),
+        tasks: taskRuntime
+          ? {
+              active: taskRuntime.listActiveRuns?.() || [],
+              canStartTasks: Boolean(taskRuntime.canStartTasks?.()),
+            }
+          : null,
       };
     },
   };
+
+  const agentRuntime = createKernelAgentRuntimeBroker({ kernel });
+  kernel.agentRuntime = agentRuntime;
+  setDefaultAgentRuntimeBroker(agentRuntime);
 
   events.emit({
     type: "kernel.started",
