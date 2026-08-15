@@ -96,7 +96,7 @@ contextBridge.exposeInMainWorld("desktop", {
     saveLibraryMcp: (request) =>
       ipcRenderer.invoke("core:library:save-mcp", request),
     importLibraryMcp: () =>
-      ipcRenderer.invoke("core:library:import-mcp", request),
+      ipcRenderer.invoke("core:library:import-mcp"),
     removeLibraryMcp: (request) =>
       ipcRenderer.invoke("core:library:remove-mcp", request),
     extensionPolicy: (request = {}) =>
