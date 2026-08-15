@@ -30,6 +30,7 @@ assert.match(visionProxy, /billing:\s*"weekly-quota"/);
 assert.match(visionProxy, /cloudVisionAvailability/);
 assert.match(visionProxy, /cloudVisionEnabled/);
 assert.match(visionProxy, /cloudVisionQuotaGuard/);
+assert.match(visionProxy, /accountRuntime\.refresh\(\)/);
 assert.match(visionProxy, /prepareAporiaCloudVisionRequest\(request,/);
 assert.match(visionProxy, /fallback to a user-configured vision/);
 
