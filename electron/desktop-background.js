@@ -55,6 +55,15 @@ export function installDesktopBackground() {
     return true;
   };
 
+  const focusTask = (taskId) => {
+    if (!showMainWindow()) return false;
+    const id = String(taskId || "").trim();
+    if (id && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send("desktop:task-requested", { taskId: id });
+    }
+    return true;
+  };
+
   const showApprovalRequired = (event = {}) => {
     if (disposed || !Notification.isSupported()) return false;
     try {
@@ -62,7 +71,7 @@ export function installDesktopBackground() {
         mainWindow.flashFrame(true);
       }
       const notification = new Notification(approvalNotificationText(event));
-      notification.on("click", showMainWindow);
+      notification.on("click", () => focusTask(event?.taskId));
       notification.show();
       return true;
     } catch {
