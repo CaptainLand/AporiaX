@@ -31,13 +31,13 @@ jobs:
         run: npm run test:architecture
 
       - name: SQLite run event store smoke
-        run: node tests/run-store-sqlite-smoke.mjs
+        run: npm run test:run-store-sqlite
 
       - name: Task runtime RPC smoke
-        run: node tests/task-runtime-rpc-smoke.mjs
+        run: npm run test:task-runtime-rpc
 
       - name: Agent runtime broker smoke
-        run: node tests/agent-runtime-broker-smoke.mjs
+        run: npm run test:agent-runtime-broker
 
       - name: Execution policy smoke
         run: npm run test:execution-policy
