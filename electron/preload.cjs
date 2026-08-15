@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const taskExecutionModes = new Map();
-const taskIdByRunId = new Map();
 const normalizeExecutionMode = (value) =>
   ["direct", "safe", "isolated"].includes(value) ? value : "safe";
 const rememberTaskExecutionModes = (tasks) => {
@@ -10,25 +9,6 @@ const rememberTaskExecutionModes = (tasks) => {
     taskExecutionModes.set(task.id, normalizeExecutionMode(task.executionMode));
   }
   return tasks;
-};
-const compactApprovalBody = (event) => {
-  const approval = event?.approval || {};
-  const title = String(approval.title || "需要确认的高风险操作").trim();
-  const detail = String(
-    approval.command || approval.reason || "打开 AporiaX 查看并确认。",
-  ).trim();
-  return detail ? `${title} · ${detail}` : title;
-};
-const notifyApprovalRequired = (event) => {
-  const runId = String(event?.runId || "");
-  const taskId = taskIdByRunId.get(runId) || "";
-  void ipcRenderer
-    .invoke("desktop:task-completed", {
-      taskId,
-      title: "AporiaX · 需要确认",
-      body: compactApprovalBody(event),
-    })
-    .catch(() => undefined);
 };
 
 contextBridge.exposeInMainWorld("desktop", {
@@ -150,18 +130,13 @@ contextBridge.exposeInMainWorld("desktop", {
     saveApiKey: (apiKey) =>
       ipcRenderer.invoke("harness:save-api-key", apiKey),
     clearApiKey: () => ipcRenderer.invoke("harness:clear-api-key"),
-    run: (request) => {
-      const runId = String(request?.runId || "");
-      if (runId && request?.taskId) {
-        taskIdByRunId.set(runId, String(request.taskId));
-      }
-      return ipcRenderer.invoke("harness:run", {
+    run: (request) =>
+      ipcRenderer.invoke("harness:run", {
         ...request,
         executionMode: normalizeExecutionMode(
           request?.executionMode || taskExecutionModes.get(request?.taskId),
         ),
-      });
-    },
+      }),
     interrupt: (runId) =>
       ipcRenderer.invoke("harness:interrupt", runId),
     pause: (runId) => ipcRenderer.invoke("harness:pause", runId),
@@ -175,19 +150,7 @@ contextBridge.exposeInMainWorld("desktop", {
     respondToApproval: (response) =>
       ipcRenderer.invoke("harness:approval-response", response),
     onEvent: (listener) => {
-      const handler = (_event, payload) => {
-        if (payload?.type === "approval.required") {
-          notifyApprovalRequired(payload);
-        }
-        listener(payload);
-        if (
-          ["turn.completed", "turn.failed", "turn.cancelled"].includes(
-            payload?.type,
-          )
-        ) {
-          taskIdByRunId.delete(String(payload?.runId || ""));
-        }
-      };
+      const handler = (_event, payload) => listener(payload);
       ipcRenderer.on("harness:event", handler);
       return () => {
         ipcRenderer.removeListener("harness:event", handler);
