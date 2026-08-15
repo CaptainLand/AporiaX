@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   TASK_COMPLETION_TOAST_SELECTOR,
   TRAY_EDUCATION_MARKER,
@@ -56,5 +57,18 @@ assert.equal(
   taskCompletionToastSuppressionCss(),
   ".task-completion-toast{display:none!important;}",
 );
+
+const desktopBackgroundSource = await readFile(
+  new URL("../electron/desktop-background.js", import.meta.url),
+  "utf8",
+);
+const mainV2Source = await readFile(
+  new URL("../electron/main-v2.js", import.meta.url),
+  "utf8",
+);
+assert.match(desktopBackgroundSource, /AporiaX · 需要确认/);
+assert.match(desktopBackgroundSource, /eventBus\.on\("approval\.required"/);
+assert.match(desktopBackgroundSource, /showApprovalRequired/);
+assert.match(mainV2Source, /desktopBackground\.attachEventBus\(kernel\.events\)/);
 
 console.log("desktop background smoke: PASS");
