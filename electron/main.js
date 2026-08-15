@@ -15,7 +15,6 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -40,16 +39,7 @@ import {
   getSandboxStatus,
   prepareSandbox,
 } from "./sandbox-runtime.js";
-import {
-  acknowledgeRecoverableRun,
-  appendRunJournalEvent,
-  beginRunJournal,
-  finishRunJournal,
-  getRunRecoveryContext,
-  listRecoverableRuns,
-  markRunRecoveryStarted,
-  updateRunJournalMetadata,
-} from "./run-store.js";
+import { createHarnessTaskRuntime } from "./harness/task-runtime.js";
 import { createProjectUnderstandingStore } from "./project-understanding.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
@@ -58,15 +48,16 @@ const isDevelopment = process.argv.includes("--dev");
 
 let mainWindow = null;
 let completionFlashTimer = null;
-const activeRuns = new Map();
-const pendingApprovals = new Map();
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (app.isReady()) createMainWindow();
+      return;
+    }
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
@@ -84,87 +75,22 @@ function approvalGrantKey(details = {}) {
     : "";
 }
 
-function createRunControl() {
-  let paused = false;
-  let pauseWaiters = [];
-  const steeringQueue = [];
-
-  const settlePauseWaiters = () => {
-    const waiters = pauseWaiters;
-    pauseWaiters = [];
-    for (const waiter of waiters) waiter.resolve();
-  };
-
-  return {
-    get paused() {
-      return paused;
-    },
-    pause() {
-      if (paused) return false;
-      paused = true;
-      return true;
-    },
-    resume() {
-      if (!paused) return false;
-      paused = false;
-      settlePauseWaiters();
-      return true;
-    },
-    enqueueSteering(message) {
-      steeringQueue.push(message);
-      return steeringQueue.length;
-    },
-    consumeSteering() {
-      return steeringQueue.splice(0, steeringQueue.length);
-    },
-    async waitIfPaused(signal) {
-      if (!paused) return;
-      if (signal?.aborted) {
-        throw Object.assign(new Error("The task was interrupted."), {
-          name: "AbortError",
-        });
+const harnessTaskRuntime = createHarnessTaskRuntime({
+  dataDirectory: () => app.getPath("userData"),
+  approvalGrantKey,
+  onIdle: () => {
+    setImmediate(() => {
+      if (
+        process.platform !== "darwin" &&
+        app.isReady() &&
+        !harnessTaskRuntime.hasActiveRuns() &&
+        (!mainWindow || mainWindow.isDestroyed())
+      ) {
+        app.quit();
       }
-      await new Promise((resolveWait, rejectWait) => {
-        let waiterEntry = null;
-        const handleAbort = () => {
-          pauseWaiters = pauseWaiters.filter(
-            (waiter) => waiter !== waiterEntry,
-          );
-          rejectWait(
-            Object.assign(new Error("The task was interrupted."), {
-              name: "AbortError",
-            }),
-          );
-        };
-        signal?.addEventListener("abort", handleAbort, { once: true });
-        waiterEntry = {
-          resolve: () => {
-            signal?.removeEventListener("abort", handleAbort);
-            resolveWait();
-          },
-        };
-        pauseWaiters.push(waiterEntry);
-      });
-    },
-    abort() {
-      paused = false;
-      settlePauseWaiters();
-    },
-  };
-}
-
-function queueRunJournalEvent(run, payload) {
-  run.journalTail = run.journalTail
-    .then(() =>
-      appendRunJournalEvent(
-        app.getPath("userData"),
-        run.runId,
-        payload,
-      ),
-    )
-    .catch(() => undefined);
-  return run.journalTail;
-}
+    });
+  },
+});
 
 function assertTrustedSender(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -429,43 +355,8 @@ async function saveTasks(tasks) {
 }
 
 function sendHarnessEvent(event, runId, payload) {
-  if (event.sender.isDestroyed()) return;
+  if (!event?.sender || event.sender.isDestroyed()) return;
   event.sender.send("harness:event", { runId, ...payload });
-}
-
-function requestHarnessApproval(event, runId, details, signal) {
-  if (signal.aborted) return Promise.resolve({ approved: false });
-  const run = activeRuns.get(runId);
-  const grantKey = approvalGrantKey(details);
-  if (grantKey && run?.approvalGrants?.has(grantKey)) {
-    return Promise.resolve({ approved: true, remembered: true });
-  }
-  const approvalId = randomUUID();
-
-  return new Promise((resolveApproval) => {
-    const handleAbort = () => {
-      pendingApprovals.delete(approvalId);
-      resolveApproval({ approved: false, interrupted: true });
-    };
-    signal.addEventListener("abort", handleAbort, { once: true });
-    pendingApprovals.set(approvalId, {
-      runId,
-      senderId: event.sender.id,
-      grantKey,
-      resolve: (response) => {
-        signal.removeEventListener("abort", handleAbort);
-        resolveApproval(response);
-      },
-    });
-    sendHarnessEvent(event, runId, {
-      type: "approval.required",
-      approval: {
-        id: approvalId,
-        canRememberForRun: Boolean(grantKey),
-        ...details,
-      },
-    });
-  });
 }
 
 function sendWindowState() {
@@ -609,10 +500,6 @@ function createMainWindow() {
     mainWindow?.show();
   });
   mainWindow.on("closed", () => {
-    for (const run of activeRuns.values()) {
-      run.controller.abort();
-    }
-    activeRuns.clear();
     mainWindow = null;
   });
 
@@ -621,6 +508,70 @@ function createMainWindow() {
   } else {
     void mainWindow.loadFile(join(projectRoot, "dist", "index.html"));
   }
+}
+
+async function startHarnessTask(
+  request,
+  { clientId = "", onEvent = null, detached = false } = {},
+) {
+  const runId = typeof request?.runId === "string" ? request.runId : "";
+  if (!runId || runId.length > 100) {
+    throw new Error("A valid run id is required.");
+  }
+  if (harnessTaskRuntime.getActiveRun(runId)) {
+    throw new Error("This Harness run is already active.");
+  }
+
+  const provider = await resolveProvider(request?.providerId);
+  let recoveryContext = null;
+  if (request?.recoveryRunId) {
+    recoveryContext = await harnessTaskRuntime.recoveryContext(
+      request.recoveryRunId,
+    );
+    if (
+      recoveryContext.taskId &&
+      request?.taskId &&
+      recoveryContext.taskId !== request.taskId
+    ) {
+      throw new Error("The recovery checkpoint belongs to another task.");
+    }
+    if (
+      recoveryContext.workspacePath &&
+      request?.workspacePath &&
+      resolve(recoveryContext.workspacePath) !== resolve(request.workspacePath)
+    ) {
+      throw new Error("The recovery checkpoint belongs to another workspace.");
+    }
+  }
+
+  return harnessTaskRuntime.start({
+    runId,
+    taskId: request?.taskId || "",
+    clientId,
+    detached,
+    recoveryContext,
+    metadata: {
+      assistantId: request?.assistantId,
+      sourceUserId: request?.sourceUserId,
+      prompt: request?.prompt,
+      workspacePath: request?.workspacePath,
+      providerId: request?.providerId,
+      modelId: request?.modelId,
+    },
+    onEvent,
+    execute: ({ signal, control, emit, requestApproval }) =>
+      runHarness({
+        ...request,
+        provider,
+        memoryDirectory: join(app.getPath("userData"), "project-memory"),
+        understandingDirectory: getProjectUnderstandingDirectory(),
+        recoveryContext,
+        signal,
+        control,
+        onEvent: emit,
+        requestApproval,
+      }),
+  });
 }
 
 ipcMain.handle("desktop:minimize", (event) => {
@@ -821,226 +772,68 @@ ipcMain.handle("harness:clear-api-key", async (event) => {
 
 ipcMain.handle("harness:run", async (event, request) => {
   assertTrustedSender(event);
-  const runId =
-    typeof request?.runId === "string" ? request.runId : "";
-  if (!runId || runId.length > 100) {
-    throw new Error("A valid run id is required.");
-  }
-  if (activeRuns.has(runId)) {
-    throw new Error("This Harness run is already active.");
-  }
-  const provider = await resolveProvider(request?.providerId);
-  let recoveryContext = null;
-  if (request?.recoveryRunId) {
-    recoveryContext = await getRunRecoveryContext(
-      app.getPath("userData"),
-      request.recoveryRunId,
-    );
-    if (
-      recoveryContext.taskId &&
-      request?.taskId &&
-      recoveryContext.taskId !== request.taskId
-    ) {
-      throw new Error("The recovery checkpoint belongs to another task.");
-    }
-    if (
-      recoveryContext.workspacePath &&
-      request?.workspacePath &&
-      resolve(recoveryContext.workspacePath) !== resolve(request.workspacePath)
-    ) {
-      throw new Error("The recovery checkpoint belongs to another workspace.");
-    }
-  }
-
-  const controller = new AbortController();
-  const control = createRunControl();
-  const run = {
-    runId,
-    taskId: request?.taskId || "",
-    controller,
-    control,
-    senderId: event.sender.id,
-    journalTail: Promise.resolve(),
-    approvalGrants: new Set(),
-  };
-  await beginRunJournal(app.getPath("userData"), {
-    runId,
-    taskId: request?.taskId,
-    assistantId: request?.assistantId,
-    sourceUserId: request?.sourceUserId,
-    prompt: request?.prompt,
-    workspacePath: request?.workspacePath,
-    providerId: request?.providerId,
-    modelId: request?.modelId,
-    recoveryOfRunId: recoveryContext?.runId,
+  const runId = typeof request?.runId === "string" ? request.runId : "";
+  return startHarnessTask(request, {
+    clientId: String(event.sender.id),
+    onEvent: (payload) => sendHarnessEvent(event, runId, payload),
   });
-  activeRuns.set(runId, run);
-  if (recoveryContext?.runId) {
-    await markRunRecoveryStarted(
-      app.getPath("userData"),
-      recoveryContext.runId,
-      runId,
-    ).catch(() => undefined);
-  }
-
-  try {
-    const result = await runHarness({
-      ...request,
-      provider,
-      memoryDirectory: join(app.getPath("userData"), "project-memory"),
-      understandingDirectory: getProjectUnderstandingDirectory(),
-      recoveryContext,
-      signal: controller.signal,
-      control,
-      onEvent: (payload) => {
-        sendHarnessEvent(event, runId, payload);
-        queueRunJournalEvent(run, payload);
-      },
-      requestApproval: (details) =>
-        requestHarnessApproval(
-          event,
-          runId,
-          details,
-          controller.signal,
-        ),
-    });
-    await run.journalTail;
-    await finishRunJournal(
-      app.getPath("userData"),
-      runId,
-      result,
-    );
-    return result;
-  } catch (error) {
-    await run.journalTail;
-    await finishRunJournal(app.getPath("userData"), runId, {
-      status: controller.signal.aborted ? "interrupted" : "failed",
-      changes: [],
-    }).catch(() => undefined);
-    throw error;
-  } finally {
-    control.abort();
-    activeRuns.delete(runId);
-    for (const [approvalId, approval] of pendingApprovals) {
-      if (approval.runId !== runId) continue;
-      pendingApprovals.delete(approvalId);
-      approval.resolve({ approved: false, interrupted: true });
-    }
-  }
 });
 
 ipcMain.handle("harness:interrupt", (event, runId) => {
   assertTrustedSender(event);
-  const run = activeRuns.get(runId);
-  if (!run || run.senderId !== event.sender.id) return false;
-  run.controller.abort();
-  run.control.abort();
-  return true;
+  return harnessTaskRuntime.interrupt(runId, {
+    clientId: String(event.sender.id),
+  });
 });
 
 ipcMain.handle("harness:pause", async (event, runId) => {
   assertTrustedSender(event);
-  const run = activeRuns.get(runId);
-  if (!run || run.senderId !== event.sender.id) return false;
-  if (!run.control.pause()) return true;
-  const payload = { type: "control.paused" };
-  sendHarnessEvent(event, runId, payload);
-  queueRunJournalEvent(run, payload);
-  await updateRunJournalMetadata(app.getPath("userData"), runId, {
-    status: "paused",
-    lastEventType: payload.type,
-  }).catch(() => undefined);
-  return true;
+  return harnessTaskRuntime.pause(runId, {
+    clientId: String(event.sender.id),
+  });
 });
 
 ipcMain.handle("harness:resume", async (event, runId) => {
   assertTrustedSender(event);
-  const run = activeRuns.get(runId);
-  if (!run || run.senderId !== event.sender.id) return false;
-  if (!run.control.resume()) return true;
-  const payload = { type: "control.resumed" };
-  sendHarnessEvent(event, runId, payload);
-  queueRunJournalEvent(run, payload);
-  await updateRunJournalMetadata(app.getPath("userData"), runId, {
-    status: "running",
-    lastEventType: payload.type,
-  }).catch(() => undefined);
-  return true;
+  return harnessTaskRuntime.resume(runId, {
+    clientId: String(event.sender.id),
+  });
 });
 
 ipcMain.handle("harness:steer", (event, { runId, message }) => {
   assertTrustedSender(event);
-  const run = activeRuns.get(runId);
-  if (!run || run.senderId !== event.sender.id) return false;
-  const content = String(message?.content || "").trim();
-  const attachments = Array.isArray(message?.attachments)
-    ? message.attachments.slice(0, 6)
-    : [];
-  if (!content && attachments.length === 0) return false;
-  const steeringMessage = {
-    id: String(message?.id || randomUUID()),
-    role: "user",
-    content,
-    attachments,
-    createdAt: String(message?.createdAt || new Date().toISOString()),
-  };
-  const queued = run.control.enqueueSteering(steeringMessage);
-  const payload = {
-    type: "steering.queued",
-    messageId: steeringMessage.id,
-    queued,
-  };
-  sendHarnessEvent(event, runId, payload);
-  queueRunJournalEvent(run, payload);
-  return true;
+  return harnessTaskRuntime.steer(runId, message, {
+    clientId: String(event.sender.id),
+  });
 });
 
 ipcMain.handle(
   "harness:approval-response",
   (event, { runId, approvalId, approved, scope = "once" }) => {
     assertTrustedSender(event);
-    const approval = pendingApprovals.get(approvalId);
-    if (
-      !approval ||
-      approval.runId !== runId ||
-      approval.senderId !== event.sender.id
-    ) {
-      return false;
-    }
-    pendingApprovals.delete(approvalId);
-    const shouldRemember =
-      Boolean(approved) && scope === "run" && Boolean(approval.grantKey);
-    if (shouldRemember) {
-      activeRuns.get(runId)?.approvalGrants?.add(approval.grantKey);
-    }
-    approval.resolve({
-      approved: Boolean(approved),
-      remembered: shouldRemember,
+    return harnessTaskRuntime.respondApproval(runId, approvalId, {
+      approved,
+      scope,
+      clientId: String(event.sender.id),
     });
-    return true;
   },
 );
 
 ipcMain.handle("harness:active-runs", (event) => {
   assertTrustedSender(event);
-  return [...activeRuns.values()].map((run) => ({
-    runId: run.runId,
-    taskId: run.taskId,
-    paused: run.control.paused,
-  }));
+  return harnessTaskRuntime.listActiveRuns();
 });
 
 ipcMain.handle("harness:recoverable-runs", async (event) => {
   assertTrustedSender(event);
-  return listRecoverableRuns(app.getPath("userData"));
+  return harnessTaskRuntime.listRecoverableRuns();
 });
 
 ipcMain.handle(
   "harness:acknowledge-recovery",
   async (event, runId) => {
     assertTrustedSender(event);
-    await acknowledgeRecoverableRun(app.getPath("userData"), runId);
-    return true;
+    return harnessTaskRuntime.acknowledgeRecovery(runId);
   },
 );
 
@@ -1058,7 +851,9 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns()) {
     app.quit();
   }
 });
+
+export { harnessTaskRuntime, startHarnessTask };
