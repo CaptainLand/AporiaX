@@ -277,10 +277,23 @@ function resolveMainModel(records, request) {
 }
 
 async function cloudVisionAvailability() {
-  const [settings, accountSnapshot] = await Promise.all([
-    loadVisionProxySettings(),
-    getDesktopAccountRuntime().getSnapshot().catch(() => null),
-  ]);
+  const settings = await loadVisionProxySettings();
+  const accountRuntime = getDesktopAccountRuntime();
+  let accountSnapshot = await accountRuntime.getSnapshot().catch(() => null);
+
+  // The guard is meant to protect real remaining quota, not the snapshot from
+  // the moment Desktop signed in. Refresh Account state immediately before a
+  // managed visual call. This is an Account API refresh only; it does not invoke
+  // a Cloud model or consume model quota by itself. If refresh is temporarily
+  // unavailable, fall back to the last authenticated snapshot rather than
+  // turning a transient Account API issue into a loss of all visual fallback.
+  if (
+    settings.cloudVisionQuotaGuard !== false &&
+    accountSnapshot?.status === "authenticated"
+  ) {
+    accountSnapshot = await accountRuntime.refresh().catch(() => accountSnapshot);
+  }
+
   return {
     settings,
     accountSnapshot,
