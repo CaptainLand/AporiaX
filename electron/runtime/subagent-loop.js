@@ -8,6 +8,7 @@ import {
   resolveScopedInstructions,
   upsertRelevantContextMessage,
 } from "../agent-context.js";
+import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js";
 import { dispatchNativeTool } from "./tool-dispatcher.js";
 import {
   MAX_SUBAGENT_RESULT_CHARS,
@@ -51,31 +52,53 @@ async function mapWithConcurrency(items, limit, worker) {
   return results;
 }
 
-export async function runSubagentTask({
-  agentId,
-  input,
-  provider,
-  modelId,
-  modelConfig,
-  thinking,
-  effort,
-  workspaceRoot,
-  parentPermissionPolicy,
-  approvalMode,
-  requestApproval,
-  signal,
-  sandboxExecutor,
-  sandboxStatus,
-  language,
-  memoryFacts,
-  emit,
-  toolRegistry,
-  parseToolArguments,
-  executeAuthorizedTool,
-  describeToolActivity,
-  describeCapability,
-  systemOwned = false,
-}) {
+export async function runSubagentTask(options = {}) {
+  const broker = getDefaultAgentRuntimeBroker();
+  if (broker && options.__kernelRouted !== true) {
+    return broker.run({
+      agentId: options.agentId,
+      role: options.input?.role,
+      task: options.input?.task,
+      background: options.input?.background,
+      systemOwned: options.systemOwned,
+      parentRunId: String(options.agentId || "").replace(/-sub-\d+$/, ""),
+      emit: options.emit,
+      execute: ({ definition }) =>
+        runSubagentTask({
+          ...options,
+          __kernelRouted: true,
+          agentDefinition: definition,
+        }),
+    });
+  }
+
+  const {
+    agentId,
+    input,
+    provider,
+    modelId,
+    modelConfig,
+    thinking,
+    effort,
+    workspaceRoot,
+    parentPermissionPolicy,
+    approvalMode,
+    requestApproval,
+    signal,
+    sandboxExecutor,
+    sandboxStatus,
+    language,
+    memoryFacts,
+    emit,
+    toolRegistry,
+    parseToolArguments,
+    executeAuthorizedTool,
+    describeToolActivity,
+    describeCapability,
+    systemOwned = false,
+    agentDefinition = null,
+  } = options;
+
   if (!toolRegistry?.definitions) {
     throw new Error("Subagent loop requires the native tool registry.");
   }
@@ -94,13 +117,21 @@ export async function runSubagentTask({
       ? describeCapability
       : () => null;
   const roleConfig = SUBAGENT_ROLE_CONFIG[input.role];
+  const runtimeDefinition = agentDefinition || null;
   const permissionPolicy = createSubagentPermissionPolicy(
     parentPermissionPolicy,
     input.role,
   );
+  const definitionTools = runtimeDefinition?.tools?.length
+    ? new Set(runtimeDefinition.tools)
+    : null;
   const enabledTools = toolRegistry
     .definitions(permissionPolicy)
-    .filter((definition) => roleConfig.tools.has(definition.function.name));
+    .filter(
+      (definition) =>
+        roleConfig.tools.has(definition.function.name) &&
+        (!definitionTools || definitionTools.has(definition.function.name)),
+    );
   const instructionContext = await loadProjectInstructionContext(workspaceRoot);
   const contextCheckpoints = [];
   const tokenAccounting = createTokenAccounting();
@@ -113,12 +144,17 @@ export async function runSubagentTask({
   let usageTotal = null;
   const evidence = [];
   const toolSteps = [];
+  const effectiveMaxRounds = Math.min(
+    input.maxRounds,
+    Math.max(2, Number(runtimeDefinition?.maxRounds || input.maxRounds)),
+  );
   const conversation = [
     {
       role: "system",
       content: [
         `You are the AporiaX ${input.role} subagent.`,
-        roleConfig.description,
+        runtimeDefinition?.description || roleConfig.description,
+        runtimeDefinition?.systemPrompt || "",
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
         "Work independently and return a concise evidence-backed report to the parent agent.",
         "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
@@ -148,10 +184,11 @@ export async function runSubagentTask({
     scope: input.scope,
     background: input.background,
     systemOwned,
+    runtime: runtimeDefinition ? "kernel" : "compatibility",
   });
 
   try {
-    for (let round = 1; round <= input.maxRounds; round += 1) {
+    for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
       const relevant = upsertRelevantContextMessage(conversation, {
         checkpoints: contextCheckpoints,
@@ -225,6 +262,7 @@ export async function runSubagentTask({
           toolSteps: toolSteps.length,
           summary: result.summary.slice(0, 500),
           systemOwned,
+          runtime: runtimeDefinition ? "kernel" : "compatibility",
         });
         return result;
       }
@@ -256,6 +294,9 @@ export async function runSubagentTask({
         try {
           if (!roleConfig.tools.has(toolName)) {
             throw new Error(`Tool is not available to ${input.role}: ${toolName}`);
+          }
+          if (definitionTools && !definitionTools.has(toolName)) {
+            throw new Error(`Tool is not enabled by Agent Registry for ${input.role}: ${toolName}`);
           }
           const parsedInput = parseToolArguments(toolCall);
           assertSubagentScope(toolName, parsedInput, input.scope);
@@ -348,12 +389,12 @@ export async function runSubagentTask({
       status: "budget_exhausted",
       summary:
         language === "en"
-          ? `The subagent reached its ${input.maxRounds}-round safety budget. Use its evidence as partial results or delegate a narrower follow-up.`
-          : `子 Agent 已达到 ${input.maxRounds} 轮安全预算。请把现有证据视为部分结果，或委派一个范围更小的后续任务。`,
+          ? `The subagent reached its ${effectiveMaxRounds}-round safety budget. Use its evidence as partial results or delegate a narrower follow-up.`
+          : `子 Agent 已达到 ${effectiveMaxRounds} 轮安全预算。请把现有证据视为部分结果，或委派一个范围更小的后续任务。`,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
       usage: usageTotal,
-      rounds: input.maxRounds,
+      rounds: effectiveMaxRounds,
       instructionFiles: [...instructionContext.loadedFiles],
     };
     emit({
@@ -365,6 +406,7 @@ export async function runSubagentTask({
       toolSteps: toolSteps.length,
       summary: result.summary,
       systemOwned,
+      runtime: runtimeDefinition ? "kernel" : "compatibility",
     });
     return result;
   } catch (error) {
@@ -384,6 +426,7 @@ export async function runSubagentTask({
       role: input.role,
       error: error.message,
       systemOwned,
+      runtime: runtimeDefinition ? "kernel" : "compatibility",
     });
     return result;
   }
