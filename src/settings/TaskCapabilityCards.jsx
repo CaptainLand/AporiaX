@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Eye, ImagePlus, Sparkles } from "lucide-react";
+import { Switch } from "../components/Controls.jsx";
 import { resolveVisionCapability } from "../runtime-ui-core.js";
 import { useI18n } from "../i18n";
 import "../runtime-ui-enhancements.css";
 import "../skill-status.css";
+
+const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
+const CLOUD_VISION_GUARD_RATIO = 0.2;
 
 function sourceLabel(source, tr) {
   if (source === "project") return tr("项目", "Project");
@@ -37,15 +41,110 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
     () => resolveVisionCapability(providers, task),
     [providers, task?.providerId, task?.modelId],
   );
-  const available = capability.available;
-  const proxyMode = capability.mode === "proxy";
+  const [cloudSettings, setCloudSettings] = useState({
+    loading: true,
+    cloudVisionEnabled: true,
+    cloudVisionQuotaGuard: true,
+  });
+  const [settingsError, setSettingsError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const api = window.desktop?.vision;
+    if (!api?.getSettings) {
+      setCloudSettings((current) => ({ ...current, loading: false }));
+      return () => {
+        active = false;
+      };
+    }
+    Promise.resolve(api.getSettings())
+      .then((settings) => {
+        if (!active) return;
+        setCloudSettings({
+          loading: false,
+          cloudVisionEnabled: settings?.cloudVisionEnabled !== false,
+          cloudVisionQuotaGuard: settings?.cloudVisionQuotaGuard !== false,
+        });
+      })
+      .catch((error) => {
+        if (!active) return;
+        setCloudSettings((current) => ({ ...current, loading: false }));
+        setSettingsError(
+          String(error?.message || tr("无法读取视觉设置", "Unable to read vision settings")),
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [tr]);
+
+  const updateCloudSettings = async (patch) => {
+    const previous = cloudSettings;
+    const optimistic = { ...cloudSettings, ...patch, loading: false };
+    setCloudSettings(optimistic);
+    setSettingsError("");
+    try {
+      const saved = await window.desktop?.vision?.setSettings?.(patch);
+      if (saved) {
+        setCloudSettings({
+          loading: false,
+          cloudVisionEnabled: saved.cloudVisionEnabled !== false,
+          cloudVisionQuotaGuard: saved.cloudVisionQuotaGuard !== false,
+        });
+      }
+    } catch (error) {
+      setCloudSettings(previous);
+      setSettingsError(
+        String(error?.message || tr("无法保存视觉设置", "Unable to save vision settings")),
+      );
+    }
+  };
+
+  const cloudProxy =
+    capability.mode === "proxy" &&
+    capability.proxy?.providerId === APORIA_CLOUD_PROVIDER_ID;
+  const hybridCloudProxy =
+    cloudProxy && capability.providerId !== APORIA_CLOUD_PROVIDER_ID;
+  const rawRemainingRatio = capability.proxy?.quotaRemainingRatio;
+  const parsedRemainingRatio =
+    rawRemainingRatio === null ||
+    rawRemainingRatio === undefined ||
+    rawRemainingRatio === ""
+      ? null
+      : Number(rawRemainingRatio);
+  const hasRemainingRatio = Number.isFinite(parsedRemainingRatio);
+  const remainingRatio = hasRemainingRatio ? parsedRemainingRatio : null;
+  const quotaProtected = Boolean(
+    hybridCloudProxy &&
+      cloudSettings.cloudVisionEnabled &&
+      cloudSettings.cloudVisionQuotaGuard &&
+      hasRemainingRatio &&
+      remainingRatio <= CLOUD_VISION_GUARD_RATIO,
+  );
+  const cloudDisabled =
+    hybridCloudProxy && !cloudSettings.cloudVisionEnabled;
   const nativeMode = capability.mode === "native";
+  const proxyMode =
+    capability.mode === "proxy" && !cloudDisabled && !quotaProtected;
+  const available = nativeMode || proxyMode;
   const mainModel =
     capability.mainModelName ||
     capability.mainModelId ||
     tr("当前模型", "Current model");
   const proxyModel =
     capability.proxy?.modelName || capability.proxy?.modelId || "";
+
+  const statusText = cloudDisabled
+    ? tr(
+        "Cloud 视觉增强已关闭；主模型仍保持本地运行",
+        "Cloud vision enhancement is off; the main model still runs locally",
+      )
+    : quotaProtected
+      ? tr(
+          "Cloud 剩余额度已进入 20% 保护区，自动视觉调用已暂停",
+          "Cloud quota is in the protected bottom 20%; automatic vision calls are paused",
+        )
+      : capabilityStatusText(capability, tr);
 
   return (
     <section
@@ -63,19 +162,19 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
             <strong>
               {available
                 ? tr("图片识别已启用", "Image recognition enabled")
-                : tr("未启用图片识别", "Image recognition unavailable")}
+                : tr("图片识别当前未启用", "Image recognition is currently unavailable")}
             </strong>
-            <span>{capabilityStatusText(capability, tr)}</span>
+            <span>{statusText}</span>
           </div>
         </div>
 
-        {(nativeMode || proxyMode) && (
+        {(nativeMode || capability.mode === "proxy") && (
           <div className="aporiax-vision-route">
             <div>
               <span>{tr("主模型", "Main model")}</span>
               <strong>{mainModel}</strong>
             </div>
-            {proxyMode && (
+            {capability.mode === "proxy" && (
               <>
                 <ArrowRight size={13} aria-hidden="true" />
                 <div>
@@ -94,18 +193,72 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
                 "图片会直接交给当前主模型处理，不需要额外视觉代理。",
                 "Images go directly to the current main model; no extra vision proxy is needed.",
               )
-            : proxyMode
+            : cloudProxy
               ? tr(
-                  `上传图片时，AporiaX 会先调用 ${proxyModel} 解析，再把结果自动交给 ${mainModel} 继续思考与执行。`,
-                  `When you attach an image, AporiaX asks ${proxyModel} to inspect it first, then passes the observation to ${mainModel} for reasoning and execution.`,
+                  `主推理继续由 ${mainModel} 执行。只有附带图片时，AporiaX 才会把单张图片交给 ${proxyModel}，再把视觉观察结果返回给主模型。`,
+                  `Main reasoning stays on ${mainModel}. Only attached images are sent one at a time to ${proxyModel}, and its visual observation is returned to the main model.`,
                 )
-              : tr(
-                  "添加一个视觉模型后，AporiaX 会自动将它用于 DeepSeek 等非图像模型的识图，无需切换主思考模型。",
-                  "Add a vision model and AporiaX will automatically use it for text-only models such as DeepSeek, without changing your main reasoning model.",
-                )}
+              : proxyMode
+                ? tr(
+                    `上传图片时，AporiaX 会先调用 ${proxyModel} 解析，再把结果自动交给 ${mainModel} 继续思考与执行。`,
+                    `When you attach an image, AporiaX asks ${proxyModel} to inspect it first, then passes the observation to ${mainModel} for reasoning and execution.`,
+                  )
+                : tr(
+                    "添加一个视觉模型后，AporiaX 会自动将它用于 DeepSeek 等非图像模型的识图，无需切换主思考模型。",
+                    "Add a vision model and AporiaX will automatically use it for text-only models such as DeepSeek, without changing your main reasoning model.",
+                  )}
         </p>
 
-        {!available && (
+        {hybridCloudProxy && (
+          <div className="aporiax-vision-controls">
+            <div className="aporiax-vision-control-row">
+              <div>
+                <strong>{tr("Cloud 视觉增强", "Cloud vision enhancement")}</strong>
+                <span>
+                  {tr(
+                    "仅在本地/自定义文本模型需要看图时调用 Qwen3.5 Flash",
+                    "Use Qwen3.5 Flash only when a local/custom text model needs to inspect an image",
+                  )}
+                </span>
+              </div>
+              <Switch
+                checked={cloudSettings.cloudVisionEnabled}
+                disabled={cloudSettings.loading}
+                label={tr("Cloud 视觉增强", "Cloud vision enhancement")}
+                onChange={(enabled) =>
+                  void updateCloudSettings({ cloudVisionEnabled: enabled })
+                }
+              />
+            </div>
+            <div className="aporiax-vision-control-row">
+              <div>
+                <strong>{tr("20% 低额度保护", "20% low-quota guard")}</strong>
+                <span>
+                  {hasRemainingRatio
+                    ? tr(
+                        `最近同步 Cloud 剩余约 ${Math.round(remainingRatio * 100)}%；真正调用前会刷新额度，低于或等于 20% 时停止自动识图`,
+                        `Last synced Cloud quota is about ${Math.round(remainingRatio * 100)}%; AporiaX refreshes it before the actual call and pauses automatic vision at or below 20%`,
+                      )
+                    : tr(
+                        "真正调用前刷新 Cloud 额度；低于或等于 20% 时停止自动识图",
+                        "Refresh Cloud quota before the actual call; pause automatic vision at or below 20%",
+                      )}
+                </span>
+              </div>
+              <Switch
+                checked={cloudSettings.cloudVisionQuotaGuard}
+                disabled={cloudSettings.loading || !cloudSettings.cloudVisionEnabled}
+                label={tr("20% 低额度保护", "20% low-quota guard")}
+                onChange={(enabled) =>
+                  void updateCloudSettings({ cloudVisionQuotaGuard: enabled })
+                }
+              />
+            </div>
+            {settingsError && <p className="aporiax-vision-settings-error">{settingsError}</p>}
+          </div>
+        )}
+
+        {!capability.available && (
           <div className="aporiax-vision-recommendation">
             <span>{tr("推荐", "Recommended")}</span>
             <strong>Qwen3.5-Flash</strong>
@@ -113,7 +266,7 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
         )}
 
         <button type="button" onClick={onManageProviders}>
-          {available
+          {capability.available
             ? tr("管理视觉模型", "Manage vision models")
             : tr("去添加视觉模型", "Add a vision model")}
           <ArrowRight size={13} />

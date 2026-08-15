@@ -15,8 +15,15 @@ const PREFERRED_VISION_MODELS = [
 
 const MAX_VISION_IMAGES_PER_MESSAGE = 8;
 const MAX_VISION_DATA_URL_CHARS = 28_000_000;
-const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
-const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
+export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
+export const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
+export const APORIA_CLOUD_VISION_MIN_REMAINING_RATIO = 0.2;
+
+function optionalFiniteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
 
 export function modelSupportsVision(model = {}) {
   const id = String(model?.id || model?.name || "").trim();
@@ -24,6 +31,47 @@ export function modelSupportsVision(model = {}) {
     return true;
   }
   return model?.supportsImages === true;
+}
+
+export function resolveAporiaCloudVisionAvailability(
+  accountSnapshot = {},
+  settings = {},
+) {
+  const enabled = settings?.cloudVisionEnabled !== false;
+  const quotaGuard = settings?.cloudVisionQuotaGuard !== false;
+  const remainingRatio = optionalFiniteNumber(accountSnapshot?.quota?.remainingRatio);
+  const hasRemainingRatio = remainingRatio !== null;
+
+  if (!enabled) {
+    return {
+      available: false,
+      reason: "disabled",
+      remainingRatio,
+    };
+  }
+  if (accountSnapshot?.status !== "authenticated") {
+    return {
+      available: false,
+      reason: "signed-out",
+      remainingRatio,
+    };
+  }
+  if (
+    quotaGuard &&
+    hasRemainingRatio &&
+    remainingRatio <= APORIA_CLOUD_VISION_MIN_REMAINING_RATIO
+  ) {
+    return {
+      available: false,
+      reason: "quota-protected",
+      remainingRatio,
+    };
+  }
+  return {
+    available: true,
+    reason: "ready",
+    remainingRatio,
+  };
 }
 
 function preferredVisionCandidate(candidates) {
@@ -43,7 +91,10 @@ function aporiaCloudVisionCandidate(records) {
       record?.kind === "aporia-cloud" ||
       record?.source === "aporia-cloud",
   );
-  if (!provider) return null;
+  // A signed-out Account cannot offer the managed proxy at all. Disabled and
+  // quota-protected states remain visible so the renderer can explain them and
+  // let the user change the local policy without signing out/in again.
+  if (!provider || provider?.visionProxyReason === "signed-out") return null;
   return {
     provider,
     model: {
@@ -56,7 +107,7 @@ function aporiaCloudVisionCandidate(records) {
 
 function rendererVisionCandidate(records) {
   // Aporia Cloud is a first-party managed proxy: it uses the Account session,
-  // not a renderer-visible API key. Prefer it when present, then fall back to
+  // not a renderer-visible API key. Prefer it when available, then fall back to
   // the existing user-configured vision Provider selection.
   const cloud = aporiaCloudVisionCandidate(records);
   if (cloud) return cloud;
@@ -74,6 +125,7 @@ function rendererVisionCandidate(records) {
 
 function publicVisionProxyMetadata(candidate) {
   if (!candidate) return null;
+  const remainingRatio = optionalFiniteNumber(candidate.provider?.visionQuotaRemainingRatio);
   return {
     providerId: String(candidate.provider?.id || ""),
     providerName: String(
@@ -81,6 +133,12 @@ function publicVisionProxyMetadata(candidate) {
     ),
     modelId: String(candidate.model?.id || ""),
     modelName: String(candidate.model?.name || candidate.model?.id || "vision-model"),
+    billing:
+      candidate.provider?.id === APORIA_CLOUD_PROVIDER_ID ||
+      candidate.provider?.kind === "aporia-cloud"
+        ? "weekly-quota"
+        : candidate.provider?.billing || "user-provider",
+    quotaRemainingRatio: remainingRatio,
   };
 }
 

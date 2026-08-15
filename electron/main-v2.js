@@ -1,6 +1,6 @@
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
-import "./account/register-desktop-account-ipc.js";
+import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
@@ -19,8 +19,16 @@ import {
   TOOL_DEFINITIONS,
   TOOL_RISKS,
 } from "./runtime/native-tool-catalog.js";
-import { prepareVisionProxyRequest } from "./vision-proxy.js";
-import { exposeVisionProxyCapabilities } from "./vision-proxy-core.js";
+import {
+  loadVisionProxySettings,
+  prepareVisionProxyRequest,
+  saveVisionProxySettings,
+} from "./vision-proxy.js";
+import {
+  APORIA_CLOUD_PROVIDER_ID,
+  exposeVisionProxyCapabilities,
+  resolveAporiaCloudVisionAvailability,
+} from "./vision-proxy-core.js";
 import {
   prepareWorkspaceMentionMessage,
   prepareWorkspaceMentionRequest,
@@ -119,12 +127,53 @@ function emitSkillStatus(event, request, activatedSkills = [], unresolved = []) 
   kernel?.events.emit({ runId, ...payload });
 }
 
+function emitVisionStatus(event, request, payload = {}) {
+  const runId = String(request?.runId || "").trim();
+  if (!runId || !payload?.type) return;
+  const eventPayload = {
+    ...payload,
+    taskId: request?.taskId || null,
+    assistantId: request?.assistantId || null,
+  };
+  if (!event.sender.isDestroyed()) {
+    event.sender.send("harness:event", { runId, ...eventPayload });
+  }
+  kernel?.events.emit({ runId, ...eventPayload });
+}
+
+async function providersWithVisionAvailability(providers) {
+  const records = Array.isArray(providers) ? providers : [];
+  const [settings, accountSnapshot] = await Promise.all([
+    loadVisionProxySettings().catch(() => ({
+      cloudVisionEnabled: true,
+      cloudVisionQuotaGuard: true,
+    })),
+    getDesktopAccountRuntime().getSnapshot().catch(() => null),
+  ]);
+  const availability = resolveAporiaCloudVisionAvailability(
+    accountSnapshot || {},
+    settings,
+  );
+  return records.map((provider) =>
+    provider?.id === APORIA_CLOUD_PROVIDER_ID || provider?.kind === "aporia-cloud"
+      ? {
+          ...provider,
+          visionProxyAvailable: availability.available,
+          visionProxyReason: availability.reason,
+          visionQuotaRemainingRatio: availability.remainingRatio,
+        }
+      : provider,
+  );
+}
+
 const nativeHandle = ipcMain.handle.bind(ipcMain);
 const originalHandle = ipcMain.handle;
 ipcMain.handle = function budgetAwareHandle(channel, listener) {
   if (channel === "providers:list") {
     return nativeHandle(channel, async (...args) =>
-      exposeVisionProxyCapabilities(await listener(...args)),
+      exposeVisionProxyCapabilities(
+        await providersWithVisionAvailability(await listener(...args)),
+      ),
     );
   }
   if (channel === "harness:steer") {
@@ -183,7 +232,9 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
     try {
       const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
       const seededRequest = seedSkillOriginalContent(request);
-      const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest);
+      const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest, {
+        onEvent: (payload) => emitVisionStatus(event, seededRequest, payload),
+      });
       const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest);
       const skillPreparedRequest = extensionSourceEnabled(policy, "skill")
         ? await prepareSkillRequest(
@@ -233,6 +284,11 @@ ipcMain.handle = originalHandle;
 kernel = createHarnessKernel({ toolDescriptors: nativeToolDescriptors() });
 setDefaultHarnessEventBus(kernel.events);
 const coreServer = createHarnessCoreServer({ kernel });
+
+ipcMain.handle("vision:settings:get", () => loadVisionProxySettings());
+ipcMain.handle("vision:settings:set", (_event, patch = {}) =>
+  saveVisionProxySettings(patch),
+);
 
 ipcMain.handle("core:status", () => ({
   running: Boolean(coreServer.url),

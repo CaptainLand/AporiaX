@@ -6,6 +6,7 @@ import {
   imageAttachments,
   mergeVisionObservation,
   modelSupportsVision,
+  resolveAporiaCloudVisionAvailability,
   selectVisionCandidate,
 } from "../electron/vision-proxy-core.js";
 
@@ -31,6 +32,41 @@ assert.equal(modelSupportsVision({ id: "gemini-2.5-flash" }), true);
 
 assert.equal(hasImageAttachments([{ role: "user", attachments: [image] }]), true);
 assert.equal(imageAttachments({ attachments: [pdf] }).length, 0);
+
+const readyCloud = resolveAporiaCloudVisionAvailability(
+  { status: "authenticated", quota: { remainingRatio: 0.82 } },
+  { cloudVisionEnabled: true, cloudVisionQuotaGuard: true },
+);
+assert.equal(readyCloud.available, true);
+assert.equal(readyCloud.reason, "ready");
+assert.equal(readyCloud.remainingRatio, 0.82);
+
+const protectedCloud = resolveAporiaCloudVisionAvailability(
+  { status: "authenticated", quota: { remainingRatio: 0.2 } },
+  { cloudVisionEnabled: true, cloudVisionQuotaGuard: true },
+);
+assert.equal(protectedCloud.available, false);
+assert.equal(protectedCloud.reason, "quota-protected");
+
+const guardOverridden = resolveAporiaCloudVisionAvailability(
+  { status: "authenticated", quota: { remainingRatio: 0.05 } },
+  { cloudVisionEnabled: true, cloudVisionQuotaGuard: false },
+);
+assert.equal(guardOverridden.available, true);
+
+const disabledCloud = resolveAporiaCloudVisionAvailability(
+  { status: "authenticated", quota: { remainingRatio: 0.9 } },
+  { cloudVisionEnabled: false, cloudVisionQuotaGuard: true },
+);
+assert.equal(disabledCloud.available, false);
+assert.equal(disabledCloud.reason, "disabled");
+
+const signedOutCloud = resolveAporiaCloudVisionAvailability(
+  { status: "anonymous", quota: null },
+  { cloudVisionEnabled: true, cloudVisionQuotaGuard: true },
+);
+assert.equal(signedOutCloud.available, false);
+assert.equal(signedOutCloud.reason, "signed-out");
 
 const providers = [
   {
@@ -82,6 +118,8 @@ const cloudProviders = exposeVisionProxyCapabilities([
     kind: "aporia-cloud",
     source: "aporia-cloud",
     hasApiKey: false,
+    visionProxyReason: "ready",
+    visionQuotaRemainingRatio: 0.73,
     models: [{ id: "aporia-cloud-default", name: "DeepSeek V4 Flash", supportsImages: false }],
   },
 ]);
@@ -93,6 +131,72 @@ assert.equal(cloudDeepSeek.visionProxy.providerId, "aporia-cloud");
 assert.equal(cloudDeepSeek.visionProxy.providerName, "Aporia Cloud");
 assert.equal(cloudDeepSeek.visionProxy.modelId, "aporia-cloud-vision");
 assert.equal(cloudDeepSeek.visionProxy.modelName, "Qwen3.5 Flash Vision");
+assert.equal(cloudDeepSeek.visionProxy.billing, "weekly-quota");
+assert.equal(cloudDeepSeek.visionProxy.quotaRemainingRatio, 0.73);
+
+const localWithCloud = exposeVisionProxyCapabilities([
+  {
+    id: "aporia-cloud",
+    name: "Aporia Cloud",
+    kind: "aporia-cloud",
+    source: "aporia-cloud",
+    visionProxyReason: "ready",
+    visionQuotaRemainingRatio: 0.68,
+    models: [{ id: "aporia-cloud-default", supportsImages: false }],
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    source: "local",
+    hasApiKey: false,
+    models: [{ id: "qwen3-coder-local", supportsImages: false }],
+  },
+]);
+const localTextModel = localWithCloud
+  .find((provider) => provider.id === "ollama")
+  .models[0];
+assert.equal(localTextModel.nativeSupportsImages, false);
+assert.equal(localTextModel.supportsImageProxy, true);
+assert.equal(localTextModel.visionProxy.providerId, "aporia-cloud");
+assert.equal(localTextModel.visionProxy.modelId, "aporia-cloud-vision");
+
+const locallyDisabledStillVisible = exposeVisionProxyCapabilities([
+  {
+    id: "aporia-cloud",
+    name: "Aporia Cloud",
+    kind: "aporia-cloud",
+    source: "aporia-cloud",
+    visionProxyAvailable: false,
+    visionProxyReason: "disabled",
+    visionQuotaRemainingRatio: 0.9,
+    models: [{ id: "aporia-cloud-default", supportsImages: false }],
+  },
+  {
+    id: "local",
+    source: "local",
+    models: [{ id: "text-only-local", supportsImages: false }],
+  },
+]);
+assert.equal(locallyDisabledStillVisible[1].models[0].supportsImageProxy, true);
+assert.equal(locallyDisabledStillVisible[1].models[0].visionProxy.providerId, "aporia-cloud");
+
+const signedOutDoesNotAdvertiseCloud = exposeVisionProxyCapabilities([
+  {
+    id: "aporia-cloud",
+    name: "Aporia Cloud",
+    kind: "aporia-cloud",
+    source: "aporia-cloud",
+    visionProxyAvailable: false,
+    visionProxyReason: "signed-out",
+    models: [{ id: "aporia-cloud-default", supportsImages: false }],
+  },
+  {
+    id: "local",
+    source: "local",
+    models: [{ id: "text-only-local", supportsImages: false }],
+  },
+]);
+assert.equal(signedOutDoesNotAdvertiseCloud[1].models[0].supportsImageProxy, false);
 
 const noKeyProviders = exposeVisionProxyCapabilities([
   {
