@@ -9,6 +9,7 @@ let runtime = null;
 let activityUnsubscribe = null;
 let quotaRefreshTimer = null;
 let quotaRefreshPromise = null;
+let quotaRefreshQueued = false;
 let warnedQuotaCycle = "";
 
 function quotaRatio(snapshot) {
@@ -74,18 +75,21 @@ function publishAccountSnapshot(snapshot) {
 async function refreshQuotaAfterCloudActivity() {
   if (!runtime) return null;
   if (quotaRefreshPromise) return quotaRefreshPromise;
+  quotaRefreshQueued = false;
   quotaRefreshPromise = runtime
     .refresh()
     .then(publishAccountSnapshot)
     .catch(() => null)
     .finally(() => {
       quotaRefreshPromise = null;
+      if (quotaRefreshQueued) scheduleQuotaRefresh();
     });
   return quotaRefreshPromise;
 }
 
 function scheduleQuotaRefresh() {
-  if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
+  quotaRefreshQueued = true;
+  if (quotaRefreshTimer || quotaRefreshPromise) return;
   quotaRefreshTimer = setTimeout(() => {
     quotaRefreshTimer = null;
     void refreshQuotaAfterCloudActivity();
@@ -115,12 +119,14 @@ ipcMain.handle("account:refresh", async () =>
 );
 ipcMain.handle("account:sign-out", async () => {
   warnedQuotaCycle = "";
+  quotaRefreshQueued = false;
   return publishAccountSnapshot(await getDesktopAccountRuntime().signOut());
 });
 
 app.on("before-quit", () => {
   if (quotaRefreshTimer) clearTimeout(quotaRefreshTimer);
   quotaRefreshTimer = null;
+  quotaRefreshQueued = false;
   activityUnsubscribe?.();
   activityUnsubscribe = null;
   runtime?.close();
