@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld("desktop", {
     refresh: () => ipcRenderer.invoke("account:refresh"),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
   },
+  vision: {
+    getSettings: () => ipcRenderer.invoke("vision:settings:get"),
+    setSettings: (patch) => ipcRenderer.invoke("vision:settings:set", patch),
+  },
   tasks: {
     load: () =>
       ipcRenderer.invoke("tasks:load").then((tasks) => rememberTaskExecutionModes(tasks)),
