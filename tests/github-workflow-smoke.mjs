@@ -10,11 +10,11 @@ assert.equal(getToolPermission(workspacePolicy, "git_commit"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "git_init"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "git_create_branch"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "git_remote_list"), "allow");
-assert.equal(getToolPermission(workspacePolicy, "git_remote_add"), "ask");
-assert.equal(getToolPermission(workspacePolicy, "git_pull"), "ask");
-assert.equal(getToolPermission(workspacePolicy, "git_push"), "ask");
+assert.equal(getToolPermission(workspacePolicy, "git_remote_add"), "allow");
+assert.equal(getToolPermission(workspacePolicy, "git_pull"), "allow");
+assert.equal(getToolPermission(workspacePolicy, "git_push"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "github_repo_create"), "ask");
-assert.equal(getToolPermission(workspacePolicy, "github_pr_create"), "ask");
+assert.equal(getToolPermission(workspacePolicy, "github_pr_create"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "github_pr_view"), "allow");
 assert.equal(getToolPermission(createPermissionPolicy("builder-write"), "git_push"), "deny");
 for (const name of ["git_log", "git_init", "git_stage", "git_commit", "git_create_branch", "git_remote_list", "git_remote_add", "git_pull", "git_push", "github_repo_create", "github_pr_create", "github_pr_view", "github_pr_checks"]) {
