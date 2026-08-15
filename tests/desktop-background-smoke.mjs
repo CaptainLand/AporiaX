@@ -69,6 +69,8 @@ const mainV2Source = await readFile(
 assert.match(desktopBackgroundSource, /AporiaX · 需要确认/);
 assert.match(desktopBackgroundSource, /eventBus\.on\("approval\.required"/);
 assert.match(desktopBackgroundSource, /showApprovalRequired/);
+assert.match(desktopBackgroundSource, /desktop:task-requested/);
+assert.match(desktopBackgroundSource, /focusTask\(event\?\.taskId\)/);
 assert.match(mainV2Source, /desktopBackground\.attachEventBus\(kernel\.events\)/);
 
 console.log("desktop background smoke: PASS");
