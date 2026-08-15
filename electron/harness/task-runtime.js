@@ -123,6 +123,31 @@ export class HarnessTaskRuntime {
     return String(value);
   }
 
+  #publish(record, payload, { journal = true } = {}) {
+    try {
+      record.onEvent?.(payload);
+    } catch {
+      // Client/renderer observers are not part of task ownership.
+    }
+    try {
+      this.#eventBus?.emit({
+        runId: record.runId,
+        taskId: record.taskId,
+        ...payload,
+      });
+    } catch {
+      // Observability is best-effort.
+    }
+    if (journal) {
+      record.journalTail = record.journalTail
+        .then(() =>
+          appendRunJournalEvent(this.#directory(), record.runId, payload),
+        )
+        .catch(() => undefined);
+    }
+    return payload;
+  }
+
   attachEventBus(eventBus) {
     this.#eventBus = eventBus || null;
     return this;
@@ -361,11 +386,7 @@ export class HarnessTaskRuntime {
     if (!record || !clientCanControl(record, clientId)) return false;
     if (!record.control.pause()) return true;
     const payload = { type: "control.paused" };
-    record.onEvent?.(payload);
-    this.#eventBus?.emit({ runId: record.runId, taskId: record.taskId, ...payload });
-    record.journalTail = record.journalTail
-      .then(() => appendRunJournalEvent(this.#directory(), record.runId, payload))
-      .catch(() => undefined);
+    this.#publish(record, payload);
     await updateRunJournalMetadata(this.#directory(), record.runId, {
       status: "paused",
       lastEventType: payload.type,
@@ -378,11 +399,7 @@ export class HarnessTaskRuntime {
     if (!record || !clientCanControl(record, clientId)) return false;
     if (!record.control.resume()) return true;
     const payload = { type: "control.resumed" };
-    record.onEvent?.(payload);
-    this.#eventBus?.emit({ runId: record.runId, taskId: record.taskId, ...payload });
-    record.journalTail = record.journalTail
-      .then(() => appendRunJournalEvent(this.#directory(), record.runId, payload))
-      .catch(() => undefined);
+    this.#publish(record, payload);
     await updateRunJournalMetadata(this.#directory(), record.runId, {
       status: "running",
       lastEventType: payload.type,
@@ -401,11 +418,7 @@ export class HarnessTaskRuntime {
       messageId: steeringMessage.id,
       queued,
     };
-    record.onEvent?.(payload);
-    this.#eventBus?.emit({ runId: record.runId, taskId: record.taskId, ...payload });
-    record.journalTail = record.journalTail
-      .then(() => appendRunJournalEvent(this.#directory(), record.runId, payload))
-      .catch(() => undefined);
+    this.#publish(record, payload);
     return true;
   }
 
