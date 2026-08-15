@@ -29,7 +29,7 @@ function classifyGitPushCommand(command, executionMode) {
       executionMode,
     );
   }
-  if (/\b(?:--force-with-lease|--force|-f)\b/i.test(source)) {
+  if (/(?:^|\s)(?:--force-with-lease|--force|-f)(?=\s|$)/i.test(source)) {
     return commandDecision(
       "ask",
       "high",
@@ -38,7 +38,7 @@ function classifyGitPushCommand(command, executionMode) {
       executionMode,
     );
   }
-  if (/\b(?:--delete|-d)\b/i.test(source)) {
+  if (/(?:^|\s)(?:--delete|-d)(?=\s|$)/i.test(source)) {
     return commandDecision(
       "ask",
       "high",
