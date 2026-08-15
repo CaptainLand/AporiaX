@@ -19,7 +19,7 @@ const [
   readFile(new URL("../electron/provider-config.js", import.meta.url), "utf8"),
 ]);
 
-assert.match(visionProxy, /aporia-cloud-vision/);
+assert.match(visionProxy, /APORIA_CLOUD_VISION_MODEL_ID/);
 assert.match(visionProxy, /Qwen3\.5 Flash Vision/);
 assert.match(visionProxy, /getDesktopAccountRuntime/);
 assert.match(visionProxy, /fetchModelGateway/);
