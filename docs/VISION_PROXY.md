@@ -36,10 +36,12 @@ reasoning + tools + file changes stay on the selected main model
 
 This route does not turn the whole task into an Aporia Cloud model request. Only the image-understanding call uses the Cloud weekly quota.
 
-The Desktop keeps two global controls in the Vision capability card:
+The Desktop keeps two persisted hybrid-routing controls in the Vision capability card when a local/custom main model is borrowing Aporia Cloud Vision:
 
 - **Cloud vision enhancement** — enabled by default. Disable it to prevent local/custom text models from automatically borrowing Aporia Cloud Vision.
-- **20% low-quota guard** — enabled by default. When the latest Account quota snapshot is at or below 20% remaining, automatic Cloud Vision is paused. The user can disable this guard if they deliberately want to continue using vision.
+- **20% low-quota guard** — enabled by default. Immediately before the managed visual call, Desktop refreshes the Aporia Account state and checks the current weekly remaining ratio. At or below 20%, automatic Cloud Vision is paused. The Account refresh itself does not invoke a model or consume model quota. The user can disable this guard if they deliberately want to continue using vision.
+
+These hybrid controls do not change the normal hidden vision preprocessing used when the main model itself is an Aporia Cloud text model.
 
 If the Account is signed out, Aporia Cloud is not advertised as an available visual proxy. Existing user-configured vision Providers can still be used.
 
@@ -51,7 +53,7 @@ The task settings sidebar distinguishes native image support from effective imag
 - **Vision proxy** means the selected main model is text-only, but AporiaX has a visual model that can inspect the image first.
 - **Unavailable** means the current main model is text-only and there is no usable visual route.
 
-When Aporia Cloud is the proxy, the card shows the local/custom main model → Qwen3.5 Flash Vision route, the Cloud enhancement switch, the low-quota guard, and the latest known remaining quota percentage when available.
+When a local/custom main model uses Aporia Cloud as the proxy, the card shows the main model → Qwen3.5 Flash Vision route, the Cloud enhancement switch, the low-quota guard, and the most recently synchronized remaining quota percentage when available. The guard refreshes Account state again immediately before an actual Cloud Vision call.
 
 Provider listings expose this distinction with `nativeSupportsImages`, `supportsImageProxy`, `supportsImages` (effective renderer capability), and a non-secret `visionProxy` descriptor. API keys remain main-process only.
 
@@ -82,8 +84,8 @@ Included:
 - local/custom text model → Aporia Cloud Vision → local/custom model hybrid route
 - signed-in Account gating
 - Cloud weekly-quota accounting through the existing model gateway
-- global Cloud Vision on/off control
-- default 20% low-quota protection
+- persisted hybrid Cloud Vision on/off control
+- default 20% low-quota protection with pre-call Account refresh
 - user-provider visual fallback
 - OpenAI-compatible Chat Completions vision requests
 - data-URL image attachments already accepted by AporiaX
