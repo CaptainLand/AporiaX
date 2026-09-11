@@ -48,6 +48,7 @@ assert.deepEqual(
     task: "Run tests",
     scope: ["."],
     background: false,
+    requiredForCompletion: true,
     maxRounds: 5,
   },
 );

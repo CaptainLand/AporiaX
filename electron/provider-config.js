@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { modelSupportsVision, normalizeImageCapability } from "./model-vision.js";
 
 export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
 export const APORIA_CLOUD_FLASH_MODEL_ID = "aporia-cloud-default";
@@ -26,6 +27,7 @@ export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY
         family: "DeepSeek V4",
         source: "aporia-cloud",
         billing: "weekly-quota",
+        imageInput: "text",
         supportsImages: false,
         supportsThinking: true,
         thinkingMode: "deepseek",
@@ -39,6 +41,7 @@ export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY
         family: "DeepSeek V4",
         source: "aporia-cloud",
         billing: "weekly-quota",
+        imageInput: "text",
         supportsImages: false,
         supportsThinking: true,
         thinkingMode: "deepseek",
@@ -60,6 +63,7 @@ export const DEFAULT_DEEPSEEK_PROVIDER = Object.freeze({
       id: "deepseek-v4-pro",
       name: "DeepSeek V4 Pro",
       shortName: "V4 Pro",
+      imageInput: "text",
       supportsImages: false,
       supportsThinking: true,
       thinkingMode: "deepseek",
@@ -70,6 +74,7 @@ export const DEFAULT_DEEPSEEK_PROVIDER = Object.freeze({
       id: "deepseek-v4-flash",
       name: "DeepSeek V4 Flash",
       shortName: "V4 Flash",
+      imageInput: "text",
       supportsImages: false,
       supportsThinking: true,
       thinkingMode: "deepseek",
@@ -149,11 +154,7 @@ export function inferModelContextWindow(modelId, vendor) {
 
 export function inferModelCapabilities(modelId, vendor) {
   const value = String(modelId || "").toLowerCase();
-  const supportsImages =
-    /(?:^|[-_/])(gpt-4o|gpt-4\.1|gpt-5|vision|vl|gemini|claude)(?:[-_/.:]|$)/i.test(
-      value,
-    ) ||
-    /qwen.*vl|llava|pixtral|internvl|vision/i.test(value);
+  const supportsImages = modelSupportsVision({ id: modelId });
   let supportsThinking = false;
   let thinkingMode = "none";
   if (vendor === "deepseek") {
@@ -194,10 +195,7 @@ export function normalizeProviderModels(models, vendor) {
       shortName: String(
         source.shortName || shortModelName(modelId),
       ).slice(0, 40),
-      supportsImages:
-        typeof source.supportsImages === "boolean"
-          ? source.supportsImages
-          : inferred.supportsImages,
+      ...normalizeImageCapability({ ...source, id: modelId }),
       supportsThinking:
         typeof source.supportsThinking === "boolean"
           ? source.supportsThinking
@@ -245,7 +243,11 @@ export function normalizeProviderInput(input, existing = null) {
     .trim()
     .slice(0, 80);
   if (!name) throw new Error("Provider 名称不能为空。");
-  const models = normalizeProviderModels(input?.models, inferred.vendor);
+  const previous = new Map((existing?.models || []).map((model) => [model.id, model]));
+  const models = normalizeProviderModels((Array.isArray(input?.models) ? input.models : []).map((model) => {
+    const id = typeof model === "string" ? model : model?.id;
+    return { ...previous.get(id), ...(typeof model === "object" ? model : {}), id };
+  }), inferred.vendor);
   if (!models.length) {
     throw new Error("请至少添加一个模型 ID，或先自动发现模型。");
   }

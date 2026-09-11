@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { completeWithSteering } from "./runtime/steerable-completion.js";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -41,16 +42,9 @@ import {
 import {
   buildChanges,
   buildSelfCheckResult,
-  createChangeVersionSignature,
-  createProgressiveReviewTask,
-  createProgressiveVerifyTask,
-  createSelfCheckPrompt,
-  evaluateAdaptiveSelfCheck,
   findVerificationCandidate,
   getPendingSelfCheckPaths,
   normalizeSelfCheckReport,
-  parseProgressiveReviewReport,
-  reviewableChanges,
 } from "./runtime/self-check-evidence.js";
 import {
   MAX_SUBAGENT_ROUNDS,
@@ -80,6 +74,11 @@ import {
   sanitizeConversation,
   sanitizeFinalAnswer,
 } from "./runtime/conversation.js";
+import {
+  conversationContainsImages,
+  isNativeVisionRejectedError,
+  stripImagePartsFromMessages,
+} from "./model-vision.js";
 import { createSelfCheckCoordinator } from "./runtime/self-check-coordinator.js";
 import { createTurnCoordinator } from "./runtime/turn-coordinator.js";
 import {
@@ -88,6 +87,13 @@ import {
 } from "./runtime/native-tool-catalog.js";
 export { sanitizeConversation } from "./runtime/conversation.js";
 export { getPendingSelfCheckPaths } from "./runtime/self-check-evidence.js";
+import { contentHash, commandOutputPreview, recordReadEvidence, recordVerification, refreshVerification, verificationVersion } from "./runtime/evidence-ledger.js";
+import { createFullAutoApproval } from "./runtime/full-auto-approval.js";
+import { verificationDirective, onlyStandaloneDeliverables } from "./runtime/delivery-policy.js";
+import { assessDelivery, deliveryNotice, normalizeVerificationSelection } from "./runtime/workflow-policy.js";
+import { isReadOnlyNativeTool } from "./runtime/durable-run.js";
+import { ToolProgressGuard } from "./runtime/tool-progress-guard.js";
+import { saveRuntimeCheckpoint, executeDurableTool } from "./runtime/durable-run.js";
 import {
   getSandboxStatus,
   runCommandWithFallback,
@@ -130,7 +136,6 @@ const MAX_ANCHOR_TEXT_FILE_BYTES = 1_000_000;
 const MAX_ANCHOR_BINARY_FILE_BYTES = 2_000_000;
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const MAX_PARALLEL_TOOL_CALLS = 4;
-const PROGRESSIVE_REVIEW_FILE_THRESHOLD = 3;
 const PROJECT_CONFIG_FILES = [
   ".aporiax.json",
   "aporiax.json",
@@ -199,11 +204,14 @@ function decodeAnchorFile(path, buffer) {
 async function captureWorkspaceStateFromRoot(
   workspaceRoot,
   signal,
+  { previousSnapshot = null, forceRead = false } = {},
 ) {
   const files = new Map();
   let totalBytes = 0;
   let skippedFiles = 0;
   let truncated = false;
+  let filesRead = 0;
+  let reusedFiles = 0;
 
   async function visit(relativeDirectory, depth) {
     throwIfAborted(signal);
@@ -268,10 +276,20 @@ async function captureWorkspaceStateFromRoot(
           }
           continue;
         }
-        const record = decodeAnchorFile(
-          relativePath.replace(/\\/g, "/"),
-          await readFile(filePath),
-        );
+        const statKey = [stats.ino, stats.size, stats.mtimeMs, stats.ctimeMs].join(":");
+        const previous = previousSnapshot?.files.get(relativePath);
+        let record;
+        if (!forceRead && previous?._statKey === statKey) {
+          record = previous;
+          reusedFiles += 1;
+        } else {
+          record = decodeAnchorFile(relativePath.replace(/\\/g, "/"), await readFile(filePath, { signal }));
+          filesRead += 1;
+          if (record) {
+            const after = await lstat(filePath);
+            record._statKey = [after.ino, after.size, after.mtimeMs, after.ctimeMs].join(":") === statKey ? statKey : null;
+          }
+        }
         if (!record) {
           skippedFiles += 1;
           continue;
@@ -292,12 +310,14 @@ async function captureWorkspaceStateFromRoot(
     totalBytes,
     skippedFiles,
     truncated,
+    filesRead,
+    reusedFiles,
   };
 }
 
 export async function captureWorkspaceState(workspacePath, options = {}) {
   const workspaceRoot = await getVerifiedWorkspaceRoot(workspacePath);
-  return captureWorkspaceStateFromRoot(workspaceRoot, options.signal);
+  return captureWorkspaceStateFromRoot(workspaceRoot, options.signal, options);
 }
 
 function reconcileWorkspaceState(
@@ -524,8 +544,9 @@ async function loadProjectConfig(workspaceRoot) {
   return { file: null, permissions: {} };
 }
 
-async function discoverVerificationCommands(workspaceRoot, changeMap) {
+export async function discoverProjectVerificationCommands(workspaceRoot, changeMap) {
   if (!workspaceRoot) return [];
+  if (onlyStandaloneDeliverables(buildChanges(changeMap))) return [];
   const directories = new Set(["."]);
   for (const change of buildChanges(changeMap)) {
     let directory = dirname(change.path).replace(/\\/g, "/");
@@ -928,7 +949,19 @@ function normalizeUnderstandingProposal({
   };
 }
 
-function requestedPathsForToolCall(toolCall) {
+function recordInspectedChange(selfCheck, changeMap, toolName, modelResult) {
+  if (!changeMap.has(modelResult?.path)) return;
+  const change = changeMap.get(modelResult.path);
+  if (change.binary && toolName === "inspect_office_file") {
+    selfCheck.reviewedVersions.set(modelResult.path, change.afterContent);
+    return;
+  }
+  if (!change.binary && toolName === "read_file") {
+    recordReadEvidence(selfCheck, changeMap, toolName, modelResult);
+  }
+}
+
+function requestedPathsForToolCall(toolCall, workspaceRoot) {
   const toolName = toolCall?.function?.name || "";
   let input;
   try {
@@ -942,6 +975,12 @@ function requestedPathsForToolCall(toolCall) {
     } catch {
       return [];
     }
+  }
+  if (toolName === "read_external_file") {
+    // Outside files have no workspace-scoped instructions. This does not grant
+    // access: the original absolute path still goes through normal approval.
+    if (!workspaceRoot || !isAbsolute(input.path || "")) return [];
+    return isPathInside(workspaceRoot, input.path) ? [relative(workspaceRoot, input.path)] : [];
   }
   if (typeof input.path === "string") return [input.path];
   if (toolName === "run_command" || toolName === "start_process") return [input.cwd || "."];
@@ -1005,6 +1044,7 @@ export async function runHarness({
   extensionPolicy = {},
   recoveryContext = null,
   deferUnderstandingCuration = true,
+  onNativeVisionRejected = null,
 }) {
   if (
     !providerConfig ||
@@ -1061,7 +1101,7 @@ export async function runHarness({
     .filter(Boolean)
     .join("\n")
     .slice(-24_000);
-  const latestUserPrompt = String(
+  let latestUserPrompt = String(
     [...(Array.isArray(messages) ? messages : [])]
       .reverse()
       .find((message) => message?.role === "user")?.content || "",
@@ -1115,7 +1155,8 @@ export async function runHarness({
     14,
   );
   const effectiveApprovalMode =
-    approvalMode === "sandbox-auto" ? "sandbox-auto" : "manual";
+    ["full-auto", "sandbox-auto", "smart-auto"].includes(approvalMode) ? approvalMode : "manual";
+  requestApproval = createFullAutoApproval({ approvalMode: effectiveApprovalMode, workspaceRoot, requestApproval, emit });
   const permissionPolicy = createPermissionPolicy(
     permission,
     projectConfig.permissions,
@@ -1247,6 +1288,8 @@ export async function runHarness({
   const sanitizedHistory = sanitizeConversation(messages, {
     supportsImages: provider.supportsImages,
   });
+  let supportsImages = Boolean(provider.supportsImages);
+  let visionFallbackAttempted = false;
   const latestUserIndex = sanitizedHistory.findLastIndex(
     (message) => message.role === "user",
   );
@@ -1257,6 +1300,9 @@ export async function runHarness({
           `This run explicitly resumes interrupted run ${recoveryContext.runId}.`,
           "The final user message below is the active request. The current workspace is the source of truth.",
           "Use the recovery journal only to identify completed and remaining work. Re-inspect files before relying on an old result.",
+          "Unfinished operations may already have taken effect. Inspect actual state first; never blindly replay uncertain effects.",
+          "Records marked replaySafe are browser navigation/close operations, not unresolved mutations. Check the current browser state as needed, but do not block unrelated work or ask for recovery approval because of these navigation errors.",
+          JSON.stringify({ checkpoint: recoveryContext.checkpoint, operations: recoveryContext.operations, unresolvedOperations: recoveryContext.unresolvedOperations }),
           `Recovery checkpoint:\n${JSON.stringify(recoveryContext).slice(0, 8_000)}`,
         ].join("\n")
       : "The final user message below is the only active request for this run. Earlier turns are context, not pending work. Never resume a failed, interrupted, or unrelated earlier task unless this final request explicitly asks you to do so.",
@@ -1279,11 +1325,15 @@ export async function runHarness({
         "Use search_text to locate relevant code before reading many files.",
         "Use the native lsp tool for semantic diagnostics, definitions, references, hover, and symbols when the file type has a configured language server. If lsp status reports a missing supported server and semantic analysis is useful, use lsp_install with approval instead of telling the user to install it manually. After code edits, prefer LSP diagnostics as a fast inner-loop signal, but still use build/tests for final verification.",
         "For Git/GitHub work, use native Git tools end-to-end. If the workspace is not a Git repository, use git_init instead of asking the user to run git init. Local init/stage/commit/branch operations may proceed automatically when policy allows; adding remotes, pulling, pushing, creating GitHub repositories, and creating PRs must respect approval boundaries.",
-        "Use read_file line ranges or offset continuation when a file is truncated. Use read_external_file only when the user task genuinely needs a specific file outside the workspace; every call requires fresh approval and remains read-only.",
+        "Use read_file line ranges or offset continuation when a file is truncated. Use read_external_file only when the user task genuinely needs a specific file outside the workspace; it remains read-only and uses the configured approval mode.",
         "Use workspace-relative paths only.",
         "Never claim a file was changed unless write_file or apply_patch succeeded.",
         "Prefer apply_patch for localized edits and write_file for new files or complete rewrites.",
         "Use concise Markdown headings and GFM tables when structure helps.",
+        "When handing off an existing file, use a Markdown link with a descriptive label and a verified absolute path (forward slashes on Windows), for example [Report](<D:/Project/Report.pdf>). Code links may append :line. Never invent artifact paths; the desktop can open, save a copy, reveal and open these links in an IDE.",
+        "Completion handoff only: when a requested deliverable is ready, lead with one short outcome sentence, then a short list of clickable links to the actual deliverable files. File size and version are optional when verified. Add only a brief validation result, a material caveat or the next necessary action. Do not append a development diary, repeated feature inventory, long self-check report or generic suggestions. If the user explicitly asks for a detailed report, follow that request instead.",
+        "Preview handoff only: when a service is confirmed ready for the user to test, give one short status sentence and a clickable HTTP(S) preview link with the observed port/path. Say if the address is local-only and whether the service will remain running after this task. A process starting is not proof that its URL is reachable; do not fabricate a URL or claim a stopped process is available. Prefer a managed persistent process for npm start/dev instead of blocking a foreground command.",
+        "These concise handoff rules do not shorten in-progress milestone updates, explanations, diagnosis, requested reports or ordinary conversation. Never remove an important failure or unverified limitation just to make delivery look successful.",
         "Put source code in fenced code blocks with an accurate language tag.",
         "Do not use emoji, pictograms, decorative symbols, or status glyphs anywhere in the final answer.",
         "Do not generate SVG markup or SVG files unless the user explicitly asks for SVG output.",
@@ -1297,15 +1347,15 @@ export async function runHarness({
         "For work that needs more than one meaningful action, call update_plan before changing files. Keep one step in_progress at a time and update the plan whenever the route changes.",
         "For multi-step work, accompany the initial plan and each meaningful milestone with one short user-facing progress update in the assistant content before the relevant tool calls. Report what was decided, what materially changed, or what was verified; do not expose hidden chain-of-thought, narrate every tool call, or repeat raw logs. AporiaX preserves these updates in the Dialogue view, so make each one useful on its own.",
         "Delegate independent codebase exploration, review, and verification to delegate_subagent. Give each subagent a focused task and path scope. Issue multiple delegate_subagent calls in one response when they do not depend on each other; AporiaX can run them concurrently.",
-        "Use background subagents for long verification while continuing independent work. Collect their results before relying on them or delivering the final answer.",
+        "Use background subagents while continuing independent work. Collect required results before final delivery and any result before relying on it. Only independent optional explore/curator work may set required_for_completion=false; Review/Verify always remain required.",
         "Subagents are read-only by design. The parent agent remains responsible for every file edit and for fixing review findings.",
         "Self-check is adaptive. Do not request it for casual conversation, explanation-only answers, or straightforward work with no meaningful risk. Call request_self_check with a concrete reason when your implementation may be wrong, incomplete, security-sensitive, difficult to verify, or when independent review would materially improve confidence. Harness may also require review for deletions, Office/binary artifacts, multi-file changes, failed mutation or verification tools, and explicit user verification requests.",
-        "When adaptive self-check is required, Harness delegates version-matched staged review and verification to read-only subagents and performs a lightweight final evidence seal. A full parent self-check is used only as a safety fallback.",
+        "You own the workflow: choose only checks relevant to the user goal. Harness never runs discovered scripts or Review automatically. request_self_check can suggest commands, explicitly run selected verification/review, or skip. Mark an ordinary run_command with verification:true to record real verification evidence. A report is not proof of execution.",
         "Project Understanding is the shared, versioned context for every task in this workspace. Relevant facts are injected automatically at the start of a task.",
         "Use judgment when maintaining Project Understanding. When you discover an important reusable, non-secret project fact such as a build command, architecture, convention, decision, debugging insight, or explicit durable user preference, call remember_project_fact to stage a candidate. Do not stage ordinary conversation, temporary progress, or one-off task details. This does not write immediately: the Curator subagent independently accepts, refines, or rejects the candidate, and Harness creates an Understanding revision only when the accepted fact has sufficient evidence. Never claim a candidate was committed before Harness confirms it. Never submit credentials or tokens.",
         "Use create_word_document, create_presentation, and create_spreadsheet for real Office files. Do not try to write Office binaries with write_file.",
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
-        "After creating or replacing an Office file, use inspect_office_file during the required adaptive self-check. Treat structural inspection as distinct from final visual rendering.",
+        "For Office artifacts choose appropriate structural and visual checks. Structural inspection alone is not final visual rendering.",
         commandUsesContainer
           ? "Use run_command when a command materially helps implement or verify the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
           : commandUsesLocalSandbox
@@ -1316,7 +1366,7 @@ export async function runHarness({
         canRunCommands
           ? "For dev servers, watchers, REPLs, or commands requiring stdin, use start_process and manage it with read_process, write_stdin, and kill_process instead of keeping run_command alive. Persistent processes are task-scoped, use the host environment with sensitive variables removed, require approval to start, and are stopped automatically when the task ends."
           : "Persistent terminal processes are disabled for this task.",
-        "When Harness reports staged review findings, fix them before finishing. If Harness explicitly starts the fallback mandatory self-check, re-read the listed current file versions and call complete_self_check before answering.",
+        "Use review findings to decide whether to fix, investigate, or deliver with a disclosed limitation. Unverified delivery is allowed; never claim unrun, failed, unavailable, or stale checks passed. complete_self_check records your report without a mandatory fallback loop.",
         "The desktop UI already presents changed files, verification, Route history, and deliverables. Do not repeat them as Markdown inventory tables or tool-call logs in the final answer.",
         !hasWorkspace
           ? "No workspace is attached. Answer without file tools and ask the user to attach a workspace when file access is required."
@@ -1337,6 +1387,7 @@ export async function runHarness({
                   : "The command tool is disabled for this task.",
             ].join(" "),
         "Keep the final answer concise. State the outcome, important limitations, and any user action still required.",
+        effectiveApprovalMode === "full-auto" ? "This task uses full automatic approval with host-level risk. Do not ask the user to approve ordinary commands again: the runtime handles authorization. Stay within the user's task; automatic permission is not permission for unrelated actions. Workspace-external or ambiguous deletion and uncertain recovery still require confirmation. Prefer start_process for development servers and provide only verified links." : "",
         projectInstructions.content
           ? `Follow these project instructions:\n${projectInstructions.content}`
           : "",
@@ -1379,6 +1430,18 @@ export async function runHarness({
   let anchorBaseline = null;
   let anchorLatest = null;
   let anchorCaptureError = "";
+  let anchorBaselinePromise = null;
+  let anchorDirty = false;
+  const toolProgress = new ToolProgressGuard();
+  const observeToolProgress = (toolCall, modelResult) => {
+    let input;
+    try { input = parseToolArguments(toolCall); } catch { input = toolCall.function.arguments; }
+    const warning = toolProgress.observe({ tool: toolCall.function.name, input, result: modelResult, version: verificationVersion(changeMap) });
+    if (warning) {
+      modelResult.progressWarning = warning;
+      emit({ type: "runtime.no_progress.warning", tool: toolCall.function.name, message: warning });
+    }
+  };
   const selfCheck = {
     started: false,
     completed: false,
@@ -1401,27 +1464,9 @@ export async function runHarness({
     verificationAttempted: false,
     verificationPassed: false,
     verificationResults: [],
+    verificationWaived: verificationDirective(latestUserPrompt) === true,
   };
-  const refreshAdaptiveSelfCheckDecision = () => {
-    const decision = evaluateAdaptiveSelfCheck({
-      requested: selfCheck.requested,
-      requestReason: selfCheck.requestReason,
-      changes: buildChanges(changeMap),
-      steps,
-      prompt: latestUserPrompt,
-    });
-    if (decision.required) {
-      selfCheck.required = true;
-      selfCheck.decisionSource = decision.source;
-      selfCheck.decisionReason = decision.reasons.join(" ");
-    } else if (!selfCheck.started) {
-      selfCheck.required = false;
-      selfCheck.decisionSource = "skipped";
-      selfCheck.decisionReason =
-        "The model and Harness found no material risk requiring independent review.";
-    }
-    return selfCheck.required;
-  };
+  const discoverVerificationCommands = (root, changes) => selfCheck.verificationWaived ? Promise.resolve([]) : discoverProjectVerificationCommands(root, changes);
   let totalUsage = null;
 
   const applyRuntimeControlBoundary = async () => {
@@ -1429,10 +1474,19 @@ export async function runHarness({
     const steeringMessages = control?.consumeSteering?.() || [];
     if (!steeringMessages.length) return;
     const sanitizedSteering = sanitizeConversation(steeringMessages, {
-      supportsImages: provider.supportsImages,
+      supportsImages,
     });
     if (!sanitizedSteering.length) return;
+    toolProgress.reset();
+    await saveRuntimeCheckpoint({ scopeId: runId, phase: "guidance-applied", latestGuidance: steeringMessages });
     conversation.push(...sanitizedSteering);
+    latestUserPrompt = steeringMessages.map((message) => String(message.content || "")).join("\n").slice(-24_000);
+    const directive = verificationDirective(latestUserPrompt);
+    if (directive !== null) {
+      selfCheck.verificationWaived = directive;
+      selfCheck.verificationCandidates = [];
+      emit({ type: "verification.policy.updated", waived: directive, source: "user" });
+    }
     emit({
       type: "steering.applied",
       messageIds: steeringMessages.map((message) => message.id),
@@ -1442,14 +1496,18 @@ export async function runHarness({
 
   const loadScopedContextForToolCalls = async (toolCalls) => {
     const retryAfterInstructions = new Set();
+    retryAfterInstructions.errors = new Map();
     for (const toolCall of toolCalls || []) {
       if (isMcpToolName(toolCall?.function?.name)) continue;
-      const paths = requestedPathsForToolCall(toolCall);
+      const paths = requestedPathsForToolCall(toolCall, workspaceRoot);
       if (!paths.length) continue;
-      const scoped = await resolveScopedInstructions(
-        instructionContext,
-        paths,
-      );
+      let scoped;
+      try { scoped = await resolveScopedInstructions(instructionContext, paths); }
+      catch (error) {
+        if (error?.name === "AbortError" || error?.code === "RUN_PERSISTENCE_FAILED") throw error;
+        retryAfterInstructions.errors.set(toolCall.id, new Error("PROJECT_INSTRUCTIONS_UNAVAILABLE: " + error.message));
+        continue; // Never execute a mutation with missing instructions.
+      }
       if (!scoped.content) continue;
       let insertAt = 0;
       while (conversation[insertAt]?.role === "system") insertAt += 1;
@@ -1591,11 +1649,17 @@ export async function runHarness({
       role: input.role,
       task: input.task,
       background: input.background,
+      requiredForCompletion: input.requiredForCompletion,
       status: "running",
       collected: false,
       result: null,
       promise: null,
     };
+    const childController = new AbortController();
+    const abortChild = () => childController.abort();
+    record.controller = childController;
+    if (subagentController.signal.aborted) abortChild();
+    else subagentController.signal.addEventListener("abort", abortChild, { once: true });
     record.promise = runSubagentTask({
       agentId,
       input,
@@ -1608,15 +1672,16 @@ export async function runHarness({
       parentPermissionPolicy: permissionPolicy,
       approvalMode: effectiveApprovalMode,
       requestApproval,
-      signal: subagentController.signal,
+      signal: childController.signal,
       sandboxExecutor: commandSandboxExecutor,
       sandboxStatus,
       language,
       memoryFacts: relevantMemory,
       emit,
+      onUsage: (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); },
       toolRegistry: TOOL_REGISTRY,
       parseToolArguments,
-      executeAuthorizedTool,
+      executeAuthorizedTool: executeTrackedTool,
       describeToolActivity,
       describeCapability: (toolName, phase = "work") =>
         capabilityRegistry?.describeTool(toolName, phase) || null,
@@ -1626,20 +1691,20 @@ export async function runHarness({
         agentId,
         role: input.role,
         status:
-          error?.name === "AbortError" || subagentController.signal.aborted
+          error?.name === "AbortError" || childController.signal.aborted
             ? "interrupted"
             : "failed",
         summary: error?.message || "Subagent failed.",
-        evidence: [],
-        steps: [],
-        usage: null,
+        evidence: error?.evidence || [],
+        steps: error?.steps || [],
+        usage: error?.usage || null,
       }))
       .then((result) => {
         record.status = result.status;
         record.result = result;
-        totalUsage = mergeTokenUsage(totalUsage, result.usage);
+        // Usage is accumulated per completed round, including cancelled workers.
         return result;
-      });
+      }).finally(() => subagentController.signal.removeEventListener("abort", abortChild));
     subagents.set(agentId, record);
     if (input.background) {
       emit({
@@ -1655,8 +1720,8 @@ export async function runHarness({
         background: true,
         message:
           language === "en"
-            ? "The subagent is running in the background. Continue independent work and collect it before final delivery."
-            : "子 Agent 正在后台运行。可以继续处理独立工作，但最终交付前需要收集结果。",
+            ? (input.requiredForCompletion ? "The subagent is running in the background. Continue independent work and collect it before final delivery." : "Optional background exploration is running. Collect it before relying on it; otherwise final delivery may cancel it.")
+            : (input.requiredForCompletion ? "子 Agent 正在后台运行。可以继续处理独立工作，但最终交付前需要收集结果。" : "可选探索正在后台运行。依赖其结论前需要收集；否则最终交付可以取消它。"),
       };
     }
     const result = await record.promise;
@@ -1839,6 +1904,34 @@ export async function runHarness({
     commandToolAvailable,
     discoverVerificationCommands,
     workspaceRoot,
+    refreshChanges: () => refreshAnchorSnapshot(),
+    executeVerification: async (candidate) => {
+      const toolCall = { id: `verify-${runId}-${selfCheck.segmentCounter}-${steps.length}`, type: "function",
+        function: { name: "run_command", arguments: JSON.stringify(candidate) } };
+      const activity = { phase: "self-check", executor: "deterministic", ...describeToolActivity(toolCall),
+        capability: capabilityRegistry?.describeTool("run_command", "self-check") || null };
+      emit({ type: "tool.requested", callId: toolCall.id, tool: "run_command", ...activity });
+      emit({ type: "tool.started", callId: toolCall.id, tool: "run_command", ...activity });
+      let value;
+      try {
+        const retry = await loadScopedContextForToolCalls([toolCall]);
+        if (retry.errors.has(toolCall.id)) throw retry.errors.get(toolCall.id);
+        if (retry.has(toolCall.id)) throw new Error("Scoped project instructions were loaded. Review the new instructions before retrying this verification command.");
+        const result = await dispatchNativeTool({ toolCall, registry: TOOL_REGISTRY, permissionPolicy,
+          approvalMode: effectiveApprovalMode, requestApproval, sandboxStatus, signal,
+          parseArguments: parseToolArguments, executeAuthorized: executeTrackedTool,
+          executeContext: { workspaceRoot, sandboxExecutor: commandSandboxExecutor, sandboxStatus, browserRuntime, processManager, lspManager } });
+        value = result.modelResult || {};
+      } catch (error) {
+        if (error?.name === "AbortError" || error?.code === "RUN_PERSISTENCE_FAILED") throw error;
+        value = { error: error.message, exitCode: null };
+      }
+      const success = value.exitCode === 0 && !value.error && !value.timedOut;
+      const detail = formatToolStepDetail("run_command", value, language);
+      steps.push({ name: "run_command", success, detail, command: candidate.command, exitCode: value.exitCode });
+      emit({ type: "tool.completed", callId: toolCall.id, tool: "run_command", ...activity, success, detail });
+      return { ...value, preview: commandOutputPreview(value, 4000) };
+    },
   });
   const runProgressiveSelfCheckSegment = selfCheckCoordinator.runSegment;
   const scheduleProgressiveSelfCheckSegment = selfCheckCoordinator.scheduleSegment;
@@ -1887,6 +1980,12 @@ export async function runHarness({
     if (!records.length) return [];
     const results = [];
     for (const record of records) {
+      if (record.requiredForCompletion === false) {
+        record.collected = true;
+        if (record.status === "running") record.controller.abort();
+        emit({ type: "subagent.optional.skipped", agentId: record.agentId, role: record.role, reason: "Not required for final delivery; no correctness gate was skipped." });
+        continue;
+      }
       const result = await record.promise;
       record.collected = true;
       results.push(result);
@@ -1901,12 +2000,15 @@ export async function runHarness({
 
   const refreshAnchorSnapshot = async ({
     ignoreAbort = false,
+    force = false,
   } = {}) => {
     if (!anchorBaseline || !workspaceRoot) return [];
+    if (!anchorDirty && !force) return [];
     try {
       const nextSnapshot = await captureWorkspaceStateFromRoot(
         workspaceRoot,
-        ignoreAbort ? undefined : signal,
+        ignoreAbort ? AbortSignal.timeout(3000) : signal,
+        { previousSnapshot: anchorLatest || anchorBaseline, forceRead: force && !ignoreAbort },
       );
       const previousSnapshot = anchorLatest || anchorBaseline;
       const changedSinceLast = new Set();
@@ -1931,6 +2033,7 @@ export async function runHarness({
         nextSnapshot,
       );
       anchorLatest = nextSnapshot;
+      anchorDirty = false;
       return buildChanges(changeMap).filter((change) =>
         changedSinceLast.has(change.path),
       );
@@ -1941,8 +2044,26 @@ export async function runHarness({
     }
   };
 
+  const ensureAnchorBaseline = async () => {
+    if (!hasWorkspace || !canWriteWorkspace || anchorBaseline) return;
+    if (!anchorBaselinePromise) anchorBaselinePromise = captureWorkspaceStateFromRoot(workspaceRoot, signal)
+      .then((snapshot) => { anchorBaseline = snapshot; anchorLatest = snapshot; })
+      .catch((error) => {
+        if (error?.name === "AbortError") throw error;
+        anchorCaptureError = error?.message || "Initial snapshot capture failed.";
+      });
+    await anchorBaselinePromise;
+  };
+
+  const executeTrackedTool = async (args) => {
+    const mayWrite = !isReadOnlyNativeTool(args.toolName);
+    if (mayWrite) await ensureAnchorBaseline();
+    try { return await executeAuthorizedTool(args); }
+    finally { if (mayWrite) anchorDirty = true; }
+  };
+
   const finalizeAnchor = async (status) => {
-    await refreshAnchorSnapshot({ ignoreAbort: true });
+    await refreshAnchorSnapshot({ ignoreAbort: status !== "completed", force: true });
     const changes = buildChanges(changeMap);
     const latest = anchorLatest || anchorBaseline;
     return {
@@ -1972,20 +2093,16 @@ export async function runHarness({
   };
 
   try {
-    if (hasWorkspace && canWriteWorkspace) {
-      try {
-        anchorBaseline = await captureWorkspaceStateFromRoot(
-          workspaceRoot,
-          signal,
-        );
-        anchorLatest = anchorBaseline;
-      } catch (error) {
-        if (error?.name === "AbortError") throw error;
-        anchorCaptureError =
-          error?.message || "Initial snapshot capture failed.";
-      }
-    }
     for (let step = 0; ; step += 1) {
+      refreshVerification(selfCheck, changeMap);
+      await saveRuntimeCheckpoint({
+        scopeId: runId, workspaceRoot, phase: "before-model", status: "running", pendingTools: [], round: step + 1, plan,
+        files: buildChanges(changeMap).map((change) => ({ path: change.path, deleted: Boolean(change.afterMissing), sha256: contentHash(change.afterContent) })),
+        versionSignature: verificationVersion(changeMap),
+        verification: { waived: Boolean(selfCheck.verificationWaived), passed: selfCheck.verificationPassed, results: selfCheck.verificationResults.slice(-30) },
+        steps: steps.slice(-30).map(({ name, success, detail }) => ({ name, success, detail })),
+        subagents: [...subagents.values()].map(({ agentId, role, task, status, result }) => ({ agentId, role, task, status, summary: result?.summary })),
+      });
       await turnCoordinator.beginRound({
         signal,
         applyControlBoundary: applyRuntimeControlBoundary,
@@ -2020,11 +2137,9 @@ export async function runHarness({
         relevantMemory: relevantDurableContext,
       });
       const requestConversation = conversation;
-      const { message, usage } = await provider.complete({
-        signal,
-        body: {
+      const completionBody = (requestMessages) => ({
           model: modelId,
-          messages: requestConversation,
+          messages: requestMessages,
           ...(provider.supportsTools && enabledToolDefinitions.length
             ? {
                 tools: enabledToolDefinitions,
@@ -2052,14 +2167,59 @@ export async function runHarness({
                 reasoning_effort: effort === "max" ? "high" : "medium",
               }
             : {}),
-        },
       });
+      let completion;
+      try {
+        completion = await completeWithSteering({
+          provider, control, signal, onEvent: emit,
+          body: completionBody(requestConversation),
+        });
+      } catch (error) {
+        if (
+          supportsImages &&
+          !visionFallbackAttempted &&
+          conversationContainsImages(requestConversation) &&
+          isNativeVisionRejectedError(error)
+        ) {
+          visionFallbackAttempted = true;
+          supportsImages = false;
+          const stripped = stripImagePartsFromMessages(conversation);
+          conversation.splice(0, conversation.length, ...stripped);
+          emit({
+            type: "model.vision-disabled",
+            providerId: providerConfig.id,
+            modelId,
+            reason: error?.message || "native vision rejected",
+          });
+          try {
+            await onNativeVisionRejected?.({
+              providerId: providerConfig.id,
+              modelId,
+              error,
+            });
+          } catch {
+            // Persisting the text-only setting must not block the retry.
+          }
+          completion = await completeWithSteering({
+            provider, control, signal, onEvent: emit,
+            body: completionBody(conversation),
+          });
+        } else {
+          throw error;
+        }
+      }
+      const { message, usage, interrupted: steered } = completion;
       recordProviderUsage(
         tokenAccounting,
         usage,
         requestConversation,
       );
       totalUsage = mergeTokenUsage(totalUsage, usage);
+      if (steered) {
+        if (message.content) conversation.push({ role: "assistant", content: message.content });
+        emit({ type: "response.steered", usage, totalUsage });
+        continue;
+      }
       emit({
         type: "context.usage",
         round: step + 1,
@@ -2073,23 +2233,14 @@ export async function runHarness({
         contextWindowTokens,
       });
 
+      await saveRuntimeCheckpoint({ scopeId: runId, phase: "model-response",
+        assistantSummary: String(message.content || "").slice(0, 6000),
+        pendingTools: (message.tool_calls || []).map((call) => ({ id: call.id, tool: call.function?.name })),
+      });
       const turnDecision = turnCoordinator.observeModelResponse(message);
       if (turnDecision.kind === "final") {
-        const finalBackgroundReviewFeedback =
-          await consumeProgressiveReviewJob({ wait: true });
-        if (finalBackgroundReviewFeedback) {
-          conversation.push({
-            role: "assistant",
-            content:
-              message.content ||
-              (isEnglish
-                ? "The independent work is complete; I am incorporating the background review findings."
-                : "独立工作已完成，正在吸收后台审查结果。"),
-          });
-          conversation.push({
-            role: "user",
-            content: finalBackgroundReviewFeedback,
-          });
+        if (control?.hasSteering?.()) {
+          conversation.push({ role: "assistant", content: message.content || "" });
           continue;
         }
         const outstandingSubagentResults =
@@ -2114,200 +2265,14 @@ export async function runHarness({
           continue;
         }
         const changes = buildChanges(changeMap);
-        const adaptiveSelfCheckRequired =
-          refreshAdaptiveSelfCheckDecision();
-        const progressiveEligible =
-          !selfCheck.legacyFallback &&
-          (selfCheck.requested ||
-            Boolean(plan) ||
-            reviewableChanges(changeMap).length >=
-              PROGRESSIVE_REVIEW_FILE_THRESHOLD ||
-            selfCheck.segments.length > 0);
-        if (
-          changes.length > 0 &&
-          adaptiveSelfCheckRequired &&
-          !selfCheck.completed &&
-          progressiveEligible
-        ) {
-          turnCoordinator.beginReview({ reason: "progressive-self-check" });
-          if (!selfCheck.started) {
-            selfCheck.started = true;
-            selfCheck.mode = "progressive";
-            emit({
-              type: "self_check.started",
-              mode: "progressive",
-              paths: changes.map((change) => change.path),
-              verificationCandidates:
-                selfCheck.verificationCandidates,
-            });
-          }
-          const finalSegment = await runProgressiveSelfCheckSegment({
-            reason: "final-seal",
-            runVerification: true,
-          });
-          const currentSignature = createChangeVersionSignature(
-            reviewableChanges(changeMap),
-          );
-          if (finalSegment?.verdict === "needs_changes") {
-            if (selfCheck.lastBlockedSignature === currentSignature) {
-              selfCheck.repeatedBlockedAttempts += 1;
-            } else {
-              selfCheck.lastBlockedSignature = currentSignature;
-              selfCheck.repeatedBlockedAttempts = 1;
-            }
-            if (selfCheck.repeatedBlockedAttempts < 2) {
-              conversation.push({
-                role: "assistant",
-                content:
-                  message.content ||
-                  (isEnglish
-                    ? "The implementation reached its staged review checkpoint."
-                    : "当前实现已到达分段自检检查点。"),
-              });
-              conversation.push({
-                role: "user",
-                content: [
-                  "AporiaX staged Review subagent blocked the final seal.",
-                  "Fix the findings below, then continue the task. Do not merely restate them:",
-                  JSON.stringify(finalSegment.findings),
-                ].join("\n"),
-              });
-              continue;
-            }
-          }
-          const seal = !finalSegment || finalSegment.verdict === "pass"
-            ? await sealProgressiveSelfCheck()
-            : null;
-          if (!seal) {
-            selfCheck.mode = "legacy";
-            selfCheck.legacyFallback = true;
-            selfCheck.completed = false;
-            selfCheck.report = null;
-            selfCheck.seal = null;
-            selfCheck.reviewedVersions.clear();
-            if (!selfCheck.verificationCandidates.length) {
-              selfCheck.verificationCandidates =
-                !commandToolAvailable
-                  ? []
-                  : await discoverVerificationCommands(
-                      workspaceRoot,
-                      changeMap,
-                    );
-            }
-            emit({
-              type: "self_check.fallback",
-              reason:
-                finalSegment?.verdict || "incomplete-evidence",
-              paths: changes.map((change) => change.path),
-            });
-            conversation.push({
-              role: "assistant",
-              content:
-                message.content ||
-                (isEnglish
-                  ? "The staged review could not produce a complete evidence seal."
-                  : "分段自检未能生成完整的证据封印。"),
-            });
-            conversation.push({
-              role: "user",
-              content: [
-                createSelfCheckPrompt(
-                  changeMap,
-                  selfCheck.verificationCandidates,
-                  language,
-                ),
-                finalSegment?.findings?.length
-                  ? `Staged review findings:\n${JSON.stringify(finalSegment.findings)}`
-                  : "",
-              ]
-                .filter(Boolean)
-                .join("\n\n"),
-            });
-            continue;
-          }
-        } else if (
-          changes.length > 0 &&
-          adaptiveSelfCheckRequired &&
-          !selfCheck.started
-        ) {
-          selfCheck.started = true;
-          selfCheck.mode = "legacy";
-          selfCheck.completed = false;
-          selfCheck.report = null;
-          selfCheck.verificationCandidates =
-            !commandToolAvailable
-              ? []
-              : await discoverVerificationCommands(
-                  workspaceRoot,
-                  changeMap,
-                );
-          emit({
-            type: "self_check.started",
-            mode: "legacy",
-            paths: changes.map((change) => change.path),
-            verificationCandidates:
-              selfCheck.verificationCandidates,
-          });
-          conversation.push({
-            role: "assistant",
-            content:
-              message.content ||
-              (isEnglish
-                ? "The initial implementation is complete."
-                : "初步实现已经完成。"),
-          });
-          conversation.push({
-            role: "user",
-            content: createSelfCheckPrompt(
-              changeMap,
-              selfCheck.verificationCandidates,
-              language,
-            ),
-          });
-          continue;
-        }
-
-        if (selfCheck.started && !selfCheck.completed) {
-          const pendingPaths = getPendingSelfCheckPaths(
-            changeMap,
-            selfCheck.reviewedVersions,
-          );
-          conversation.push({
-            role: "assistant",
-            content:
-              message.content ||
-              (isEnglish
-                ? "The self-check is not complete yet."
-                : "自检尚未完成。"),
-          });
-          conversation.push({
-            role: "user",
-            content: isEnglish
-              ? [
-                  "The mandatory self-check is incomplete, so Harness blocked the final answer.",
-                  pendingPaths.length
-                    ? `Re-read these files after their latest write:\n${pendingPaths
-                        .map((path) => `- ${path}`)
-                        .join("\n")}`
-                    : "All changed files were read, but complete_self_check has not succeeded.",
-                  "Continue the self-check and call complete_self_check before finishing.",
-                ].join("\n")
-              : [
-                  "强制自检尚未完成，当前最终答复被 Harness 拦截。",
-                  pendingPaths.length
-                    ? `仍需在最新写入后重新读取：\n${pendingPaths
-                        .map((path) => `- ${path}`)
-                        .join("\n")}`
-                    : "所有改动文件已读取，但还没有成功调用 complete_self_check。",
-                  "继续自检并调用 complete_self_check，不要直接结束任务。",
-                ].join("\n"),
-          });
-          continue;
-        }
-
+        // Workflow evidence informs delivery; it is not an automatic veto.
         const finalizedAnchor = await finalizeAnchor("completed");
+        refreshVerification(selfCheck, changeMap);
+        const deliveryAssessment = assessDelivery(selfCheck, buildChanges(changeMap), verificationVersion(changeMap));
+        selfCheck.delivery = deliveryAssessment;
+        if (!deliveryAssessment.passed || deliveryAssessment.reviewPending || deliveryAssessment.findings.length) selfCheck.seal = null;
         for (const verification of selfCheck.verificationResults) {
-          if (!verification.passed) continue;
+          if (!selfCheck.verificationPassed || !verification.passed || verification.versionSignature !== verificationVersion(changeMap)) continue;
           stageUnderstandingCandidate(
             {
               category: "verification",
@@ -2321,12 +2286,14 @@ export async function runHarness({
             },
           );
         }
-        const finalContent =
+        const baseFinalContent =
           typeof message.content === "string" && message.content.trim()
             ? sanitizeFinalAnswer(message.content)
             : isEnglish
               ? "The task completed, but the model returned no text."
               : "任务已完成，但模型没有返回文本结果。";
+        const notice = deliveryNotice(deliveryAssessment, changes.length > 0, language);
+        const finalContent = notice ? `${baseFinalContent}\n\n${notice}` : baseFinalContent;
         const curationInput = {
           finalAnswer: finalContent,
           changes: finalizedAnchor.changes,
@@ -2372,14 +2339,13 @@ export async function runHarness({
                 source: "legacy-memory-import",
               }
             : null);
+        if (control?.hasSteering?.()) {
+          conversation.push({ role: "assistant", content: message.content || "" });
+          continue;
+        }
         const completedResult = {
           status: "completed",
-          content:
-            typeof message.content === "string" && message.content.trim()
-              ? sanitizeFinalAnswer(message.content)
-              : isEnglish
-                ? "The task completed, but the model returned no text."
-                : "任务已完成，但模型没有返回文本结果。",
+          content: finalContent,
           steps,
           changes: finalizedAnchor.changes,
           anchor: finalizedAnchor.anchor,
@@ -2412,7 +2378,6 @@ export async function runHarness({
             background: record.background,
           })),
         };
-        completedResult.content = finalContent;
         turnCoordinator.complete({
           changedFiles: completedResult.changes.length,
           toolSteps: steps.length,
@@ -2463,6 +2428,7 @@ export async function runHarness({
           async (toolCall) => {
             throwIfAborted(signal);
             await control?.waitIfPaused?.(signal);
+            if (control?.hasSteering?.()) return { toolCall, success: true, detail: "Skipped for new guidance", result: { modelResult: { skipped: true, reason: "New user guidance pending; replan before executing." } } };
             const toolName = toolCall.function.name;
             const phase = selfCheck.started ? "self-check" : "work";
             const capability = capabilityRegistry?.describeTool(toolName, phase) || null;
@@ -2490,6 +2456,8 @@ export async function runHarness({
             let result;
             let success = true;
             try {
+              if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
+              if (retryAfterScopedInstructions.has(toolCall.id)) throw new Error("Review newly loaded scoped instructions and retry.");
               if (toolName === "delegate_subagent") {
                 result = {
                   modelResult: await startSubagent(
@@ -2507,7 +2475,7 @@ export async function runHarness({
                   sandboxStatus,
                   signal,
                   parseArguments: parseToolArguments,
-                  executeAuthorized: executeAuthorizedTool,
+                  executeAuthorized: executeTrackedTool,
                   executeContext: {
                     workspaceRoot,
                     sandboxExecutor: commandSandboxExecutor,
@@ -2545,19 +2513,8 @@ export async function runHarness({
         for (const outcome of parallelResults) {
           const { toolCall, result, success, detail } = outcome;
           const modelResult = result.modelResult;
-          if (
-            selfCheck.started &&
-            changeMap.has(modelResult?.path) &&
-            ((changeMap.get(modelResult.path).binary &&
-              toolCall.function.name === "inspect_office_file") ||
-              (!changeMap.get(modelResult.path).binary &&
-                toolCall.function.name === "read_file"))
-          ) {
-            selfCheck.reviewedVersions.set(
-              modelResult.path,
-              changeMap.get(modelResult.path).afterContent,
-            );
-          }
+          observeToolProgress(toolCall, modelResult);
+          recordInspectedChange(selfCheck, changeMap, toolCall.function.name, modelResult);
           steps.push({
             name: toolCall.function.name,
             planStepId:
@@ -2594,9 +2551,14 @@ export async function runHarness({
       for (const toolCall of message.tool_calls) {
         throwIfAborted(signal);
         await control?.waitIfPaused?.(signal);
+        if (control?.hasSteering?.()) {
+          conversation.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ skipped: true, reason: "New user guidance pending; replan before executing." }) });
+          continue;
+        }
         let result;
         let success = true;
         let matchedVerificationCandidate = null;
+        const toolVerificationVersion = verificationVersion(changeMap);
         const phase = selfCheck.started ? "self-check" : "work";
         const capability = capabilityRegistry?.describeTool(toolCall.function.name, phase) || null;
         const activity = describeToolActivity(toolCall);
@@ -2619,18 +2581,22 @@ export async function runHarness({
           ...activity,
         });
         try {
+          if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
           if (retryAfterScopedInstructions.has(toolCall.id)) {
             throw new Error(
               "Scoped project instructions were loaded for this path. Review them and retry the file mutation with compliant content.",
             );
           }
           if (mcpRuntime.hasTool(toolCall.function.name)) {
+            // Unknown MCP tools can write/download into the workspace too.
+            await ensureAnchorBaseline();
+            anchorDirty = true;
             result = {
-              modelResult: await mcpRuntime.call(
+              modelResult: await executeDurableTool(toolCall.function.name, parseToolArguments(toolCall), () => mcpRuntime.call(
                 toolCall.function.name,
                 parseToolArguments(toolCall),
                 { requestApproval },
-              ),
+              ), requestApproval),
             };
           } else if (toolCall.function.name === "delegate_subagent") {
             result = {
@@ -2664,32 +2630,35 @@ export async function runHarness({
           } else if (toolCall.function.name === "request_self_check") {
             const request = parseToolArguments(toolCall);
             const reason = String(request.reason || "").trim().slice(0, 1_000);
-            if (!reason) {
-              throw new Error("request_self_check requires a concrete reason.");
+            if (!reason) throw new Error("request_self_check requires a concrete relevance reason.");
+            const action = request.action || "run";
+            if (!["suggest", "run", "skip"].includes(action)) throw new Error("Unknown self-check action.");
+            if (action === "suggest") {
+              result = { modelResult: { candidates: await discoverVerificationCommands(workspaceRoot, changeMap),
+                note: "Suggestions only. Choose relevant commands explicitly; none have run." } };
+            } else if (action === "skip") {
+              selfCheck.verificationRequired = [];
+              selfCheck.required = false;
+              selfCheck.reviewRequested = false;
+              result = { modelResult: { skipped: true, reason, note: "Earlier execution evidence remains. Skipping is not a pass." } };
+            } else {
+              const selected = normalizeVerificationSelection(request.verification || []);
+              selfCheck.started = true;
+              selfCheck.requested = true;
+              selfCheck.reviewRequested = request.review !== false;
+              selfCheck.required = selfCheck.reviewRequested;
+              selfCheck.requestReason = reason;
+              selfCheck.mode = "agent-led";
+              selfCheck.verificationRequired = selfCheck.verificationWaived ? [] : selected;
+              selfCheck.verificationCandidates = selfCheck.verificationRequired;
+              emit({ type: "self_check.requested", reason, verification: selfCheck.verificationRequired });
+              await runProgressiveSelfCheckSegment({ reason,
+                review: selfCheck.reviewRequested, runVerification: selfCheck.verificationRequired.length > 0 });
+              selfCheck.delivery = assessDelivery(selfCheck, buildChanges(changeMap), verificationVersion(changeMap));
+              selfCheck.completed = !selfCheck.delivery.reviewPending;
+              result = { modelResult: { completed: true, ...buildSelfCheckResult(selfCheck, changeMap),
+                note: "Checks are evidence, not an automatic delivery veto. Address or disclose findings; unrun checks are not passed." } };
             }
-            selfCheck.requested = true;
-            selfCheck.required = true;
-            selfCheck.requestReason = reason;
-            selfCheck.focus = Array.isArray(request.focus)
-              ? request.focus.map(String).filter(Boolean).slice(0, 20)
-              : [];
-            selfCheck.decisionSource = "model";
-            selfCheck.decisionReason = reason;
-            emit({
-              type: "self_check.requested",
-              reason,
-              focus: selfCheck.focus,
-            });
-            result = {
-              modelResult: {
-                requested: true,
-                mode: "adaptive",
-                reason,
-                focus: selfCheck.focus,
-                next:
-                  "Harness will schedule independent review at the next safe checkpoint.",
-              },
-            };
           } else if (toolCall.function.name === "update_plan") {
             const previousPlan = plan;
             const nextPlan = normalizeExecutionPlan(
@@ -2714,166 +2683,30 @@ export async function runHarness({
               type: "plan.updated",
               plan,
             });
-            if (
-              refreshAdaptiveSelfCheckDecision() &&
-              newlyCompletedSteps.length &&
-              reviewableChanges(changeMap).some(
-                (change) =>
-                  selfCheck.reviewedVersions.get(change.path) !==
-                  change.afterContent,
-              )
-            ) {
-              const completedStep = newlyCompletedSteps.at(-1);
-              const verificationStepPattern =
-                /test|verify|build|lint|check|测试|验证|构建|检查/i;
-              const hasLaterVerificationStep = plan.steps.some(
-                (step) =>
-                  step.id !== completedStep.id &&
-                  step.status !== "completed" &&
-                  verificationStepPattern.test(
-                    `${step.title} ${step.detail || ""}`,
-                  ),
-              );
-              const stagedReview =
-                scheduleProgressiveSelfCheckSegment({
-                  reason: `plan-step:${completedStep.title}`,
-                  planStepId: completedStep.id,
-                  runVerification:
-                    !hasLaterVerificationStep &&
-                    verificationStepPattern.test(
-                      `${completedStep.title} ${completedStep.detail || ""}`,
-                    ),
-                });
-              result.modelResult.stagedReview = stagedReview
-                ? {
-                    segmentId: stagedReview.segmentId,
-                    status: stagedReview.status,
-                    paths: stagedReview.paths,
-                  }
-                : null;
-            }
           } else if (toolCall.function.name === "complete_self_check") {
-            if (!selfCheck.started) {
-              const changes = buildChanges(changeMap);
-              if (!changes.length) {
-                throw new Error(
-                  "Mandatory self-check has not started yet because no changed files exist.",
-                );
-              }
-              selfCheck.required = true;
-              selfCheck.requested = true;
-              selfCheck.requestReason =
-                "The model explicitly entered the self-check phase.";
-              selfCheck.decisionSource = "model";
-              selfCheck.decisionReason = selfCheck.requestReason;
-              selfCheck.started = true;
-              selfCheck.completed = false;
-              selfCheck.report = null;
-              selfCheck.verificationCandidates =
-                getToolPermission(permissionPolicy, "run_command") === "deny"
-                  ? []
-                  : await discoverVerificationCommands(
-                      workspaceRoot,
-                      changeMap,
-                    );
-              emit({
-                type: "self_check.started",
-                paths: changes.map((change) => change.path),
-                verificationCandidates:
-                  selfCheck.verificationCandidates,
-              });
-            }
-            const pendingPaths = getPendingSelfCheckPaths(
-              changeMap,
-              selfCheck.reviewedVersions,
-            );
-            if (pendingPaths.length > 0) {
-              throw new Error(
-                `Re-read these changed files after their latest write before completing self-check: ${pendingPaths.join(", ")}`,
-              );
-            }
-            if (
-              selfCheck.verificationCandidates.length > 0 &&
-              !selfCheck.verificationAttempted
-            ) {
-              throw new Error(
-                "Run at least one detected project verification command before completing self-check.",
-              );
-            }
-            const report = normalizeSelfCheckReport(
-              parseToolArguments(toolCall),
-            );
-            const includesUnrenderedOfficeArtifact = buildChanges(
-              changeMap,
-            ).some(
-              (change) =>
-                change.binary &&
-                isOfficePath(change.path) &&
-                change.artifact?.visualQa !== "rendered",
-            );
-            if (
-              includesUnrenderedOfficeArtifact &&
-              !report.remainingRisks.some((risk) =>
-                /visual|render|layout|版式|渲染|视觉/i.test(risk),
-              )
-            ) {
-              report.remainingRisks.push(
-                "Office 文件已通过结构检查，最终视觉版式仍需在对应 Office 应用中确认。",
-              );
-            }
-            if (
-              (!selfCheck.verificationCandidates.length ||
-                (selfCheck.verificationAttempted &&
-                  !selfCheck.verificationPassed)) &&
-              report.remainingRisks.length === 0
-            ) {
-              report.remainingRisks.push(
-                selfCheck.verificationCandidates.length
-                  ? "项目验证命令未通过，仍需人工确认运行结果。"
-                  : "未发现可执行的项目验证脚本，已完成静态复核。",
-              );
-            }
-            selfCheck.completed = true;
-            selfCheck.mode = "legacy";
-            selfCheck.seal = {
-              id: `legacy-seal-${Date.now()}`,
-              createdAt: new Date().toISOString(),
-              versionSignature: createChangeVersionSignature(
-                reviewableChanges(changeMap),
-              ),
-              reviewedFiles: reviewableChanges(changeMap).map(
-                (change) => change.path,
-              ),
-              segmentCount: selfCheck.segments.length,
-              verificationAttempted: selfCheck.verificationAttempted,
-              verificationPassed: selfCheck.verificationPassed,
-              fallback: true,
-            };
+            const report = normalizeSelfCheckReport(parseToolArguments(toolCall));
+            refreshVerification(selfCheck, changeMap);
+            selfCheck.delivery = assessDelivery(selfCheck, buildChanges(changeMap), verificationVersion(changeMap));
+            const pendingPaths = getPendingSelfCheckPaths(changeMap, selfCheck.reviewedVersions);
+            if (pendingPaths.length) report.remainingRisks.push("缺少当前版本读取证据：" + pendingPaths.join(", "));
+            const notice = deliveryNotice(selfCheck.delivery, buildChanges(changeMap).length > 0, language);
+            if (notice) report.remainingRisks.push(notice);
+            if (buildChanges(changeMap).some(change => change.binary && isOfficePath(change.path) && change.artifact?.visualQa !== "rendered"))
+              report.remainingRisks.push("Office 文件的最终视觉版式仍需渲染确认。");
             selfCheck.report = report;
-            result = {
-              modelResult: {
-                completed: true,
-                reviewedFiles: buildChanges(changeMap).map(
-                  (change) => change.path,
-                ),
-                ...report,
-              },
-            };
-            emit({
-              type: "self_check.completed",
-              report: buildSelfCheckResult(selfCheck, changeMap),
-            });
+            selfCheck.completed = pendingPaths.length === 0;
+            selfCheck.mode = "agent-led";
+            selfCheck.seal = null; // A model-authored report cannot mint execution proof.
+            result = { modelResult: { reportAccepted: true, ...buildSelfCheckResult(selfCheck, changeMap) } };
+            emit({ type: "self_check.completed", report: buildSelfCheckResult(selfCheck, changeMap) });
           } else {
             const parsedToolInput =
               toolCall.function.name === "run_command"
                 ? parseToolArguments(toolCall)
                 : null;
-            matchedVerificationCandidate = selfCheck.started
-              ? findVerificationCandidate(
-                  selfCheck.verificationCandidates,
-                  parsedToolInput,
-                )
-              : null;
+            matchedVerificationCandidate = parsedToolInput?.verification === true
+              ? parsedToolInput
+              : findVerificationCandidate(selfCheck.verificationRequired || [], parsedToolInput);
             if (matchedVerificationCandidate) {
               selfCheck.verificationAttempted = true;
             }
@@ -2886,7 +2719,7 @@ export async function runHarness({
               sandboxStatus,
               signal,
               parseArguments: parseToolArguments,
-              executeAuthorized: executeAuthorizedTool,
+              executeAuthorized: executeTrackedTool,
               executeContext: {
                 workspaceRoot,
                 sandboxExecutor: commandSandboxExecutor,
@@ -2948,27 +2781,16 @@ export async function runHarness({
                 }
               }
             }
-            if (
-              selfCheck.started &&
-              changeMap.has(result.modelResult?.path) &&
-              ((changeMap.get(result.modelResult.path).binary &&
-                toolCall.function.name === "inspect_office_file") ||
-                (!changeMap.get(result.modelResult.path).binary &&
-                  toolCall.function.name === "read_file"))
-            ) {
-              selfCheck.reviewedVersions.set(
-                result.modelResult.path,
-                changeMap.get(result.modelResult.path).afterContent,
-              );
-            }
+            recordInspectedChange(selfCheck, changeMap, toolCall.function.name, result.modelResult);
             if (
               matchedVerificationCandidate &&
               toolCall.function.name === "run_command"
             ) {
               const passed = result.modelResult?.exitCode === 0;
-              selfCheck.verificationPassed =
-                selfCheck.verificationPassed || passed;
-              selfCheck.verificationResults.push({
+              recordVerification(selfCheck, changeMap, {
+                output: commandOutputPreview(result.modelResult),
+                error: result.modelResult?.error || null,
+                timedOut: Boolean(result.modelResult?.timedOut),
                 command:
                   result.modelResult?.command ||
                   parsedToolInput?.command ||
@@ -2982,14 +2804,13 @@ export async function runHarness({
                   typeof result.modelResult?.exitCode === "number"
                     ? result.modelResult.exitCode
                     : null,
-              });
+              }, toolVerificationVersion);
             }
           }
         } catch (error) {
-          if (error?.name === "AbortError") throw error;
+          if (error?.name === "AbortError" || ["VERIFICATION_BLOCKED", "RUN_PERSISTENCE_FAILED"].includes(error?.code)) throw error;
           success = false;
           if (
-            selfCheck.started &&
             toolCall.function.name === "run_command"
           ) {
             let failedCommand = "";
@@ -2998,23 +2819,19 @@ export async function runHarness({
               const failedInput = parseToolArguments(toolCall);
               failedCommand = failedInput.command || "";
               failedCwd = failedInput.cwd || ".";
-              matchedVerificationCandidate =
-                findVerificationCandidate(
-                  selfCheck.verificationCandidates,
-                  failedInput,
-                );
+              matchedVerificationCandidate = failedInput.verification === true ? failedInput
+                : findVerificationCandidate(selfCheck.verificationRequired || [], failedInput);
             } catch {
               // Invalid tool input is already surfaced to the model.
             }
             if (matchedVerificationCandidate) {
-              selfCheck.verificationAttempted = true;
-              selfCheck.verificationResults.push({
+              recordVerification(selfCheck, changeMap, {
                 command: failedCommand,
                 cwd: failedCwd,
                 passed: false,
                 exitCode: null,
                 error: error.message,
-              });
+              }, toolVerificationVersion);
             }
           }
           result = { modelResult: { error: error.message } };
@@ -3023,6 +2840,7 @@ export async function runHarness({
         if (result?.modelResult?.timedOut) success = false;
 
         const modelResult = result.modelResult;
+        observeToolProgress(toolCall, modelResult);
         const stepDetail = formatToolStepDetail(
           toolCall.function.name,
           modelResult,
@@ -3072,27 +2890,6 @@ export async function runHarness({
           tool_call_id: toolCall.id,
           content: JSON.stringify(modelResult),
         });
-      }
-      if (!selfCheck.started && refreshAdaptiveSelfCheckDecision()) {
-        const pendingStagePaths = reviewableChanges(changeMap)
-          .filter(
-            (change) =>
-              selfCheck.reviewedVersions.get(change.path) !==
-              change.afterContent,
-          )
-          .map((change) => change.path);
-        if (
-          pendingStagePaths.length >=
-          PROGRESSIVE_REVIEW_FILE_THRESHOLD
-        ) {
-          scheduleProgressiveSelfCheckSegment({
-            reason: "change-batch",
-            planStepId:
-              plan?.steps.find((step) => step.status === "in_progress")
-                ?.id || null,
-            runVerification: false,
-          });
-        }
       }
     }
 
@@ -3146,12 +2943,15 @@ export async function runHarness({
       interruptedResult.witness = witness.snapshot();
       return interruptedResult;
     }
-    const finalizedAnchor = await finalizeAnchor("failed");
+    const contextBlocked = error?.code === "CONTEXT_BUDGET_EXCEEDED";
+    const verificationBlocked = contextBlocked || error?.code === "VERIFICATION_UNAVAILABLE";
+    const finalizedAnchor = await finalizeAnchor(verificationBlocked ? "blocked" : "failed");
     const failedResult = {
-      status: "failed",
-      error: true,
+      status: verificationBlocked ? "blocked" : "failed",
+      error: !verificationBlocked,
+      ...(contextBlocked ? { contextBudget: error.budget } : {}),
       content:
-        error?.message ||
+        (contextBlocked ? (isEnglish ? "Context budget exceeded. Reduce attachments or narrow the request, or choose a larger context window. Saved work is preserved." : "当前请求超过上下文预算。请减少附件、缩小请求范围，或选择更大的上下文窗口；已完成的工作仍保留。") : error?.message) ||
         (isEnglish ? "Harness run failed." : "Harness 运行失败。"),
       steps,
       changes: finalizedAnchor.changes,

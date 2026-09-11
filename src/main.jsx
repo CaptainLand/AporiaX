@@ -1,4 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { taskApprovalMode } from "./state/approval-mode.js";
+import { taskExecutionMode } from "./state/execution-mode.js";
+import { providerModelsById, buildProviderModels } from "./state/provider-models.js";
+import { ModelVisionSettings } from "./settings/ModelVisionSettings.jsx";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -63,7 +67,8 @@ import {
   summarizeRoutePrompt,
   updateRunAssistant,
 } from "./p0-model";
-import WelcomeParticleOcean from "./WelcomeParticleOcean";
+import WelcomeOverlay from "./welcome/WelcomeOverlay.jsx";
+import { FORCE_WELCOME_EACH_LAUNCH } from "./welcome/welcome-flags.js";
 import {
   I18nProvider,
   LanguageSwitch,
@@ -77,6 +82,7 @@ import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
+import { buildRemoteTaskSyncPayload } from "./account/remote-sync.js";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
   getAvailableModels,
@@ -97,12 +103,39 @@ import "./styles.css";
 
 const STORAGE_KEY = "aporiax.tasks.v1";
 const SIDEBAR_COLLAPSED_KEY = "aporiax.sidebar-collapsed.v1";
+const SESSION_UI_KEY = "aporiax.session-ui.v1";
 const SETTINGS_PANEL_WIDTH_KEY = "aporiax.settings-panel-width.v1";
 const FILES_PANEL_WIDTH_KEY = "aporiax.files-panel-width.v1";
-const THEME_STORAGE_KEY = "aporiax.theme.v1";
+const THEME_STORAGE_KEY = "aporiax.theme.v2";
+const SESSION_VIEWS = new Set([
+  "dialogue",
+  "route",
+  "workspace",
+  "understanding",
+]);
 const DEFAULT_SETTINGS_PANEL_WIDTH = 320;
 const DEFAULT_FILES_PANEL_WIDTH = 520;
-const APP_ICON_URL = `${import.meta.env.BASE_URL}aporiax-icon.png`;
+const APP_ICON_LIGHT_URL = `${import.meta.env.BASE_URL}aporiax-icon.png`;
+const APP_ICON_DARK_URL = `${import.meta.env.BASE_URL}aporiax-icon-dark.png`;
+
+function AppGlyph() {
+  return (
+    <>
+      <img
+        className="theme-icon-light"
+        src={APP_ICON_LIGHT_URL}
+        alt=""
+        aria-hidden="true"
+      />
+      <img
+        className="theme-icon-dark"
+        src={APP_ICON_DARK_URL}
+        alt=""
+        aria-hidden="true"
+      />
+    </>
+  );
+}
 
 function mergeRecoverableRuns(tasks, records, tr) {
   if (!Array.isArray(records) || records.length === 0) return tasks;
@@ -182,15 +215,72 @@ function migrateLegacyLocalStorage() {
 migrateLegacyLocalStorage();
 
 function readSavedTheme() {
-  return localStorage.getItem(THEME_STORAGE_KEY) === "light"
-    ? "light"
-    : "dark";
+  return localStorage.getItem(THEME_STORAGE_KEY) === "dark"
+    ? "dark"
+    : "light";
 }
 
 function readPanelWidth(storageKey, fallback, minimum, maximum) {
   const saved = Number(localStorage.getItem(storageKey));
   if (!Number.isFinite(saved)) return fallback;
   return Math.min(maximum, Math.max(minimum, saved));
+}
+
+function readSessionUi() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SESSION_UI_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      welcomeDismissed: parsed.welcomeDismissed === true,
+      taskId: typeof parsed.taskId === "string" ? parsed.taskId : "",
+      view: SESSION_VIEWS.has(parsed.view) ? parsed.view : "dialogue",
+      workspaceFocusPath:
+        typeof parsed.workspaceFocusPath === "string"
+          ? parsed.workspaceFocusPath
+          : "",
+      scrollTop: Math.max(0, Number(parsed.scrollTop) || 0),
+      stickToBottom: parsed.stickToBottom === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionUi(patch) {
+  if (!patch || typeof patch !== "object") return;
+  try {
+    const current = readSessionUi() || {
+      welcomeDismissed: false,
+      taskId: "",
+      view: "dialogue",
+      workspaceFocusPath: "",
+      scrollTop: 0,
+      stickToBottom: true,
+    };
+    localStorage.setItem(
+      SESSION_UI_KEY,
+      JSON.stringify({ ...current, ...patch }),
+    );
+  } catch {
+    // Session restoration is best-effort.
+  }
+}
+
+function chooseRestoredTaskId(tasks, preferredId) {
+  const records = Array.isArray(tasks) ? tasks : [];
+  if (preferredId && records.some((task) => task.id === preferredId)) {
+    return preferredId;
+  }
+  return records[0]?.id || null;
+}
+
+function threadScrollSnapshot(body) {
+  if (!body) return { scrollTop: 0, stickToBottom: true };
+  return {
+    scrollTop: body.scrollTop,
+    stickToBottom:
+      body.scrollHeight - body.clientHeight - body.scrollTop < 72,
+  };
 }
 
 function readSavedTasks() {
@@ -283,45 +373,12 @@ function AppTitlebar({ onOpenSettings }) {
         title={tr("打开设置", "Open settings")}
       >
         <span className="brand-mark">
-          <img src={APP_ICON_URL} alt="" aria-hidden="true" />
+          <AppGlyph />
         </span>
         <span>AporiaX</span>
       </button>
       <div className="titlebar-drag" />
     </header>
-  );
-}
-
-function WelcomeOverlay({ onContinue }) {
-  return (
-    <div className="welcome-backdrop">
-      <WelcomeParticleOcean />
-      <section
-        className="welcome-card"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="welcome-title"
-        aria-describedby="welcome-subtitle"
-      >
-        <h1 id="welcome-title">
-          <span>Every problem begins</span>
-          <span>
-            with an <em>aporia.</em>
-          </span>
-        </h1>
-        <p id="welcome-subtitle">每个答案，都始于一个尚未解开的疑问。</p>
-        <button
-          className="welcome-enter"
-          type="button"
-          aria-label="Enter AporiaX"
-          onClick={onContinue}
-        >
-          Enter
-          <ArrowRight size={16} />
-        </button>
-      </section>
-      <LanguageSwitch className="welcome-language-switch" />
-    </div>
   );
 }
 
@@ -839,7 +896,7 @@ function NewTaskModal({
           </section>
 
           <section className="form-section configuration-card">
-            <div className="config-row">
+            <div className="config-row approval-mode-config">
               <div className="config-copy">
                 <div className="config-title">
                   <ShieldCheck size={16} />
@@ -847,20 +904,20 @@ function NewTaskModal({
                 </div>
                 <p>
                   {tr(
-                    "命令默认在本地临时工作区自动执行；Docker 可选，用于加强系统级隔离。",
-                    "Commands run automatically in a temporary local workspace. Docker is optional for stronger system isolation.",
+                    "默认全自动，无需首次批准。命令、文件读取、网络及发布操作使用本机权限；越界/不明删除仍询问。脚本和 MCP 的间接行为无法保证拦截。",
+                    "Full auto by default, without first-use approval. Commands, file reads, network and publishing use host authority. External/ambiguous deletion still asks; indirect script/MCP effects cannot be guaranteed blocked.",
                   )}
                 </p>
               </div>
-              <Switch
-                checked={config.approvalMode !== "manual"}
-                label={tr("命令自动执行", "Automatic command execution")}
-                onChange={(enabled) =>
-                  setConfig((current) => ({
-                    ...current,
-                    approvalMode: enabled ? "sandbox-auto" : "manual",
-                  }))
-                }
+              <SegmentedControl
+                value={taskApprovalMode(config.approvalMode)}
+                ariaLabel={tr("审批模式", "Approval mode")}
+                options={[
+                  { value: "full-auto", label: tr("全自动", "Full auto") },
+                  { value: "smart-auto", label: tr("智能", "Smart") },
+                  { value: "manual", label: tr("手动", "Manual") },
+                ]}
+                onChange={(approvalMode) => setConfig((current) => ({ ...current, approvalMode }))}
               />
             </div>
           </section>
@@ -1594,10 +1651,18 @@ function TaskWorkspace({
   onDeleteTask,
   theme,
   onToggleTheme,
+  restoredSession = null,
+  onPersistSession,
+  storageReady = true,
 }) {
   const { tr } = useI18n();
-  const [activeView, setActiveView] = useState("dialogue");
-  const [workspaceFocusPath, setWorkspaceFocusPath] = useState("");
+  const restoreForTask = restoredSession?.taskId === task.id;
+  const [activeView, setActiveView] = useState(() =>
+    restoreForTask ? restoredSession.view : "dialogue",
+  );
+  const [workspaceFocusPath, setWorkspaceFocusPath] = useState(() =>
+    restoreForTask ? restoredSession.workspaceFocusPath || "" : "",
+  );
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -1611,8 +1676,21 @@ function TaskWorkspace({
   );
   const moreMenuRef = useRef(null);
   const threadBodyRef = useRef(null);
-  const viewScrollMemoryRef = useRef(new Map());
-  const dialogueFollowRef = useRef(true);
+  const viewScrollMemoryRef = useRef((() => {
+    const memory = new Map();
+    if (restoreForTask) {
+      memory.set(`${task.id}:${restoredSession.view}`, {
+        top: restoredSession.scrollTop,
+        stickToBottom: restoredSession.stickToBottom,
+      });
+    }
+    return memory;
+  })());
+  const dialogueFollowRef = useRef(
+    restoreForTask ? restoredSession.stickToBottom : true,
+  );
+  const restoreOnceRef = useRef(true);
+  const persistTimerRef = useRef(null);
   const model = getModel(
     providers,
     task.providerId,
@@ -1629,12 +1707,61 @@ function TaskWorkspace({
       : 0;
 
   useEffect(() => {
-    setActiveView("dialogue");
-    setWorkspaceFocusPath("");
     setMoreMenuOpen(false);
     setRenameOpen(false);
     setDeleteOpen(false);
-  }, [task.id]);
+    if (restoreOnceRef.current && restoredSession?.taskId === task.id) {
+      restoreOnceRef.current = false;
+      setActiveView(restoredSession.view || "dialogue");
+      setWorkspaceFocusPath(restoredSession.workspaceFocusPath || "");
+      return;
+    }
+    if (
+      restoreOnceRef.current &&
+      restoredSession?.taskId &&
+      restoredSession.taskId !== task.id &&
+      !storageReady
+    ) {
+      return;
+    }
+    restoreOnceRef.current = false;
+    setActiveView("dialogue");
+    setWorkspaceFocusPath("");
+  }, [task.id, storageReady]);
+
+  const flushSession = () => {
+    if (!onPersistSession) return;
+    const body = threadBodyRef.current;
+    onPersistSession({
+      taskId: task.id,
+      view: activeView,
+      workspaceFocusPath,
+      ...(body ? threadScrollSnapshot(body) : {}),
+    });
+  };
+
+  const scheduleSessionFlush = () => {
+    if (!onPersistSession) return;
+    window.clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = window.setTimeout(flushSession, 200);
+  };
+
+  useEffect(() => {
+    const handleHide = () => flushSession();
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") handleHide();
+    };
+    window.addEventListener("pagehide", handleHide);
+    window.addEventListener("beforeunload", handleHide);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearTimeout(persistTimerRef.current);
+      window.removeEventListener("pagehide", handleHide);
+      window.removeEventListener("beforeunload", handleHide);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      handleHide();
+    };
+  }, [task.id, activeView, workspaceFocusPath]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1646,22 +1773,24 @@ function TaskWorkspace({
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       const body = threadBodyRef.current;
-      if (!body) return;
-      const memory = viewScrollMemoryRef.current.get(
-        `${task.id}:${activeView}`,
-      );
-      if (!memory) {
-        body.scrollTop =
-          activeView === "dialogue" ? body.scrollHeight : 0;
-        if (activeView === "dialogue") dialogueFollowRef.current = true;
-        return;
+      if (body) {
+        const memory = viewScrollMemoryRef.current.get(
+          `${task.id}:${activeView}`,
+        );
+        if (!memory) {
+          body.scrollTop =
+            activeView === "dialogue" ? body.scrollHeight : 0;
+          if (activeView === "dialogue") dialogueFollowRef.current = true;
+        } else {
+          body.scrollTop = memory.stickToBottom
+            ? body.scrollHeight
+            : Math.min(memory.top, body.scrollHeight);
+          if (activeView === "dialogue") {
+            dialogueFollowRef.current = memory.stickToBottom;
+          }
+        }
       }
-      body.scrollTop = memory.stickToBottom
-        ? body.scrollHeight
-        : Math.min(memory.top, body.scrollHeight);
-      if (activeView === "dialogue") {
-        dialogueFollowRef.current = memory.stickToBottom;
-      }
+      flushSession();
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeView, task.id]);
@@ -1925,10 +2054,12 @@ function TaskWorkspace({
           ref={threadBodyRef}
           className={`thread-body ${activeView}-mode`}
           onScroll={(event) => {
-            if (activeView !== "dialogue") return;
             const body = event.currentTarget;
-            dialogueFollowRef.current =
-              body.scrollHeight - body.clientHeight - body.scrollTop < 72;
+            if (activeView === "dialogue") {
+              dialogueFollowRef.current =
+                body.scrollHeight - body.clientHeight - body.scrollTop < 72;
+            }
+            scheduleSessionFlush();
           }}
         >
           <div
@@ -2142,6 +2273,7 @@ function emptyProviderForm() {
     baseUrl: "",
     apiKey: "",
     modelsText: "",
+    modelsById: {},
   };
 }
 
@@ -2166,6 +2298,7 @@ const PROVIDER_PRESETS = [
 
 function providerToForm(provider) {
   return {
+    modelsById: providerModelsById(provider.models || []),
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
@@ -2232,6 +2365,11 @@ function ProviderManagerModal({
           ? current.name
           : result.suggestedName,
         baseUrl: result.baseUrl,
+        modelsById: Object.fromEntries(result.models.map((model) => [model.id, {
+          ...model,
+          ...(current.modelsById?.[model.id]?.imageInput === "text"
+            ? { imageInput: "text" } : {}),
+        }])),
         modelsText: result.models
           .map((model) => model.id)
           .join("\n"),
@@ -2267,7 +2405,7 @@ function ProviderManagerModal({
         name: form.name,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
-        models: modelIds,
+        models: buildProviderModels(modelIds, form.modelsById),
       });
       const nextProviders = await onChanged();
       setForm(providerToForm(savedProvider));
@@ -2390,6 +2528,7 @@ function ProviderManagerModal({
                           name: preset.name,
                           baseUrl: preset.baseUrl,
                           modelsText: "",
+                          modelsById: {},
                         }));
                         setError("");
                       }}
@@ -2493,6 +2632,8 @@ function ProviderManagerModal({
             <div className="provider-detection-summary">
               <span>{tr("{count} 个模型", "{count} model(s)", { count: modelIds.length })}</span>
             </div>
+            <ModelVisionSettings modelIds={modelIds} modelsById={form.modelsById}
+              onChange={(modelsById) => setForm((current) => ({ ...current, modelsById }))} />
             {error && <p className="api-key-error">{error}</p>}
           </div>
         </div>
@@ -2578,7 +2719,7 @@ function ApplicationSettingsModal({
         <header className="application-settings-header">
           <div>
             <span className="application-settings-mark">
-              <img src={APP_ICON_URL} alt="" aria-hidden="true" />
+              <AppGlyph />
             </span>
             <div>
               <h2 id="application-settings-title">
@@ -2782,7 +2923,7 @@ function ApplicationSettingsModal({
             ) : (
               <section className="application-about">
                 <span className="application-about-mark">
-                  <img src={APP_ICON_URL} alt="" aria-hidden="true" />
+                  <AppGlyph />
                 </span>
                 <span className="application-about-kicker">AporiaX</span>
                 <h3>Every problem begins with an aporia.</h3>
@@ -2824,8 +2965,9 @@ function ApplicationSettingsModal({
 function App() {
   const { language, tr } = useI18n();
   const [tasks, setTasks] = useTaskStore(readSavedTasks);
+  const [sessionUi] = useState(readSessionUi);
   const [activeTaskId, setActiveTaskId] = useState(
-    () => tasks[0]?.id || null,
+    () => chooseRestoredTaskId(tasks, sessionUi?.taskId),
   );
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
@@ -2856,9 +2998,13 @@ function App() {
   const [approvalResponding, setApprovalResponding] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
   const [theme, setTheme] = useState(readSavedTheme);
-  const [welcomeOpen, setWelcomeOpen] = useState(true);
+  const [welcomeOpen, setWelcomeOpen] = useState(
+    () => FORCE_WELCOME_EACH_LAUNCH || !sessionUi?.welcomeDismissed,
+  );
   const runsRef = useRef(new Map());
   const tasksRef = useRef(tasks);
+  const remoteSyncSignatureRef = useRef("");
+  const handledRemoteCommandIdsRef = useRef(new Set());
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
   const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
@@ -2957,6 +3103,30 @@ function App() {
     tasksRef.current = tasks;
   }, [tasks]);
 
+
+  useEffect(() => {
+    if (!storageReady || !window.desktop?.account?.syncTasks) return undefined;
+    let disposed = false;
+    let interval = null;
+    const sync = async (force = false) => {
+      const payload = buildRemoteTaskSyncPayload(tasks, { runningTaskIds, pausedTaskIds });
+      const signature = JSON.stringify(payload);
+      if (!force && signature === remoteSyncSignatureRef.current) return;
+      try {
+        const result = await window.desktop.account.syncTasks(payload);
+        if (!disposed && result?.enabled) remoteSyncSignatureRef.current = signature;
+      } catch {
+        // Account, network, and opt-in errors remain non-blocking for local tasks.
+      }
+    };
+    const timeout = window.setTimeout(() => void sync(false), 1_400);
+    interval = window.setInterval(() => void sync(true), 20_000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+      if (interval) window.clearInterval(interval);
+    };
+  }, [storageReady, tasks, runningTaskIds, pausedTaskIds]);
   useEffect(() => {
     // localStorage is only a startup cache. Serializing the entire task history
     // synchronously for every streamed token can block the renderer. Keep the
@@ -3015,7 +3185,9 @@ function App() {
         ));
         if (!active) return;
         setTasks(hydratedTasks);
-        setActiveTaskId(hydratedTasks[0]?.id || null);
+        setActiveTaskId(
+          chooseRestoredTaskId(hydratedTasks, sessionUi?.taskId),
+        );
         if (recoverableRuns.length) {
           setNotice(
             tr(
@@ -3038,11 +3210,41 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (activeTaskId) writeSessionUi({ taskId: activeTaskId });
+  }, [activeTaskId]);
+
+  useEffect(() => {
     if (!storageReady || !window.desktop?.tasks) return undefined;
     const timeout = window.setTimeout(() => {
-      void window.desktop.tasks.save(tasks).catch(() => {
-        setNotice(tr("任务检查点保存失败", "Failed to save the task checkpoint"));
-      });
+      void window.desktop.tasks
+        .save(tasks)
+        .then((result) => {
+          const failed = Array.isArray(result?.failed) ? result.failed : [];
+          if (result === true || result?.ok !== false) return;
+          const oversized = failed.filter(
+            (item) => item.code === "TASK_JSON_TOO_LARGE",
+          );
+          if (oversized.length) {
+            setNotice(
+              tr(
+                "有 {count} 个任务超过 200 MB，已跳过这些任务，其余已保存",
+                "{count} task(s) exceeded 200 MB and were skipped; other tasks were saved",
+                { count: oversized.length },
+              ),
+            );
+            return;
+          }
+          if (failed.length) {
+            setNotice(
+              tr("任务检查点保存失败", "Failed to save the task checkpoint"),
+            );
+          }
+        })
+        .catch(() => {
+          setNotice(
+            tr("任务检查点保存失败", "Failed to save the task checkpoint"),
+          );
+        });
     }, 350);
     return () => window.clearTimeout(timeout);
   }, [storageReady, tasks]);
@@ -3093,6 +3295,15 @@ function App() {
     setSandboxStatus,
     setApproval: setTaskApproval,
     normalizeWorkspacePath,
+    onNativeVisionDisabled: () => {
+      void reloadProviders();
+      setNotice(
+        tr(
+          "该模型看图失败，已改为无视觉",
+          "This model failed to read images; vision was turned off",
+        ),
+      );
+    },
   });
 
   useEffect(() => {
@@ -3102,6 +3313,7 @@ function App() {
     return window.desktop.notifications.onTaskRequested(({ taskId }) => {
       if (!tasksRef.current.some((task) => task.id === taskId)) return;
       setActiveTaskId(taskId);
+      writeSessionUi({ welcomeDismissed: true, taskId });
       setWelcomeOpen(false);
     });
   }, []);
@@ -3293,8 +3505,8 @@ function App() {
           });
         setNotice(
           tr(
-            "新要求已发送，将在下一安全边界接入当前任务",
-            "Guidance sent; it will join the current task at the next safe boundary",
+            "新要求已发送：立即调整模型生成，已开始的操作完成后接入",
+            "Guidance sent: redirecting generation; in-flight operations finish first",
           ),
         );
         return true;
@@ -3429,10 +3641,7 @@ function App() {
       taskId: targetTask.id,
       assistantId,
       routeCounter: 0,
-      approvalMode:
-        targetTask.approvalMode === "manual"
-          ? "manual"
-          : "sandbox-auto",
+      approvalMode: taskApprovalMode(targetTask.approvalMode),
     });
     setRunningTaskIds((current) => new Set(current).add(targetTask.id));
     setActiveRunIdsByTask((current) => ({
@@ -3460,10 +3669,8 @@ function App() {
         thinking: targetTask.thinking,
         effort: targetTask.effort,
         permission: targetTask.permission,
-        approvalMode:
-          targetTask.approvalMode === "manual"
-            ? "manual"
-            : "sandbox-auto",
+        executionMode: taskExecutionMode(targetTask.executionMode),
+        approvalMode: taskApprovalMode(targetTask.approvalMode),
         language,
         messages: [
           ...targetTask.messages.filter(
@@ -3533,7 +3740,9 @@ function App() {
               : task,
           ),
         );
-        if (result.status === "failed") {
+        if (result.status === "blocked") {
+          setNotice(tr("验证受阻，已有实现已保存", "Verification unavailable; existing work was saved"));
+        } else if (result.status === "failed") {
           setNotice(tr("Harness 运行失败", "Harness run failed"));
         } else if (result.status === "interrupted") {
           setNotice(tr("任务已停止，已保留文件检查点", "Task stopped; file checkpoints were preserved"));
@@ -3670,6 +3879,65 @@ function App() {
 
     return true;
   };
+
+
+  useEffect(() => {
+    if (!storageReady || !window.desktop?.account?.remoteCommands) return undefined;
+    let disposed = false;
+    let timer = null;
+    const acknowledge = (commandId, status, result = "") =>
+      window.desktop.account.acknowledgeRemoteCommand?.(commandId, status, result);
+    const poll = async () => {
+      try {
+        const commands = await window.desktop.account.remoteCommands();
+        for (const command of Array.isArray(commands) ? commands : []) {
+          if (!command?.id || handledRemoteCommandIdsRef.current.has(command.id)) continue;
+          handledRemoteCommandIdsRef.current.add(command.id);
+          try {
+            if (["files_roots", "files_list", "file_preview", "file_download"].includes(command.type)) {
+              if (!window.desktop.account.executeRemoteFileCommand) {
+                throw new Error("Desktop file access is unavailable in this build.");
+              }
+              const result = await window.desktop.account.executeRemoteFileCommand(command);
+              await acknowledge(command.id, "completed", JSON.stringify(result));
+              continue;
+            }
+            const task = tasksRef.current.find((candidate) => candidate.id === command.localTaskId);
+            if (!task) {
+              await acknowledge(command.id, "failed", "Task is no longer available on Desktop.");
+              continue;
+            }
+            if (command.type === "prompt") {
+              const prompt = String(command.payload?.prompt || "").trim();
+              if (!prompt || !sendMessage(prompt, [], { taskId: task.id })) {
+                throw new Error("Remote prompt could not be queued.");
+              }
+              await acknowledge(command.id, "accepted", "Prompt queued on Desktop.");
+              continue;
+            }
+            const runId = activeRunIdsByTask[task.id];
+            if (!runId) throw new Error("Task is not currently running.");
+            if (command.type === "pause") await window.desktop.harness.pause(runId);
+            else if (command.type === "resume") await window.desktop.harness.resume(runId);
+            else if (command.type === "stop") await window.desktop.harness.interrupt(runId);
+            else throw new Error("Unsupported remote command.");
+            await acknowledge(command.id, "completed", `${command.type} applied on Desktop.`);
+          } catch (error) {
+            await acknowledge(command.id, "failed", String(error?.message || "Remote command failed."));
+          }
+        }
+      } catch {
+        // Remote control is optional and must never block the local Harness.
+      } finally {
+        if (!disposed) timer = window.setTimeout(poll, 2_500);
+      }
+    };
+    timer = window.setTimeout(poll, 800);
+    return () => {
+      disposed = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [storageReady, activeRunIdsByTask]);
 
   const stopActiveRun = async () => {
     if (!activeRunId || !window.desktop?.harness?.interrupt) return;
@@ -4175,6 +4443,7 @@ function App() {
   };
 
   const dismissWelcome = () => {
+    writeSessionUi({ welcomeDismissed: true });
     setWelcomeOpen(false);
   };
 
@@ -4259,6 +4528,9 @@ function App() {
                   current === "dark" ? "light" : "dark",
                 )
               }
+              restoredSession={sessionUi}
+              onPersistSession={writeSessionUi}
+              storageReady={storageReady}
             />
           ) : (
             <EmptyState onNewTask={requestNewTask} />
@@ -4315,6 +4587,10 @@ function App() {
         onOpen={() => {
           if (completionNotice?.taskId) {
             setActiveTaskId(completionNotice.taskId);
+            writeSessionUi({
+              welcomeDismissed: true,
+              taskId: completionNotice.taskId,
+            });
             setWelcomeOpen(false);
           }
           setCompletionNotice(null);

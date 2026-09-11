@@ -124,6 +124,7 @@ export function normalizeSubagentInput(input) {
     task,
     scope: normalizeWorkspaceScope(input?.scope),
     background: Boolean(input?.background),
+    requiredForCompletion: !(input?.background && input?.required_for_completion === false && ["explore", "curator"].includes(role)),
     maxRounds,
   };
 }
@@ -198,6 +199,7 @@ export function compactSubagentModelResult(modelResult) {
       ? { ...modelResult }
       : { value: modelResult };
   if (typeof result.content === "string" && result.content.length > 16_000) {
+    if (result.readRange) result.readRange = { ...result.readRange, end: result.readRange.start + result.content.slice(0, 16_000).replace(/\r\n/g, "\n").length };
     result.content = `${result.content.slice(0, 16_000)}\n[truncated]`;
     result.truncated = true;
   }
@@ -220,11 +222,14 @@ export function subagentEvidence(toolName, result) {
   const value = compactSubagentModelResult(result);
   return {
     tool: toolName,
+    sha256: value.sha256 || null,
+    readRange: value.readRange || null,
     path: value.path || null,
     command: value.command || null,
     cwd: value.cwd || null,
     query: value.query || null,
     exitCode: typeof value.exitCode === "number" ? value.exitCode : null,
+    timedOut: Boolean(value.timedOut),
     error: value.error ? String(value.error).slice(0, 500) : null,
     preview: String(
       value.content ||

@@ -119,6 +119,7 @@ export function buildToolApprovalRequest({
             ? "读取工作区外文件"
             : approvalTitles[toolName] || `允许工具：${toolName || "unknown"}`,
     command,
+    input,
     cwd: input.cwd || ".",
     reason:
       typeof input.reason === "string" && input.reason.trim()

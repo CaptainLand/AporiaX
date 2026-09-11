@@ -1,8 +1,5 @@
-const KNOWN_VISION_MODEL_PATTERNS = [
-  /(?:^|[-_/])(gpt-4o|gpt-4\.1|gpt-5|vision|vl|gemini|claude)(?:[-_/.:]|$)/i,
-  /qwen.*vl|llava|pixtral|internvl|vision/i,
-  /(?:^|[-_/])qwen3\.(?:5|6|7)(?:[-_/.:]|$)/i,
-];
+import { modelSupportsVision } from "./model-vision.js";
+export { modelSupportsVision } from "./model-vision.js";
 
 const PREFERRED_VISION_MODELS = [
   /^qwen3\.5-flash$/i,
@@ -17,14 +14,6 @@ const MAX_VISION_IMAGES_PER_MESSAGE = 8;
 const MAX_VISION_DATA_URL_CHARS = 28_000_000;
 const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
 const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
-
-export function modelSupportsVision(model = {}) {
-  const id = String(model?.id || model?.name || "").trim();
-  if (KNOWN_VISION_MODEL_PATTERNS.some((pattern) => pattern.test(id))) {
-    return true;
-  }
-  return model?.supportsImages === true;
-}
 
 function preferredVisionCandidate(candidates) {
   for (const pattern of PREFERRED_VISION_MODELS) {
@@ -43,33 +32,15 @@ function aporiaCloudVisionCandidate(records) {
       record?.kind === "aporia-cloud" ||
       record?.source === "aporia-cloud",
   );
-  if (!provider) return null;
+  if (provider?.visionCapability?.status !== "ready" || provider.visionCapability.model?.id !== APORIA_CLOUD_VISION_MODEL_ID) return null;
   return {
     provider,
     model: {
       id: APORIA_CLOUD_VISION_MODEL_ID,
-      name: "Qwen3.5 Flash Vision",
+      name: provider.visionCapability.model.name || "Aporia Cloud Vision",
       supportsImages: true,
     },
   };
-}
-
-function rendererVisionCandidate(records) {
-  // Aporia Cloud is a first-party managed proxy: it uses the Account session,
-  // not a renderer-visible API key. Prefer it when present, then fall back to
-  // the existing user-configured vision Provider selection.
-  const cloud = aporiaCloudVisionCandidate(records);
-  if (cloud) return cloud;
-
-  const candidates = [];
-  for (const provider of records) {
-    if (provider?.hasApiKey !== true) continue;
-    for (const model of Array.isArray(provider?.models) ? provider.models : []) {
-      if (!modelSupportsVision(model)) continue;
-      candidates.push({ provider, model });
-    }
-  }
-  return preferredVisionCandidate(candidates);
 }
 
 function publicVisionProxyMetadata(candidate) {
@@ -86,13 +57,14 @@ function publicVisionProxyMetadata(candidate) {
 
 export function exposeVisionProxyCapabilities(providers) {
   const records = Array.isArray(providers) ? providers : [];
-  const proxyCandidate = rendererVisionCandidate(records);
-  const proxyMetadata = publicVisionProxyMetadata(proxyCandidate);
-
   return records.map((provider) => ({
     ...provider,
     models: (Array.isArray(provider?.models) ? provider.models : []).map(
       (model) => {
+        const proxyCandidate = provider.id === APORIA_CLOUD_PROVIDER_ID
+          ? aporiaCloudVisionCandidate(records)
+          : selectVisionCandidate(records, { mainProviderId: provider.id, mainModelId: model.id });
+        const proxyMetadata = publicVisionProxyMetadata(proxyCandidate);
         const nativeSupportsImages = modelSupportsVision(model);
         const supportsImageProxy =
           !nativeSupportsImages && Boolean(proxyMetadata);
@@ -156,6 +128,8 @@ export function selectVisionCandidate(
   const candidates = [];
   for (const provider of records) {
     const providerId = String(provider?.id || "").trim();
+    if (providerId === APORIA_CLOUD_PROVIDER_ID || provider?.kind === "aporia-cloud" || provider?.source === "aporia-cloud") continue;
+    if (!(provider?.hasApiKey === true || provider?.encryptedKey || provider?.environmentKey || provider?.vendor === "local" || provider?.source === "local")) continue;
     if (explicitProvider && providerId !== explicitProvider) continue;
     for (const model of Array.isArray(provider?.models) ? provider.models : []) {
       const modelId = String(model?.id || "").trim();

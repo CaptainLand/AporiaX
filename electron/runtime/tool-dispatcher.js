@@ -1,4 +1,5 @@
 import { getToolPermission } from "../agent-core.js";
+import { executeDurableTool } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
 import {
   buildToolApprovalRequest,
@@ -90,7 +91,7 @@ export async function dispatchNativeTool({
     }
   }
 
-  const result = await executeAuthorized({
+  const result = await executeDurableTool(toolName, input, () => executeAuthorized({
     ...executeContext,
     toolCall,
     toolName,
@@ -98,7 +99,7 @@ export async function dispatchNativeTool({
     input,
     signal,
     permissionDecision: decision,
-  });
+  }), requestApproval);
   assertNotAborted(signal);
   return result;
 }

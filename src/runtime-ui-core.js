@@ -110,6 +110,7 @@ export function resolveVisionCapability(providers, task) {
     providerName: String(provider?.name || ""),
     mainModelId: String(model?.id || task?.modelId || ""),
     mainModelName: modelDisplayName(model, task?.modelId),
+    cloudVisionStatus: provider?.id === "aporia-cloud" ? provider?.visionCapability?.status || "unknown" : null,
     proxy: proxyEnabled
       ? {
           providerId: String(proxy.providerId || ""),

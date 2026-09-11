@@ -21,8 +21,8 @@ export const DEFAULT_TASK_OPTIONS = {
   thinking: true,
   effort: "high",
   permission: "workspace-write",
-  approvalMode: "sandbox-auto",
-  executionMode: "safe",
+  approvalMode: "full-auto",
+  executionMode: "direct",
 };
 
 const MODEL_SOURCE_GROUPS = [

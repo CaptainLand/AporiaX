@@ -1,7 +1,7 @@
 {
   "name": "aporiax-desktop",
   "productName": "AporiaX",
-  "description": "A local desktop coding agent with reviewable tools and mandatory self-check.",
+  "description": "A local desktop coding agent with reviewable tools and honest, agent-led verification.",
   "author": "SeaLandX",
   "license": "MIT",
   "homepage": "https://github.com/CaptainLand/AporiaX#readme",
@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.7.1",
+  "version": "0.7.5",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -26,6 +26,10 @@
     "start": "electron .",
     "browser:install": "playwright-core install chromium",
     "test:runtime": "node --experimental-sqlite tests/runtime-smoke.mjs",
+    "test:priority-one": "node --experimental-sqlite tests/priority-one-runtime-smoke.mjs",
+    "test:runtime-efficiency": "node --experimental-sqlite tests/runtime-efficiency-smoke.mjs && node --experimental-sqlite tests/runtime-concurrency-integration.mjs && node --experimental-sqlite tests/runtime-background-integration.mjs",
+    "test:delivery-auto": "node tests/full-auto-delivery-smoke.mjs && node tests/delivery-runtime-integration.mjs && node tests/delivery-guidance-smoke.mjs && node tests/approval-settings-browser.mjs && electron tests/electron-sandbox-asar-smoke.cjs",
+    "test:links-steering": "node tests/links-steering-smoke.mjs && node --experimental-sqlite tests/steering-runtime-integration.mjs && node tests/links-steering-browser.mjs && electron tests/desktop-links-electron.cjs",
     "test:run-store-sqlite": "node --experimental-sqlite tests/run-store-sqlite-smoke.mjs",
     "test:task-runtime-rpc": "node --experimental-sqlite tests/task-runtime-rpc-smoke.mjs",
     "test:agent-runtime-broker": "node tests/agent-runtime-broker-smoke.mjs",
@@ -35,9 +39,10 @@
     "test:collaboration": "node tests/harness-collaboration-smoke.mjs",
     "test:desktop-background": "node tests/desktop-background-smoke.mjs",
     "test:vision": "node tests/vision-proxy-smoke.mjs",
+    "test:vision-recovery": "node --experimental-sqlite tests/recovery-approval-regression.mjs && node tests/vision-capability-regression.mjs && node tests/vision-proxy-smoke.mjs && node tests/aporia-cloud-vision-smoke.mjs && node tests/model-vision-browser.mjs && electron tests/vision-request-electron.cjs",
     "test:runtime-ui": "node tests/runtime-ui-smoke.mjs",
     "test:process-ui": "node tests/agent-process-mentions-smoke.mjs",
-    "test:task-store": "node tests/task-store-smoke.mjs",
+    "test:task-store": "node tests/task-store-smoke.mjs && node tests/task-history-store-smoke.mjs",
     "test:renderer-architecture": "node tests/native-renderer-architecture-smoke.mjs",
     "test:renderer-modules": "node tests/renderer-modules-smoke.mjs",
     "test:harness-events-ui": "node tests/harness-event-hook-smoke.mjs",
@@ -76,12 +81,14 @@
     "test:v061-capabilities": "node tests/v061-capabilities-smoke.mjs",
     "test:account-ui": "node tests/local-account-ui-smoke.mjs",
     "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs",
+    "test:welcome-gem": "node tests/welcome-gem-browser.mjs",
     "test:run-retry": "node tests/run-retry-core-smoke.mjs",
     "test:github-workflow": "node tests/github-workflow-smoke.mjs",
     "test:lsp-installer": "node tests/lsp-installer-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@paper-design/shaders": "^0.0.80",
     "@vscode/ripgrep": "^1.18.0",
     "diff": "^9.0.0",
     "docx": "^9.7.1",
@@ -127,6 +134,7 @@
       "dist/**/*",
       "electron/**/*",
       "build/icon.ico",
+      "build/icon-dark.ico",
       "package.json"
     ],
     "win": {

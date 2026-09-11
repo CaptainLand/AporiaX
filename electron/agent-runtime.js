@@ -32,7 +32,7 @@ import {
 } from "./harness/collaboration.js";
 import { getDefaultHarnessEventBus } from "./harness/event-bus.js";
 import { HarnessScheduler } from "./harness/scheduler.js";
-import { scopesOverlap } from "./harness/scope-leases.js";
+import { scopesOverlap, normalizeBuilderScopes } from "./harness/scope-leases.js";
 import { createTaskGraph } from "./harness/task-graph.js";
 
 const MAX_BUILDERS = 2;
@@ -179,6 +179,7 @@ function plannerPrompt(request, builderLimit) {
     "Shared coordination files such as package.json, lockfiles, shared routing tables, generated indexes, shared stores, and common design-system components should normally be listed in contract.sharedFiles and left to Lead/Main instead of being owned by a Builder.",
     "Each Builder task must declare contractKeys for the shared invariants it must obey and a concise approvedPlan. This is the Lead plan-approval boundary; do not leave incompatible choices for Builders to negotiate after they start.",
     "Use dependsOn when one Builder must receive another Builder's handoff before starting. Independent Builders may run in parallel.",
+    "If Lead/Main has useful independent implementation in contract.sharedFiles, include optional mainTask:{task,writeScopes,approvedPlan:{approach,assumptions}}. It runs concurrently in an isolated scope before final integration. Use ONLY exact sharedFiles paths, no overlap with Builders, no dependency on their unfinished results. Omit it if waiting is genuinely necessary; never invent busywork.",
     "Return JSON only with this schema:",
     JSON.stringify({
       parallelize: true,
@@ -336,18 +337,32 @@ export function normalizeBuilderOrchestrationPlan(
       approval,
     };
   }
+  let mainTask = null;
+  if (parsed.mainTask?.task && !tasks.some((task) => task.id === "main-preparation")) {
+    try {
+      const writeScopes = normalizeBuilderScopes(parsed.mainTask.writeScopes);
+      if (writeScopes.every((scope) => contract.sharedFiles.includes(scope)) &&
+          !writeScopes.some((scope) => tasks.some((task) => task.writeScopes.some((other) => scopesOverlap(scope, other))))) {
+        mainTask = { id: "main-preparation", title: "Main independent implementation", role: "builder", executionRole: "main",
+          task: String(parsed.mainTask.task).slice(0, 4000), writeScopes, dependsOn: [],
+          contractKeys: contract.invariants.filter((item) => item.severity === "must").map((item) => item.key),
+          approvedPlan: { approach: String(parsed.mainTask.approvedPlan?.approach || parsed.mainTask.task).slice(0, 1200), assumptions: [] } };
+      }
+    } catch { /* An invalid optional Main scope cannot broaden write authority. */ }
+  }
+  const executionTasks = mainTask ? [...approval.tasks, mainTask] : approval.tasks;
   return {
     parallelize: true,
     reason: String(parsed.reason || "safe-builder-split").slice(0, 800),
-    tasks: approval.tasks,
-    contract,
-    approval,
+    tasks: executionTasks,
+    contract: mainTask ? normalizeCollaborationContract(parsed.contract, { tasks: executionTasks }) : contract,
+    approval: { ...approval, tasks: executionTasks },
   };
 }
 
 function builderPrompt({ definition, node, request, contract, inbox }) {
   return [
-    `You are an AporiaX Builder worker (${node.id}).`,
+    node.executionRole === "main" ? "You are AporiaX Lead/Main, doing independent scoped implementation concurrently with Builders. Final integration follows their handoffs." : `You are an AporiaX Builder worker (${node.id}).`,
     definition?.systemPrompt ||
       "Implement only the delegated change inside the explicit write scope.",
     "You are working in an isolated Git worktree. Your changes are provisional until Harness conflict-checks and merges them.",
@@ -689,10 +704,16 @@ async function runOrchestratedHarness(options) {
       }
       const graph = createTaskGraph(plan.tasks);
       const taskMeta = new Map(plan.tasks.map((task) => [task.id, task]));
+      // Separate admission queue avoids parent/child scheduler deadlock.
+      // Events and workspace leases are shared with the Kernel.
+      const orchestrationEvents = { emit: event => emit({
+        ...event, runId: options.runId, parentTaskId: options.taskId,
+      }, { budgetEvent: false }) };
       const scheduler = new HarnessScheduler({
-        concurrency: Math.min(builderLimit, MAX_BUILDERS),
+        eventBus: orchestrationEvents,
+        concurrency: Math.min(builderLimit, MAX_BUILDERS) + (plan.tasks.some((task) => task.executionRole === "main") ? 1 : 0),
       });
-      const workspaces = new BuilderWorkspaceManager();
+      const workspaces = new BuilderWorkspaceManager({ eventBus: orchestrationEvents });
       emit(
         {
           type: "task_graph.planned",
@@ -702,26 +723,30 @@ async function runOrchestratedHarness(options) {
         { budgetEvent: false },
       );
 
+      const inFlight = new Map();
       while (true) {
         const ready = graph.ready({ role: "builder" });
-        if (!ready.length) break;
-        const scheduled = ready.map((graphNode) => {
+        for (const graphNode of ready) {
           const meta = taskMeta.get(graphNode.id) || {};
           const node = {
             ...graphNode,
             task: meta.task || graphNode.task,
             contractKeys: meta.contractKeys || [],
             approvedPlan: meta.approvedPlan || {},
+            executionRole: meta.executionRole || "builder",
           };
           const agentId = `${options.runId || "run"}-builder-${node.id}`;
           graph.claim(node.id, agentId);
-          return scheduler.enqueue({
-            id: `builder:${node.id}`,
+          const scheduled = scheduler.enqueue({
+            id: `${options.runId || "run"}:builder:${node.id}`,
             kind: "builder",
             priority: 10,
+            signal: options.signal,
             metadata: {
               taskId: node.id,
               agentId,
+              runId: options.runId,
+              parentTaskId: options.taskId,
               writeScopes: node.writeScopes,
               contractKeys: node.contractKeys,
             },
@@ -733,20 +758,27 @@ async function runOrchestratedHarness(options) {
                 emit({
                   type: "subagent.started",
                   agentId,
-                  role: "builder",
+                  role: node.executionRole,
                   task: node.task || node.title,
                   scope: node.writeScopes,
                   background: true,
                   contractId: plan.contract?.id || null,
                   contractKeys: node.contractKeys,
                   inboxCount: inbox.length,
-                });
+                }, { budgetEvent: node.executionRole !== "main" });
                 started = true;
                 workspace = await workspaces.open({
                   workspaceRoot,
                   agentId,
                   writeScopes: node.writeScopes,
                 });
+                if (resolve(workspace.workspaceRoot) === workspaceRoot) {
+                  await workspace.close().catch(() => undefined);
+                  workspace = null;
+                  throw new Error(
+                    "Builder workspace must use an isolated worktree; refusing parent-workspace fallback while a scope lease is required.",
+                  );
+                }
                 const childContext = {
                   contract: plan.contract,
                   task: {
@@ -795,7 +827,7 @@ async function runOrchestratedHarness(options) {
                                 ...event,
                                 type: "subagent.tool.started",
                                 agentId,
-                                role: "builder",
+                                role: node.executionRole,
                               },
                               { budgetEvent: false },
                             );
@@ -805,7 +837,7 @@ async function runOrchestratedHarness(options) {
                                 ...event,
                                 type: "subagent.tool.completed",
                                 agentId,
-                                role: "builder",
+                                role: node.executionRole,
                               },
                               { budgetEvent: false },
                             );
@@ -912,6 +944,7 @@ async function runOrchestratedHarness(options) {
                 }
                 const result = {
                   id: node.id,
+                  role: node.executionRole,
                   title: node.title,
                   status: "completed",
                   agentId,
@@ -929,12 +962,12 @@ async function runOrchestratedHarness(options) {
                 emit({
                   type: "subagent.completed",
                   agentId,
-                  role: "builder",
+                  role: node.executionRole,
                   status: "completed",
                   summary: result.summary,
                   changedPaths: result.changedPaths,
                   contractId: plan.contract?.id || null,
-                });
+                }, { budgetEvent: node.executionRole !== "main" });
                 return result;
               } catch (error) {
                 if (error?.name === "AbortError" || options.signal?.aborted) {
@@ -944,6 +977,7 @@ async function runOrchestratedHarness(options) {
                   id: node.id,
                   title: node.title,
                   status: "failed",
+                  role: node.executionRole,
                   agentId,
                   writeScopes: node.writeScopes,
                   contractKeys: node.contractKeys,
@@ -958,9 +992,9 @@ async function runOrchestratedHarness(options) {
                   emit({
                     type: "subagent.failed",
                     agentId,
-                    role: "builder",
+                    role: node.executionRole,
                     error: result.error,
-                  });
+                  }, { budgetEvent: node.executionRole !== "main" });
                 }
                 return result;
               } finally {
@@ -968,11 +1002,15 @@ async function runOrchestratedHarness(options) {
               }
             },
           });
-        });
-        const settled = await Promise.all(
-          scheduled.map((job) => job.promise),
-        );
-        builderResults.push(...settled);
+          const completion = scheduled.promise.then((result) => { builderResults.push(result); return result; })
+            .finally(() => inFlight.delete(node.id));
+          inFlight.set(node.id, completion);
+        }
+        if (!inFlight.size) break;
+        // Release a dependent node as soon as ITS prerequisites finish, not
+        // after every unrelated worker in the current batch completes.
+        try { await Promise.race(inFlight.values()); }
+        catch (error) { await Promise.allSettled(inFlight.values()); throw error; }
       }
       for (const blocked of graph.blocked()) {
         builderResults.push({
@@ -1142,6 +1180,7 @@ async function runOrchestratedHarness(options) {
       mailbox: mailbox.snapshot(),
       builders: builderResults.map((item) => ({
         id: item.id,
+        role: item.role || "builder",
         title: item.title,
         agentId: item.agentId,
         status: item.status,
@@ -1156,7 +1195,7 @@ async function runOrchestratedHarness(options) {
     subagents: [
       ...(builderResults.map((item) => ({
         agentId: item.agentId,
-        role: "builder",
+        role: item.role || "builder",
         task: item.title,
         status: item.status,
         background: true,

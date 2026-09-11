@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { providerChatEndpoint } from "./provider-config.js";
 import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
 import { callModelProviderOnce } from "./runtime/provider-stream.js";
+import { queryCloudVisionCapability } from "./cloud-vision-capability.js";
+import { modelSupportsVision } from "./model-vision.js";
 import {
   buildVisionMessages,
   hasImageAttachments,
@@ -16,12 +18,16 @@ const VISION_TIMEOUT_MS = 60_000;
 const VISION_MAX_OUTPUT_TOKENS = 1_600;
 const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
 const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
-const APORIA_CLOUD_VISION_MODEL_NAME = "Qwen3.5 Flash Vision";
 const APORIA_CLOUD_MAX_IMAGE_DATA_URL_CHARS = 7_500_000;
 const APORIA_CLOUD_VISION_OUTPUT_TOKENS = 900;
 
 function getProviderStorePath() {
   return join(app.getPath("userData"), "aporiax-providers.json");
+}
+
+export function getCloudVisionCapability(options = {}) {
+  const account = getDesktopAccountRuntime();
+  return queryCloudVisionCapability((path, init) => account.fetchModelGateway(path, init), options);
 }
 
 async function readProviderRecords() {
@@ -65,7 +71,7 @@ function normalizeAssistantContent(content) {
 
 async function callVisionProvider({ provider, model, message, signal }) {
   const apiKey = decryptProviderKey(provider);
-  if (!apiKey) {
+  if (!apiKey && provider?.vendor !== "local" && provider?.source !== "local") {
     throw new Error(
       `Vision Provider ${provider?.name || provider?.id || "unknown"} has no API key.`,
     );
@@ -82,7 +88,7 @@ async function callVisionProvider({ provider, model, message, signal }) {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
       body: JSON.stringify({
         model: model.id,
@@ -149,6 +155,9 @@ async function callAporiaCloudVision({ message, image, signal, onEvent }) {
 }
 
 async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}) {
+  const capability = await getCloudVisionCapability({ signal });
+  if (capability.status !== "ready") throw new Error("APORIA_CLOUD_VISION_NOT_READY: Cloud 视觉尚未配置就绪或暂时无法确认，请检查服务后重试。");
+  const visionModelName = capability.model.name;
   const messages = Array.isArray(request?.messages) ? request.messages : [];
   const nextMessages = [];
   let imageCount = 0;
@@ -165,7 +174,7 @@ async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}
       onEvent?.({
         type: "vision.proxy.started",
         provider: "Aporia Cloud",
-        model: APORIA_CLOUD_VISION_MODEL_NAME,
+        model: visionModelName,
         imageIndex: index + 1,
         imageCount: images.length,
       });
@@ -184,7 +193,7 @@ async function prepareAporiaCloudVisionRequest(request, { signal, onEvent } = {}
     nextMessages.push(
       mergeVisionObservation(message, observations.join("\n\n"), {
         providerName: "Aporia Cloud",
-        modelId: APORIA_CLOUD_VISION_MODEL_NAME,
+        modelId: visionModelName,
       }),
     );
   }
@@ -216,9 +225,9 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
   const messages = Array.isArray(request?.messages) ? request.messages : [];
   if (!hasImageAttachments(messages)) return request;
 
-  // Aporia Cloud's public main model remains DeepSeek V4 Flash. Images are
-  // materialized once, before the Agent loop, through the hidden Qwen vision
-  // model. The resulting text observation replaces raw images so tool-call
+  // Cloud images are materialized once, before the Agent loop, through the
+  // server-configured vision model after its readiness check. The resulting
+  // text observation replaces raw images so tool-call
   // rounds cannot repeatedly send or repeatedly bill the same attachment.
   if (String(request?.providerId || "") === APORIA_CLOUD_PROVIDER_ID) {
     return prepareAporiaCloudVisionRequest(request, { signal, onEvent });
@@ -226,7 +235,7 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
 
   const records = await readProviderRecords();
   const main = resolveMainModel(records, request);
-  if (main.model?.supportsImages === true) return request;
+  if (modelSupportsVision(main.model)) return request;
 
   const candidate = selectVisionCandidate(records, {
     mainProviderId: request?.providerId,
@@ -234,7 +243,7 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
     visionProviderId: request?.visionProviderId,
     visionModelId: request?.visionModelId,
   });
-  if (!candidate) return request;
+  if (!candidate) throw new Error("VISION_NOT_CONFIGURED: 当前模型未声明原生视觉，也没有已配置的视觉代理。请在模型设置中声明原生视觉或配置视觉 Provider。");
 
   const nextMessages = [];
   let proxiedImages = 0;

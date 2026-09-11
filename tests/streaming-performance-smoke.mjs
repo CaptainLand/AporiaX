@@ -20,9 +20,9 @@ const deltaBranch = hook.slice(
 );
 assert.doesNotMatch(deltaBranch, /setTasks\(/);
 
-assert.match(
-  main,
-  /tasksRef\.current = tasks;\r?\n  \}, \[tasks\]\);\r?\n\r?\n  useEffect\(\(\) => \{[\s\S]*?cacheTasksLocally\(tasks\);[\s\S]*?\}, 750\);/,
-);
+// Remote sync has its own effect between these two effects; adjacency is not
+// a performance contract. Keep checking synchronous ref refresh and debounce.
+assert.match(main, /tasksRef\.current = tasks;\r?\n  \}, \[tasks\]\);/);
+assert.match(main, /const timeout = window\.setTimeout\(\(\) => \{\s*cacheTasksLocally\(tasks\);\s*\}, 750\);\s*return \(\) => window\.clearTimeout\(timeout\);\s*\}, \[tasks\]\);/);
 
 console.log("streaming performance smoke: PASS");

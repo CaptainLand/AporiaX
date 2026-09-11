@@ -532,13 +532,17 @@ export function enrichRouteEntries(route, steps, result) {
       id: `self-check-${result.status || "completed"}`,
       kind: "self-check-complete",
       stage: "trial",
-      title: result.selfCheck.completed
-        ? "强制自检已完成"
-        : "强制自检未完成",
-      detail: result.selfCheck.verification?.passed
+      title: result.selfCheck.delivery?.status === "passed"
+        ? "检查已通过"
+        : result.selfCheck.completed
+          ? "独立检查已记录"
+          : "检查未完成",
+      detail: result.selfCheck.delivery?.status === "passed" || result.selfCheck.verification?.passed
         ? "项目验证已通过"
-        : "保留未验证项",
-      status: result.selfCheck.completed ? "completed" : "failed",
+        : result.selfCheck.delivery?.status === "failed"
+          ? "验证未通过，证据已保留"
+          : "保留未验证项",
+      status: result.selfCheck.delivery?.status === "failed" ? "failed" : "completed",
     });
   }
 
@@ -569,7 +573,7 @@ export function routeEntriesFromMessage(message) {
         : /Mandatory self-check has not started yet/i.test(
               entry.detail || "",
             )
-          ? "Harness 已进入强制自检并继续复核"
+          ? "Harness 已记录独立检查并继续复核"
           : entry.detail;
       if (
         entry.tool === "complete_self_check" &&

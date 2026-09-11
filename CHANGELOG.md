@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.5 — 2026-09-10
+
+AporiaX 0.7.5 replaces the particle-ocean opening with a light Gem Smoke AX and shows that welcome on every launch.
+
+- Opening uses the original AX PNG plus Paper Gem Smoke on a light Mesh field, with a Liquid Metal Enter control.
+- Clicking the welcome canvas (not Enter or language) cycles logo treatments; reduced-motion users keep the static PNG.
+- Paper shader CSS stays out of CSP: no `unsafe-inline`, original logo file unchanged.
+- Logo-effect switches keep the previous frame until the next canvas has drawn, so the page Mesh does not flash through a hole.
+- Shows the welcome screen on every launch in this package; 0.7.4 task storage, vision defaults, and tray mark are unchanged.
+- Approval requests show a corner toast with a short summary and Approve / Deny; it closes on click or after 5 seconds.
+
+## 0.7.4 — 2026-09-10
+
+AporiaX 0.7.4 keeps the desktop store, vision defaults, and session restore out of the way of the main workspace.
+
+- Split task history into per-task JSON plus content-addressed attachment blobs; a single task over 200 MB is skipped while other tasks still save.
+- Default custom-model image input to native vision, then switch that model to text-only if the provider rejects images.
+- Use the night AX mark for the Windows tray, overflow, and taskbar; in-app logos still follow the chosen theme.
+- Removed the Witness stall banner and the persistent Cloud error-code line under sign-in.
+- Restored the last task, view tab, and scroll position after relaunch instead of always opening the first task.
+
+## 0.7.3 — 2026-09-10
+
+AporiaX 0.7.3 makes delivery agent-led and honest, and packages the post-0.7.2 Harness, vision-budget and shared-lease repairs.
+
+- Stopped auto-running tests, staged Review, or a mandatory self-check fallback from file count, plan completion, or a root `package.json`.
+- Recorded only explicitly selected or `verification:true` commands as executable evidence; skip does not turn a failure into a pass.
+- Allowed delivery with unverified, failed, unavailable, or stale evidence, and stopped presenting “no required review” as a test pass.
+- Estimated native-vision image blocks separately from text tokens; over-budget requests block and keep saved work.
+- Shared process-wide Builder scope leases across Kernel and orchestration, with no parent-workspace fallback on conflict.
+- Included full-auto approval defaults, per-model vision declarations, and recovery-approval anti-spam from the 0.7.2 patch line.
+- Refreshed Windows x64 installer, portable package, bilingual README, and bilingual release notes. Existing 0.7.2 packages remain unchanged.
+
 ## 0.7.1 — 2026-08-14
 
 AporiaX 0.7.1 improves Harness performance and reliability while keeping high-risk verification strict.

@@ -52,7 +52,9 @@ function paginateContent(content, input, maximumChars) {
     const endLine = Math.max(startLine, Math.min(lines.length, Number(input.end_line) || startLine + 999));
     const selected = lines.slice(startLine - 1, endLine).join("\n");
     const page = selected.slice(0, limit);
+    const start = lines.slice(0, startLine - 1).reduce((sum, line) => sum + line.length + 1, 0);
     return {
+      readRange: { start, end: start + page.length + (page.length === selected.length && endLine < lines.length ? 1 : 0) },
       content: page,
       startLine,
       endLine: startLine + page.split("\n").length - 1,
@@ -68,6 +70,10 @@ function paginateContent(content, input, maximumChars) {
   const page = String(content).slice(offset, offset + limit);
   const nextOffset = offset + page.length;
   return {
+    readRange: {
+      start: String(content).slice(0, offset).replace(/\r\n/g, "\n").length,
+      end: String(content).slice(0, nextOffset).replace(/\r\n/g, "\n").length,
+    },
     content: page,
     offset,
     nextOffset: nextOffset < content.length ? nextOffset : null,

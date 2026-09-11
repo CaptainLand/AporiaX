@@ -13,6 +13,7 @@ const rememberTaskExecutionModes = (tasks) => {
 
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
+  links: { activate: (request) => ipcRenderer.invoke("desktop:link", request) },
   selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
   openWorkspace: (workspacePath) =>
     ipcRenderer.invoke("desktop:open-workspace", workspacePath),
@@ -24,6 +25,16 @@ contextBridge.exposeInMainWorld("desktop", {
     signIn: () => ipcRenderer.invoke("account:sign-in"),
     refresh: () => ipcRenderer.invoke("account:refresh"),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
+    setRemoteEnabled: (enabled) =>
+      ipcRenderer.invoke("account:set-remote-enabled", enabled),
+    setRemoteFileAccess: (enabled) =>
+      ipcRenderer.invoke("account:set-remote-file-access", enabled),
+    syncTasks: (payload) => ipcRenderer.invoke("account:sync-tasks", payload),
+    remoteCommands: () => ipcRenderer.invoke("account:remote-commands"),
+    acknowledgeRemoteCommand: (commandId, status, result = "") =>
+      ipcRenderer.invoke("account:ack-remote-command", commandId, status, result),
+    executeRemoteFileCommand: (command) =>
+      ipcRenderer.invoke("account:execute-remote-file-command", command),
   },
   tasks: {
     load: () =>
@@ -60,6 +71,7 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   attachments: {
     parse: (request) => ipcRenderer.invoke("attachments:parse", request),
+    store: (request) => ipcRenderer.invoke("attachments:store", request),
   },
   providers: {
     list: () => ipcRenderer.invoke("providers:list"),

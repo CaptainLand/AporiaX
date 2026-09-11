@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { splitSteeredReply } from "../state/steering-messages.js";
 import {
   closeRunningRouteEntries,
   getRouteToolMeta,
@@ -26,6 +27,7 @@ export function useHarnessEvents({
   setSandboxStatus,
   setApproval,
   normalizeWorkspacePath,
+  onNativeVisionDisabled,
 }) {
   useEffect(() => {
     if (!window.desktop?.harness?.onEvent) return undefined;
@@ -118,6 +120,11 @@ export function useHarnessEvents({
         return;
       }
 
+      if (event.type === "model.vision-disabled") {
+        onNativeVisionDisabled?.(event);
+        return;
+      }
+
       if (event.type === "skill.unresolved") {
         reduceTaskEvent();
         return;
@@ -151,14 +158,16 @@ export function useHarnessEvents({
         setRunStatus({
           title: tr("已收到新的执行要求", "New guidance received"),
           detail: tr(
-            "将在下一安全边界合并到当前任务",
-            "It will be merged into the current task at the next safe boundary",
+            "正在接入：模型生成将取消；已开始的工具操作会先完成",
+            "Applying guidance: generation will stop; an in-flight tool will finish first",
           ),
         });
         return;
       }
 
       if (event.type === "steering.applied") {
+        flushPendingDeltas();
+        setTasks((current) => splitSteeredReply(current, run, event));
         const messageIds = new Set(event.messageIds || []);
         setTasks((current) =>
           current.map((task) =>
@@ -220,12 +229,12 @@ export function useHarnessEvents({
       }
 
       if (event.type === "response.reset") {
-        discardPendingDelta(event.runId);
+        flushPendingDeltas();
         reduceTaskEvent();
         setRunStatus({
           title:
-            event.phase === "self-check"
-              ? tr("AporiaX 正在强制自检", "AporiaX is running its mandatory self-check")
+              event.phase === "self-check"
+              ? tr("AporiaX 正在独立检查", "AporiaX is running an independent check")
               : tr("AporiaX 正在生成", "AporiaX is responding"),
           detail:
             event.phase === "self-check"
@@ -588,7 +597,7 @@ export function useHarnessEvents({
                 id: `${event.runId}-self-check-start`,
                 kind: "self-check-start",
                 stage: "trial",
-                title: tr("进入强制自检", "Begin mandatory self-check"),
+                title: tr("开始独立检查", "Begin independent check"),
                 detail: tr("复核 {count} 个修改文件", "Review {count} changed file(s)", { count: event.paths?.length || 0 }),
                 status: "completed",
                 startedAt: now,
@@ -598,10 +607,10 @@ export function useHarnessEvents({
           })),
         );
         setRunStatus({
-          title: tr("进入强制自检", "Begin mandatory self-check"),
+          title: tr("开始独立检查", "Begin independent check"),
           detail: event.verificationCandidates?.length
             ? tr("复核 {count} 个文件，并尝试项目构建或测试", "Review {count} file(s), then attempt the project build or tests", { count: event.paths?.length || 0 })
-            : tr("必须重新读取 {count} 个修改文件后才能完成任务", "All {count} changed file(s) must be re-read before the task can finish", { count: event.paths?.length || 0 }),
+            : tr("正在复核 {count} 个修改文件", "Reviewing {count} changed file(s)", { count: event.paths?.length || 0 }),
         });
         return;
       }
@@ -619,10 +628,12 @@ export function useHarnessEvents({
                 stage: "trial",
                 title: event.report?.mode === "progressive"
                   ? tr("最终证据封印完成", "Final evidence seal completed")
-                  : tr("强制自检已完成", "Mandatory self-check completed"),
-                detail: event.report?.verification?.passed
+                  : tr("独立检查已记录", "Independent check recorded"),
+                detail: event.report?.delivery?.status === "passed" || event.report?.verification?.passed
                   ? tr("项目验证已通过", "Project verification passed")
-                  : tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: event.report?.reviewedFiles?.length || 0 }),
+                  : event.report?.delivery?.status === "failed"
+                    ? tr("验证未通过，证据已保留", "Checks failed; evidence was kept")
+                    : tr("已复核 {count} 个文件", "Reviewed {count} file(s)", { count: event.report?.reviewedFiles?.length || 0 }),
                 status: "completed",
                 startedAt: now,
                 finishedAt: now,
@@ -631,7 +642,9 @@ export function useHarnessEvents({
           })),
         );
         setRunStatus({
-          title: tr("强制自检已通过", "Mandatory self-check passed"),
+          title: event.report?.verification?.passed
+            ? tr("独立检查已通过", "Independent check passed")
+            : tr("独立检查已记录", "Independent check recorded"),
           detail: tr("已复核 {count} 个修改文件，正在整理最终答复", "Reviewed {count} changed file(s); preparing the final response", { count: event.report?.reviewedFiles?.length || 0 }),
         });
         return;
@@ -702,6 +715,12 @@ export function useHarnessEvents({
                 "After approval, Harness will run this command in a temporary local workspace",
               ),
         });
+        return;
+      }
+
+      if (event.type === "approval.resolved") {
+        setApproval(run.taskId, null);
+        return;
       }
     });
 

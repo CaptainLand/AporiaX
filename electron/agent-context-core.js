@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { conversationTokenMaterial } from "./runtime/multimodal-budget.js";
 import {
   lstat,
   mkdir,
@@ -112,56 +113,33 @@ export function estimateConversationTokens(
   conversation,
   accounting = null,
 ) {
-  const serialized = JSON.stringify(conversation || []);
+  const { serialized, imageTokens } = conversationTokenMaterial(conversation);
   const heuristic = countHeuristicTokens(serialized);
-  if (
-    !accounting ||
-    !accounting.lastPromptTokens ||
-    !accounting.lastConversationCharacters
-  ) {
-    return Math.max(
-      1,
-      heuristic + normalizeUsageNumber(accounting?.providerOverheadTokens),
-    );
-  }
-  const calibrated = Math.ceil(
-    serialized.length * accounting.calibratedTokensPerCharacter +
-      accounting.providerOverheadTokens,
-  );
-  const deltaCharacters =
-    serialized.length - accounting.lastConversationCharacters;
-  const incremental = Math.ceil(
-    accounting.lastPromptTokens +
-      deltaCharacters * accounting.calibratedTokensPerCharacter,
-  );
-  return Math.max(1, heuristic, calibrated, incremental);
+  if (!accounting?.lastPromptTokens || !accounting.lastConversationCharacters)
+    return Math.max(1, heuristic + normalizeUsageNumber(accounting?.providerOverheadTokens)) + imageTokens;
+  const calibrated = Math.ceil(serialized.length * accounting.calibratedTokensPerCharacter + accounting.providerOverheadTokens);
+  const incremental = Math.ceil(accounting.lastPromptTokens +
+    (serialized.length - accounting.lastConversationCharacters) * accounting.calibratedTokensPerCharacter);
+  return Math.max(1, heuristic, calibrated, incremental) + imageTokens;
 }
 
-export function recordProviderUsage(
-  accounting,
-  usage,
-  conversation,
-) {
+export function recordProviderUsage(accounting, usage, conversation) {
   if (!accounting || !usage) return accounting;
   const promptTokens = inputTokensFromUsage(usage);
   if (!promptTokens) return accounting;
-  const serialized = JSON.stringify(conversation || []);
+  const { serialized, imageCount } = conversationTokenMaterial(conversation);
+  accounting.requests += 1;
+  if (imageCount) {
+    accounting.source = "multimodal-heuristic";
+    return accounting;
+  }
   const heuristic = countHeuristicTokens(serialized);
-  const measuredRatio = Math.min(
-    1.5,
-    Math.max(0.08, promptTokens / Math.max(1, serialized.length)),
-  );
-  accounting.calibratedTokensPerCharacter =
-    accounting.calibratedTokensPerCharacter > 0
-      ? accounting.calibratedTokensPerCharacter * 0.35 + measuredRatio * 0.65
-      : measuredRatio;
-  accounting.providerOverheadTokens = Math.max(
-    0,
-    Math.min(50_000, promptTokens - heuristic),
-  );
+  const measuredRatio = Math.min(1.5, Math.max(0.08, promptTokens / Math.max(1, serialized.length)));
+  accounting.calibratedTokensPerCharacter = accounting.calibratedTokensPerCharacter > 0
+    ? accounting.calibratedTokensPerCharacter * 0.35 + measuredRatio * 0.65 : measuredRatio;
+  accounting.providerOverheadTokens = Math.max(0, Math.min(50_000, promptTokens - heuristic));
   accounting.lastPromptTokens = promptTokens;
   accounting.lastConversationCharacters = serialized.length;
-  accounting.requests += 1;
   accounting.source = "provider-usage-calibrated";
   return accounting;
 }
@@ -230,6 +208,7 @@ function conciseToolEvidence(message) {
 }
 
 function uniqueRecent(values, limit) {
+  if (limit <= 0) return [];
   const output = [];
   const seen = new Set();
   for (let index = values.length - 1; index >= 0; index -= 1) {
@@ -324,43 +303,86 @@ export function compactConversationForRequest({
   plan = null,
   relevantMemory = [],
 }) {
-  const reserveTokens = Math.max(
-    MIN_CONTEXT_RESERVE_TOKENS,
-    Math.floor(contextWindowTokens * 0.14),
-  );
-  const compactAtTokens = Math.max(
-    20_000,
-    contextWindowTokens - reserveTokens,
-  );
+  const reserveTokens = Math.min(Math.floor(contextWindowTokens * 0.4), Math.max(
+    MIN_CONTEXT_RESERVE_TOKENS, Math.floor(contextWindowTokens * 0.14),
+  ));
+  const compactAtTokens = Math.max(1, contextWindowTokens - reserveTokens);
   const estimatedTokensBefore = estimateConversationTokens(
     conversation,
     accounting,
   );
   if (estimatedTokensBefore <= compactAtTokens) return null;
 
-  const systemCount = leadingSystemCount(conversation);
-  let keepRecentFrom = Math.max(
-    systemCount,
-    conversation.length - 16,
-  );
-  while (
-    keepRecentFrom < conversation.length &&
-    conversation[keepRecentFrom]?.role === "tool"
-  ) {
-    keepRecentFrom += 1;
+  const prefix = "AporiaX durable context checkpoint:\n";
+  const previous = [];
+  const messages = conversation.filter((message) => {
+    if (message.role !== "system" || !String(message.content).startsWith(prefix)) return true;
+    const value = safeJsonParse(message.content.slice(prefix.length));
+    if (value) previous.push(value);
+    return false;
+  });
+  const systemCount = leadingSystemCount(messages);
+  const instructions = messages.slice(0, systemCount);
+  // Keep an assistant tool call and ALL of its results in one history unit.
+  const groups = [];
+  for (const message of messages.slice(systemCount)) {
+    if (message.role === "tool" && groups.at(-1)?.[0]?.tool_calls?.length) groups.at(-1).push(message);
+    else groups.push([message]);
   }
-  const olderMessages = conversation.slice(systemCount, keepRecentFrom);
-  if (olderMessages.length < 4) return null;
-
-  const checkpoint = buildStructuredContextCheckpoint(olderMessages, {
-    plan,
-    relevantMemory,
-  });
-  conversation.splice(systemCount, olderMessages.length, {
-    role: "system",
-    content: `AporiaX durable context checkpoint:\n${JSON.stringify(checkpoint)}`,
-  });
+  const latestUser = groups.findLastIndex((group) => group[0].role === "user");
+  const retained = new Set(groups.map((_, index) => index));
+  let omitted = [];
+  let checkpoint;
+  let candidate;
+  let summaryLimit = 12;
+  let compactedToolOutput = false;
+  const limits = { requirements: 12, decisions: 12, actions: 40, evidence: 50, failures: 16, files: 60, commands: 20 };
+  const rebuild = () => {
+    checkpoint = buildStructuredContextCheckpoint(omitted, { plan, relevantMemory });
+    for (const [key, limit] of Object.entries(limits)) {
+      checkpoint[key] = uniqueRecent([...previous.flatMap((item) => item[key] || []), ...checkpoint[key]], Math.min(limit, summaryLimit));
+    }
+    checkpoint.compactedMessages += previous.reduce((sum, item) => sum + (item.compactedMessages || 0), 0);
+    checkpoint.relevantMemory = checkpoint.relevantMemory.slice(0, Math.min(4, summaryLimit));
+    if (checkpoint.plan) checkpoint.plan.steps = checkpoint.plan.steps.slice(0, summaryLimit);
+    candidate = [...instructions, { role: "system", content: prefix + JSON.stringify(checkpoint) },
+      ...groups.flatMap((group, index) => retained.has(index) ? group : [])];
+  };
+  // Start with a bounded tail; never silently truncate the latest user request.
+  let count = 0;
+  for (let index = groups.length - 1; index >= 0; index--) {
+    count += groups[index].length;
+    if (count > 16 && index !== latestUser && groups[index][0].role !== "system") retained.delete(index);
+  }
+  const updateOmitted = () => { omitted = groups.flatMap((group, index) => retained.has(index) ? [] : group); };
+  updateOmitted();
+  rebuild();
+  while (estimateConversationTokens(candidate, accounting) > compactAtTokens) {
+    const removable = [...retained].find((index) => index !== latestUser && index !== groups.length - 1 && groups[index][0].role !== "system");
+    if (removable !== undefined) {
+      retained.delete(removable);
+      updateOmitted();
+    } else if (summaryLimit > 0) {
+      summaryLimit = Math.floor(summaryLimit / 2);
+    } else if (!compactedToolOutput) {
+      compactedToolOutput = true;
+      for (const index of retained) groups[index] = groups[index].map((message) => message.role === "tool"
+        ? { ...message, content: JSON.stringify({ ...conciseToolEvidence(message), contextCompacted: true, note: "Full output omitted; re-read the relevant range if needed." }) }
+        : message);
+    } else {
+      const error = new Error("CONTEXT_BUDGET_EXCEEDED: system instructions or the latest request/tool exchange exceed the available input budget. Narrow the request or use a larger context window.");
+      error.code = "CONTEXT_BUDGET_EXCEEDED";
+      const material = conversationTokenMaterial(candidate);
+      error.budget = { contextWindowTokens, reserveTokens, inputBudget: compactAtTokens,
+        estimatedTokens: estimateConversationTokens(candidate, accounting), imageCount: material.imageCount,
+        estimatedImageTokens: material.imageTokens, estimator: "multimodal-heuristic" };
+      throw error;
+    }
+    rebuild();
+  }
+  conversation.splice(0, conversation.length, ...candidate);
   contextCheckpoints.push(checkpoint);
+  if (contextCheckpoints.length > 8) contextCheckpoints.splice(0, contextCheckpoints.length - 8);
   const estimatedTokensAfter = estimateConversationTokens(
     conversation,
     accounting,
@@ -368,7 +390,7 @@ export function compactConversationForRequest({
   onEvent?.({
     type: "context.compacted",
     checkpoint,
-    compactedMessages: olderMessages.length,
+    compactedMessages: omitted.length,
     estimatedTokensBefore,
     estimatedTokensAfter,
     contextWindowTokens,
@@ -648,6 +670,7 @@ export async function resolveScopedInstructions(
   requestedPaths,
 ) {
   if (!context?.workspaceRoot) return { content: "", files: [] };
+  const loadedFiles = new Set(context.loadedFiles);
   const sections = [];
   const files = [];
   const paths = [...new Set((requestedPaths || ["."]).map(normalizeRelativePath))];
@@ -656,13 +679,13 @@ export async function resolveScopedInstructions(
     for (const directory of ancestorDirectoriesForPath(requestedPath)) {
       for (const name of INSTRUCTION_FILE_NAMES) {
         const source = `${directory}/${name}`;
-        if (context.loadedFiles.has(source)) continue;
+        if (loadedFiles.has(source)) continue;
         try {
           const content = await readInstructionFile(
             join(context.workspaceRoot, ...source.split("/")),
           );
           if (!content.trim()) continue;
-          context.loadedFiles.add(source);
+          loadedFiles.add(source);
           files.push(source);
           sections.push(`## ${source}\n${content}`);
         } catch (error) {
@@ -673,17 +696,18 @@ export async function resolveScopedInstructions(
       }
     }
     for (const rule of context.rules) {
-      if (context.loadedFiles.has(rule.source)) continue;
+      if (loadedFiles.has(rule.source)) continue;
       const matches =
         !rule.paths.length ||
         rule.paths.some((pattern) => globToRegExp(pattern).test(requestedPath));
       if (!matches) continue;
-      context.loadedFiles.add(rule.source);
+      loadedFiles.add(rule.source);
       files.push(rule.source);
       sections.push(`## ${rule.source}\n${rule.content}`);
     }
   }
 
+  for (const source of loadedFiles) context.loadedFiles.add(source);
   return { content: sections.join("\n\n"), files };
 }
 

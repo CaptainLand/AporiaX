@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  AlertCircle,
   Check,
   CircleUserRound,
   Cloud,
   ExternalLink,
+  FolderOpen,
   Laptop,
   LogIn,
   LogOut,
   RefreshCw,
+  Smartphone,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import "./local-account.css";
@@ -58,6 +59,8 @@ export function LocalAccountPanel() {
   const remaining = quotaPercent(account?.quota);
   const modelName = useMemo(() => primaryModel(account?.models), [account?.models]);
   const signedIn = account?.status === "authenticated" && profile;
+  const remoteEnabled = Boolean(account?.device?.remoteEnabled);
+  const remoteFilesEnabled = Boolean(account?.remoteFiles?.enabled);
 
   const signIn = async () => {
     if (!api?.signIn || busy) return;
@@ -105,6 +108,34 @@ export function LocalAccountPanel() {
     }
   };
 
+  const toggleRemoteSync = async () => {
+    if (!api?.setRemoteEnabled || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const snapshot = await api.setRemoteEnabled(!remoteEnabled);
+      setAccount(snapshot || account);
+    } catch (remoteError) {
+      setError(remoteError?.message || "REMOTE_SYNC_UPDATE_FAILED");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleRemoteFiles = async () => {
+    if (!api?.setRemoteFileAccess || busy || !remoteEnabled) return;
+    setBusy(true);
+    setError("");
+    try {
+      const snapshot = await api.setRemoteFileAccess(!remoteFilesEnabled);
+      setAccount(snapshot || account);
+    } catch (remoteError) {
+      setError(remoteError?.message || "REMOTE_FILE_ACCESS_UPDATE_FAILED");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (signedIn) {
     return (
       <div className="local-account-panel">
@@ -138,14 +169,54 @@ export function LocalAccountPanel() {
               <div><Laptop size={13} /><span>{account?.device?.name || tr("当前电脑", "This PC")}</span></div>
             </div>
 
+
+            <button
+              aria-pressed={remoteEnabled}
+              className={`local-account-remote ${remoteEnabled ? "is-enabled" : ""}`}
+              disabled={busy}
+              onClick={toggleRemoteSync}
+              type="button"
+            >
+              <Smartphone size={14} />
+              <span>
+                <strong>{tr("手机远程同步", "Mobile remote sync")}</strong>
+                <small>{remoteEnabled ? tr("已连接任务状态与远程指令", "Task status and remote commands enabled") : tr("点击后允许同账号手机访问", "Allow phones on this account to connect")}</small>
+              </span>
+              <i aria-hidden="true" />
+            </button>
             <p className="local-account-local-note">
               {tr(
-                "账号只同步身份、额度、模型与设备信息；项目源码、工作区和本地对话仍保留在这台电脑。",
-                "Account sync covers identity, quota, models and devices. Projects, workspace files and local conversations stay on this computer.",
+                "手机远程同步默认只传任务状态、最近对话与 Witness 摘要。文件访问需要单独开启。",
+                "Mobile sync only transfers task state, recent dialogue, and Witness summaries by default. File access requires its own switch.",
               )}
             </p>
 
-            {error && <p className="local-account-inline-error"><AlertCircle size={13} />{error}</p>}
+            <button
+              aria-pressed={remoteFilesEnabled}
+              className={`local-account-remote ${remoteFilesEnabled ? "is-enabled" : ""}`}
+              disabled={busy || !remoteEnabled}
+              onClick={toggleRemoteFiles}
+              type="button"
+            >
+              <FolderOpen size={14} />
+              <span>
+                <strong>{tr("手机只读文件浏览", "Read-only mobile files")}</strong>
+                <small>
+                  {remoteFilesEnabled
+                    ? tr("可浏览本机；每个文件仍需逐次确认", "Browse this PC; every file still needs approval")
+                    : remoteEnabled
+                      ? tr("允许查看整台电脑的文件目录", "Allow browsing file directories on this PC")
+                      : tr("请先开启手机远程同步", "Enable mobile remote sync first")}
+                </small>
+              </span>
+              <i aria-hidden="true" />
+            </button>
+            <p className="local-account-local-note local-account-local-note--security">
+              {tr(
+                "只允许查看与下载，不能修改、移动或删除。目录仅传元数据；预览或下载会在本机逐文件确认，并通过 Cloud 临时传输（最多 10 分钟）。",
+                "View and download only—never edit, move, or delete. Directory metadata is listed without content; each preview or download needs Desktop approval and uses Cloud transit for up to 10 minutes.",
+              )}
+            </p>
 
             <div className="local-account-actions">
               <button disabled={busy} onClick={refresh} type="button"><RefreshCw className={busy ? "spin" : ""} size={14} />{tr("刷新", "Refresh")}</button>
@@ -203,12 +274,6 @@ export function LocalAccountPanel() {
         </span>
         {busy ? <RefreshCw className="spin" size={14} /> : <ExternalLink size={14} />}
       </button>
-      {error && (
-        <p className="local-account-inline-error local-account-inline-error--panel" role="alert">
-          <AlertCircle size={13} />
-          <span>{tr("登录未完成：", "Sign-in did not complete: ")}{error}</span>
-        </p>
-      )}
     </div>
   );
 }

@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.1" src="https://img.shields.io/badge/source-v0.7.1-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.5" src="https://img.shields.io/badge/source-v0.7.5-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.7.1`**. The project remains in Preview.
-> 0.7.1 focuses on Harness performance, risk-adaptive self-check, lower-cost subagent orchestration, Understanding curation, stream-safe retries, and the current AporiaX Web authorization entry.
+> The current AporiaX source and Windows release version is **`v0.7.5`**. The project remains in Preview.
+> 0.7.5 replaces the opening with a light Gem Smoke AX and shows that welcome on every launch.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -44,11 +44,11 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX particle-ocean welcome screen" /></td>
+    <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX light Gem Smoke welcome screen" /></td>
     <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>Begin with an aporia</strong><br><sub>A restrained particle-ocean welcome screen with bilingual entry</sub></td>
+    <td align="center"><strong>Begin with an aporia</strong><br><sub>A light Gem Smoke welcome screen with bilingual entry</sub></td>
     <td align="center"><strong>Route · Evidence · Anchor</strong><br><sub>See the route, preserve the evidence, and roll back safely</sub></td>
   </tr>
   <tr>
@@ -68,6 +68,46 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Understanding</strong><br><sub>Version architecture, conventions, commands, preferences, and debugging knowledge</sub></td>
   </tr>
 </table>
+
+## What's new in 0.7.5: light Gem Smoke welcome
+
+- Opening uses the original AX with Gem Smoke on a light Mesh field and a Liquid Metal Enter control.
+- Clicking empty welcome canvas cycles logo treatments; reduced-motion users keep the static PNG.
+- Approval requests show a corner toast with Approve / Deny; it closes on click or after 5 seconds.
+- Switches no longer flash a hole or paper card; this package shows welcome on every launch.
+- 0.7.4 task storage, vision defaults, and tray mark are unchanged.
+
+[Read the complete bilingual 0.7.5 notes](docs/releases/v0.7.5.md)
+
+## What's new in 0.7.4: durable tasks and a quieter desktop
+
+- Each task is stored as its own JSON file with content-addressed attachment blobs; only a task over 200 MB is skipped.
+- Custom models default to native vision and fall back to text-only if the provider rejects images.
+- The Windows tray, overflow, and taskbar use the night AX mark; in-app logos still follow the theme.
+- The Witness stall banner and sidebar login error code are gone; relaunch returns to the last task, tab, and scroll position.
+
+[Read the complete bilingual 0.7.4 notes](docs/releases/v0.7.4.md)
+
+## What's new in 0.7.3: agent-led checks and honest delivery
+
+- Tests, staged Review, and mandatory self-check fallbacks no longer start from file count, plan completion, or a root test script.
+- Only commands the main agent explicitly selects are executed; `verification:true` is the evidence marker, and skip does not convert a failure into a pass.
+- Existing files may be delivered unverified, failed, or unavailable; the UI no longer presents “no required review” as a test pass.
+- Native vision estimates image blocks instead of Base64-as-text; over-budget requests keep saved work.
+- Kernel and orchestration share write-scope leases; overlapping scopes cannot open together and do not fall back to the parent workspace.
+
+[Read the complete bilingual 0.7.3 notes](docs/releases/v0.7.3.md)
+
+## What's new in 0.7.2: reliable, interactive desktop workflows
+
+- SQLite checkpoints and operation receipts retain task state; uncertain effects require fresh approval during recovery.
+- Verification is bound to file versions; partial reads are checked against content hashes and coverage.
+- Guidance cancels current main-model generation and starts a replacement request. Started tools finish; pending operations are skipped.
+- Replies before and after guidance stay in chronological segments, preserving Witness and Anchor ownership.
+- File links offer Open, Save as, Show in folder, Open in another app / IDE and Copy path. Executables require confirmation.
+- Includes existing Desktop remote-task sync and per-file-approved read-only transfer controls; availability depends on Cloud and network configuration.
+
+[Read the complete bilingual 0.7.2 notes](docs/releases/v0.7.2.md)
 
 ## What's new in 0.7.1: a faster, more deliberate Harness
 
@@ -139,7 +179,7 @@ Images are materialized once before the main Agent loop. Raw image attachments a
 | Agent collaboration | Shared Contracts, deterministic Plan Approval, structured handoffs, and a bounded mailbox; Main remains final integration authority |
 | Observable execution | Witness reports main/subagent activity, duration, failures, and self-check stages while Route preserves the full trace |
 | Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and atomic conflict checks |
-| Mandatory self-check | Review/Verify subagents inspect current file versions before a lightweight final seal over tests, risks, and deliverables |
+| Independent checks | The main agent selects relevant commands and review; Harness records real evidence and allows delivery with unverified or failed status |
 | Project understanding | Understanding stores reusable architecture, conventions, commands, preferences, and debugging knowledge for the workspace |
 | Extensions | Skills, MCP, Browser, Office, and native tools share the same capability system |
 | Multiple model APIs | Aporia Cloud plus multiple OpenAI-compatible providers/keys, `/models` discovery, and task-level model selection |
@@ -149,13 +189,13 @@ Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet
 
 ## Download
 
-`main` is now the **v0.7.1 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.7.5 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.7.1 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Setup-0.7.1-x64.exe) | Recommended Windows x64 installer |
-| [0.7.1 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Portable-0.7.1-x64.exe) | No-install Windows x64 package |
+| [0.7.5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Setup-0.7.5-x64.exe) | Recommended Windows x64 installer |
+| [0.7.5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Portable-0.7.5-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 

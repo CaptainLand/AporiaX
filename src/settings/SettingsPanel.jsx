@@ -1,4 +1,6 @@
 import React from "react";
+import { taskApprovalMode } from "../state/approval-mode.js";
+import { taskExecutionMode } from "../state/execution-mode.js";
 import {
   AlertTriangle,
   Folder,
@@ -28,9 +30,11 @@ export function SettingsPanel({
     providers.find((candidate) => candidate.id === task.providerId) ||
     providers[0];
   const cloudProvider = provider?.source === "aporia-cloud" || provider?.kind === "aporia-cloud";
-  const executionMode = ["direct", "safe", "isolated"].includes(task.executionMode)
-    ? task.executionMode
-    : "safe";
+  const executionMode = taskExecutionMode(task.executionMode);
+  const approvalMode = taskApprovalMode(task.approvalMode);
+  const approvalLabel = approvalMode === "full-auto"
+    ? tr("全自动审批", "Full auto approval")
+    : approvalMode === "manual" ? tr("手动审批", "Manual approval") : tr("智能审批", "Smart approval");
   return (
     <aside className="settings-panel" style={style}>
       <div className="settings-panel-header">
@@ -92,7 +96,7 @@ export function SettingsPanel({
         />
         <p className="settings-language-note">
           {executionMode === "direct"
-            ? tr("直接在真实工作区执行，速度最快；智能 Permission 会拦截未知或高风险命令。", "Runs in the real workspace for maximum speed; smart Permission gates unknown and high-risk commands.")
+            ? tr("直接在真实工作区执行，不创建临时副本；是否询问由下方审批模式决定。", "Runs in the real workspace without a temporary copy; approval behavior is controlled below.")
             : executionMode === "safe"
               ? tr("在临时工作区副本执行并冲突检查后同步；仍使用本机网络与进程权限。", "Runs in a temporary workspace copy and conflict-checks synchronization; host network and process authority remain available.")
               : tr("只在 Docker 强隔离环境执行；Docker 未就绪时不会静默降级到 Host。", "Runs only inside the Docker isolation profile; it never silently falls back to Host when Docker is unavailable.")}
@@ -159,30 +163,38 @@ export function SettingsPanel({
         {sandboxStatus && executionMode !== "isolated" && (
           <div className="sandbox-constraints fallback">
             <span>{executionMode === "direct" ? tr("真实工作区", "Real workspace") : tr("临时工作区", "Temporary workspace")}</span>
-            <span>{tr("智能审批", "Smart approval")}</span>
+            <span>{approvalLabel}</span>
             <span>{tr("使用本机网络", "Host network")}</span>
             <span>{executionMode === "direct" ? tr("无隔离", "No isolation") : tr("冲突检查同步", "Conflict-checked sync")}</span>
           </div>
         )}
         <div className="sandbox-auto-approval">
-          <div>
-            <strong>{tr("命令自动执行", "Automatic command execution")}</strong>
-            <span>
-              {tr(
-                "开启后，仅命中智能 Permission 低风险规则的命令自动执行；依赖安装、网络写入、破坏性操作等仍会询问或拒绝。",
-                "When enabled, only commands recognized as low risk by smart Permission auto-run; dependency mutation, remote writes, destructive operations, and similar risks still ask or deny.",
-              )}
-            </span>
-          </div>
-          <Switch
-            checked={task.approvalMode !== "manual"}
-            label={tr("命令自动执行", "Automatic command execution")}
-            onChange={(enabled) =>
-              onUpdateTask({
-                approvalMode: enabled ? "sandbox-auto" : "manual",
-              })
-            }
+          <strong>{tr("审批模式", "Approval mode")}</strong>
+          <SegmentedControl
+            value={approvalMode}
+            ariaLabel={tr("审批模式", "Approval mode")}
+            options={[
+              { value: "full-auto", label: tr("全自动", "Full auto") },
+              { value: "smart-auto", label: tr("智能", "Smart") },
+              { value: "manual", label: tr("手动", "Manual") },
+            ]}
+            onChange={(approvalMode) => onUpdateTask({ approvalMode })}
           />
+          <span className="approval-mode-description">
+            {approvalMode === "full-auto"
+              ? tr("全自动 · 高权限，无需首次批准。命令、脚本、文件读取及外部操作直接执行。", "Full auto · High privilege, without first-use approval. Commands, scripts, file reads and external actions run directly.")
+              : approvalMode === "smart-auto"
+                ? tr("智能 · 自动放行已识别的低风险操作，其他操作请求确认。", "Smart · Automatically approves recognized low-risk actions; other actions ask for confirmation.")
+                : tr("手动 · 需要审批的操作逐次请求确认。", "Manual · Actions requiring approval ask for confirmation each time.")}
+          </span>
+          <details className="approval-mode-details">
+            <summary>{tr("权限边界与风险", "Permission boundaries and risks")}</summary>
+            <p>{tr(
+              "越界/不明删除、异常恢复仍确认；明确拒绝的工具不放行。不是系统隔离，无法保证拦截脚本或 MCP 的间接删除。",
+              "External/ambiguous deletion and uncertain recovery still ask; denied tools stay denied. This is not OS isolation and cannot guarantee blocking indirect script/MCP deletion.",
+            )}</p>
+          </details>
+          <span>{tr("修改在下次运行生效。", "Changes apply to the next run.")}</span>
         </div>
       </section>
 

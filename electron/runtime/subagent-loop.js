@@ -9,7 +9,9 @@ import {
   upsertRelevantContextMessage,
 } from "../agent-context.js";
 import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js";
+import { ToolProgressGuard } from "./tool-progress-guard.js";
 import { dispatchNativeTool } from "./tool-dispatcher.js";
+import { saveRuntimeCheckpoint } from "./durable-run.js";
 import {
   MAX_SUBAGENT_RESULT_CHARS,
   SUBAGENT_ROLE_CONFIG,
@@ -63,6 +65,7 @@ export async function runSubagentTask(options = {}) {
       systemOwned: options.systemOwned,
       parentRunId: String(options.agentId || "").replace(/-sub-\d+$/, ""),
       emit: options.emit,
+      signal: options.signal,
       execute: ({ definition }) =>
         runSubagentTask({
           ...options,
@@ -187,9 +190,11 @@ export async function runSubagentTask(options = {}) {
     runtime: runtimeDefinition ? "kernel" : "compatibility",
   });
 
+  const toolProgress = new ToolProgressGuard();
   try {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
+      await saveRuntimeCheckpoint({ scopeId: agentId, role: input.role, task: input.task, workspaceRoot, status: "running", round, evidence: compactSubagentEvidence(evidence) });
       const relevant = upsertRelevantContextMessage(conversation, {
         checkpoints: contextCheckpoints,
         memoryFacts,
@@ -234,6 +239,7 @@ export async function runSubagentTask(options = {}) {
       });
       recordProviderUsage(tokenAccounting, usage, requestConversation);
       usageTotal = mergeTokenUsage(usageTotal, usage);
+      options.onUsage?.(usage);
       if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
         const summary = String(message.content || "")
           .trim()
@@ -253,6 +259,7 @@ export async function runSubagentTask(options = {}) {
           rounds: round,
           instructionFiles: [...instructionContext.loadedFiles],
         };
+        await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
         emit({
           type: "subagent.completed",
           agentId,
@@ -375,6 +382,13 @@ export async function runSubagentTask(options = {}) {
           )
         : await mapWithConcurrency(message.tool_calls, 1, executeCall);
       for (const { toolCall, modelResult } of results) {
+        let parsed;
+        try { parsed = parseToolArguments(toolCall); } catch { parsed = toolCall.function.arguments; }
+        const warning = toolProgress.observe({ tool: toolCall.function.name, input: parsed, result: modelResult });
+        if (warning) {
+          modelResult.progressWarning = warning;
+          emit({ type: "runtime.no_progress.warning", agentId, tool: toolCall.function.name, message: warning });
+        }
         conversation.push({
           role: "tool",
           tool_call_id: toolCall.id,
@@ -397,6 +411,7 @@ export async function runSubagentTask(options = {}) {
       rounds: effectiveMaxRounds,
       instructionFiles: [...instructionContext.loadedFiles],
     };
+    await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
     emit({
       type: "subagent.completed",
       agentId,
@@ -410,7 +425,13 @@ export async function runSubagentTask(options = {}) {
     });
     return result;
   } catch (error) {
-    if (error?.name === "AbortError") throw error;
+    if (error?.name === "AbortError") {
+      // A cancelled optional worker can have completed billable rounds.
+      error.usage = usageTotal;
+      error.evidence = compactSubagentEvidence(evidence);
+      error.steps = toolSteps.slice(-60);
+      throw error;
+    }
     const result = {
       agentId,
       role: input.role,
@@ -420,6 +441,7 @@ export async function runSubagentTask(options = {}) {
       steps: toolSteps.slice(-60),
       usage: usageTotal,
     };
+    await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
     emit({
       type: "subagent.failed",
       agentId,

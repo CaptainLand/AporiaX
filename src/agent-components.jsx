@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "./i18n";
+import { attachmentImageSrc } from "./attachments.js";
 
 const CODE_EXTENSIONS = new Set([
   "c",
@@ -215,7 +216,7 @@ export function UserAttachments({ attachments }) {
         ) : (
           <figure key={attachment.id || attachment.name}>
             <img
-              src={attachment.dataUrl}
+              src={attachmentImageSrc(attachment)}
               alt={attachment.name || tr("图片附件", "Image attachment")}
             />
             <figcaption>{attachment.name || tr("图片", "Image")}</figcaption>
@@ -244,6 +245,21 @@ export function ApprovalCard({ approval, onRespond, responding }) {
         <code>{approval.command}</code>
         <span>{tr("工作目录：{path}", "Working directory: {path}", { path: approval.cwd || "." })}</span>
       </div>
+      {approval.kind === "recovery-reconciliation" && approval.unresolved?.length > 0 && (
+        <div className="approval-warning">
+          <div>
+            <strong>{tr("上次结果尚未确认的操作", "Previous operations with unconfirmed outcomes")}</strong>
+            <ul>
+              {approval.unresolved.slice(0, 8).map((operation, index) => (
+                <li key={operation.operationId || index}>
+                  {operation.tool}{operation.target ? " · " + operation.target : ""}
+                </li>
+              ))}
+            </ul>
+            <p>{tr("请先核对上述相关操作。批准后将保存本次核对结果，同一条旧记录不再反复询问；其他操作不因此获得授权。", "Check the related operations above. Approval saves this acknowledgement so the same old record does not ask again; it does not authorize unrelated actions.")}</p>
+          </div>
+        </div>
+      )}
       <div className="approval-warning">
         {approval.kind === "execute" &&
         approval.sandbox?.available ? (

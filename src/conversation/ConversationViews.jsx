@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
 import remarkGfm from "remark-gfm";
 import { diffLines } from "diff";
 import { createPortal } from "react-dom";
@@ -72,6 +73,38 @@ function MarkdownCodeBlock({ children }) {
   );
 }
 
+const LinkWorkspace = createContext("");
+
+function MessageLink({ href, children, title }) {
+  const workspacePath = useContext(LinkWorkspace);
+  const { language, tr } = useI18n();
+  const [error, setError] = useState("");
+  const link = classifyLink(href);
+  const activate = async (event, action) => {
+    if (!link || link.kind === "anchor") return;
+    if (!window.desktop?.links && link.kind === "web") return;
+    event.preventDefault();
+    setError("");
+    if (!window.desktop?.links) {
+      setError(tr("请在桌面端打开本地文件", "Open local files in the desktop app"));
+      return;
+    }
+    try {
+      const result = await window.desktop.links.activate({ href, action, workspacePath, language });
+      if (!result?.ok) setError(result?.error || tr("无法打开链接", "Could not open link"));
+    } catch (failure) { setError(failure.message); }
+  };
+  if (!link) return <span>{children}</span>;
+  return <>
+    <a href={href} title={title || href} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
+      onClick={(event) => void activate(event, "open")}
+      onContextMenu={(event) => void activate(event, "menu")}
+      onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void activate(event, "menu"); }}
+    >{children}</a>
+    {error && <span role="alert"> — {error}</span>}
+  </>;
+}
+
 function MarkdownMessage({ content }) {
   const normalizedContent = String(content || "")
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
@@ -85,13 +118,10 @@ function MarkdownMessage({ content }) {
     <div className="markdown-message">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url, key) => key === "href" ? messageLinkUrl(url) : defaultUrlTransform(url)}
         components={{
           pre: MarkdownCodeBlock,
-          a: ({ children, ...props }) => (
-            <a {...props} rel="noreferrer" target="_blank">
-              {children}
-            </a>
-          ),
+          a: MessageLink,
         }}
       >
         {normalizedContent}
@@ -378,9 +408,9 @@ function SelfCheckCard({ selfCheck }) {
         </span>
         <div>
           <strong>
-            {progressive
-              ? tr("分段自检与最终封印已完成", "Staged review and final seal completed")
-              : tr("强制自检已完成", "Mandatory self-check completed")}
+            {progressive || selfCheck.mode === "agent-led"
+              ? tr("独立检查已记录", "Independent checks recorded")
+              : tr("检查已完成", "Self-check completed")}
           </strong>
           <span>
             {progressive
@@ -400,13 +430,17 @@ function SelfCheckCard({ selfCheck }) {
       {verification?.required && (
         <div
           className={`self-check-verification ${
-            verification.passed ? "passed" : "not-passed"
+            (selfCheck.delivery?.status || (verification.passed ? "passed" : "failed")) === "passed"
+              ? "passed"
+              : "not-passed"
           }`}
         >
           <strong>
-            {verification.passed
+            {selfCheck.delivery?.status === "passed" || (selfCheck.delivery == null && verification.passed)
               ? tr("项目验证已通过", "Project verification passed")
-              : verification.attempted
+              : selfCheck.delivery?.status === "unavailable"
+                ? tr("项目验证不可用", "Project verification unavailable")
+                : verification.attempted
                 ? tr("项目验证未通过", "Project verification failed")
                 : tr("项目验证未执行", "Project verification was not run")}
           </strong>
@@ -771,21 +805,30 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
   const { tr } = useI18n();
   const [retrying, setRetrying] = useState(false);
   const failed = message.error || message.status === "failed";
+  const blocked = message.status === "blocked";
   const interrupted = message.status === "interrupted";
   const hasAnchor = Boolean(message.anchor && message.changes?.length);
   const restored = Boolean(message.anchorRestoredAt);
 
   return (
     <article
-      className={`assistant-message ${failed ? "error" : ""} ${interrupted ? "interrupted" : ""}`}
+      className={`assistant-message ${failed ? "error" : ""} ${interrupted || blocked ? "interrupted" : ""}`}
     >
       <div className="assistant-message-heading">
         <strong>
-          {failed
+          {blocked ? tr("验证受阻 · 实现已保存", "Verification unavailable · Work saved") : failed
             ? tr("运行失败", "Run failed")
             : interrupted
               ? tr("任务已停止", "Task stopped")
-              : "AporiaX"}
+              : message.status === "completed" && message.selfCheck?.delivery?.status === "unverified"
+                ? tr("已交付 · 未验证", "Delivered · Unverified")
+                : message.status === "completed" && message.selfCheck?.delivery?.status === "unavailable"
+                  ? tr("已交付 · 验证不可用", "Delivered · Verification unavailable")
+                  : message.status === "completed" && message.selfCheck?.delivery?.status === "failed"
+                    ? tr("已交付 · 验证未通过", "Delivered · Checks failed")
+                    : message.status === "completed" && message.selfCheck?.verification?.waived
+                      ? tr("已交付 · 未验证", "Delivered · Unverified")
+                      : "AporiaX"}
         </strong>
         <RunDurationChip message={message} />
         {hasAnchor && (
@@ -869,7 +912,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           <span className="stream-placeholder">{tr("暂无回复内容", "No response content")}</span>
         )}
       </div>
-      {(failed || interrupted) && message.prompt && (
+      {(failed || interrupted || blocked) && message.prompt && (
         <button
           className="retry-message-button"
           type="button"
@@ -1011,12 +1054,12 @@ function describeWitnessRecord(record, tr, language) {
     "subagent.started": [tr("子 Agent 已开始工作", "Subagent started working"), record.detail],
     "subagent.completed": [tr("子 Agent 已返回记录", "Subagent returned its record"), record.detail],
     "subagent.failed": [tr("子 Agent 未能完成", "Subagent did not complete"), record.detail],
-    "self_check.started": [tr("进入强制自检", "Mandatory self-check started"), tr("正在复核修改和验证结果", "Reviewing changes and verification evidence")],
+    "self_check.started": [tr("开始独立检查", "Independent check started"), tr("正在复核修改和验证结果", "Reviewing changes and verification evidence")],
     "self_check.segment.started": [tr("分段子 Agent 自检", "Staged subagent review"), tr("正在复核 {count} 个当前文件版本", "Reviewing {count} current file version(s)", { count: record.detail || 0 })],
     "self_check.segment.completed": [tr("分段自检已记录", "Staged review recorded"), record.detail],
     "self_check.fallback": [tr("切换到完整自检", "Switching to full self-check"), tr("分段证据不完整，启用安全兜底", "Staged evidence was incomplete; safety fallback enabled")],
     "self_check.sealed": [tr("最终证据已封印", "Final evidence sealed"), tr("当前文件版本均已有匹配的审查依据", "Every current file version has matching review evidence")],
-    "self_check.completed": [tr("强制自检完成", "Mandatory self-check completed"), tr("正在整理最终结果", "Preparing the final result")],
+    "self_check.completed": [tr("独立检查已记录", "Independent check recorded"), tr("正在整理最终结果", "Preparing the final result")],
     "instructions.loaded": [tr("已加载目录规则", "Scoped project rules loaded"), record.detail],
     "context.compacted": [tr("已整理长任务上下文", "Long-task context compacted"), tr("关键约束与证据已保留", "Key constraints and evidence were preserved")],
     "memory.updated": [tr("项目记忆已更新", "Project memory updated"), record.detail],
@@ -1045,7 +1088,6 @@ function WitnessPanel({ witness, liveProgress }) {
     language,
   );
   const activeAgents = witness?.counters?.activeAgents || 0;
-  const alerts = witness?.alerts || [];
   const witnessFinished = ["completed", "failed", "interrupted"].includes(
     witness?.status,
   );
@@ -1114,13 +1156,6 @@ function WitnessPanel({ witness, liveProgress }) {
           </p>
         </div>
       </div>
-
-      {alerts.length > 0 && (
-        <div className="witness-alert">
-          <AlertTriangle size={13} />
-          <span>{alerts.at(-1).detail}</span>
-        </div>
-      )}
 
       {visibleRecords.length > 0 && (
         <div className="witness-ledger">
@@ -1256,8 +1291,8 @@ export function Conversation({
                 {message.steeringStatus === "failed" && <AlertTriangle size={12} />}
                 {message.steeringStatus === "pending"
                   ? tr(
-                      "等待下一安全边界应用",
-                      "Waiting for the next safe boundary",
+                      "等待接入 · 正在调整生成或等待当前操作完成",
+                      "Pending · redirecting generation or finishing the current operation",
                     )
                   : message.steeringStatus === "applied"
                     ? tr("已应用到当前任务", "Applied to the current task")
@@ -1278,6 +1313,7 @@ export function Conversation({
         const restored = Boolean(message.anchorRestoredAt);
         return (
           <React.Fragment key={message.id}>
+            <LinkWorkspace.Provider value={task.workspacePath || ""}>
             <AssistantMessage
               message={message}
               onRetry={onRetry}
@@ -1285,6 +1321,7 @@ export function Conversation({
                 setAnchorRequest({ messageId: anchorTarget.id })
               }
             />
+            </LinkWorkspace.Provider>
             {!restored && files.length > 0 && (
               <EditedFilesCard
                 files={files}

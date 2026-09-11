@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { withDurableRun } from "../runtime/durable-run.js";
 import {
   acknowledgeRecoverableRun,
-  appendRunJournalEvent,
+  appendRunJournalEvents,
   beginRunJournal,
   finishRunJournal,
   getRunRecoveryContext,
   listRecoverableRuns,
   markRunRecoveryStarted,
   updateRunJournalMetadata,
+  saveRunCheckpoint,
+  saveRunOperation,
+  findConfirmedRunOperation,
 } from "../run-store.js";
 
 function createAbortError(message = "The task was interrupted.") {
@@ -18,6 +22,7 @@ function createRunControl() {
   let paused = false;
   let pauseWaiters = [];
   const steeringQueue = [];
+  const steeringListeners = new Set();
 
   const settlePauseWaiters = () => {
     const waiters = pauseWaiters;
@@ -42,7 +47,13 @@ function createRunControl() {
     },
     enqueueSteering(message) {
       steeringQueue.push(message);
+      for (const listener of steeringListeners) listener();
       return steeringQueue.length;
+    },
+    hasSteering: () => steeringQueue.length > 0,
+    onSteering(listener) {
+      steeringListeners.add(listener);
+      return () => steeringListeners.delete(listener);
     },
     consumeSteering() {
       return steeringQueue.splice(0, steeringQueue.length);
@@ -139,13 +150,44 @@ export class HarnessTaskRuntime {
       // Observability is best-effort.
     }
     if (journal) {
-      record.journalTail = record.journalTail
-        .then(() =>
-          appendRunJournalEvent(this.#directory(), record.runId, payload),
-        )
-        .catch(() => undefined);
+      this.#queueJournal(record, payload);
     }
     return payload;
+  }
+
+  #queueJournal(record, event) {
+    if (record.persistenceError) return;
+    record.pendingEvents.push(event);
+    record.pendingBytes += Buffer.byteLength(JSON.stringify(event));
+    const stream = ["response.delta", "witness.updated"].includes(event.type);
+    if (!stream || record.pendingEvents.length >= 64 || record.pendingBytes >= 64_000) {
+      this.#flushJournal(record);
+    } else if (!record.journalTimer) {
+      record.journalTimer = setTimeout(() => this.#flushJournal(record), 100);
+      record.journalTimer.unref?.();
+    }
+  }
+
+  #flushJournal(record) {
+    clearTimeout(record.journalTimer);
+    record.journalTimer = null;
+    const events = record.pendingEvents.splice(0);
+    record.pendingBytes = 0;
+    if (events.length) record.journalTail = record.journalTail
+      .then(() => {
+        if (record.persistenceError) throw record.persistenceError;
+        return appendRunJournalEvents(this.#directory(), record.runId, events);
+      })
+      .catch((error) => this.#persistenceFailed(record, error));
+    return record.journalTail;
+  }
+
+  #persistenceFailed(record, cause) {
+    if (record.persistenceError) return;
+    record.persistenceError = Object.assign(new Error("RUN_PERSISTENCE_FAILED: 无法保存任务进度，已停止执行。请检查磁盘空间和数据目录权限。", { cause }), { code: "RUN_PERSISTENCE_FAILED" });
+    try { record.onEvent?.({ type: "run.persistence_failed", error: record.persistenceError.message }); } catch {}
+    try { this.#eventBus?.emit({ runId: record.runId, taskId: record.taskId, type: "run.persistence_failed", error: record.persistenceError.message }); } catch {}
+    record.controller.abort();
   }
 
   attachEventBus(eventBus) {
@@ -244,6 +286,9 @@ export class HarnessTaskRuntime {
       controller,
       control,
       journalTail: Promise.resolve(),
+      pendingEvents: [],
+      pendingBytes: 0,
+      journalTimer: null,
       approvalGrants: new Set(),
       startedAt: new Date().toISOString(),
       onEvent,
@@ -262,14 +307,6 @@ export class HarnessTaskRuntime {
     });
     this.#activeRuns.set(safeRunId, record);
 
-    if (recoveryContext?.runId) {
-      await markRunRecoveryStarted(
-        this.#directory(),
-        recoveryContext.runId,
-        safeRunId,
-      ).catch(() => undefined);
-    }
-
     const emit = (payload = {}) => {
       const event = {
         timestamp: payload?.timestamp || new Date().toISOString(),
@@ -285,21 +322,33 @@ export class HarnessTaskRuntime {
       } catch {
         // Observability is best-effort; task execution remains authoritative.
       }
-      record.journalTail = record.journalTail
-        .then(() => appendRunJournalEvent(this.#directory(), safeRunId, event))
-        .catch(() => undefined);
+      this.#queueJournal(record, event);
       return event;
     };
 
-    const requestApproval = (details = {}) => {
+    const requestApproval = async (details = {}) => {
       if (controller.signal.aborted) {
         return Promise.resolve({ approved: false, interrupted: true });
       }
-      const grantKey = String(this.#approvalGrantKey(details) || "");
+      const grantKey = details?.kind === "recovery-reconciliation" ? "" : String(this.#approvalGrantKey(details) || "");
       if (grantKey && record.approvalGrants.has(grantKey)) {
         return Promise.resolve({ approved: true, remembered: true });
       }
       const approvalId = randomUUID();
+      try {
+        await this.#flushJournal(record);
+        if (record.persistenceError) throw record.persistenceError;
+        await saveRunCheckpoint(this.#directory(), safeRunId, {
+          scopeId: "approval:" + approvalId, phase: "approval-pending",
+          approval: { id: approvalId, kind: details.kind, tool: details.tool, title: details.title,
+            command: String(details.command || "").slice(0, 4000), cwd: details.cwd },
+          requiresFreshApproval: true,
+        });
+      } catch (error) {
+        this.#persistenceFailed(record, error);
+        throw record.persistenceError;
+      }
+      if (controller.signal.aborted) return { approved: false, interrupted: true };
       return new Promise((resolveApproval) => {
         const handleAbort = () => {
           this.#pendingApprovals.delete(approvalId);
@@ -328,24 +377,59 @@ export class HarnessTaskRuntime {
     };
 
     const runPromise = (async () => {
+      const durableWrite = async (write) => {
+        try {
+          await this.#flushJournal(record);
+          if (record.persistenceError) throw record.persistenceError;
+          return await write();
+        } catch (cause) {
+          this.#persistenceFailed(record, cause);
+          throw record.persistenceError;
+        }
+      };
       try {
-        const result = await execute({
+        for (const [scopeId, checkpoint] of Object.entries(recoveryContext?.checkpoint?.agents || {})) {
+          await durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, { ...checkpoint, scopeId: scopeId === recoveryContext.runId ? safeRunId : scopeId }));
+        }
+        const inheritedOperations = new Map([...(recoveryContext?.operations || []), ...(recoveryContext?.unresolvedOperations || [])].map((operation) => [operation.operationId, operation]));
+        const copiedOperations = [];
+        for (const operation of inheritedOperations.values()) {
+          const copied = { ...operation, operationId: randomUUID(), recoveredFrom: operation.operationId };
+          await durableWrite(() => saveRunOperation(this.#directory(), safeRunId, copied));
+          copiedOperations.push(copied);
+        }
+        if (recoveryContext?.runId) {
+          await durableWrite(() => markRunRecoveryStarted(this.#directory(), recoveryContext.runId, safeRunId));
+        }
+        const result = await withDurableRun({
+          workspacePath: metadata?.workspacePath || recoveryContext?.workspacePath,
+          unresolved: copiedOperations.filter((operation) => ["started", "uncertain"].includes(operation.state)),
+          confirmed: copiedOperations.filter((operation) => operation.state === "confirmed"),
+          findConfirmed: recoveryContext?.runId
+            ? (fingerprint) => durableWrite(() => findConfirmedRunOperation(this.#directory(), safeRunId, fingerprint))
+            : null,
+          signal: controller.signal,
+          checkpoint: (value) => durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, value)),
+          operation: (value) => durableWrite(() => saveRunOperation(this.#directory(), safeRunId, value)),
+        }, () => execute({
           signal: controller.signal,
           control,
           emit,
           requestApproval,
-        });
-        await record.journalTail;
+        }));
+        await this.#flushJournal(record);
+        if (record.persistenceError) throw record.persistenceError;
         await finishRunJournal(this.#directory(), safeRunId, result);
         return result;
       } catch (error) {
-        await record.journalTail;
+        await this.#flushJournal(record);
         await finishRunJournal(this.#directory(), safeRunId, {
           status: controller.signal.aborted ? "interrupted" : "failed",
           changes: [],
         }).catch(() => undefined);
         throw error;
       } finally {
+        clearTimeout(record.journalTimer);
         control.abort();
         this.#activeRuns.delete(safeRunId);
         for (const [approvalId, approval] of this.#pendingApprovals) {
@@ -416,6 +500,7 @@ export class HarnessTaskRuntime {
     const payload = {
       type: "steering.queued",
       messageId: steeringMessage.id,
+      message: steeringMessage,
       queued,
     };
     this.#publish(record, payload);
@@ -440,6 +525,15 @@ export class HarnessTaskRuntime {
       Boolean(approved) && scope === "run" && Boolean(approval.grantKey);
     if (shouldRemember) {
       this.#activeRuns.get(approval.runId)?.approvalGrants.add(approval.grantKey);
+    }
+    const record = this.#activeRuns.get(approval.runId);
+    if (record) {
+      record.journalTail = record.journalTail
+        .then(() => saveRunCheckpoint(this.#directory(), approval.runId, {
+          scopeId: "approval:" + approval.approvalId, phase: "approval-resolved",
+          approved: Boolean(approved), requiresFreshApproval: true,
+        }))
+        .catch((error) => this.#persistenceFailed(record, error));
     }
     approval.resolve({ approved: Boolean(approved), remembered: shouldRemember });
     return true;

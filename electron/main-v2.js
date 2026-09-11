@@ -1,7 +1,11 @@
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
+import { registerBlobScheme } from "./blob-protocol.js";
+
+registerBlobScheme();
 import "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
+import { showApprovalToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
 import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
@@ -19,7 +23,7 @@ import {
   TOOL_DEFINITIONS,
   TOOL_RISKS,
 } from "./runtime/native-tool-catalog.js";
-import { prepareVisionProxyRequest } from "./vision-proxy.js";
+import { prepareVisionProxyRequest, getCloudVisionCapability } from "./vision-proxy.js";
 import { exposeVisionProxyCapabilities } from "./vision-proxy-core.js";
 import {
   prepareWorkspaceMentionMessage,
@@ -165,9 +169,13 @@ const nativeHandle = ipcMain.handle.bind(ipcMain);
 const originalHandle = ipcMain.handle;
 ipcMain.handle = function budgetAwareHandle(channel, listener) {
   if (channel === "providers:list") {
-    return nativeHandle(channel, async (...args) =>
-      exposeVisionProxyCapabilities(await listener(...args)),
-    );
+    return nativeHandle(channel, async (...args) => {
+      const records = await listener(...args);
+      const cloud = records.some((provider) => provider.id === "aporia-cloud");
+      const visionCapability = cloud ? await getCloudVisionCapability() : null;
+      return exposeVisionProxyCapabilities(records.map((provider) => provider.id === "aporia-cloud"
+        ? { ...provider, visionCapability } : provider));
+    });
   }
   if (channel === "harness:steer") {
     return nativeHandle(channel, async (event, request = {}) => {
@@ -242,6 +250,29 @@ kernel = createHarnessKernel({
   taskRuntime: desktopMain.harnessTaskRuntime,
 });
 setDefaultHarnessEventBus(kernel.events);
+kernel.events.on("approval.required", (event) => {
+  const approval = event.approval || {};
+  showApprovalToast({
+    approval,
+    theme: desktopMain.getDesktopWindowTheme?.() || "light",
+    onDecide: (approved) => {
+      desktopMain.harnessTaskRuntime.respondApproval(event.runId, approval.id, {
+        approved,
+        scope: "once",
+      });
+      const window = desktopMain.getDesktopMainWindow?.();
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("harness:event", {
+          type: "approval.resolved",
+          runId: event.runId,
+          taskId: event.taskId,
+          approved,
+          approval: { id: approval.id },
+        });
+      }
+    },
+  });
+});
 desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
   const budget = planAgentBudget(request || {});
   const preparedRequest = await prepareHarnessRunRequest(null, request);

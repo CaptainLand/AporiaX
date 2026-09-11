@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.1" src="https://img.shields.io/badge/source-v0.7.1-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.5" src="https://img.shields.io/badge/source-v0.7.5-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX 当前源码与 Windows 发行版本为 **`v0.7.1`**，仍处于 Preview 阶段。
-> 0.7.1 聚焦 Harness 性能、按风险自检、低成本子 Agent 编排、Understanding 整理与流式重试可靠性，并将桌面登录入口切换到当前 AporiaX Web 服务。
+> AporiaX 当前源码与 Windows 发行版本为 **`v0.7.5`**，仍处于 Preview 阶段。
+> 0.7.5 把开屏换成浅色 Gem Smoke AX，每次启动都会先看到欢迎页。
 > Aporia Account、Aporia Cloud、BYOK 与本地模型路径继续保持相互独立。
 
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
@@ -35,11 +35,11 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX 粒子海欢迎页" /></td>
+    <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX 浅色 Gem Smoke 欢迎页" /></td>
     <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>从一个疑问开始</strong><br><sub>开屏与中英双语入口</sub></td>
+    <td align="center"><strong>从一个疑问开始</strong><br><sub>浅色 Gem Smoke 开屏与中英双语入口</sub></td>
     <td align="center"><strong>Route · Evidence · Anchor</strong><br><sub>看见路径，保留依据，随时安全回退</sub></td>
   </tr>
   <tr>
@@ -59,6 +59,46 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
     <td align="center"><strong>Understanding</strong><br><sub>版本化沉淀架构、约定、命令、偏好与调试经验</sub></td>
   </tr>
 </table>
+
+## 0.7.5 更新：浅色 Gem Smoke 开屏
+
+- 欢迎页改为原版 AX 上的 Gem Smoke，浅色 Mesh 背景，Liquid Metal 进入按钮。
+- 点空白可循环多种 logo 着色效果；减少动态效果时只用静态 PNG。
+- 需要确认时角落弹出通知，可确认或拒绝；点了立刻关掉，5 秒未点也会消失。
+- 切换时不再挖空闪白；本包每次启动都先显示欢迎页。
+- 0.7.4 的分任务落盘、原生视觉默认和夜间托盘图标保持不变。
+
+[查看完整 0.7.5 中英文更新记录](docs/releases/v0.7.5.md)
+
+## 0.7.4 更新：分任务落盘与安静桌面
+
+- 每个任务单独 JSON，附件按哈希落盘；单个任务超过 200 MB 才跳过，其余照常保存。
+- 自定义模型默认原生视觉，看图被拒绝后自动改为仅文本。
+- 任务栏 / 托盘 / 收纳篮使用夜间 AX；软件内 logo 仍随主题。
+- 去掉 Witness 停滞横幅和侧栏登录错误码；下次启动回到上次任务、页签和滚动位置。
+
+[查看完整 0.7.4 中英文更新记录](docs/releases/v0.7.4.md)
+
+## 0.7.3 更新：Agent 主导检查与诚实交付
+
+- 不再因文件数、计划完成或根目录测试脚本自动跑测试、Review 或强制自检。
+- 主 Agent 明确选择的命令才会执行；`verification:true` 才记为验证证据，跳过不会把失败改成通过。
+- 未验证、失败、环境不可用或过期时仍可交付已有文件，界面不再把「无需审查」显示成测试通过。
+- 原生视觉按图片块估算预算，超预算会保留已完成工作；含图片的用量不污染文本校准。
+- Kernel 与编排共用写范围锁，重叠 scope 不能同时打开，冲突后不会退回父工作区。
+
+[查看完整 0.7.3 中英文更新记录](docs/releases/v0.7.3.md)
+
+## 0.7.2 更新：更可靠、更顺畅的桌面工作流
+
+- SQLite 检查点与操作回执保存任务状态；不确定的副作用在恢复时重新确认。
+- 验证结果绑定文件版本，分段读取按内容哈希和覆盖范围核验，避免旧证据误判。
+- 插话可取消主模型当前生成并重新请求；已开始的工具先完成，尚未开始的操作跳过。
+- 插话前后回复分段展示，保留原输出与 Witness / Anchor 关联。
+- 文件链接支持打开、另存为、文件夹定位、其他应用 / IDE 打开及复制路径；可执行文件需确认。
+- 合入既有 Desktop 远程任务同步与逐文件确认的只读传输入口；实际可用性取决于 Cloud 与网络配置。
+
+[查看完整 0.7.2 中英文更新记录](docs/releases/v0.7.2.md)
 
 ## 0.7.1 更新：更快、更克制的 Harness
 
@@ -130,7 +170,7 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 | Agent 协作 | Shared Contract、Plan Approval、结构化 handoff 与有界 mailbox；Main 保持最终集成权 |
 | 可观察执行 | Witness 在 Dialogue 实时记录主/子 Agent、当前动作、耗时、失败与自检阶段；Route 保留完整路径 |
 | 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、对话级 Anchor、跨轮恢复与原子冲突检查 |
-| 强制自检 | 分段 Review/Verify 子 Agent 复核当前文件版本，最后以轻量封印确认测试、风险和交付物 |
+| 独立检查 | 主 Agent 明确选择相关命令与审查；Harness 记录真实证据并允许带着未验证/失败状态交付 |
 | 项目理解 | Understanding 持续沉淀架构、约定、命令、偏好和调试经验，供项目内任务共享 |
 | 扩展 | Skill 文件夹、MCP JSON、Browser、Office 与原生工具统一进入 Capability 系统 |
 | 多模型 API | Aporia Cloud、多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
@@ -140,13 +180,13 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 
 ## 下载
 
-`main` 当前是 **v0.7.1 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
+`main` 当前是 **v0.7.5 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 所有历史版本与发行说明 |
-| [0.7.1 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Setup-0.7.1-x64.exe) | 推荐的 Windows x64 安装包 |
-| [0.7.1 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.1/AporiaX-Portable-0.7.1-x64.exe) | 无需安装的 Windows x64 便携包 |
+| [0.7.5 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Setup-0.7.5-x64.exe) | 推荐的 Windows x64 安装包 |
+| [0.7.5 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Portable-0.7.5-x64.exe) | 无需安装的 Windows x64 便携包 |
 
 首次启动后：
 

@@ -110,6 +110,7 @@ assert.deepEqual(
 );
 
 const selfCheck = {
+  required: true,
   completed: true,
   reviewedVersions: new Map([["src/a.js", "b\n"]]),
   report: {

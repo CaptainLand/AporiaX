@@ -257,25 +257,6 @@
   opacity: 0.6;
 }
 
-.local-account-inline-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 0;
-  color: #ff929d;
-  font-size: 9.5px;
-  line-height: 1.4;
-}
-
-.local-account-inline-error svg {
-  margin-top: 1px;
-  flex: 0 0 auto;
-}
-
-.local-account-inline-error--panel {
-  padding: 3px 7px 0;
-}
-
 .spin {
   animation: local-account-spin 0.8s linear infinite;
 }
@@ -312,4 +293,68 @@
 :root[data-theme="light"] .local-account-local-note,
 :root[data-theme="light"] .local-account-actions button {
   background: rgba(43, 94, 123, 0.045);
+}
+
+.local-account-remote {
+  display: grid;
+  width: 100%;
+  min-height: 43px;
+  padding: 8px 9px;
+  border: 1px solid rgba(98, 202, 239, 0.12);
+  border-radius: 9px;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  color: #918b98;
+  background: rgba(62, 177, 229, 0.035);
+  text-align: left;
+}
+
+.local-account-remote > svg { color: #62caef; }
+
+.local-account-remote > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.local-account-remote strong { color: #d8d4de; font-size: 10.5px; }
+.local-account-remote small { color: #817a88; font-size: 9px; line-height: 1.35; }
+
+.local-account-remote > i {
+  position: relative;
+  width: 25px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(126, 116, 139, 0.35);
+  transition: background 160ms ease;
+}
+
+.local-account-remote > i::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #aaa5b1;
+  content: "";
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.local-account-remote.is-enabled {
+  border-color: rgba(98, 202, 239, 0.28);
+  background: rgba(62, 177, 229, 0.08);
+}
+
+.local-account-remote.is-enabled > i { background: rgba(65, 188, 239, 0.45); }
+.local-account-remote.is-enabled > i::after { transform: translateX(11px); background: #8bdefc; }
+.local-account-remote:hover:not(:disabled) { border-color: rgba(98, 202, 239, 0.32); }
+.local-account-remote:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+.local-account-local-note--security {
+  border: 1px solid rgba(98, 202, 239, 0.08);
 }

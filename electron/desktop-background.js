@@ -1,4 +1,5 @@
 import { Menu, Notification, Tray, app } from "electron";
+import { existsSync } from "node:fs";
 import { access, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,13 @@ import {
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
+
+let activeTray = null;
+
+export function setDesktopTrayImage(image) {
+  if (!activeTray || activeTray.isDestroyed() || !image) return;
+  activeTray.setImage(image);
+}
 
 export function installDesktopBackground() {
   let tray = null;
@@ -107,7 +115,11 @@ export function installDesktopBackground() {
 
   const createTray = () => {
     if (disposed || tray) return;
-    tray = new Tray(join(projectRoot, "build", "icon.ico"));
+    const trayIcon = existsSync(join(projectRoot, "build", "icon-dark.ico"))
+      ? join(projectRoot, "build", "icon-dark.ico")
+      : join(projectRoot, "build", "icon.ico");
+    tray = new Tray(trayIcon);
+    activeTray = tray;
     tray.on("click", showMainWindow);
     tray.on("double-click", showMainWindow);
     updateTray();
@@ -148,6 +160,7 @@ export function installDesktopBackground() {
     stopTrayRefreshTimer();
     if (tray && !tray.isDestroyed()) tray.destroy();
     tray = null;
+    activeTray = null;
   };
   const handleActivate = () => {
     showMainWindow();

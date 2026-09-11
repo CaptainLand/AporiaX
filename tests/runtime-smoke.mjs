@@ -46,6 +46,7 @@ import {
   acknowledgeRecoverableRun,
   appendRunJournalEvent,
   beginRunJournal,
+  closeRunJournalStore,
   finishRunJournal,
   getRunRecoveryContext,
   listRecoverableRuns,
@@ -1181,6 +1182,7 @@ try {
       path: "checked.js",
       content: "export const checked = true;\n",
     }),
+    createToolDelta("explicit-review-1", "request_self_check", { reason: "Review initial implementation", verification: [] }),
     createToolDelta("plan-2", "update_plan", {
       explanation: "实现阶段完成，进入验证。",
       steps: [
@@ -1208,7 +1210,8 @@ try {
       old_text: "checked = true",
       new_text: "checked = 'reviewed'",
     }),
-    { content: "实现与分段自检均已完成。" },
+    createToolDelta("explicit-review-2", "request_self_check", { reason: "Review patched module", verification: [{ command: "npm run test", cwd: ".", reason: "Syntax check for checked.js" }] }),
+    { content: "实现与显式检查均已完成。" },
   ];
   let scriptedResponseIndex = 0;
   let transientFailureInjected = false;
@@ -1346,8 +1349,9 @@ try {
     "structured plans should be projected as first-class runtime events",
   );
   assert.equal(harnessResult.selfCheck?.completed, true);
-  assert.equal(harnessResult.selfCheck?.mode, "progressive");
-  assert.equal(harnessResult.selfCheck?.seal?.segmentCount, 2);
+  assert.equal(harnessResult.selfCheck?.mode, "agent-led");
+  assert.equal(harnessResult.selfCheck?.segments?.length, 2);
+  assert.equal(harnessResult.selfCheck?.seal, null, "model-led checks do not mint a final seal");
   assert.equal(
     harnessResult.selfCheck?.segments?.every(
       (segment) => segment.verdict === "pass",
@@ -1363,9 +1367,11 @@ try {
     harnessEvents.filter(
       (event) => event.type === "subagent.started" && event.role === "verify",
     ).length,
-    1,
-    "a later verification step should reserve the single Verify budget for the final current version",
+    0,
+    "known final verification commands execute without another model-backed Verify agent",
   );
+  assert.equal(stagedVerifyRound, 0);
+  assert.ok(harnessResult.steps.some((step) => step.name === "run_command" && step.success), "deterministic verification still executes the real command");
   assert.equal(
     await readFile(join(testRoot, "checked.js"), "utf8"),
     "export const checked = 'reviewed';\n",
@@ -1417,7 +1423,7 @@ try {
   assert.equal(
     harnessEvents.some(
       (event) =>
-        event.type === "subagent.tool.started" &&
+        event.type === "tool.started" && event.executor === "deterministic" &&
         event.tool === "run_command" &&
         event.command === "npm run test",
     ),
@@ -1679,18 +1685,10 @@ try {
   });
   assert.equal(autoSelfCheckResult.status, "completed");
   assert.equal(autoSelfCheckResult.selfCheck?.completed, true);
-  assert.equal(
-    autoSelfCheckResult.steps.find(
-      (step) => step.name === "complete_self_check" && !step.success,
-    )?.retry,
-    true,
-  );
-  assert.equal(
-    autoSelfCheckEvents.filter(
-      (event) => event.type === "self_check.started",
-    ).length,
-    1,
-  );
+  assert.equal(autoSelfCheckResult.steps.filter(step => step.name === "complete_self_check" && !step.success).length, 0,
+    "reports are accepted with evidence gaps instead of a mandatory retry");
+  assert.equal(autoSelfCheckEvents.filter(event => event.type === "self_check.started").length, 0);
+  assert.equal(autoSelfCheckResult.selfCheck.verification.passed, false);
 
   const commandSnapshotRoot = join(testRoot, "command-snapshot");
   await mkdir(commandSnapshotRoot, { recursive: true });
@@ -1701,7 +1699,6 @@ try {
       cwd: ".",
       reason: "Create a file through the command sandbox.",
     }),
-    { content: "The command-created file now exists." },
     createToolDelta("command-read", "read_file", {
       path: "command-created.js",
     }),
@@ -1709,6 +1706,7 @@ try {
       command: "node --check command-created.js",
       cwd: ".",
       reason: "Verify the command-created JavaScript file.",
+      verification: true,
     }),
     createToolDelta("command-self-check", "complete_self_check", {
       summary: "Re-read and syntax-checked the command-created file.",
@@ -1857,7 +1855,6 @@ try {
         },
       ],
     }),
-    { content: "表格已生成，准备自检。" },
     createToolDelta("inspect-sheet-1", "inspect_office_file", {
       path: "销售看板.xlsx",
     }),
@@ -2281,6 +2278,7 @@ try {
   console.log("Runtime smoke test passed.");
 } finally {
   globalThis.fetch = originalFetch;
+  await closeRunJournalStore();
   const resolvedRoot = resolve(testRoot);
   const resolvedWorkspace = resolve(".");
   if (

@@ -4,9 +4,12 @@ import {
   app,
   dialog,
   ipcMain,
+  nativeImage,
   safeStorage,
   shell,
 } from "electron";
+import { handleDesktopLink } from "./desktop-links.js";
+import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
 import {
   lstat,
   mkdir,
@@ -15,6 +18,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -26,6 +30,8 @@ import {
   saveWorkspaceTextFile,
 } from "./agent-runtime.js";
 import { parseAttachment } from "./attachment-parser.js";
+import { attachBlobProtocol } from "./blob-protocol.js";
+import { createTaskHistoryStore } from "./task-history-store.js";
 import {
   APORIA_CLOUD_PROVIDER_ID,
   DEFAULT_DEEPSEEK_PROVIDER,
@@ -41,6 +47,7 @@ import {
 } from "./sandbox-runtime.js";
 import { createHarnessTaskRuntime } from "./harness/task-runtime.js";
 import { createProjectUnderstandingStore } from "./project-understanding.js";
+import { setDesktopTrayImage } from "./desktop-background.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -48,6 +55,7 @@ const isDevelopment = process.argv.includes("--dev");
 
 let mainWindow = null;
 let completionFlashTimer = null;
+let currentWindowTheme = "light";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -106,12 +114,13 @@ function getProviderStorePath() {
   return join(app.getPath("userData"), "aporiax-providers.json");
 }
 
-function getTasksPath() {
-  return join(app.getPath("userData"), "aporiax-tasks.json");
-}
+let taskHistoryStore = null;
 
-function getLegacyTasksPath() {
-  return join(app.getPath("userData"), "deepagent-tasks.json");
+function getTaskHistoryStore() {
+  if (!taskHistoryStore) {
+    taskHistoryStore = createTaskHistoryStore(app.getPath("userData"));
+  }
+  return taskHistoryStore;
 }
 
 function getProjectUnderstandingDirectory() {
@@ -302,6 +311,33 @@ async function saveProvider(input) {
   return publicProviderSummary(nextRecord);
 }
 
+async function disableProviderNativeVision(providerId, modelId) {
+  if (
+    !providerId ||
+    !modelId ||
+    providerId === APORIA_CLOUD_PROVIDER_ID
+  ) {
+    return false;
+  }
+  const storedProviders = await readStoredProviders();
+  const existing = storedProviders.find(
+    (provider) => provider.id === providerId,
+  );
+  if (!existing) return false;
+  const models = (existing.models || []).map((model) =>
+    String(model?.id || "") === String(modelId)
+      ? { ...model, imageInput: "text" }
+      : model,
+  );
+  await saveProvider({
+    id: existing.id,
+    name: existing.name,
+    baseUrl: existing.baseUrl,
+    models,
+  });
+  return true;
+}
+
 async function removeProvider(providerId) {
   if (providerId === APORIA_CLOUD_PROVIDER_ID) return false;
   const providers = await readStoredProviders();
@@ -329,29 +365,23 @@ async function saveApiKey(apiKey) {
 }
 
 async function loadTasks() {
-  for (const tasksPath of [getTasksPath(), getLegacyTasksPath()]) {
-    try {
-      const tasks = JSON.parse(await readFile(tasksPath, "utf8"));
-      return Array.isArray(tasks) ? tasks : [];
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw new Error("Unable to read saved tasks.", { cause: error });
-      }
-    }
+  try {
+    return await getTaskHistoryStore().loadTasks();
+  } catch (error) {
+    throw new Error("Unable to read saved tasks.", { cause: error });
   }
-  return null;
 }
 
 async function saveTasks(tasks) {
-  if (!Array.isArray(tasks)) {
-    throw new Error("Tasks must be an array.");
+  return getTaskHistoryStore().saveTasks(tasks);
+}
+
+async function hydrateHarnessMessages(messages) {
+  try {
+    return await getTaskHistoryStore().hydrateMessages(messages);
+  } catch {
+    return Array.isArray(messages) ? messages : [];
   }
-  const serialized = JSON.stringify(tasks);
-  if (Buffer.byteLength(serialized, "utf8") > 50_000_000) {
-    throw new Error("Task history exceeds the 50 MB storage limit.");
-  }
-  await mkdir(dirname(getTasksPath()), { recursive: true });
-  await writeFile(getTasksPath(), serialized, "utf8");
 }
 
 function sendHarnessEvent(event, runId, payload) {
@@ -367,10 +397,35 @@ function sendWindowState() {
   );
 }
 
+function desktopShellIcon() {
+  const candidates = [
+    join(projectRoot, "build", "icon-dark.ico"),
+    join(projectRoot, "dist", "aporiax-icon-dark.png"),
+    join(projectRoot, "public", "aporiax-icon-dark.png"),
+    join(projectRoot, "build", "icon.ico"),
+  ];
+  for (const iconPath of candidates) {
+    if (!existsSync(iconPath)) continue;
+    const image = nativeImage.createFromPath(iconPath);
+    if (!image.isEmpty()) return image;
+  }
+  return nativeImage.createFromPath(join(projectRoot, "build", "icon.ico"));
+}
+
+function themedNativeIcon(_theme) {
+  return desktopShellIcon();
+}
+
 function applyWindowTheme(theme) {
   const normalizedTheme = theme === "dark" ? "dark" : "light";
+  currentWindowTheme = normalizedTheme;
+  const image = themedNativeIcon(normalizedTheme);
+  if (!image.isEmpty()) {
+    setDesktopTrayImage(image);
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return normalizedTheme;
   const dark = normalizedTheme === "dark";
+  if (!image.isEmpty()) mainWindow.setIcon(image);
   mainWindow.setBackgroundColor(dark ? "#15111b" : "#eef3f7");
   if (
     process.platform !== "darwin" &&
@@ -427,7 +482,7 @@ function notifyTaskCompleted(payload) {
   const notification = new Notification({
     title,
     body,
-    icon: join(projectRoot, "build", "icon.ico"),
+    icon: themedNativeIcon(currentWindowTheme),
     silent: false,
   });
   notification.on("click", () => focusTask(taskId));
@@ -447,8 +502,8 @@ function createMainWindow() {
     ...(process.platform !== "darwin"
       ? {
           titleBarOverlay: {
-            color: "#1b1622",
-            symbolColor: "#f0edf3",
+            color: "#edf2f6",
+            symbolColor: "#303438",
             height: 38,
           },
         }
@@ -456,8 +511,8 @@ function createMainWindow() {
     resizable: true,
     maximizable: true,
     minimizable: true,
-    icon: join(projectRoot, "build", "icon.ico"),
-    backgroundColor: "#15111b",
+    icon: themedNativeIcon(currentWindowTheme),
+    backgroundColor: "#eef3f7",
     webPreferences: {
       preload: join(currentDirectory, "preload.cjs"),
       contextIsolation: true,
@@ -523,6 +578,7 @@ async function startHarnessTask(
   }
 
   const provider = await resolveProvider(request?.providerId);
+  const messages = await hydrateHarnessMessages(request?.messages);
   let recoveryContext = null;
   if (request?.recoveryRunId) {
     recoveryContext = await harnessTaskRuntime.recoveryContext(
@@ -562,6 +618,7 @@ async function startHarnessTask(
     execute: ({ signal, control, emit, requestApproval }) =>
       runHarness({
         ...request,
+        messages,
         provider,
         memoryDirectory: join(app.getPath("userData"), "project-memory"),
         understandingDirectory: getProjectUnderstandingDirectory(),
@@ -570,6 +627,8 @@ async function startHarnessTask(
         control,
         onEvent: emit,
         requestApproval,
+        onNativeVisionRejected: ({ providerId, modelId }) =>
+          disableProviderNativeVision(providerId, modelId),
       }),
   });
 }
@@ -623,6 +682,12 @@ ipcMain.handle("desktop:select-directory", async (event) => {
   return result.filePaths[0];
 });
 
+ipcMain.handle("desktop:link", async (event, request) => {
+  assertTrustedSender(event);
+  try { return await handleDesktopLink(event, request); }
+  catch (error) { return { ok: false, error: error.message }; }
+});
+
 ipcMain.handle("desktop:open-workspace", async (event, workspacePath) => {
   assertTrustedSender(event);
   if (
@@ -649,8 +714,7 @@ ipcMain.handle("tasks:load", async (event) => {
 
 ipcMain.handle("tasks:save", async (event, tasks) => {
   assertTrustedSender(event);
-  await saveTasks(tasks);
-  return true;
+  return saveTasks(tasks);
 });
 
 ipcMain.handle(
@@ -699,7 +763,22 @@ ipcMain.handle("understanding:revert", async (event, request) => {
 
 ipcMain.handle("attachments:parse", async (event, request) => {
   assertTrustedSender(event);
-  return parseAttachment(request);
+  const parsed = await parseAttachment(request);
+  try {
+    const stored = await getTaskHistoryStore().putBlob(request?.data, {
+      type: parsed.type || request?.type,
+    });
+    return { ...parsed, hash: stored.hash, size: stored.size };
+  } catch {
+    return parsed;
+  }
+});
+
+ipcMain.handle("attachments:store", async (event, request) => {
+  assertTrustedSender(event);
+  return getTaskHistoryStore().putBlob(request?.data, {
+    type: request?.type,
+  });
 });
 
 ipcMain.handle("providers:list", async (event) => {
@@ -800,9 +879,10 @@ ipcMain.handle("harness:resume", async (event, runId) => {
   });
 });
 
-ipcMain.handle("harness:steer", (event, { runId, message }) => {
+ipcMain.handle("harness:steer", async (event, { runId, message }) => {
   assertTrustedSender(event);
-  return harnessTaskRuntime.steer(runId, message, {
+  const [hydrated] = await hydrateHarnessMessages([message || {}]);
+  return harnessTaskRuntime.steer(runId, { ...message, ...hydrated }, {
     clientId: String(event.sender.id),
   });
 });
@@ -811,6 +891,7 @@ ipcMain.handle(
   "harness:approval-response",
   (event, { runId, approvalId, approved, scope = "once" }) => {
     assertTrustedSender(event);
+    if (approvalToastApprovalId() === String(approvalId || "")) closeApprovalToast();
     return harnessTaskRuntime.respondApproval(runId, approvalId, {
       approved,
       scope,
@@ -842,6 +923,7 @@ app.whenReady().then(() => {
   if (process.platform === "win32") {
     app.setAppUserModelId("com.aporiax.desktop");
   }
+  attachBlobProtocol(getTaskHistoryStore());
   createMainWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -857,3 +939,11 @@ app.on("window-all-closed", () => {
 });
 
 export { harnessTaskRuntime, startHarnessTask };
+
+export function getDesktopMainWindow() {
+  return mainWindow;
+}
+
+export function getDesktopWindowTheme() {
+  return currentWindowTheme;
+}

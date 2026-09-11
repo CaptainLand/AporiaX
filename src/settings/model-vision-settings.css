@@ -1,0 +1,8 @@
+.model-vision-settings { margin: 14px 0 0; padding: 12px; min-width: 0; border: 1px solid #dfe2e5; border-radius: 8px; }
+.model-vision-settings legend { padding: 0 4px; font-size: 12px; font-weight: 600; }
+.model-vision-settings p { margin: 0 0 10px; color: #89959c; font-size: 11px; line-height: 1.5; }
+.model-vision-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; min-width: 0; }
+.model-vision-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.model-vision-row select { flex: 0 0 132px; max-width: 50%; padding: 7px; border: 1px solid #dfe2e5; border-radius: 6px; color: inherit; background: #f1f3f4; font: inherit; font-size: 12px; }
+:root[data-theme="dark"] .model-vision-settings, :root[data-theme="dark"] .model-vision-row select { border-color: #343844; }
+:root[data-theme="dark"] .model-vision-row select { background: #1b1d24; }

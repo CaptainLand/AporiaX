@@ -1,0 +1,209 @@
+/* Scoped separately from the legacy particle welcome. Preserve the app font stack. */
+.ax-welcome {
+  --welcome-paper: #f7f9fc;
+  --welcome-ink: #172b45;
+  --welcome-muted: #5a6c82;
+  --welcome-accent: #2563eb;
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  overflow: hidden;
+  height: 100%;
+  color: var(--welcome-ink);
+  background: var(--welcome-paper);
+  font-family: Inter, "SF Pro Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.ax-welcome__drag { position: absolute; inset: 0 0 auto; height: 38px; z-index: 2; -webkit-app-region: drag; }
+.ax-welcome__mesh {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.3;
+  background:
+    radial-gradient(ellipse at 18% 28%, #c3e4fa 0%, transparent 52%),
+    radial-gradient(ellipse at 82% 18%, #b4daf6 0%, transparent 48%),
+    radial-gradient(ellipse at 72% 86%, #d4eefb 0%, transparent 56%);
+}
+.ax-welcome__mesh[data-effect="animated"] { background: transparent; opacity: 0.3; }
+.ax-welcome__mesh canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; contain: strict; }
+.ax-welcome__composition {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: min(1200px, 86%);
+  margin: 28px auto 0;
+  padding: 8px 0;
+}
+.ax-welcome__copy { position: relative; z-index: 1; padding: 28px 0 0 10px; }
+.ax-welcome h1 { margin: 0; font-size: clamp(54px, 6.1vw, 88px); font-weight: 550; line-height: 1.12; letter-spacing: -0.065em; }
+.ax-welcome h1 span { color: var(--welcome-accent); }
+.ax-welcome__subtitle { max-width: 26ch; margin: 25px 0 34px; color: var(--welcome-muted); font-size: clamp(16px, 1.4vw, 19px); line-height: 1.85; letter-spacing: 0.015em; text-wrap: pretty; }
+.ax-welcome__enter {
+  --enter-ink: #ffffff;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 22px 0 24px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--enter-ink);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  text-shadow: 0 1px 2px #0b2744cc, 0 0 10px #0b274499;
+  -webkit-app-region: no-drag;
+  background: linear-gradient(160deg, #4d93c8 0%, #2a6aa0 48%, #1b4f78 100%);
+  box-shadow: 0 12px 28px #176de238, inset 0 1px 0 #ffffff55;
+  transition: filter 180ms ease, transform 180ms ease;
+}
+.ax-welcome__enter-metal {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+.ax-welcome__enter-metal canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  contain: strict;
+}
+.ax-welcome__enter[data-metal="animated"] .ax-welcome__enter-metal {
+  opacity: 0.42;
+  mix-blend-mode: soft-light;
+}
+.ax-welcome__enter[data-metal="animated"] { background: linear-gradient(160deg, #4d93c8 0%, #2a6aa0 48%, #1b4f78 100%); }
+.ax-welcome__enter span:not(.ax-welcome__enter-metal),
+.ax-welcome__enter svg { position: relative; z-index: 1; }
+.ax-welcome__enter svg { color: var(--enter-ink); transition: transform 180ms ease; }
+.ax-welcome__enter:hover { filter: none; }
+.ax-welcome__enter:hover svg { transform: translateX(3px); }
+.ax-welcome__enter:focus,
+.ax-welcome__enter:focus-visible { outline: none; }
+.ax-welcome .ax-welcome__language button:focus-visible { outline: 2px solid var(--welcome-accent); outline-offset: 3px; }
+.ax-welcome__art {
+  position: relative;
+  isolation: isolate;
+  width: min(100%, 56vh, 590px);
+  aspect-ratio: 1;
+  justify-self: end;
+  pointer-events: none;
+  background: transparent;
+}
+.ax-welcome__halo { position: absolute; inset: 2% -6% -6%; background: radial-gradient(ellipse, #c6eaff65 0, #e8f4fc45 42%, transparent 70%); }
+.ax-welcome__original,
+.ax-welcome__plate {
+  position: absolute;
+  inset: 6%;
+  width: 88%;
+  height: 88%;
+}
+.ax-welcome__original { object-fit: contain; opacity: 1; }
+.ax-welcome__plate {
+  opacity: 0;
+  overflow: hidden;
+  -webkit-mask-image: url("../../aporiax-logo-clean.png");
+  mask-image: url("../../aporiax-logo-clean.png");
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.ax-welcome__plate canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.ax-welcome__shader {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  /* Rectangular feather: dissolve the canvas square without a circular crop. */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0%, #000 12%, #000 88%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 12%, #000 88%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent 0%, #000 12%, #000 88%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 12%, #000 88%, transparent 100%);
+  mask-composite: intersect;
+}
+.ax-welcome__shader canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; contain: strict; z-index: 0; }
+.ax-welcome canvas[data-pending] { opacity: 0; }
+.ax-welcome__art[data-image] .ax-welcome__shader { opacity: 1; }
+.ax-welcome__art[data-plate] .ax-welcome__plate { opacity: 1; }
+.ax-welcome__art[data-image] .ax-welcome__original,
+.ax-welcome__art[data-plate] .ax-welcome__original { opacity: 0; }
+.ax-welcome__art[data-effect="fallback"] .ax-welcome__original { opacity: 1; }
+.ax-welcome__footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 24px;
+  flex: 0 0 auto;
+  width: min(1200px, 86%);
+  margin: 0 auto;
+  padding: 18px 0 24px;
+}
+.ax-welcome .ax-welcome__language { position: static; padding: 3px; border: 1px solid #dce5ee; border-radius: 9px; background: #ecf1f6; box-shadow: none; backdrop-filter: none; }
+.ax-welcome .ax-welcome__language button { min-height: 32px; padding: 0 12px; color: var(--welcome-muted); }
+.ax-welcome .ax-welcome__language button.active { color: var(--welcome-ink); background: #fff; box-shadow: 0 1px 3px #172b4512; }
+
+:root[data-theme="dark"] .ax-welcome { --welcome-paper: #0f151d; --welcome-ink: #e7f1fc; --welcome-muted: #9cb1c6; --welcome-accent: #74cfff; }
+:root[data-theme="dark"] .ax-welcome__halo { opacity: 0.16; }
+:root[data-theme="dark"] .ax-welcome__mesh {
+  opacity: 0.32;
+  background:
+    radial-gradient(ellipse at 18% 28%, #1f4a6e 0%, transparent 52%),
+    radial-gradient(ellipse at 82% 18%, #1a3d5c 0%, transparent 48%),
+    radial-gradient(ellipse at 72% 86%, #256088 0%, transparent 56%);
+}
+:root[data-theme="dark"] .ax-welcome__mesh[data-effect="animated"] { background: transparent; opacity: 0.34; }
+:root[data-theme="dark"] .ax-welcome .ax-welcome__language { border-color: #2d4054; background: #151f2b; }
+:root[data-theme="dark"] .ax-welcome .ax-welcome__language button.active { color: #d9f3ff; background: #284459; box-shadow: none; }
+
+@media (max-width: 760px) {
+  .ax-welcome__composition { grid-template-columns: 1fr; align-content: center; gap: 0; padding: 12px 0; width: 84%; }
+  .ax-welcome__art { grid-row: 1; width: min(62vw, 280px); justify-self: end; margin: 0; }
+  .ax-welcome__copy { padding: 0; }
+  .ax-welcome h1 { font-size: clamp(52px, 10vw, 68px); }
+  .ax-welcome__subtitle { max-width: 30ch; font-size: 15px; margin: 16px 0 18px; }
+  .ax-welcome__footer { width: 84%; gap: 12px; padding: 16px 0 20px; }
+}
+@media (min-width: 761px) and (max-height: 640px) {
+  .ax-welcome__composition { padding: 0; }
+  .ax-welcome__art { width: min(100%, 46vh, 360px); }
+  .ax-welcome__copy { padding-top: 0; }
+  .ax-welcome__subtitle { margin: 14px 0 18px; }
+  .ax-welcome__footer { padding: 12px 0 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ax-welcome *, .ax-welcome *::before, .ax-welcome *::after { animation: none !important; transition: none !important; }
+}

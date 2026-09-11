@@ -21,13 +21,15 @@ const runRetryCore = await readFile(
   "utf8",
 );
 
+assert.match(index, /aporiax-blob:/);
+assert.match(preload, /attachments:store/);
 assert.doesNotMatch(index, /runtime-ui-enhancements\.jsx/);
 assert.doesNotMatch(index, /live-agent-status\.jsx/);
 assert.doesNotMatch(index, /skill-status\.jsx/);
 assert.doesNotMatch(index, /prompt-folding\.js/);
 assert.doesNotMatch(index, /agent-process-mentions\.css/);
 
-assert.match(main, /useTaskStore\(readSavedTasks\)/);
+assert.match(main, /aporiax\.session-ui\.v1/);
 assert.match(conversation, /<RunDurationChip message=\{message\}/);
 assert.doesNotMatch(conversation, /<LiveAgentStatus message=\{message\}/);
 assert.doesNotMatch(conversation, /<AgentProcessTrace message=\{message\}/);
@@ -43,7 +45,7 @@ assert.match(main, /const \[activeRunIdsByTask, setActiveRunIdsByTask\]/);
 assert.match(main, /run\.taskId === targetTask\.id/);
 assert.match(main, /runningTaskIds\.has\(activeTask\.id\)/);
 assert.doesNotMatch(main, /const \[runningTaskId, setRunningTaskId\]/);
-assert.match(electronMain, /const activeRuns = new Map\(\)/);
+assert.match(electronMain, /harnessTaskRuntime\.hasActiveRuns\(\)/);
 assert.match(electronMain, /app\.requestSingleInstanceLock\(\)/);
 assert.match(electronMain, /taskId: request\?\.taskId \|\| ""/);
 assert.match(preload, /activeRuns: \(\) => ipcRenderer\.invoke\("harness:active-runs"\)/);
@@ -55,7 +57,7 @@ assert.match(main, /Composer,\s+isImageAttachment,/);
 assert.match(main, /force: true/);
 assert.match(runRetryCore, /main-confirmed-idle/);
 assert.match(runRetryCore, /removeRendererTaskRuns\(rendererRuns, taskId\)/);
-assert.match(electronMain, /approvalGrants/);
+assert.match(electronMain, /approvalGrantKey/);
 assert.match(
   conversation,
   /<FoldableUserPrompt content=\{message\.content\}/,

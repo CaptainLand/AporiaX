@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { contentHash } from "../electron/runtime/evidence-ledger.js";
 import { createSelfCheckCoordinator } from "../electron/runtime/self-check-coordinator.js";
 import {
   buildSelfCheckResult,
@@ -92,6 +93,7 @@ assert.deepEqual(
     },
     mode: "adaptive",
     decision: "skipped",
+    delivery: null,
     segments: [],
     seal: null,
   },
@@ -111,6 +113,7 @@ function createState() {
     repeatedBlockedAttempts: 0,
     lastBlockedSignature: "",
     verificationCandidates: [],
+    verificationRequired: [{ command: "npm run test", cwd: ".", reason: "Selected fixture check" }],
     verificationAttempted: false,
     verificationPassed: false,
     verificationResults: [],
@@ -155,6 +158,8 @@ const coordinator = createSelfCheckCoordinator({
         {
           tool: "read_file",
           path: "src/a.js",
+          sha256: contentHash("const a = 2;\n"),
+          readRange: { start: 0, end: "const a = 2;\n".length },
           preview: "const a = 2;",
         },
       ],
@@ -225,7 +230,7 @@ const staleCoordinator = createSelfCheckCoordinator({
         ],
         remaining_risks: [],
       }),
-      evidence: [{ tool: "read_file", path: "src/b.js", preview: "two" }],
+      evidence: [{ tool: "read_file", path: "src/b.js", preview: "two", sha256: contentHash("two"), readRange: { start: 0, end: 3 } }],
     };
   },
   commandToolAvailable: false,
@@ -299,6 +304,7 @@ failedVerificationState.verificationCandidates = [
   { command: "npm test", cwd: "." },
   { command: "npm run lint", cwd: "." },
 ];
+failedVerificationState.verificationRequired = failedVerificationState.verificationCandidates;
 const failedVerificationChanges = new Map([
   [
     "src/verified.js",
@@ -317,6 +323,7 @@ const failedVerificationCoordinator = createSelfCheckCoordinator({
   changeMap: failedVerificationChanges,
   language: "en",
   emit: () => {},
+  executeVerification: async (candidate) => ({ command: candidate.command, cwd: candidate.cwd, exitCode: candidate.command === "npm test" ? 0 : 1, error: candidate.command === "npm test" ? null : "tests failed" }),
   startSubagent: async (input, agentId) =>
     input.role === "review"
       ? {
@@ -329,7 +336,7 @@ const failedVerificationCoordinator = createSelfCheckCoordinator({
             remaining_risks: [],
           }),
           evidence: [
-            { tool: "read_file", path: "src/verified.js", preview: "after" },
+            { tool: "read_file", path: "src/verified.js", preview: "after", sha256: contentHash("after"), readRange: { start: 0, end: 5 } },
           ],
         }
       : {

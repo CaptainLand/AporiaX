@@ -36,7 +36,11 @@ export const TOOL_DEFINITIONS = [
           background: {
             type: "boolean",
             description:
-              "Run without blocking the main agent. Background results are collected before final delivery.",
+              "Run without blocking the main agent. Required background results are collected before final delivery.",
+          },
+          required_for_completion: {
+            type: "boolean",
+            description: "Defaults to true. Set false only for optional background explore/curator work that is NOT needed to establish correctness or answer the request. Pending optional work is cancelled at delivery; review and verify remain required.",
           },
           max_rounds: {
             type: "integer",
@@ -431,6 +435,7 @@ export const TOOL_DEFINITIONS = [
             description:
               "A short user-facing explanation of why the command is needed.",
           },
+          verification: { type: "boolean", description: "Record this relevant check as execution evidence for the current version. Default false." },
         },
         required: ["command", "cwd"],
         additionalProperties: false,
@@ -702,7 +707,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "request_self_check",
       description:
-        "Request an independent adaptive self-check when the work may be wrong, incomplete, risky, or difficult to verify. Do not call this for casual conversation or a straightforward answer with no file changes.",
+        "Choose workflow checks explicitly: suggest returns candidates without running; run performs optional Review and only the supplied relevant verification commands; skip records a decision without erasing evidence. No automatic final check is scheduled.",
       parameters: {
         type: "object",
         properties: {
@@ -711,6 +716,9 @@ export const TOOL_DEFINITIONS = [
             description:
               "Concise concrete reason an independent review is warranted.",
           },
+          action: { type: "string", enum: ["suggest", "run", "skip"] },
+          review: { type: "boolean", description: "Run independent file review (default true)." },
+          verification: { type: "array", maxItems: 8, items: { type: "object", properties: { command: { type: "string" }, cwd: { type: "string" }, reason: { type: "string" } }, required: ["command", "cwd", "reason"], additionalProperties: false } },
           focus: {
             type: "array",
             items: { type: "string" },
@@ -749,7 +757,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "complete_self_check",
       description:
-        "Finish an active fallback self-check phase. This succeeds only after every changed text file has been re-read and every changed Office file has been structurally inspected after its latest write.",
+        "Submit your self-check report. Harness keeps real execution evidence and reports coverage gaps; your report cannot mark unrun or failed checks as passed.",
       parameters: {
         type: "object",
         properties: {

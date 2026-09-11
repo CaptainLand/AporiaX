@@ -1,10 +1,11 @@
 import { isOfficePath } from "../office-tools.js";
+import { runDeterministicVerification } from "./deterministic-verification.js";
+import { readEvidenceCovers, recordVerification, refreshVerification, verificationVersion, classifyVerificationFailure, commandOutputPreview } from "./evidence-ledger.js";
 import {
   buildChanges,
   buildSelfCheckResult,
   createChangeVersionSignature,
   createProgressiveReviewTask,
-  createProgressiveVerifyTask,
   findVerificationCandidate,
   parseProgressiveReviewReport,
   reviewableChanges,
@@ -40,6 +41,8 @@ export function createSelfCheckCoordinator({
   commandToolAvailable = false,
   discoverVerificationCommands,
   workspaceRoot,
+  refreshChanges = async () => {},
+  executeVerification,
 } = {}) {
   if (!selfCheck || !(changeMap instanceof Map)) {
     throw new Error("Self-check coordinator requires selfCheck state and changeMap.");
@@ -63,20 +66,19 @@ export function createSelfCheckCoordinator({
     reason,
     planStepId = null,
     runVerification = false,
+    review = true,
   }) => {
-    const pendingChanges = currentPendingChanges();
-    if (
-      runVerification &&
-      commandToolAvailable &&
-      selfCheck.verificationCandidates.length === 0
-    ) {
-      selfCheck.verificationCandidates =
-        await discoverVerificationCommands(workspaceRoot, changeMap);
-    }
+    const verificationSignature = refreshVerification(selfCheck, changeMap);
+    if (selfCheck.verificationWaived) { runVerification = false; selfCheck.verificationCandidates = []; }
+    const pendingChanges = review ? currentPendingChanges() : [];
+    // Discovery is a suggestion, not execution authority. Only this request's
+    // explicitly selected checks run; earlier failures never schedule retries.
+    const selected = selfCheck.verificationRequired || [];
     const verificationCandidates = runVerification
-      ? selfCheck.verificationCandidates.slice(0, 4)
+      ? [...new Map(selected.map((item) => [JSON.stringify([item.command, item.cwd || "."]), item])).values()]
       : [];
     if (!pendingChanges.length && !verificationCandidates.length) return null;
+    if (!pendingChanges.length && selfCheck.verificationPassed) return null;
 
     selfCheck.segmentCounter += 1;
     const segmentId = `segment-${selfCheck.segmentCounter}`;
@@ -138,25 +140,13 @@ export function createSelfCheckCoordinator({
       ),
     );
     const verifyPromise = verificationCandidates.length
-      ? startSubagent(
-          {
-            role: "verify",
-            task: createProgressiveVerifyTask(
-              verificationCandidates,
-              reason,
-              language,
-            ),
-            scope: ["."],
-            background: false,
-            max_rounds: 4,
-          },
-          `${segmentId}-verify`,
-        )
+      ? runDeterministicVerification(verificationCandidates, executeVerification)
       : Promise.resolve(null);
     const [reviewResults, verifyResult] = await Promise.all([
       Promise.all(reviewPromises),
       verifyPromise,
     ]);
+    if (runVerification) await refreshChanges();
 
     const reviewReports = reviewResults.map((result) =>
       parseProgressiveReviewReport(result?.summary, "review"),
@@ -179,9 +169,9 @@ export function createSelfCheckCoordinator({
     );
     const missingReviewEvidence = pendingChanges
       .filter((change) =>
-        !reviewEvidence.some((item) =>
-          reviewEvidenceCoversChange(change, item),
-        ),
+        !(change.binary || change.afterMissing
+          ? reviewEvidence.some((item) => reviewEvidenceCoversChange(change, item))
+          : readEvidenceCovers(change, reviewEvidence)),
       )
       .map((change) => change.path);
     if (
@@ -226,16 +216,17 @@ export function createSelfCheckCoordinator({
       .map((item) => ({
         command: item.command,
         cwd: item.cwd || ".",
-        passed: item.exitCode === 0,
+        passed: item.exitCode === 0 && !item.error && !item.timedOut,
         exitCode: item.exitCode,
         error: item.error || null,
+        output: commandOutputPreview(item),
       }));
     if (verificationCandidates.length) {
       if (verifyResult?.status !== "completed" || !observedCommands.length) {
         verifyReport.verdict = "uncertain";
         verifyReport.parseError = true;
         verifyReport.remainingRisks.push(
-          "验证子 Agent 没有留下可核验的命令执行证据。",
+          "验证执行器没有留下可核验的命令执行证据。",
         );
       } else {
         verifyReport.commands = observedCommands;
@@ -244,13 +235,10 @@ export function createSelfCheckCoordinator({
         )
           ? "pass"
           : "fail";
-        selfCheck.verificationAttempted = true;
-        selfCheck.verificationPassed = observedCommands.every(
-          (command) => command.passed,
-        );
         for (const command of observedCommands) {
-          selfCheck.verificationResults.push(command);
+          recordVerification(selfCheck, changeMap, command, verificationSignature);
         }
+        if (!selfCheck.verificationPassed) verifyReport.verdict = "fail";
       }
     }
 
@@ -267,6 +255,13 @@ export function createSelfCheckCoordinator({
     segment.reviewAgentId = segment.reviewAgentIds[0] || null;
     segment.verifyAgentId = verifyResult?.agentId || null;
     segment.findings = reviewReport.findings;
+    segment.commands = observedCommands;
+    segment.blocker = classifyVerificationFailure(observedCommands);
+    segment.verificationVersion = verificationSignature;
+    if (runVerification && verificationSignature !== verificationVersion(changeMap)) {
+      verifyReport.verdict = "uncertain";
+      verifyReport.remainingRisks.push("代码在验证期间发生变化，需要重新验证当前版本。");
+    }
     segment.checks = [...reviewReport.checks, ...verifyReport.checks];
     segment.remainingRisks = [
       ...reviewReport.remainingRisks,
@@ -384,11 +379,12 @@ export function createSelfCheckCoordinator({
   };
 
   const seal = async () => {
+    refreshVerification(selfCheck, changeMap);
     const pendingPaths = currentPendingChanges().map((change) => change.path);
     if (pendingPaths.length) return null;
     if (
       selfCheck.verificationCandidates.length > 0 &&
-      !selfCheck.verificationAttempted
+      !selfCheck.verificationPassed
     ) {
       return null;
     }
@@ -409,7 +405,7 @@ export function createSelfCheckCoordinator({
       remainingRisks.push("项目验证命令未通过，仍需人工确认运行结果。");
     }
     if (!selfCheck.verificationCandidates.length) {
-      remainingRisks.push("未发现可执行的项目验证脚本，已完成分段静态复核。");
+      remainingRisks.push(selfCheck.verificationWaived ? "用户要求跳过可执行测试，交付未经运行验证；静态复核仍保留。" : "未发现与本次改动相关的项目验证脚本，已完成分段静态复核。");
     }
     const unreviewableBinaryPaths = buildChanges(changeMap)
       .filter(

@@ -47,6 +47,8 @@ export function evaluateAdaptiveSelfCheck({
   steps = [],
   prompt = "",
 } = {}) {
+  // Advisory scoring for callers and tests. Harness no longer auto-starts
+  // Review or tests from this helper.
   const changeList = Array.isArray(changes) ? changes : [];
   const reasons = [];
   if (requested) {
@@ -102,6 +104,8 @@ export function createChangeVersionSignature(changes) {
     left.path.localeCompare(right.path),
   )) {
     digest.update(change.path);
+    digest.update("\0");
+    digest.update(JSON.stringify([Boolean(change.afterMissing), Boolean(change.binary)]));
     digest.update("\0");
     digest.update(String(change.afterContent ?? ""));
     digest.update("\0");
@@ -282,14 +286,14 @@ export function createProgressiveVerifyTask(candidates, reason, language) {
   if (language === "en") {
     return [
       `Perform staged verification (${reason}).`,
-      "Run the single most relevant command below. Do not edit source files. Report the exact observed exit code.",
+      "Run the single most relevant command below. Do not edit source files. Report the exact observed exit code. Unrun candidates are not passed checks. Report environment blockers instead of retrying unchanged commands.",
       candidateList,
       outputSchema,
     ].join("\n");
   }
   return [
     `执行分段验证（${reason}）。`,
-    "从下列候选中运行一条最相关的命令。禁止修改源文件，并如实记录命令和退出码。",
+    "从下列候选中运行一条最相关的命令。禁止修改源文件，如实记录退出码；未运行的候选不算通过。遇到环境阻塞时报告并停止，不要重复失败命令。",
     candidateList,
     outputSchema,
   ].join("\n");
@@ -297,57 +301,17 @@ export function createProgressiveVerifyTask(candidates, reason, language) {
 
 export function buildSelfCheckResult(selfCheck, changeMap) {
   const changedPaths = buildChanges(changeMap).map((change) => change.path);
-  if (changedPaths.length === 0) {
-    return {
-      required: false,
-      completed: true,
-      reviewedFiles: [],
-      summary: "",
-      checks: [],
-      improvements: [],
-      remainingRisks: [],
-      verification: {
-        required: false,
-        attempted: false,
-        passed: false,
-        candidates: [],
-        results: [],
-      },
-      mode: selfCheck.mode || "progressive",
-      segments: [],
-      seal: selfCheck.seal || null,
-    };
-  }
-  if (selfCheck.required === false) {
-    return {
-      required: false,
-      completed: true,
-      reviewedFiles: [],
-      summary: selfCheck.decisionReason || "Adaptive self-check was not required.",
-      checks: [],
-      improvements: [],
-      remainingRisks: [],
-      verification: {
-        required: false,
-        attempted: false,
-        passed: false,
-        candidates: [],
-        results: [],
-      },
-      mode: "adaptive",
-      decision: selfCheck.decisionSource || "skipped",
-      segments: [],
-      seal: null,
-    };
-  }
   return {
-    required: true,
-    completed: Boolean(selfCheck.completed),
+    required: Boolean(selfCheck.required),
+    // required:false completed:true means no independent review was required,
+    // not that executable tests passed.
+    completed: selfCheck.required === false || Boolean(selfCheck.completed),
     reviewedFiles: changedPaths.filter(
       (path) =>
         selfCheck.reviewedVersions.get(path) === changeMap.get(path)?.afterContent,
     ),
-    summary: selfCheck.report?.summary || "",
+    summary: selfCheck.report?.summary || selfCheck.decisionReason || "",
+    decision: selfCheck.decisionSource || "model",
     checks: selfCheck.report?.checks || [],
     improvements: selfCheck.report?.improvements || [],
     remainingRisks: selfCheck.report?.remainingRisks || [],
@@ -369,12 +333,14 @@ export function buildSelfCheckResult(selfCheck, changeMap) {
       remainingRisks: segment.remainingRisks || [],
     })),
     seal: selfCheck.seal || null,
+    delivery: selfCheck.delivery || null,
     verification: {
-      required: selfCheck.verificationCandidates.length > 0,
-      attempted: selfCheck.verificationAttempted,
-      passed: selfCheck.verificationPassed,
-      candidates: selfCheck.verificationCandidates,
-      results: selfCheck.verificationResults,
+      ...(selfCheck.verificationWaived ? { waived: true } : {}),
+      required: Boolean(selfCheck.verificationRequired?.length),
+      attempted: Boolean(selfCheck.verificationAttempted),
+      passed: Boolean(selfCheck.verificationPassed),
+      candidates: selfCheck.verificationCandidates || [],
+      results: selfCheck.verificationResults || [],
     },
   };
 }
@@ -396,7 +362,7 @@ export function createSelfCheckPrompt(
   );
   if (language === "en") {
     return [
-      "Begin the mandatory self-check phase. A final answer will not be accepted yet.",
+      "Continue the independent check the main agent explicitly requested. Harness does not start a mandatory self-check automatically.",
       "Use read_file to re-read every file changed in this turn, then check correctness, completeness, security, performance, and obvious edge cases:",
       ...changedPaths.map((path) => `- ${path}`),
       includesOfficeArtifacts
@@ -405,20 +371,20 @@ export function createSelfCheckPrompt(
       "Fix problems immediately with write_file or apply_patch. Re-read every file after its latest write.",
       verificationCandidates.length
         ? [
-            "Harness found the following project verification commands. Use run_command to attempt at least one relevant check; Harness will apply the current sandbox and approval policy:",
+            "Harness found these verification candidates. Attempt the most relevant check under the current sandbox and approval policy. Only report actually observed current-version checks as passed; report environment blockers instead of retrying unchanged failures:",
             ...verificationCandidates.map(
               (candidate) =>
                 `- ${candidate.command} (directory: ${candidate.cwd})`,
             ),
           ].join("\n")
         : "No test, typecheck, lint, or build script was found in package.json. Perform a static review and record the missing runtime verification as a remaining risk.",
-      "After all checks, call complete_self_check with concrete checks, improvements, and remaining risks. Do not provide the final answer before calling it.",
+      "After the selected checks, call complete_self_check with concrete checks, improvements, and remaining risks. Delivery remains allowed with an honest verification status.",
     ]
       .filter(Boolean)
       .join("\n");
   }
   return [
-    "进入强制自检阶段。最终答复暂时不会被接受。",
+    "根据主 Agent 明确选择的检查继续复核。Harness 不会自动强制进入自检。",
     "你必须使用 read_file 重新读取下面每个本轮修改过的文件，并检查正确性、完整性、安全性、性能和明显的边界情况：",
     ...changedPaths.map((path) => `- ${path}`),
     includesOfficeArtifacts
@@ -427,14 +393,14 @@ export function createSelfCheckPrompt(
     "发现问题时立即使用 write_file 修复。任何再次写入的文件都必须在修复后重新 read_file。",
     verificationCandidates.length
       ? [
-          "Harness 检测到以下项目验证命令。必须使用 run_command 至少尝试一项最相关的验证；Harness 会按当前沙箱与审批策略执行：",
+          "Harness 检测到以下验证候选，按当前沙箱和审批策略尝试最相关的一项。仅把当前版本实际执行成功的检查报告为通过；环境阻塞须如实报告，不要重复失败操作：",
           ...verificationCandidates.map(
             (candidate) =>
               `- ${candidate.command}（目录：${candidate.cwd}）`,
           ),
         ].join("\n")
       : "未自动发现 package.json 中的 test/typecheck/lint/build 脚本；请进行静态复核并把未运行验证记录为剩余风险。",
-    "全部复核完成后，调用 complete_self_check 提交具体检查项、改进内容和剩余风险。不要在调用该工具前给出最终答复。",
+    "全部复核完成后，调用 complete_self_check 提交具体检查项、改进内容和剩余风险。未运行、失败或不可用的检查不得报告为通过。",
   ].join("\n");
 }
 
@@ -447,7 +413,12 @@ export function findVerificationCandidate(candidates, input) {
   return (
     candidates.find(
       (candidate) =>
-        candidate.command === command && candidate.cwd === cwd,
+        normalizeVerificationCommand(candidate.command) === normalizeVerificationCommand(command) &&
+        (candidate.cwd || ".") === cwd,
     ) || null
   );
+}
+
+function normalizeVerificationCommand(command) {
+  return String(command || "").trim().replace(/^npm\s+(?:run\s+)?test$/, "npm run test");
 }

@@ -201,6 +201,7 @@ export async function callModelProviderOnce({
   signal?.addEventListener("abort", handleAbort, { once: true });
   let idleTimedOut = false;
   let receivedStreamBytes = false;
+  let observedUsage = null;
   let idleTimeout = null;
   const resetIdleTimeout = () => {
     clearTimeout(idleTimeout);
@@ -251,6 +252,29 @@ export async function callModelProviderOnce({
     let buffer = "";
     const toolCalls = [];
     const decoder = new TextDecoder();
+    let finishReason = null;
+    let sawDone = false;
+    const processLine = (line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return;
+      const data = trimmed.slice(5).trim();
+      if (!data) return;
+      if (data === "[DONE]") { sawDone = true; return; }
+      const payload = JSON.parse(data);
+      const streamError = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
+      if (streamError) throw createProviderError(provider, streamError, 0);
+      if (payload.usage) { usage = payload.usage; observedUsage = payload.usage; }
+      const choice = payload?.choices?.[0];
+      if (choice?.finish_reason != null) finishReason = choice.finish_reason;
+      const delta = choice?.delta;
+      if (!delta) return;
+      if (typeof delta.content === "string" && delta.content) {
+        content += delta.content;
+        onEvent?.({ type: "response.delta", delta: delta.content });
+      }
+      if (typeof delta.reasoning_content === "string") reasoningContent += delta.reasoning_content;
+      for (const toolCall of delta.tool_calls || []) appendToolCallDelta(toolCalls, toolCall);
+    };
 
     for await (const chunk of response.body) {
       throwIfAborted(signal);
@@ -261,38 +285,32 @@ export async function callModelProviderOnce({
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        const payload = JSON.parse(data);
-        const streamError =
-          typeof payload?.error === "string"
-            ? payload.error
-            : payload?.error?.message;
-        if (streamError) {
-          throw createProviderError(provider, streamError, 0);
-        }
-        if (payload.usage) usage = payload.usage;
-        const delta = payload?.choices?.[0]?.delta;
-        if (!delta) continue;
-        if (typeof delta.content === "string" && delta.content) {
-          content += delta.content;
-          onEvent?.({ type: "response.delta", delta: delta.content });
-        }
-        if (
-          typeof delta.reasoning_content === "string" &&
-          delta.reasoning_content
-        ) {
-          reasoningContent += delta.reasoning_content;
-        }
-        for (const toolCall of delta.tool_calls || []) {
-          appendToolCallDelta(toolCalls, toolCall);
-        }
+        processLine(line);
       }
     }
+    buffer += decoder.decode();
+    if (buffer.trim()) processLine(buffer);
+    const failIncomplete = (code) => {
+      const error = createProviderError(provider, code, 0);
+      error.retryable = false;
+      error.usage = usage;
+      onEvent?.({ type: "response.incomplete", code, finishReason, usage });
+      throw error;
+    };
+    if (!sawDone && !finishReason) failIncomplete("PROVIDER_STREAM_INCOMPLETE");
+    if (finishReason && !["stop", "tool_calls"].includes(finishReason)) failIncomplete(`PROVIDER_FINISH_${String(finishReason).toUpperCase()}`);
+    for (const call of toolCalls.filter(Boolean)) {
+      try {
+        if (!call.id || !call.function?.name) throw new Error();
+        const args = JSON.parse(call.function.arguments);
+        if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error();
+      } catch { failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE"); }
+    }
+    if (finishReason === "tool_calls" && !toolCalls.filter(Boolean).length) failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE");
 
     return {
+      finishReason: finishReason || (toolCalls.length ? "tool_calls" : "stop"),
+      streamComplete: true,
       message: {
         content,
         ...(reasoningContent
@@ -305,7 +323,7 @@ export async function callModelProviderOnce({
       usage,
     };
   } catch (error) {
-    if (signal?.aborted) throw createAbortError();
+    if (signal?.aborted) throw Object.assign(createAbortError(), { usage: observedUsage });
     if (provider.kind === "aporia-cloud" && error?.message === "DESKTOP_ACCOUNT_SIGNED_OUT") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
     }

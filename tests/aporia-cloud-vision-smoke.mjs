@@ -10,7 +10,9 @@ const [visionProxy, visionCore, mainV2, accountRuntime, providerConfig] = await 
 ]);
 
 assert.match(visionProxy, /aporia-cloud-vision/);
-assert.match(visionProxy, /Qwen3\.5 Flash Vision/);
+assert.doesNotMatch(visionProxy, /Qwen3\.5 Flash Vision/);
+assert.match(visionProxy, /getCloudVisionCapability/);
+assert.match(visionProxy, /capability\.status !== "ready"/);
 assert.match(visionProxy, /getDesktopAccountRuntime/);
 assert.match(visionProxy, /fetchModelGateway/);
 assert.match(visionProxy, /callModelProviderOnce/);

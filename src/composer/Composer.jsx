@@ -15,6 +15,7 @@ import { useI18n } from "../i18n";
 import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { getModel, getModelGroups } from "../models/model-catalog.js";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
+import { attachmentImageSrc } from "../attachments.js";
 
 function ModelMenu({ task, providers, onUpdate, onClose }) {
   const { tr } = useI18n();
@@ -108,22 +109,39 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
   );
 }
 
-function readImageFile(file) {
-  return new Promise((resolveImage, rejectImage) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolveImage({
-        id: crypto.randomUUID(),
-        kind: "image",
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        dataUrl: String(reader.result),
+function bytesToDataUrl(type, bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
+  }
+  return `data:${type || "image/png"};base64,${btoa(binary)}`;
+}
+
+async function storeImageFile(file) {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const type = file.type || "image/png";
+  let hash;
+  if (window.desktop?.attachments?.store) {
+    try {
+      const stored = await window.desktop.attachments.store({
+        type,
+        data,
       });
-    reader.onerror = () =>
-      rejectImage(new Error(`无法读取图片：${file.name}`));
-    reader.readAsDataURL(file);
-  });
+      hash = stored.hash;
+    } catch {
+      // Persist will extract the in-memory data URL later.
+    }
+  }
+  return {
+    id: crypto.randomUUID(),
+    kind: "image",
+    name: file.name,
+    type,
+    size: file.size,
+    hash,
+    dataUrl: bytesToDataUrl(type, data),
+  };
 }
 
 const DOCUMENT_ATTACHMENT_ACCEPT = [
@@ -168,9 +186,12 @@ const DOCUMENT_ATTACHMENT_ACCEPT = [
 ].join(",");
 
 export function isImageAttachment(attachment) {
+  if (!attachment || attachment.kind === "document") return false;
   return (
-    attachment?.kind === "image" ||
-    typeof attachment?.dataUrl === "string"
+    attachment.kind === "image" ||
+    typeof attachment.dataUrl === "string" ||
+    (typeof attachment.hash === "string" &&
+      String(attachment.type || "").startsWith("image/"))
   );
 }
 
@@ -262,7 +283,7 @@ export function Composer({
       return;
     }
     try {
-      const images = await Promise.all(candidates.map(readImageFile));
+      const images = await Promise.all(candidates.map(storeImageFile));
       setAttachments((current) => [...current, ...images].slice(0, 6));
     } catch (error) {
       onNotice(error?.message || tr("无法读取图片", "Unable to read the image"));
@@ -405,7 +426,7 @@ export function Composer({
                 </div>
               ) : (
                 <figure key={attachment.id}>
-                  <img src={attachment.dataUrl} alt={attachment.name} />
+                  <img src={attachmentImageSrc(attachment)} alt={attachment.name} />
                   <figcaption>{attachment.name}</figcaption>
                   <button
                     type="button"

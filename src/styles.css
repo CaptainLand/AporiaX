@@ -1681,7 +1681,7 @@ body.panel-is-resizing * {
   padding: 2px 5px;
   border: 1px solid #e1e4e7;
   border-radius: 5px;
-  color: #92533c;
+  color: #2c85ad;
   background: #f6f7f8;
   font-family:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
@@ -1729,7 +1729,7 @@ body.panel-is-resizing * {
   margin: 13px 0 17px;
   border: 1px solid #dfe3e6;
   border-radius: 10px;
-  background: #17191b;
+  background: #f6f8f9;
 }
 
 .code-block-toolbar {
@@ -1738,9 +1738,9 @@ body.panel-is-resizing * {
   align-items: center;
   justify-content: space-between;
   padding: 0 9px 0 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  color: #91989e;
-  background: #202327;
+  border-bottom: 1px solid rgba(48, 56, 62, 0.08);
+  color: #6a737a;
+  background: #eef1f3;
   font-family:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 10.5px;
@@ -1755,15 +1755,15 @@ body.panel-is-resizing * {
   padding: 0 7px;
   cursor: pointer;
   border-radius: 6px;
-  color: #b6bcc1;
+  color: #5c656c;
   background: transparent;
   font-family: inherit;
   font-size: 9.9px;
 }
 
 .code-block-toolbar button:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  color: #2d3338;
+  background: rgba(48, 56, 62, 0.08);
 }
 
 .code-block pre {
@@ -1778,7 +1778,7 @@ body.panel-is-resizing * {
   padding: 0;
   border: 0;
   border-radius: 0;
-  color: #e5e8ea;
+  color: #2c3338;
   background: transparent;
   font-family:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
@@ -2509,11 +2509,48 @@ body.panel-is-resizing * {
   border-top: 1px solid rgba(105, 123, 134, 0.14);
 }
 
-.sandbox-auto-approval > div {
+.sandbox-auto-approval {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.sandbox-auto-approval > .segmented-control,
+.approval-mode-config > .segmented-control {
   display: flex;
   min-width: 0;
+  width: 100%;
+  flex-direction: row;
+  flex-shrink: 0;
+}
+
+.sandbox-auto-approval > .segmented-control button,
+.approval-mode-config > .segmented-control button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.config-row.approval-mode-config {
+  align-items: stretch;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+}
+
+.approval-mode-details {
+  color: #89959c;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.approval-mode-details summary {
+  cursor: pointer;
+}
+
+.approval-mode-details p {
+  margin: 6px 0 0;
 }
 
 .sandbox-auto-approval strong {
@@ -2988,13 +3025,13 @@ body.panel-is-resizing * {
   flex-direction: column;
   border: 1px solid #e0e4e6;
   border-radius: 8px;
-  background: #202326;
+  background: #f4f6f7;
   gap: 6px;
 }
 
 .approval-command code {
   overflow: auto;
-  color: #edf0f2;
+  color: #2c3338;
   font-family:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 11.6px;
@@ -3002,7 +3039,7 @@ body.panel-is-resizing * {
 }
 
 .approval-command span {
-  color: #8f979d;
+  color: #6f787e;
   font-size: 9.4px;
 }
 
@@ -3781,8 +3818,8 @@ body.panel-is-resizing * {
   overflow: auto;
   flex: 1;
   padding: 12px;
-  color: #dfe4e7;
-  background: #202326;
+  color: #2c3338;
+  background: #f6f8f9;
 }
 
 .workspace-preview code {
@@ -4676,7 +4713,7 @@ body.panel-is-resizing * {
 
 :root[data-theme="dark"] .markdown-message code {
   border-color: #3a4249;
-  color: #e2a98d;
+  color: #8fd0e8;
   background: #20262c;
 }
 
@@ -6121,6 +6158,24 @@ body.panel-is-resizing * {
   object-fit: contain;
 }
 
+.brand-mark .theme-icon-dark,
+.application-settings-mark .theme-icon-dark,
+.application-about-mark .theme-icon-dark {
+  display: none;
+}
+
+:root[data-theme="dark"] .brand-mark .theme-icon-light,
+:root[data-theme="dark"] .application-settings-mark .theme-icon-light,
+:root[data-theme="dark"] .application-about-mark .theme-icon-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .brand-mark .theme-icon-dark,
+:root[data-theme="dark"] .application-settings-mark .theme-icon-dark,
+:root[data-theme="dark"] .application-about-mark .theme-icon-dark {
+  display: block;
+}
+
 .brand-mark {
   border-radius: 6px;
 }
@@ -6456,23 +6511,6 @@ body.panel-is-resizing * {
   -webkit-line-clamp: 2;
 }
 
-.witness-alert {
-  display: flex;
-  align-items: flex-start;
-  padding: 8px 9px;
-  border-radius: 10px;
-  color: #875d31;
-  background: rgba(185, 122, 45, 0.09);
-  gap: 7px;
-  font-size: 10.5px;
-  line-height: 1.45;
-}
-
-.witness-alert svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-
 .witness-ledger {
   display: grid;
   max-height: 360px;
@@ -6604,11 +6642,6 @@ body.panel-is-resizing * {
 
 :root[data-theme="dark"] .witness-record strong {
   color: #cfc7d6;
-}
-
-:root[data-theme="dark"] .witness-alert {
-  color: #e0b078;
-  background: rgba(177, 112, 39, 0.11);
 }
 
 @media (max-width: 620px) {
@@ -7705,6 +7738,25 @@ body.panel-is-resizing * {
     0 15px 42px rgba(44, 54, 61, 0.08);
 }
 
+.code-block {
+  background:
+    radial-gradient(circle at 4% 0%, rgba(105, 168, 204, 0.08), transparent 36%),
+    rgba(255, 255, 255, 0.78);
+}
+
+.code-block-toolbar {
+  border-bottom-color: rgba(48, 56, 62, 0.08);
+  color: #6a737a;
+  background: rgba(247, 249, 250, 0.78);
+}
+
+.approval-command {
+  border-color: rgba(48, 56, 62, 0.08);
+  background:
+    radial-gradient(circle at 4% 0%, rgba(105, 168, 204, 0.07), transparent 42%),
+    rgba(247, 249, 250, 0.86);
+}
+
 .markdown-message table {
   border-radius: 13px;
   background:
@@ -7992,6 +8044,43 @@ body.panel-is-resizing * {
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
+}
+
+:root[data-theme="dark"] .code-block-toolbar {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  color: #91989e;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="dark"] .code-block-toolbar button {
+  color: #b6bcc1;
+}
+
+:root[data-theme="dark"] .code-block-toolbar button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .markdown-message .code-block code {
+  color: #e5e8ea;
+}
+
+:root[data-theme="dark"] .approval-command {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(8, 6, 12, 0.42);
+}
+
+:root[data-theme="dark"] .approval-command code {
+  color: #edf0f2;
+}
+
+:root[data-theme="dark"] .approval-command span {
+  color: #8f979d;
+}
+
+:root[data-theme="dark"] .workspace-preview pre {
+  color: #dfe4e7;
+  background: #141018;
 }
 
 :root[data-theme="dark"] .markdown-message table {
@@ -10103,8 +10192,8 @@ body.panel-is-resizing * {
   padding: 13px 15px 40px;
   border: 0;
   outline: 0;
-  color: #dfe4e7;
-  background: #202326;
+  color: #2c3338;
+  background: #f6f8f9;
   font-family:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 10.5px;

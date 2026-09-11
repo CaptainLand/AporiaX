@@ -42,6 +42,7 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
       parentRunId = "",
       taskId = "",
       emit = null,
+      signal,
       execute,
     } = {}) {
       if (typeof execute !== "function") {
@@ -91,10 +92,12 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
         definitionSource: definition.source,
       });
 
+      let started = false;
       const scheduled = kernel.scheduler.enqueue({
         id: `agent:${safeAgentId}`,
         kind: `agent:${safeRole}`,
         priority: ROLE_PRIORITIES[safeRole] || 10,
+        signal,
         metadata: {
           agentId: safeAgentId,
           role: safeRole,
@@ -103,6 +106,7 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
           background: Boolean(background),
         },
         run: async () => {
+          started = true;
           kernel.sessions.transition(safeAgentId, "running");
           safeEmit({ type: "agent.runtime.started" });
           try {
@@ -130,7 +134,14 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
           }
         },
       });
-      return scheduled.promise;
+      try { return await scheduled.promise; }
+      catch (error) {
+        if (!started) {
+          kernel.sessions.transition(safeAgentId, error?.name === "AbortError" ? "cancelled" : "failed", { error: error.message });
+          safeEmit({ type: "agent.runtime.cancelled", error: error.message });
+        }
+        throw error;
+      }
     },
   });
 }

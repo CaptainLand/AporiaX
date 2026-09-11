@@ -1,15 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  cp,
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import fsPromises from "node:fs/promises";
+import { createRequire } from "node:module";
+// Workspaces may contain other Electron releases. Treat their ASAR archives
+// as ordinary files, not Electron's virtual directories, during copy/sync.
+const { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } =
+  process.versions.electron ? createRequire(import.meta.url)("original-fs").promises : fsPromises;
 import { tmpdir } from "node:os";
 import {
   dirname,

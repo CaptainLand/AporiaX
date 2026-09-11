@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -17,6 +18,8 @@ import {
   normalizeBuilderScopes,
   pathInsideScopes,
 } from "./scope-leases.js";
+
+import { sharedScopeLeases } from "./shared-scope-leases.js";
 
 const SNAPSHOT_MAX_FILES = 800;
 const SNAPSHOT_MAX_BYTES = 24_000_000;
@@ -343,7 +346,7 @@ export class BuilderWorkspaceManager {
 
   constructor({ eventBus = null, leases = null } = {}) {
     this.#eventBus = eventBus;
-    this.#leases = leases || new ScopeLeaseManager();
+    this.#leases = leases || sharedScopeLeases;
   }
 
   leases() {
@@ -354,7 +357,8 @@ export class BuilderWorkspaceManager {
     const owner = String(agentId || "").trim();
     if (!owner) throw new Error("Builder agentId is required.");
     const scopes = normalizeBuilderScopes(writeScopes);
-    const lease = this.#leases.acquire(owner, scopes);
+    workspaceRoot = await realpath(resolve(workspaceRoot));
+    const lease = this.#leases.acquire(owner, scopes, { workspaceRoot });
     let baseDirectory = null;
     let worktreeRoot = null;
     try {

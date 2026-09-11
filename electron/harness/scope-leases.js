@@ -1,3 +1,11 @@
+import { resolve } from "node:path";
+
+function namespace(options = {}) {
+  if (!options.workspaceRoot) return "";
+  const root = resolve(options.workspaceRoot);
+  return process.platform === "win32" ? root.toLowerCase() : root;
+}
+
 function normalizePath(value) {
   const path = String(value || ".")
     .trim()
@@ -36,8 +44,8 @@ export function normalizeBuilderScopes(values, { allowRoot = false } = {}) {
 }
 
 export function scopesOverlap(left, right) {
-  const a = normalizePath(left);
-  const b = normalizePath(right);
+  const a = process.platform === "win32" ? normalizePath(left).toLowerCase() : normalizePath(left);
+  const b = process.platform === "win32" ? normalizePath(right).toLowerCase() : normalizePath(right);
   return a === "." || b === "." || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
@@ -55,10 +63,13 @@ export class ScopeLeaseManager {
   acquire(owner, values, options = {}) {
     const id = String(owner || "").trim();
     if (!id) throw new Error("Scope lease owner is required.");
-    if (this.#leases.has(id)) throw new Error(`Scope lease already exists: ${id}`);
+    const workspace = namespace(options);
+    const key = JSON.stringify([workspace, id]);
+    if (this.#leases.has(key)) throw new Error(`Scope lease already exists: ${id}`);
     const scopes = normalizeBuilderScopes(values, options);
     const conflicts = [];
     for (const lease of this.#leases.values()) {
+      if ((lease.workspace || "") !== workspace) continue;
       for (const scope of scopes) {
         const collision = lease.scopes.find((existing) => scopesOverlap(scope, existing));
         if (collision) conflicts.push({ owner: lease.owner, requested: scope, existing: collision });
@@ -70,18 +81,18 @@ export class ScopeLeaseManager {
         .join(", ");
       throw new Error(`Builder scope conflicts with an active worker: ${detail}`);
     }
-    const lease = Object.freeze({ owner: id, scopes: Object.freeze([...scopes]) });
-    this.#leases.set(id, lease);
-    return { ...lease, release: () => this.release(id) };
+    const lease = Object.freeze({ owner: id, ...(workspace ? { workspace } : {}), scopes: Object.freeze([...scopes]) });
+    this.#leases.set(key, lease);
+    return { ...lease, release: () => this.#leases.delete(key) };
   }
 
-  release(owner) {
-    return this.#leases.delete(String(owner || ""));
+  release(owner, options = {}) {
+    return this.#leases.delete(JSON.stringify([namespace(options), String(owner || "")]));
   }
 
   conflicts(values, options = {}) {
     const scopes = normalizeBuilderScopes(values, options);
-    return [...this.#leases.values()].flatMap((lease) =>
+    return [...this.#leases.values()].filter(lease => (lease.workspace || "") === namespace(options)).flatMap((lease) =>
       scopes.flatMap((scope) =>
         lease.scopes
           .filter((existing) => scopesOverlap(scope, existing))
@@ -91,6 +102,6 @@ export class ScopeLeaseManager {
   }
 
   list() {
-    return [...this.#leases.values()].map((lease) => ({ owner: lease.owner, scopes: [...lease.scopes] }));
+    return [...this.#leases.values()].map((lease) => ({ ...lease, scopes: [...lease.scopes] }));
   }
 }

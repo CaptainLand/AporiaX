@@ -25,7 +25,7 @@ const pdf = {
 assert.equal(modelSupportsVision({ id: "deepseek-v4-pro" }), false);
 assert.equal(
   modelSupportsVision({ id: "qwen3.5-flash", supportsImages: false }),
-  true,
+  false,
 );
 assert.equal(modelSupportsVision({ id: "gemini-2.5-flash" }), true);
 
@@ -44,10 +44,10 @@ const providers = [
     name: "Qwen",
     hasApiKey: true,
     models: [
-      { id: "qwen3.7-flash", supportsImages: false },
-      { id: "qwen3.6-flash", supportsImages: false },
-      { id: "qwen3.5-flash-2026-02-23", supportsImages: false },
-      { id: "qwen3.5-flash", supportsImages: false },
+      { id: "qwen3.7-flash", supportsImages: true },
+      { id: "qwen3.6-flash", supportsImages: true },
+      { id: "qwen3.5-flash-2026-02-23", supportsImages: true },
+      { id: "qwen3.5-flash", supportsImages: true },
     ],
   },
 ];
@@ -82,6 +82,7 @@ const cloudProviders = exposeVisionProxyCapabilities([
     kind: "aporia-cloud",
     source: "aporia-cloud",
     hasApiKey: false,
+    visionCapability: { status: "ready", model: { id: "aporia-cloud-vision", name: "Configured Vision" } },
     models: [{ id: "aporia-cloud-default", name: "DeepSeek V4 Flash", supportsImages: false }],
   },
 ]);
@@ -92,7 +93,7 @@ assert.equal(cloudDeepSeek.supportsImageProxy, true);
 assert.equal(cloudDeepSeek.visionProxy.providerId, "aporia-cloud");
 assert.equal(cloudDeepSeek.visionProxy.providerName, "Aporia Cloud");
 assert.equal(cloudDeepSeek.visionProxy.modelId, "aporia-cloud-vision");
-assert.equal(cloudDeepSeek.visionProxy.modelName, "Qwen3.5 Flash Vision");
+assert.equal(cloudDeepSeek.visionProxy.modelName, "Configured Vision");
 
 const noKeyProviders = exposeVisionProxyCapabilities([
   {
@@ -103,7 +104,7 @@ const noKeyProviders = exposeVisionProxyCapabilities([
   {
     id: "qwen",
     hasApiKey: false,
-    models: [{ id: "qwen3.5-flash", supportsImages: false }],
+    models: [{ id: "qwen3.5-flash", supportsImages: true }],
   },
 ]);
 assert.equal(noKeyProviders[0].models[0].supportsImages, false);

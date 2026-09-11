@@ -14,7 +14,7 @@ assert.match(hook, /event\.type === "response\.delta"/);
 assert.match(hook, /event\.type === "tool\.started"/);
 assert.match(hook, /event\.type === "witness\.updated"/);
 assert.match(hook, /event\.type === "approval\.required"/);
-assert.match(hook, /event\.type === "skill\.activated"/);
+assert.match(hook, /event\.type === "model\.vision-disabled"/);
 assert.match(hook, /event\.capability/);
 assert.match(hook, /getRouteToolMeta/);
 // Tool presentation must no longer depend on feature-specific MCP/browser name

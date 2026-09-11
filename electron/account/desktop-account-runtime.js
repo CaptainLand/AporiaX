@@ -1,4 +1,4 @@
-import { app, safeStorage, shell } from "electron";
+import { app, dialog, safeStorage, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
@@ -15,6 +15,11 @@ import {
   parseDesktopLoopbackCallback,
   projectAccountSnapshot,
 } from "./desktop-account-core.js";
+import {
+  executeRemoteFileCommand as executeFileBrokerCommand,
+  readRemoteFileSettings,
+  writeRemoteFileSettings,
+} from "./remote-file-broker.js";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const LOGIN_TIMEOUT_MS = 150_000;
@@ -68,6 +73,7 @@ export function createDesktopAccountRuntime(options = {}) {
   const userDataPath = app.getPath("userData");
   const sessionPath = join(userDataPath, "aporiax-account-session.json");
   const installationPath = join(userDataPath, "aporiax-installation.json");
+  const remoteFileSettingsPath = join(userDataPath, "aporiax-remote-file-access.json");
 
   let accessToken = "";
   let currentSnapshot = emptySnapshot();
@@ -243,16 +249,114 @@ export function createDesktopAccountRuntime(options = {}) {
     return authenticatedFetch(modelGatewayBaseUrl, path, init, true);
   }
 
+  async function setRemoteEnabled(enabled) {
+    const snapshot = await bootstrap();
+    const deviceId = snapshot?.device?.id;
+    if (!deviceId) throw new Error("DESKTOP_DEVICE_REQUIRED");
+    const device = await authenticatedRequest(`/devices/${encodeURIComponent(deviceId)}`, {
+      method: "PATCH",
+      body: { remoteEnabled: Boolean(enabled) },
+    });
+    const remoteFiles = enabled
+      ? await readRemoteFileSettings(remoteFileSettingsPath)
+      : await writeRemoteFileSettings(remoteFileSettingsPath, false);
+    currentSnapshot = { ...currentSnapshot, device, remoteFiles, error: "" };
+    bootstrapPromise = Promise.resolve(currentSnapshot);
+    return currentSnapshot;
+  }
+
+  async function setRemoteFileAccess(enabled) {
+    const snapshot = await bootstrap();
+    if (snapshot?.status !== "authenticated") throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
+    if (enabled && !snapshot?.device?.remoteEnabled) throw new Error("REMOTE_SYNC_REQUIRED");
+    const remoteFiles = await writeRemoteFileSettings(remoteFileSettingsPath, Boolean(enabled));
+    currentSnapshot = { ...currentSnapshot, remoteFiles, error: "" };
+    bootstrapPromise = Promise.resolve(currentSnapshot);
+    return currentSnapshot;
+  }
+
+  async function syncRemoteTasks(payload) {
+    const snapshot = await bootstrap();
+    if (snapshot?.status !== "authenticated") return { enabled: false, reason: "SIGNED_OUT" };
+    if (!snapshot?.device?.remoteEnabled) return { enabled: false, reason: "REMOTE_SYNC_DISABLED" };
+    const result = await authenticatedRequest("/remote/desktop/tasks", {
+      method: "PUT",
+      body: payload,
+      timeout: 20_000,
+    });
+    return { enabled: true, ...result };
+  }
+
+  async function pollRemoteCommands() {
+    const snapshot = await bootstrap();
+    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) return [];
+    const commands = await authenticatedRequest("/remote/desktop/commands", { timeout: 12_000 });
+    return Array.isArray(commands) ? commands : [];
+  }
+
+  async function acknowledgeRemoteCommand(commandId, status, result = "") {
+    if (!commandId) throw new Error("REMOTE_COMMAND_ID_REQUIRED");
+    return authenticatedRequest(`/remote/desktop/commands/${encodeURIComponent(commandId)}`, {
+      method: "PATCH",
+      body: { status, result },
+    });
+  }
+
+  async function uploadRemoteCommandFile(commandId, file) {
+    const headers = new Headers({
+      "Content-Type": "application/octet-stream",
+      "X-AporiaX-File-Type": file.mime || "application/octet-stream",
+      "X-AporiaX-File-Name": encodeURIComponent(file.name || "download"),
+      "X-AporiaX-File-Size": String(file.size || file.buffer?.length || 0),
+    });
+    const response = await authenticatedFetch(
+      apiBaseUrl,
+      `/remote/desktop/commands/${encodeURIComponent(commandId)}/file`,
+      { method: "PUT", headers, body: file.buffer, signal: AbortSignal.timeout(60_000) },
+    );
+    const payload = await parseJson(response);
+    if (!response.ok) throw responseError(payload, response.status, "REMOTE_FILE_UPLOAD_FAILED");
+    return payload;
+  }
+
+  async function executeRemoteFileCommand(command) {
+    if (!command?.id) throw new Error("REMOTE_COMMAND_ID_REQUIRED");
+    const snapshot = await bootstrap();
+    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) {
+      throw new Error("REMOTE_SYNC_DISABLED");
+    }
+    return executeFileBrokerCommand(command, {
+      configPath: remoteFileSettingsPath,
+      confirm: async ({ action, path: targetPath }) => {
+        const verb = action === "preview" ? "预览" : "下载";
+        const result = await dialog.showMessageBox({
+          type: "warning",
+          title: `允许手机${verb}文件？`,
+          message: `AporiaX Mobile 请求${verb}此文件`,
+          detail: `${targetPath}\n\n仅本次允许。文件内容会通过 AporiaX Cloud 临时传输，最多保留 10 分钟。`,
+          buttons: ["允许一次", "拒绝"],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        return result.response === 0;
+      },
+      upload: (file) => uploadRemoteCommandFile(command.id, file),
+    });
+  }
+
   async function hydrateAccount() {
-    const [me, quota, models, usage, devices] = await Promise.all([
+    const [me, quota, models, usage, devices, remoteFiles] = await Promise.all([
       authenticatedRequest("/me"),
       authenticatedRequest("/quota/weekly"),
       authenticatedRequest("/models"),
       authenticatedRequest("/usage/summary?days=7"),
       authenticatedRequest("/devices"),
+      readRemoteFileSettings(remoteFileSettingsPath),
     ]);
     currentSnapshot = {
       ...projectAccountSnapshot({ me, quota, models, usage, devices }),
+      remoteFiles,
       error: "",
     };
     return currentSnapshot;
@@ -419,6 +523,7 @@ export function createDesktopAccountRuntime(options = {}) {
       // Local credential removal is authoritative for user-requested sign-out.
     }
     bootstrapPromise = null;
+    await writeRemoteFileSettings(remoteFileSettingsPath, false);
     await clearStoredSession();
     return currentSnapshot;
   }
@@ -429,6 +534,12 @@ export function createDesktopAccountRuntime(options = {}) {
     modelGatewayBaseUrl,
     getSnapshot: bootstrap,
     startBrowserLogin,
+    setRemoteEnabled,
+    setRemoteFileAccess,
+    syncRemoteTasks,
+    pollRemoteCommands,
+    acknowledgeRemoteCommand,
+    executeRemoteFileCommand,
     fetchModelGateway,
     refresh,
     signOut,

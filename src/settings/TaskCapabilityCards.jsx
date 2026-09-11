@@ -14,8 +14,8 @@ function sourceLabel(source, tr) {
 function capabilityStatusText(capability, tr) {
   if (capability.mode === "native") {
     return tr(
-      "当前模型原生支持图片输入",
-      "Current model supports images natively",
+      "当前模型配置为原生图片输入",
+      "Current model is configured for native image input",
     );
   }
   if (capability.mode === "proxy") {
@@ -26,8 +26,8 @@ function capabilityStatusText(capability, tr) {
     );
   }
   return tr(
-    "当前主模型不支持图片，且尚未配置视觉模型",
-    "The current main model is text-only and no vision model is configured",
+    capability.cloudVisionStatus ? "尚未确认 Cloud 托管视觉就绪" : "当前模型未声明图片输入，也没有已配置的视觉代理",
+    capability.cloudVisionStatus ? "Cloud managed vision readiness is not confirmed" : "Native image input is not declared and no configured vision proxy is available",
   );
 }
 
@@ -62,8 +62,8 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
           <div>
             <strong>
               {available
-                ? tr("图片识别已启用", "Image recognition enabled")
-                : tr("未启用图片识别", "Image recognition unavailable")}
+                ? tr("图片输入已配置", "Image input configured")
+                : tr("图片输入尚未就绪", "Image input not ready")}
             </strong>
             <span>{capabilityStatusText(capability, tr)}</span>
           </div>
@@ -100,17 +100,12 @@ function VisionCapabilityCard({ task, providers, onManageProviders }) {
                   `When you attach an image, AporiaX asks ${proxyModel} to inspect it first, then passes the observation to ${mainModel} for reasoning and execution.`,
                 )
               : tr(
-                  "添加一个视觉模型后，AporiaX 会自动将它用于 DeepSeek 等非图像模型的识图，无需切换主思考模型。",
-                  "Add a vision model and AporiaX will automatically use it for text-only models such as DeepSeek, without changing your main reasoning model.",
+                  capability.cloudVisionStatus ? "登录后请检查 Cloud 视觉配置及服务版本。未收到就绪结果时，不会显示或调用一个假定可用的模型。" : "自定义模型默认按原生视觉发图。若看图失败，会自动改为仅文本；也可在模型设置中手动选择。不会自动借用 Cloud 额度。",
+                  capability.cloudVisionStatus ? "After signing in, check Cloud vision configuration and service version. An assumed model is not shown or called without readiness confirmation." : "Custom models default to native vision. If image reading fails, they switch to text only. You can also set this in model settings. Cloud quota is not used implicitly.",
                 )}
         </p>
 
-        {!available && (
-          <div className="aporiax-vision-recommendation">
-            <span>{tr("推荐", "Recommended")}</span>
-            <strong>Qwen3.5-Flash</strong>
-          </div>
-        )}
+        {available && <p>{tr("配置状态不代表上游调用已验证；实际可用性以 API 返回为准。", "Configuration does not prove upstream availability; actual requests may still fail.")}</p>}
 
         <button type="button" onClick={onManageProviders}>
           {available

@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { fullAutoRequiresConfirmation, createFullAutoApproval } from "../electron/runtime/full-auto-approval.js";
+import { verificationDirective, onlyStandaloneDeliverables } from "../electron/runtime/delivery-policy.js";
+import { classifyVerificationFailure } from "../electron/runtime/evidence-ledger.js";
+import { discoverProjectVerificationCommands } from "../electron/agent-runtime-core.js";
+import { taskApprovalMode } from "../src/state/approval-mode.js";
+
+const temp = await mkdtemp(join(tmpdir(), "aporia-auto-"));
+try {
+  const root = join(temp, "workspace");
+  const outside = join(temp, "outside");
+  await mkdir(root); await mkdir(outside);
+  await writeFile(join(root, "inside.txt"), "keep");
+  await writeFile(join(outside, "outside.txt"), "keep");
+  let asked = 0;
+  const requestApproval = async () => { asked++; return { approved: false }; };
+  const auto = createFullAutoApproval({ approvalMode: "full-auto", workspaceRoot: root, requestApproval });
+  for (let i = 0; i < 100; i++) assert.equal((await auto({ toolName: "run_command", command: "npm start", cwd: "." })).approved, true);
+  for (const [toolName, command] of [["start_process", "npm run dev"], ["run_command", "npm run dist:win"], ["run_command", "npm install"], ["git_push", "git_push"], ["browser_click", "browser_click"], ["read_external_file", "read_external_file C:/notes.txt"], ["mcp__server__upload", "upload"]]) assert.equal((await auto({ toolName, command })).approved, true);
+  assert.equal(asked, 0, "full auto must not require even the first approval");
+  assert.equal(await fullAutoRequiresConfirmation({ command: "rm -f inside.txt" }, root), "");
+  for (const command of ["rm -rf ../outside", "rm -rf .", "rm -rf $HOME", "del /s C:\\Users", "node -e 'fs.unlink(x)'", "rm -rf inside.txt && echo hi"]) assert.ok(await fullAutoRequiresConfirmation({ command }, root), command);
+  await symlink(outside, join(root, "link"), process.platform === "win32" ? "junction" : "dir");
+  assert.ok(await fullAutoRequiresConfirmation({ command: "rm -rf link" }, root), "junction must not evade the boundary");
+  assert.equal((await auto({ kind: "recovery-reconciliation" })).approved, false);
+  assert.equal(asked, 1);
+  assert.equal(createFullAutoApproval({ approvalMode: "manual", workspaceRoot: root, requestApproval }), requestApproval);
+  assert.equal(taskApprovalMode(), "full-auto");
+  assert.equal(taskApprovalMode("sandbox-auto"), "full-auto");
+  assert.equal(taskApprovalMode("smart-auto"), "smart-auto");
+  assert.equal(taskApprovalMode("manual"), "manual");
+  assert.equal(verificationDirective("先别测试了，直接交付吧"), true);
+  assert.equal(verificationDirective("skip tests and deliver"), true);
+  assert.equal(verificationDirective("不要跳过测试"), false);
+  assert.equal(verificationDirective("恢复测试"), false);
+  assert.equal(verificationDirective('报告中写着“先别测试了，直接交付吧”'), null);
+  assert.equal(classifyVerificationFailure([{ passed: false, exitCode: 1, output: "Assertion failed: ENOENT" }]), "verification");
+  assert.equal(classifyVerificationFailure([{ passed: false, exitCode: null, error: "ENOENT, not found in app.asar" }]), "environment");
+  await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { test: "node unrelated.test.js" } }));
+  const html = { path: "gift.html", beforeMissing: true, afterContent: "<html><h1>Hello</h1></html>" };
+  assert.equal(onlyStandaloneDeliverables([html]), true);
+  assert.deepEqual(await discoverProjectVerificationCommands(root, new Map([[html.path, html]])), []);
+  assert.equal((await discoverProjectVerificationCommands(root, new Map([["core.js", { path: "core.js", afterContent: "const x = 1" }]])))[0].command, "npm run test");
+  console.log("Full auto without initial approval, deletion boundaries, user-only verification waiver and relevant checks: PASS");
+} finally { await rm(temp, { recursive: true, force: true }); }
