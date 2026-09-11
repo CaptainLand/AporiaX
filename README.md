@@ -36,7 +36,7 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX 浅色 Gem Smoke 欢迎页" /></td>
-    <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
+    <td width="50%"><img src="docs/assets/about.png" alt="AporiaX 设置 · 关于" /></td>
   </tr>
   <tr>
     <td align="center"><strong>从一个疑问开始</strong><br><sub>浅色 Gem Smoke 开屏与中英双语入口</sub></td>
@@ -57,6 +57,14 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
   <tr>
     <td align="center"><strong>Workspace</strong><br><sub>按目录展开项目文件，预览代码并管理跨轮 Anchor</sub></td>
     <td align="center"><strong>Understanding</strong><br><sub>版本化沉淀架构、约定、命令、偏好与调试经验</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/settings-general.png" alt="AporiaX 通用设置" /></td>
+    <td width="50%"><img src="docs/assets/settings-extensions.png" alt="AporiaX 扩展库" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>通用设置</strong><br><sub>语言、外观、模型与本地执行边界</sub></td>
+    <td align="center"><strong>扩展</strong><br><sub>安装可审查的方法，而不是新权限</sub></td>
   </tr>
 </table>
 

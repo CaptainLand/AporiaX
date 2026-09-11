@@ -45,7 +45,7 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX light Gem Smoke welcome screen" /></td>
-    <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Route Evidence Anchor" /></td>
+    <td width="50%"><img src="docs/assets/about.png" alt="AporiaX Settings About" /></td>
   </tr>
   <tr>
     <td align="center"><strong>Begin with an aporia</strong><br><sub>A light Gem Smoke welcome screen with bilingual entry</sub></td>
@@ -66,6 +66,14 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
   <tr>
     <td align="center"><strong>Workspace</strong><br><sub>Expand the project tree, preview code, and manage cross-turn Anchors</sub></td>
     <td align="center"><strong>Understanding</strong><br><sub>Version architecture, conventions, commands, preferences, and debugging knowledge</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/settings-general.png" alt="AporiaX General settings" /></td>
+    <td width="50%"><img src="docs/assets/settings-extensions.png" alt="AporiaX Extensions library" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>General</strong><br><sub>Language, appearance, models, and the local execution boundary</sub></td>
+    <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
 
