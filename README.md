@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every answer begins with a question yet to be explored." />
+  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
 </p>
 
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、验证依据和最终产物留在界面中，而不是只给出一段聊天回复。

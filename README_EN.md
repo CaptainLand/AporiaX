@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every answer begins with a question yet to be explored." />
+  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
 </p>
 
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
