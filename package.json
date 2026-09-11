@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.7.5",
+  "version": "0.8.0",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -80,21 +80,27 @@
     "test:v06-architecture": "node tests/v06-architecture-freeze-smoke.mjs",
     "test:v061-capabilities": "node tests/v061-capabilities-smoke.mjs",
     "test:account-ui": "node tests/local-account-ui-smoke.mjs",
-    "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs",
+    "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs && node tests/gpu-guard-smoke.mjs",
     "test:welcome-gem": "node tests/welcome-gem-browser.mjs",
     "test:run-retry": "node tests/run-retry-core-smoke.mjs",
     "test:github-workflow": "node tests/github-workflow-smoke.mjs",
-    "test:lsp-installer": "node tests/lsp-installer-smoke.mjs"
+    "test:lsp-installer": "node tests/lsp-installer-smoke.mjs",
+    "test:workbench-state": "node tests/workbench-state-smoke.mjs && node tests/workbench-present-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@paper-design/shaders": "^0.0.80",
     "@vscode/ripgrep": "^1.18.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "diff": "^9.0.0",
     "docx": "^9.7.1",
+    "docx-preview": "0.4.0",
     "exceljs": "^4.4.0",
+    "highlight.js": "11.12.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
+    "node-pty": "1.1.0",
     "pdfjs-dist": "^4.10.38",
     "playwright-core": "^1.62.0",
     "pptxgenjs": "^4.0.1",

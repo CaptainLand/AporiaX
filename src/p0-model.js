@@ -54,6 +54,7 @@ const ROUTE_TOOL_META = {
   read_process: { stage: "trial", zh: "读取进程输出", en: "Read process output" },
   write_stdin: { stage: "trial", zh: "写入进程输入", en: "Write process input" },
   kill_process: { stage: "trial", zh: "停止常驻进程", en: "Stop persistent process" },
+  present_to_user: { stage: "deliver", zh: "在侧栏展示", en: "Present in workbench" },
   complete_self_check: { stage: "trial", zh: "提交自检结果", en: "Submit self-check result" },
 };
 

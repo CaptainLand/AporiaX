@@ -6,7 +6,9 @@
     <style>
       html, body {
         margin: 0;
+        padding: 18px;
         background: transparent;
+        overflow: hidden;
         font-family: Inter, "SF Pro Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
         user-select: none;
       }
@@ -24,9 +26,7 @@
         background:
           linear-gradient(135deg, rgba(84, 173, 212, 0.12), transparent 45%),
           rgba(250, 252, 252, 0.96);
-        box-shadow:
-          0 24px 62px rgba(25, 45, 54, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.78);
+        box-shadow: 0 8px 18px rgba(25, 45, 54, 0.14);
       }
       html[data-theme="dark"] .toast {
         border-color: rgba(82, 164, 202, 0.26);
@@ -34,9 +34,7 @@
         background:
           linear-gradient(135deg, rgba(58, 150, 193, 0.12), transparent 46%),
           rgba(16, 22, 27, 0.96);
-        box-shadow:
-          0 26px 66px rgba(0, 0, 0, 0.48),
-          inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.32);
       }
       .icon {
         display: inline-flex;

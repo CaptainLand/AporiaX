@@ -9,6 +9,7 @@ import {
   shell,
 } from "electron";
 import { handleDesktopLink } from "./desktop-links.js";
+import { registerWorkbench } from "./workbench/service.js";
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
 import {
   lstat,
@@ -54,6 +55,7 @@ const projectRoot = join(currentDirectory, "..");
 const isDevelopment = process.argv.includes("--dev");
 
 let mainWindow = null;
+const workbench = registerWorkbench(() => mainWindow);
 let completionFlashTimer = null;
 let currentWindowTheme = "light";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -555,6 +557,7 @@ function createMainWindow() {
     mainWindow?.show();
   });
   mainWindow.on("closed", () => {
+    workbench.hide();
     mainWindow = null;
   });
 

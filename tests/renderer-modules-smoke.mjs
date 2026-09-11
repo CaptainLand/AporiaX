@@ -21,6 +21,8 @@ for (const definition of [
 
 assert.match(main, /from "\.\/composer\/Composer\.jsx"/);
 assert.match(main, /from "\.\/conversation\/ConversationViews\.jsx"/);
+assert.match(main, /from "\.\/workbench\/WorkbenchLayout\.jsx"/);
+assert.match(main, /from "\.\/workbench\/use-workbench\.js"/);
 assert.match(main, /from "\.\/settings\/SettingsPanel\.jsx"/);
 assert.match(main, /from "\.\/components\/Controls\.jsx"/);
 assert.match(main, /from "\.\/models\/model-catalog\.js"/);
@@ -31,6 +33,8 @@ for (const path of [
   "src/settings/SettingsPanel.jsx",
   "src/components/Controls.jsx",
   "src/models/model-catalog.js",
+  "src/workbench/WorkbenchLayout.jsx",
+  "src/workbench/state.js",
 ]) {
   await access(path);
 }
@@ -41,6 +45,7 @@ const conversation = await readFile(
 );
 assert.match(conversation, /export function Conversation\(/);
 assert.match(conversation, /export function RouteView\(/);
+assert.match(conversation, /useWorkbenchContext/);
 
 const composer = await readFile("src/composer/Composer.jsx", "utf8");
 assert.match(composer, /export function Composer\(/);

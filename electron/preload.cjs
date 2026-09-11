@@ -13,6 +13,14 @@ const rememberTaskExecutionModes = (tasks) => {
 
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
+  workbench: {
+    request: (input) => ipcRenderer.invoke("workbench:request", input),
+    subscribe: (callback) => {
+      const listener = (_event, data) => callback(data);
+      ipcRenderer.on("workbench:event", listener);
+      return () => ipcRenderer.removeListener("workbench:event", listener);
+    },
+  },
   links: { activate: (request) => ipcRenderer.invoke("desktop:link", request) },
   selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
   openWorkspace: (workspacePath) =>

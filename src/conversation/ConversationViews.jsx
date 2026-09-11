@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
+import { useWorkbenchContext } from "../workbench/use-workbench.js";
 import remarkGfm from "remark-gfm";
 import { diffLines } from "diff";
 import { createPortal } from "react-dom";
@@ -77,6 +78,7 @@ const LinkWorkspace = createContext("");
 
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
+  const workbench = useWorkbenchContext();
   const { language, tr } = useI18n();
   const [error, setError] = useState("");
   const link = classifyLink(href);
@@ -85,6 +87,14 @@ function MessageLink({ href, children, title }) {
     if (!window.desktop?.links && link.kind === "web") return;
     event.preventDefault();
     setError("");
+    if (action === "open" && workbench?.openHref) {
+      try {
+        if (await workbench.openHref(href)) return;
+      } catch (failure) {
+        setError(failure.message);
+        return;
+      }
+    }
     if (!window.desktop?.links) {
       setError(tr("请在桌面端打开本地文件", "Open local files in the desktop app"));
       return;

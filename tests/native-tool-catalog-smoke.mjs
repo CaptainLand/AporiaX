@@ -17,6 +17,7 @@ for (const required of [
   "read_process",
   "write_stdin",
   "kill_process",
+  "present_to_user",
   "run_command",
   "browser_open",
   "browser_click",
@@ -38,6 +39,8 @@ assert.equal(TOOL_REGISTRY.get("run_command")?.risk, "execute");
 assert.equal(TOOL_REGISTRY.get("read_file")?.risk, "read");
 assert.equal(TOOL_REGISTRY.get("read_external_file")?.risk, "read");
 assert.equal(TOOL_REGISTRY.get("start_process")?.risk, "execute");
+assert.equal(TOOL_REGISTRY.get("present_to_user")?.risk, "read");
+assert.equal(TOOL_RISKS.present_to_user, "read");
 
 const readFileTool = TOOL_DEFINITIONS.find((definition) => definition.function.name === "read_file");
 assert(readFileTool.function.parameters.properties.start_line);

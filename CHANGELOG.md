@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 — 2026-09-12
+
+AporiaX 0.8.0 adds a same-screen workbench so the Agent can show files, the in-app browser, and process logs beside the conversation.
+
+- Right sidebar hosts Route, Workspace, Understanding, files, Browser, user terminals, and Agent process logs on the same screen.
+- Agent and user share one Browser view. Opening something in the sidebar is Agent-led (`present_to_user`); Markdown links in the final answer do not auto-open tabs.
+- Restarting no longer restores dead Browser/terminal sessions or crash-loop on stale layout ids.
+- GPU process crashes no longer quit the app after three retries; a later launch can fall back to software rendering. Welcome shaders run at 48 fps and load in sequence.
+- Approval corner toasts last 10 seconds and no longer clip a strange native shadow.
+
 ## 0.7.5 — 2026-09-10
 
 AporiaX 0.7.5 replaces the particle-ocean opening with a light Gem Smoke AX and shows that welcome on every launch.

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.5" src="https://img.shields.io/badge/source-v0.7.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.0" src="https://img.shields.io/badge/source-v0.8.0-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX 当前源码与 Windows 发行版本为 **`v0.7.5`**，仍处于 Preview 阶段。
-> 0.7.5 把开屏换成浅色 Gem Smoke AX，每次启动都会先看到欢迎页。
+> AporiaX 当前源码与 Windows 发行版本为 **`v0.8.0`**，仍处于 Preview 阶段。
+> 0.8.0 在对话右侧加入同屏工作台：文件、Browser 和进程日志由 Agent 决定何时打开。
 > Aporia Account、Aporia Cloud、BYOK 与本地模型路径继续保持相互独立。
 
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
@@ -67,6 +67,15 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
     <td align="center"><strong>扩展</strong><br><sub>安装可审查的方法，而不是新权限</sub></td>
   </tr>
 </table>
+
+## 0.8.0 更新：同屏工作台
+
+- 右侧栏可在同一屏幕打开 Route、文件、Browser、用户终端和 Agent 进程日志。
+- 打开侧栏内容由 Agent 调用 `present_to_user` 决定；写文件或跑命令不会自动弹出，回答里的 Markdown 链接也不会打开侧栏。
+- 退出再开会清掉已经不存在的 Browser / 终端会话，避免对失效 id 闪退。
+- GPU 连续崩溃不再把窗口杀掉；欢迎页着色器降帧并错开加载。审批角落通知改为 10 秒。
+
+[查看完整 0.8.0 中英文更新记录](docs/releases/v0.8.0.md)
 
 ## 0.7.5 更新：浅色 Gem Smoke 开屏
 
@@ -188,13 +197,13 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 
 ## 下载
 
-`main` 当前是 **v0.7.5 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
+`main` 当前是 **v0.8.0 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 所有历史版本与发行说明 |
-| [0.7.5 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Setup-0.7.5-x64.exe) | 推荐的 Windows x64 安装包 |
-| [0.7.5 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Portable-0.7.5-x64.exe) | 无需安装的 Windows x64 便携包 |
+| [0.8.0 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Setup-0.8.0-x64.exe) | 推荐的 Windows x64 安装包 |
+| [0.8.0 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Portable-0.8.0-x64.exe) | 无需安装的 Windows x64 便携包 |
 
 首次启动后：
 

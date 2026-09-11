@@ -20,6 +20,7 @@ const TOOL_PRESENTATION = {
   read_process: ["trial", "读取进程输出", "Read process output", "正在读取终端输出", "Reading terminal output", "terminal"],
   write_stdin: ["trial", "写入进程输入", "Write process input", "正在向终端发送输入", "Writing to process stdin", "terminal"],
   kill_process: ["trial", "停止常驻进程", "Stop persistent process", "正在停止任务终端进程", "Stopping a managed task process", "terminal"],
+  present_to_user: ["deliver", "在侧栏展示", "Present in workbench", "正在把结果展示到侧栏", "Presenting the result in the side workbench", "document"],
   browser_open: ["lens", "打开浏览器页面", "Open browser page", "正在打开浏览器页面", "Opening browser page", "browser"],
   browser_snapshot: ["lens", "观察页面结构", "Inspect page structure", "正在观察页面结构", "Inspecting page structure", "browser-read"],
   browser_console: ["trial", "检查浏览器控制台", "Inspect browser console", "正在检查浏览器控制台", "Inspecting browser console", "browser-check"],

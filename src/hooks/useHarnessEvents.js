@@ -92,6 +92,7 @@ export function useHarnessEvents({
       read_process: tr("正在读取终端输出", "Reading terminal output"),
       write_stdin: tr("正在向终端发送输入", "Writing to process stdin"),
       kill_process: tr("正在停止任务终端进程", "Stopping a managed task process"),
+      present_to_user: tr("正在把结果展示到侧栏", "Presenting the result in the side workbench"),
       browser_open: tr("正在打开浏览器页面", "Opening browser page"),
       browser_snapshot: tr("正在观察页面结构", "Inspecting page structure"),
       browser_click: tr("正在点击页面元素", "Clicking page element"),

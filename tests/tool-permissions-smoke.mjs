@@ -19,15 +19,18 @@ assert.equal(getToolPermission(workspaceWrite, "browser_click"), "ask");
 assert.equal(getToolPermission(workspaceWrite, "read_external_file"), "allow");
 assert.equal(getToolPermission(workspaceWrite, "start_process"), "ask");
 assert.equal(getToolPermission(workspaceWrite, "read_process"), "allow");
+assert.equal(getToolPermission(workspaceWrite, "present_to_user"), "allow");
 
 const readOnly = createPermissionPolicy("read-only");
 assert.equal(getToolPermission(readOnly, "read_external_file"), "allow");
+assert.equal(getToolPermission(readOnly, "present_to_user"), "allow");
 
 const builderWrite = createPermissionPolicy("builder-write");
 assert.equal(getToolPermission(builderWrite, "run_command"), "allow");
 assert.equal(getToolPermission(builderWrite, "browser_click"), "deny");
 assert.equal(getToolPermission(builderWrite, "delegate_subagent"), "deny");
 assert.equal(getToolPermission(builderWrite, "read_external_file"), "deny");
+assert.equal(getToolPermission(builderWrite, "present_to_user"), "deny");
 
 const dockerAuto = resolveToolExecutionPermission({
   toolName: "run_command",

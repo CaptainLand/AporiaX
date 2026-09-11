@@ -57,8 +57,8 @@ export function showApprovalToast({
   closeApprovalToast();
   const copy = approvalToastCopy(approval, language);
   const window = new BrowserWindow({
-    width: 360,
-    height: 168,
+    width: 396,
+    height: 204,
     frame: false,
     transparent: true,
     resizable: false,
@@ -69,7 +69,7 @@ export function showApprovalToast({
     alwaysOnTop: true,
     focusable: true,
     show: false,
-    hasShadow: true,
+    hasShadow: false,
     backgroundColor: "#00000000",
     webPreferences: {
       preload: join(currentDirectory, "approval-toast-preload.cjs"),
@@ -78,6 +78,7 @@ export function showApprovalToast({
       sandbox: true,
     },
   });
+  window.setHasShadow(false);
   window.setAlwaysOnTop(true, "status");
   window.setMenuBarVisibility(false);
   const timer = setTimeout(() => {

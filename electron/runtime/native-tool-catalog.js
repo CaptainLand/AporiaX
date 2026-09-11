@@ -510,6 +510,47 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "present_to_user",
+      description:
+        "Open selected files, a running process log, or the current browser page in the user's side workbench. Call this only when you decide the user should look at that result now. A Markdown link in the final answer does not open the sidebar.",
+      parameters: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            maxItems: 8,
+            items: { type: "string" },
+            description: "Workspace-relative files to show, such as a finished document, image, or source file.",
+          },
+          path: {
+            type: "string",
+            description: "Optional single workspace-relative file to show.",
+          },
+          line: {
+            type: "integer",
+            minimum: 1,
+            description: "Optional 1-based line to reveal in a text file.",
+          },
+          process_id: {
+            type: "string",
+            description: "Optional managed process id whose log should be shown.",
+          },
+          url: {
+            type: "string",
+            description: "Optional HTTP(S) preview URL to open in the existing workbench browser session.",
+          },
+          show_browser: {
+            type: "boolean",
+            description: "Bring the current workbench browser tab to the front without navigating.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "git_status",
       description:
         "Inspect the workspace Git status without modifying the repository. Use this to understand tracked, modified, and untracked files.",
@@ -834,6 +875,7 @@ export const TOOL_RISKS = {
   read_process: "read",
   write_stdin: "control",
   kill_process: "control",
+  present_to_user: "read",
   ...BROWSER_TOOL_RISKS,
   request_self_check: "control",
   complete_self_check: "control",

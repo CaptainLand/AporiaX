@@ -34,6 +34,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRight,
   PanelRightClose,
   Palette,
   Pause,
@@ -79,6 +80,8 @@ import {
   isImageAttachment,
 } from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
+import { WorkbenchLayout } from "./workbench/WorkbenchLayout.jsx";
+import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
@@ -1657,6 +1660,7 @@ function TaskWorkspace({
 }) {
   const { tr } = useI18n();
   const restoreForTask = restoredSession?.taskId === task.id;
+  const workbench = useWorkbench(task);
   const [activeView, setActiveView] = useState(() =>
     restoreForTask ? restoredSession.view : "dialogue",
   );
@@ -1666,6 +1670,7 @@ function TaskWorkspace({
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [viewMenu, setViewMenu] = useState(null);
   const [settingsPanelWidth, setSettingsPanelWidth] = useState(() =>
     readPanelWidth(
       SETTINGS_PANEL_WIDTH_KEY,
@@ -1830,6 +1835,20 @@ function TaskWorkspace({
     };
   }, [moreMenuOpen]);
 
+  useEffect(() => {
+    if (!viewMenu) return undefined;
+    const close = (event) => {
+      if (event.type === "keydown" && event.key !== "Escape") return;
+      setViewMenu(null);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [viewMenu]);
+
   const switchView = (nextView) => {
     if (nextView === activeView) return;
     const body = threadBodyRef.current;
@@ -1847,6 +1866,21 @@ function TaskWorkspace({
     switchView("workspace");
     if (settingsOpen) onToggleSettings();
     setMoreMenuOpen(false);
+  };
+
+  const openInSidebar = (viewId) => {
+    if (["workspace", "understanding"].includes(viewId) && !task.workspacePath) {
+      onSelectWorkspace();
+      setViewMenu(null);
+      return;
+    }
+    workbench.open(viewId);
+    setViewMenu(null);
+  };
+
+  const toggleSidebar = () => {
+    if (workbench.layout.open) workbench.collapse();
+    else workbench.expand();
   };
 
   const showSettingsPanel = () => {
@@ -1878,8 +1912,49 @@ function TaskWorkspace({
     setMoreMenuOpen(false);
   };
 
+  const workbenchBuiltins = {
+    route: (
+      <RouteView
+        key={task.id}
+        task={task}
+        isRunning={isRunning}
+        approval={approval}
+        approvalResponding={approvalResponding}
+        onRespondApproval={onRespondApproval}
+        onRevert={onRevert}
+        onSaveChanges={onSaveChanges}
+        onNotice={onNotice}
+      />
+    ),
+    workspace: (
+      <div className="workspace-view-stack workspace-tree-only">
+        <AnchorHistory
+          task={task}
+          isRunning={isRunning}
+          onRestore={onRestoreAnchor}
+        />
+        <FileExplorerPanel
+          workspacePath={task.workspacePath}
+          embedded
+          initialPath={workspaceFocusPath}
+          onNotice={onNotice}
+          onOpenFile={(path) => workbench.openFile(path)}
+        />
+      </div>
+    ),
+    understanding: (
+      <ProjectUnderstandingPanel
+        task={task}
+        refreshToken={task.understandingRevision || 0}
+        onNotice={onNotice}
+        onOpenFile={(path) => workbench.openFile(path)}
+      />
+    ),
+  };
+
   return (
-    <div className="task-workspace">
+    <WorkbenchContext.Provider value={workbench}>
+    <div className={`task-workspace${workbench.layout.open ? " workbench-open" : ""}`}>
       <section className="thread">
         <header className="thread-header">
           <div className="thread-heading">
@@ -1935,6 +2010,17 @@ function TaskWorkspace({
               onClick={onToggleTheme}
             >
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            </IconButton>
+            <IconButton
+              label={
+                workbench.layout.open
+                  ? tr("收起工作侧栏", "Collapse workbench sidebar")
+                  : tr("打开工作侧栏", "Open workbench sidebar")
+              }
+              className={workbench.layout.open ? "active" : ""}
+              onClick={toggleSidebar}
+            >
+              <PanelRight size={17} />
             </IconButton>
             <IconButton
               label={settingsOpen ? tr("关闭任务设置", "Close task settings") : tr("打开任务设置", "Open task settings")}
@@ -2043,12 +2129,41 @@ function TaskWorkspace({
                 }
                 switchView(view.id);
               }}
+              onContextMenu={(event) => {
+                if (view.id === "dialogue") return;
+                event.preventDefault();
+                if (
+                  ["workspace", "understanding"].includes(view.id) &&
+                  !task.workspacePath
+                ) {
+                  onSelectWorkspace();
+                  return;
+                }
+                setViewMenu({ id: view.id, x: event.clientX, y: event.clientY });
+              }}
             >
               {view.label}
               {view.id === "route" && isRunning && <span />}
             </button>
           ))}
         </nav>
+        {viewMenu ? (
+          <div
+            className="task-more-menu thread-view-context-menu"
+            role="menu"
+            style={{ left: viewMenu.x, top: viewMenu.y }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => openInSidebar(viewMenu.id)}
+            >
+              <PanelRight size={15} />
+              {tr("在侧栏打开", "Open in sidebar")}
+            </button>
+          </div>
+        ) : null}
 
         <div
           ref={threadBodyRef}
@@ -2160,6 +2275,16 @@ function TaskWorkspace({
         />
       </section>
 
+      {workbench.layout.open ? (
+        <WorkbenchLayout
+          workbench={workbench}
+          overlaying={settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu)}
+          onNotice={onNotice}
+          onNeedWorkspace={onSelectWorkspace}
+          builtins={workbenchBuiltins}
+        />
+      ) : null}
+
       {settingsOpen ? (
         <>
           <PanelResizer
@@ -2205,6 +2330,7 @@ function TaskWorkspace({
         />
       )}
     </div>
+    </WorkbenchContext.Provider>
   );
 }
 

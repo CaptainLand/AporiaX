@@ -37,6 +37,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     browser_close: "allow",
     request_self_check: "allow",
     complete_self_check: "allow",
+    present_to_user: "allow",
   },
   "workspace-write": {
     "*": "deny",
@@ -90,6 +91,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     browser_press: "ask",
     request_self_check: "allow",
     complete_self_check: "allow",
+    present_to_user: "allow",
   },
   // Builder workers operate only inside their leased isolated worktree. They
   // may now run verification commands there so a Builder can test its own

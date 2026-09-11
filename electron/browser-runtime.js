@@ -164,21 +164,7 @@ export function isBrowserToolName(name) {
   return BROWSER_TOOL_NAMES.has(String(name || ""));
 }
 
-export function normalizeBrowserUrl(value) {
-  let url;
-  try {
-    url = new URL(String(value || "").trim());
-  } catch {
-    throw new Error("Browser URL must be an absolute http/https URL.");
-  }
-  if (!new Set(["http:", "https:"]).has(url.protocol)) {
-    throw new Error("AporiaX Browser only allows http and https URLs.");
-  }
-  if (url.username || url.password) {
-    throw new Error("Credentials embedded in browser URLs are not allowed.");
-  }
-  return url.toString();
-}
+export { normalizeBrowserUrl } from "./browser-url.js";
 
 export function hasBrowserLocator(input = {}) {
   return Boolean(

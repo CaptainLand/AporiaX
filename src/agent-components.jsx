@@ -809,6 +809,7 @@ export function FileExplorerPanel({
   style,
   embedded = false,
   initialPath = "",
+  onOpenFile,
 }) {
   const { tr } = useI18n();
   const [entriesByDirectory, setEntriesByDirectory] = useState({});
@@ -986,11 +987,15 @@ export function FileExplorerPanel({
         });
       }
       if (!cancelled) {
-        await openFile({
-          path: initialPath,
-          name: parts.at(-1),
-          type: "file",
-        });
+        if (onOpenFile) {
+          onOpenFile(initialPath);
+        } else {
+          await openFile({
+            path: initialPath,
+            name: parts.at(-1),
+            type: "file",
+          });
+        }
       }
     };
     void revealFile();
@@ -1043,7 +1048,7 @@ export function FileExplorerPanel({
 
   return (
     <aside
-      className={`file-explorer-panel ${embedded ? "embedded" : ""}`}
+      className={`file-explorer-panel ${embedded ? "embedded" : ""} ${onOpenFile ? "tree-only" : ""}`}
       style={style}
       onKeyDown={(event) => {
         if (
@@ -1094,11 +1099,22 @@ export function FileExplorerPanel({
                 key={entry.path}
                 style={{ paddingLeft: `${12 + entry.depth * 13}px` }}
                 type="button"
-                onClick={() =>
-                  entry.type === "directory"
-                    ? void toggleDirectory(entry)
-                    : void openFile(entry)
+                title={
+                  entry.type === "file" && onOpenFile
+                    ? tr("双击打开文件", "Double-click to open")
+                    : undefined
                 }
+                onClick={() => {
+                  if (entry.type === "directory") {
+                    void toggleDirectory(entry);
+                    return;
+                  }
+                  setSelectedPath(entry.path);
+                  if (!onOpenFile) void openFile(entry);
+                }}
+                onDoubleClick={() => {
+                  if (entry.type === "file" && onOpenFile) onOpenFile(entry.path);
+                }}
               >
                 {entry.type === "directory" ? (
                   <>

@@ -1,3 +1,4 @@
+import "./gpu-guard.js";
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
 import { registerBlobScheme } from "./blob-protocol.js";

@@ -5,10 +5,10 @@ import {
   approvalToastCopy,
 } from "../electron/approval-toast-state.js";
 
-assert.equal(APPROVAL_TOAST_TIMEOUT_MS, 5_000);
-assert.equal(approvalToastClosedByTimeout(4_999, false), false);
-assert.equal(approvalToastClosedByTimeout(5_000, false), true);
-assert.equal(approvalToastClosedByTimeout(8_000, true), false, "a click dismisses immediately and is not a timeout");
+assert.equal(APPROVAL_TOAST_TIMEOUT_MS, 10_000);
+assert.equal(approvalToastClosedByTimeout(9_999, false), false);
+assert.equal(approvalToastClosedByTimeout(10_000, false), true);
+assert.equal(approvalToastClosedByTimeout(12_000, true), false, "a click dismisses immediately and is not a timeout");
 
 const zh = approvalToastCopy({
   title: "运行命令",

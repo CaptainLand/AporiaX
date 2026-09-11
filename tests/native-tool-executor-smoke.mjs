@@ -145,6 +145,26 @@ try {
   const diff = await executor({ ...base, toolName: "git_diff", input: { path: "src/a.js" } });
   assert.match(diff.modelResult.diff, /diff --git/);
 
+  const presented = [];
+  const shown = await executor({
+    ...base,
+    toolName: "present_to_user",
+    workbenchPresent: {
+      file(path, line) { presented.push(`${path}:${line || 1}`); },
+    },
+    input: { path: "src/a.js", line: 2 },
+  });
+  assert.equal(shown.modelResult.presented, true);
+  assert.deepEqual(shown.modelResult.files, ["src/a.js"]);
+  assert.deepEqual(presented, ["src/a.js:2"]);
+
+  const unavailable = await executor({
+    ...base,
+    toolName: "present_to_user",
+    input: { path: "src/a.js" },
+  });
+  assert.equal(unavailable.modelResult.presented, false);
+
   await assert.rejects(
     () => executor({ ...base, toolName: "read_file", input: { path: "../secret" } }),
     /outside workspace/,

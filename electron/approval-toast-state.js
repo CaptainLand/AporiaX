@@ -1,4 +1,4 @@
-export const APPROVAL_TOAST_TIMEOUT_MS = 5_000;
+export const APPROVAL_TOAST_TIMEOUT_MS = 10_000;
 export const APPROVAL_TOAST_BODY_LIMIT = 160;
 
 export function approvalToastCopy(approval = {}, language = "zh-CN") {

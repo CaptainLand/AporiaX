@@ -104,18 +104,26 @@ function useWelcomeEffects(imageRef, plateRef, meshRef, metalRef) {
         state.assets = await mod.loadLogoCycleAssets();
         if (generation !== state.generation) return;
         mountLogo(0, generation);
-        if (meshRef.current) {
+        const later = (fn, ms) => {
+          const timer = window.setTimeout(() => {
+            if (generation === state.generation) fn();
+          }, ms);
+          extras.push(() => window.clearTimeout(timer));
+        };
+        later(() => {
+          if (!meshRef.current) return;
           extras.push(mod.mountMeshFlow(meshRef.current, {
             onReady: () => { if (generation === state.generation) setMeshOn(true); },
             onError: () => {},
           }));
-        }
-        if (metalRef.current) {
+        }, 280);
+        later(() => {
+          if (!metalRef.current) return;
           extras.push(mod.mountLiquidMetal(metalRef.current, {
             onReady: () => { if (generation === state.generation) setMetalOn(true); },
             onError: () => {},
           }));
-        }
+        }, 560);
       }).catch((error) => {
         if (generation !== state.generation) return;
         console.warn("AporiaX welcome: animation unavailable.", error);

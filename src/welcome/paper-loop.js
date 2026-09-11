@@ -1,7 +1,7 @@
 import { ShaderMount } from "@paper-design/shaders";
 
 export const WELCOME_MAX_PIXELS = 480_000;
-export const WELCOME_MAX_FPS = 120;
+export const WELCOME_MAX_FPS = 48;
 
 const WEBGL = { alpha: true, antialias: false, powerPreference: "low-power" };
 

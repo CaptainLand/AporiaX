@@ -168,6 +168,7 @@ export function createNativeToolExecutor({
     browserRuntime = null,
     processManager = null,
     lspManager = null,
+    workbenchPresent = null,
   }) {
     throwIfAborted(signal);
 
@@ -611,6 +612,51 @@ export function createNativeToolExecutor({
     if (toolName === "kill_process") {
       if (!processManager) throw new Error("Persistent terminal runtime is unavailable.");
       return { modelResult: await processManager.kill(input.process_id) };
+    }
+
+    if (toolName === "present_to_user") {
+      if (!workbenchPresent) {
+        return {
+          modelResult: {
+            presented: false,
+            reason: "Workbench presentation is only available in the AporiaX desktop app.",
+          },
+        };
+      }
+      const files = [];
+      if (typeof input.path === "string" && input.path.trim()) files.push(input.path.trim());
+      if (Array.isArray(input.files)) {
+        for (const value of input.files) {
+          if (typeof value === "string" && value.trim()) files.push(value.trim());
+        }
+      }
+      const uniqueFiles = [...new Set(files)].slice(0, 8);
+      const processId = typeof input.process_id === "string" ? input.process_id.trim() : "";
+      const url = typeof input.url === "string" ? input.url.trim() : "";
+      if (!uniqueFiles.length && !processId && !url && input.show_browser !== true) {
+        throw new Error("Specify files, a process, or a browser page to show the user.");
+      }
+      const presented = { files: [], processId: null, browser: false, url: "" };
+      for (const path of uniqueFiles) {
+        await verifyExistingTarget(workspaceRoot, path);
+        workbenchPresent.file?.(path, input.line);
+        presented.files.push(path);
+      }
+      if (processId) {
+        workbenchPresent.process?.(processId);
+        presented.processId = processId;
+      }
+      if (url) {
+        if (!browserRuntime) throw new Error("AporiaX Browser runtime is unavailable.");
+        await browserRuntime.open({ url });
+        presented.browser = true;
+        presented.url = url;
+      }
+      if (url || input.show_browser === true) {
+        workbenchPresent.browser?.();
+        presented.browser = true;
+      }
+      return { modelResult: { presented: true, ...presented } };
     }
 
     if (toolName === "git_status") {

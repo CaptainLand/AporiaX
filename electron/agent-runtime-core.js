@@ -606,6 +606,7 @@ const PARALLEL_MAIN_TOOLS = new Set([
   "git_status",
   "git_diff",
   "inspect_office_file",
+  "present_to_user",
   "delegate_subagent",
 ]);
 
@@ -1018,6 +1019,8 @@ function mainToolBatchCanRunInParallel(toolCalls) {
   });
 }
 
+import { acquireWorkbenchResources } from "./workbench/runtime-provider.js";
+
 export async function runHarness({
   runId = "",
   taskId = "",
@@ -1184,8 +1187,9 @@ export async function runHarness({
         sandboxStatus?.autoApprovalSafe,
     );
   const browserEnabled = extensionPolicy?.browser !== false;
-  const browserRuntime = createBrowserRuntime();
-  const processManager = createPersistentProcessManager({ emit });
+  const workbenchResources = acquireWorkbenchResources({ runId, taskId, workspacePath: workspaceRoot || workspacePath || "", emit });
+  const browserRuntime = workbenchResources?.browserRuntime || createBrowserRuntime();
+  const processManager = workbenchResources?.processManager || createPersistentProcessManager({ emit });
   const lspManager = workspaceRoot
     ? createLspManager({ workspaceRoot, emit, signal })
     : null;
@@ -1332,6 +1336,7 @@ export async function runHarness({
         "Use concise Markdown headings and GFM tables when structure helps.",
         "When handing off an existing file, use a Markdown link with a descriptive label and a verified absolute path (forward slashes on Windows), for example [Report](<D:/Project/Report.pdf>). Code links may append :line. Never invent artifact paths; the desktop can open, save a copy, reveal and open these links in an IDE.",
         "Completion handoff only: when a requested deliverable is ready, lead with one short outcome sentence, then a short list of clickable links to the actual deliverable files. File size and version are optional when verified. Add only a brief validation result, a material caveat or the next necessary action. Do not append a development diary, repeated feature inventory, long self-check report or generic suggestions. If the user explicitly asks for a detailed report, follow that request instead.",
+        "A Markdown link in the final answer does not open the side workbench. Call present_to_user only when you decide the user should see a specific file, preview page, or running process in the sidebar now. Do not call it after ordinary writes, verification commands, or merely because a deliverable link exists.",
         "Preview handoff only: when a service is confirmed ready for the user to test, give one short status sentence and a clickable HTTP(S) preview link with the observed port/path. Say if the address is local-only and whether the service will remain running after this task. A process starting is not proof that its URL is reachable; do not fabricate a URL or claim a stopped process is available. Prefer a managed persistent process for npm start/dev instead of blocking a foreground command.",
         "These concise handoff rules do not shorten in-progress milestone updates, explanations, diagnosis, requested reports or ordinary conversation. Never remove an important failure or unverified limitation just to make delivery look successful.",
         "Put source code in fenced code blocks with an accurate language tag.",
@@ -1920,7 +1925,7 @@ export async function runHarness({
         const result = await dispatchNativeTool({ toolCall, registry: TOOL_REGISTRY, permissionPolicy,
           approvalMode: effectiveApprovalMode, requestApproval, sandboxStatus, signal,
           parseArguments: parseToolArguments, executeAuthorized: executeTrackedTool,
-          executeContext: { workspaceRoot, sandboxExecutor: commandSandboxExecutor, sandboxStatus, browserRuntime, processManager, lspManager } });
+          executeContext: { workspaceRoot, sandboxExecutor: commandSandboxExecutor, sandboxStatus, browserRuntime, processManager, lspManager, workbenchPresent: workbenchResources?.present || null } });
         value = result.modelResult || {};
       } catch (error) {
         if (error?.name === "AbortError" || error?.code === "RUN_PERSISTENCE_FAILED") throw error;
@@ -2482,6 +2487,7 @@ export async function runHarness({
                     sandboxStatus,
                     browserRuntime,
                     processManager,
+                    workbenchPresent: workbenchResources?.present || null,
                   },
                 });
               }
@@ -2727,6 +2733,7 @@ export async function runHarness({
                 browserRuntime,
                 processManager,
                 lspManager,
+                workbenchPresent: workbenchResources?.present || null,
               },
             });
             const directChanges = Array.isArray(result.changes)
@@ -2992,9 +2999,10 @@ export async function runHarness({
     return failedResult;
   } finally {
     await lspManager?.closeAll().catch(() => undefined);
-    await processManager.closeAll().catch(() => undefined);
+    if (workbenchResources) await workbenchResources.release({ aborted: Boolean(signal?.aborted) }).catch((error) => forwardEvent({ type: "workbench.cleanup.failed", error: error.message }));
+    else await processManager.closeAll().catch(() => undefined);
     await mcpRuntime.close().catch(() => undefined);
-    await browserRuntime.close().catch(() => undefined);
+    if (!workbenchResources) await browserRuntime.close().catch(() => undefined);
     witness?.dispose();
   }
 }

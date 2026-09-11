@@ -6,6 +6,11 @@ import {
   isBrowserToolName,
   normalizeBrowserUrl,
 } from "../electron/browser-runtime.js";
+import {
+  isAllowedBrowserNavigation,
+  isNavigationAbort,
+  navigationTarget,
+} from "../electron/browser-url.js";
 import { createPermissionPolicy, getToolPermission } from "../electron/agent-core.js";
 
 const names = BROWSER_TOOL_DEFINITIONS.map((definition) => definition.function.name);
@@ -27,9 +32,19 @@ assert.equal(BROWSER_TOOL_RISKS.browser_fill, "control");
 
 assert.equal(normalizeBrowserUrl("https://example.com/path"), "https://example.com/path");
 assert.equal(normalizeBrowserUrl("http://127.0.0.1:5173"), "http://127.0.0.1:5173/");
+assert.equal(normalizeBrowserUrl("bilibili.com"), "https://bilibili.com/");
+assert.equal(normalizeBrowserUrl("www.example.com/a"), "https://www.example.com/a");
+assert.throws(() => normalizeBrowserUrl(""), /absolute http\/https/i);
 assert.throws(() => normalizeBrowserUrl("file:///etc/passwd"), /only allows http and https/i);
 assert.throws(() => normalizeBrowserUrl("javascript:alert(1)"), /only allows http and https/i);
 assert.throws(() => normalizeBrowserUrl("https://user:pass@example.com"), /Credentials embedded/i);
+assert.throws(() => normalizeBrowserUrl("hello world"), /absolute http\/https/i);
+
+assert.equal(isAllowedBrowserNavigation("about:blank"), true);
+assert.equal(isAllowedBrowserNavigation("https://www.bilibili.com/"), true);
+assert.equal(isAllowedBrowserNavigation("javascript:alert(1)"), false);
+assert.equal(navigationTarget({ url: "https://www.bilibili.com/" }), "https://www.bilibili.com/");
+assert.equal(isNavigationAbort({ code: "ERR_ABORTED", errno: -3 }), true);
 
 assert.equal(hasBrowserLocator({ role: "button", name: "Save" }), true);
 assert.equal(hasBrowserLocator({ label: "Email" }), true);

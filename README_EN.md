@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.7.5" src="https://img.shields.io/badge/source-v0.7.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.0" src="https://img.shields.io/badge/source-v0.8.0-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.7.5`**. The project remains in Preview.
-> 0.7.5 replaces the opening with a light Gem Smoke AX and shows that welcome on every launch.
+> The current AporiaX source and Windows release version is **`v0.8.0`**. The project remains in Preview.
+> 0.8.0 adds a same-screen workbench: files, Browser, and process logs open when the Agent decides the user should look.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -76,6 +76,15 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
+
+## What's new in 0.8.0: same-screen workbench
+
+- Right sidebar hosts Route, files, Browser, user terminals, and Agent process logs on the same screen.
+- Opening sidebar content is Agent-led via `present_to_user`; writing a file or running a command does not auto-open tabs, and Markdown links in the final answer do not open the sidebar.
+- Relaunch drops dead Browser/terminal sessions instead of crash-looping on stale ids.
+- GPU process crashes no longer quit the window; welcome shaders run slower and mount in sequence. Approval toasts last 10 seconds.
+
+[Read the complete bilingual 0.8.0 notes](docs/releases/v0.8.0.md)
 
 ## What's new in 0.7.5: light Gem Smoke welcome
 
@@ -197,13 +206,13 @@ Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet
 
 ## Download
 
-`main` is now the **v0.7.5 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.8.0 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.7.5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Setup-0.7.5-x64.exe) | Recommended Windows x64 installer |
-| [0.7.5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.7.5/AporiaX-Portable-0.7.5-x64.exe) | No-install Windows x64 package |
+| [0.8.0 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Setup-0.8.0-x64.exe) | Recommended Windows x64 installer |
+| [0.8.0 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Portable-0.8.0-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 

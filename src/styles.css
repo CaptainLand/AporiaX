@@ -6402,7 +6402,7 @@ body.panel-is-resizing * {
 
 .witness-panel {
   display: grid;
-  margin: 2px 0 38px;
+  margin: 2px 0 16px;
   padding: 15px 16px 12px;
   border: 1px solid rgba(71, 155, 194, 0.2);
   border-radius: 16px;
@@ -8291,6 +8291,11 @@ body.panel-is-resizing * {
   scroll-margin-bottom: 120px;
 }
 
+:root[data-theme="dark"] .dialogue-panel .message-list:has(.witness-panel) {
+  padding-bottom: 16px;
+  scroll-margin-bottom: 16px;
+}
+
 :root[data-theme="dark"] .assistant-message {
   margin-bottom: 38px;
 }
@@ -8728,8 +8733,9 @@ body.panel-is-resizing * {
     transform 150ms ease;
 }
 
-.thread-view-tabs button.active {
-  color: #30383e;
+.thread-view-context-menu {
+  position: fixed;
+  z-index: 40;
 }
 
 .thread-view-tabs button.active::after {
@@ -11057,6 +11063,11 @@ body.panel-is-resizing * {
 .dialogue-panel .message-list {
   padding-bottom: 88px;
   scroll-margin-bottom: 88px;
+}
+
+.dialogue-panel .message-list:has(.witness-panel) {
+  padding-bottom: 16px;
+  scroll-margin-bottom: 16px;
 }
 
 /* Anchor history: persistent cross-turn workspace checkpoints. */
