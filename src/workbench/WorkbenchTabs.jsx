@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   FileText,
   GitCompare,
+  GitBranch,
   Globe,
+  MessagesSquare,
   Plus,
   PanelRightClose,
   TerminalSquare,
@@ -18,6 +20,8 @@ const TITLES = {
   terminal: "Terminal",
   process: "Process",
   file: "File",
+  sidechat: "侧边聊天",
+  git: "Git",
 };
 
 export function WorkbenchTabs({
@@ -84,7 +88,7 @@ export function WorkbenchTabs({
                 dragId.current = "";
               }}
             >
-              {resource && resource.status !== "exited" && resource.status !== "closed" ? (
+              {tab.kind === "terminal" ? <TerminalSquare size={12} /> : resource && resource.status !== "exited" && resource.status !== "closed" ? (
                 <span className={`workbench-tab-dot ${resource.owner === "user" ? "warn" : ""}`} />
               ) : null}
               <span className="workbench-tab-title">{tab.title || TITLES[tab.kind] || tab.kind}</span>
@@ -124,6 +128,9 @@ export function WorkbenchTabs({
         </button>
         {plusOpen ? (
           <div className="workbench-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => { onOpen("sidechat"); setPlusOpen(false); }}>
+              <MessagesSquare size={14} /> {tr("侧边聊天", "Side chat")}
+            </button>
             <button type="button" role="menuitem" onClick={() => { onOpen("route"); setPlusOpen(false); }}>
               <GitCompare size={14} /> {tr("变更", "Changes")}
             </button>
@@ -135,6 +142,9 @@ export function WorkbenchTabs({
             </button>
             <button type="button" role="menuitem" onClick={() => { onOpen("file"); setPlusOpen(false); }}>
               <FileText size={14} /> {tr("文件", "File")}
+            </button>
+            <button type="button" role="menuitem" onClick={() => { onOpen("git"); setPlusOpen(false); }}>
+              <GitBranch size={14} /> Git
             </button>
           </div>
         ) : null}

@@ -10,6 +10,7 @@ import {
 } from "electron";
 import { handleDesktopLink } from "./desktop-links.js";
 import { registerWorkbench } from "./workbench/service.js";
+import { createSideChatService } from "./side-chat/service.js";
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
 import {
   lstat,
@@ -107,6 +108,22 @@ function assertTrustedSender(event) {
     throw new Error("Rejected IPC request from an unknown renderer.");
   }
 }
+
+const sideChat = createSideChatService({
+  dataDirectory: () => app.getPath("userData"),
+  resolveProvider,
+  loadTask: (taskId) => getTaskHistoryStore().loadTask(taskId),
+  publish: (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send("side-chat:event", payload);
+    }
+  },
+});
+ipcMain.handle("side-chat:request", (event, input) => {
+  assertTrustedSender(event);
+  return sideChat.request(input);
+});
+app.on("before-quit", () => sideChat.dispose());
 
 function getCredentialPath() {
   return join(app.getPath("userData"), "deepseek-credentials.json");

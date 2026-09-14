@@ -725,7 +725,7 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "github_repo_create",
-      description: "Create a GitHub repository from the current local Git workspace through authenticated GitHub CLI and attach it as a remote. Does not push commits automatically. Requires approval.",
+      description: "Create a GitHub repository from the current local Git workspace through authenticated GitHub CLI and attach it as a remote. Check github_auth_status first; authentication is distinct from the AporiaX account. Does not push commits automatically. Requires approval.",
       parameters: {
         type: "object",
         properties: {
@@ -767,6 +767,14 @@ export const TOOL_DEFINITIONS = [
       name: "github_pr_checks",
       description: "Read GitHub checks for the current or numbered pull request. A failing check is returned as evidence rather than treated as a tool failure.",
       parameters: { type: "object", properties: { number: { type: "integer", minimum: 1 } }, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_auth_status",
+      description: "Check GitHub CLI availability and active github.com login without exposing credentials. If not authenticated, direct the user to sidebar Git > repository settings > GitHub > browser login. The user completes authorization in the system browser/interactive terminal; never ask for passwords/tokens or run gh auth token. After authorization, recheck this tool before remote operations.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
   ...OFFICE_TOOL_DEFINITIONS,
@@ -893,6 +901,7 @@ export const TOOL_RISKS = {
   github_pr_create: "control",
   github_pr_view: "read",
   github_pr_checks: "read",
+  github_auth_status: "read",
   inspect_office_file: "read",
   write_file: "write",
   apply_patch: "write",

@@ -257,6 +257,19 @@ export function resolveWorkspacePath(workspaceRoot, requestedPath) {
   return targetPath;
 }
 
+export function toWorkspaceRelativePath(workspaceRoot, requestedPath) {
+  const normalized = normalizeLocalPath(requestedPath);
+  if (!normalized) return "";
+  try {
+    const absolute = resolveWorkspacePath(workspaceRoot, requestedPath);
+    const rel = relative(resolve(workspaceRoot || "."), absolute);
+    if (!rel || rel === ".") return ".";
+    return rel.replaceAll("\\", "/");
+  } catch {
+    return normalized;
+  }
+}
+
 export async function getVerifiedWorkspaceRoot(workspacePath) {
   if (typeof workspacePath !== "string" || !workspacePath.trim()) {
     throw new Error("A workspace directory is required.");

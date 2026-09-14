@@ -1,0 +1,40 @@
+const { app } = require("electron");
+const assert = require("node:assert/strict");
+const { mkdtemp } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
+const delay = (ms) => new Promise((done) => setTimeout(done, ms));
+let service;
+app.whenReady().then(async () => {
+  const { createWorkbenchService } = await import(pathToFileURL(join(__dirname, "../electron/workbench/service.js")));
+  service = createWorkbenchService({ getWindow: () => null });
+  const workspacePath = await mkdtemp(join(tmpdir(), "aporiax-terminal-v2-"));
+  const request = (data) => service.request({ taskId: "native-terminal-v2", workspacePath, ...data });
+  const created = await request({ action: "new-terminal" }), r = service.resources.get(created.id);
+  const id = created.id;
+  assert.match(created.title, /PowerShell/);
+  r.child.onData((data) => { if (data.includes("\x1b[c")) r.child.write("\x1b[?1;2c"); if (data.includes("\x1b[6n")) r.child.write("\x1b[1;1R"); });
+  await request({ action: "terminal-rename", id, text: "测试输出" }); assert.equal(r.title, "测试输出");
+  await assert.rejects(request({ action: "terminal-rename", id, text: "bad\nname" }), /有效/);
+  await assert.rejects(request({ action: "terminal-copy", id, text: "x".repeat(1000001) }), /长度/);
+  assert.deepEqual(await request({ action: "terminal-paste", id, taskId: "foreign" }), { missing: true });
+  await delay(800);
+  await request({ action: "write", id, data: 'node -e "process.stdout.write(\'x\'.repeat(170000)+\'NATIVE_\'+\'TAIL\')"; exit\r' });
+  for (let index = 0; index < 180 && r.status !== "exited"; index++) await delay(100);
+  assert.equal(r.status, "exited", "Owned test shell did not exit");
+  let cursor = 0, output = "", chunks = 0, hasMore;
+  do {
+    const chunk = await request({ action: "read", id, cursor });
+    assert.equal(chunk.status, "exited"); output += chunk.output; cursor = chunk.cursor; hasMore = chunk.hasMore; chunks++;
+  } while (hasMore && chunks < 20);
+  assert.ok(chunks >= 3); assert.match(output, /NATIVE_TAIL/);
+  const second = await request({ action: "new-terminal" });
+  assert.equal((await request({ action: "read", id, cursor: 0 })).status, "exited", "New terminals must not erase exited logs");
+  assert.equal((await request({ action: "list" })).length, 2);
+  await request({ action: "stop", id, dispose: true });
+  assert.equal(service.resources.has(id), false);
+  await request({ action: "stop", id: second.id, dispose: true });
+  console.log("PASS: native PowerShell PTY >160K output followed by exit, full paged tail, retained exited logs after new terminal, rename validation, cross-task clipboard denial, owned session disposal. No clipboard contents read/written.");
+}).then(async () => { await service?.closeAll(); app.exit(0); })
+  .catch(async (error) => { console.error(error); await service?.closeAll(); app.exit(1); });

@@ -158,6 +158,20 @@ try {
   assert.deepEqual(shown.modelResult.files, ["src/a.js"]);
   assert.deepEqual(presented, ["src/a.js:2"]);
 
+  const absPresented = [];
+  const absPath = join(root, "src", "a.js");
+  const absShown = await executor({
+    ...base,
+    toolName: "present_to_user",
+    workbenchPresent: {
+      file(path, line) { absPresented.push(`${path}:${line || 1}`); },
+    },
+    input: { path: `<${absPath.replaceAll("\\", "/")}>`, line: 3 },
+  });
+  assert.equal(absShown.modelResult.presented, true);
+  assert.deepEqual(absShown.modelResult.files, ["src/a.js"]);
+  assert.deepEqual(absPresented, ["src/a.js:3"]);
+
   const unavailable = await executor({
     ...base,
     toolName: "present_to_user",

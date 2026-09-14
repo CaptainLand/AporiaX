@@ -378,6 +378,7 @@ export function createTaskHistoryStore(
     persistAttachment,
     persistTask,
     hydrateMessages,
+    loadTask: (id) => readTaskFile(assertTaskId(id)),
     loadTasks,
     saveTasks,
   };

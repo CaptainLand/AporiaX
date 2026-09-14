@@ -4,6 +4,8 @@ import { createNativeToolExecutor } from "../electron/runtime/native-tool-execut
 import { TOOL_REGISTRY } from "../electron/runtime/native-tool-catalog.js";
 
 const workspacePolicy = createPermissionPolicy("workspace-write");
+assert.equal(getToolPermission(workspacePolicy, "github_auth_status"), "allow");
+assert.ok(TOOL_REGISTRY.get("github_auth_status"));
 assert.equal(getToolPermission(workspacePolicy, "git_log"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "git_stage"), "allow");
 assert.equal(getToolPermission(workspacePolicy, "git_commit"), "allow");
@@ -37,6 +39,7 @@ const runGitCommand = async ({ args }) => {
 };
 const runGitHubCli = async ({ args }) => {
   ghCalls.push(args);
+  if (args[0] === "auth") return { exitCode: 0, stdout: JSON.stringify([{ login: "fixture", active: true, state: "success", token: "NEVER_RETURN_THIS" }]), stderr: "" };
   if (args[0] === "repo" && args[1] === "view") {
     return { exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "demo/repo", url: "https://example.invalid/demo/repo", visibility: "PRIVATE" }), stderr: "" };
   }
@@ -65,6 +68,10 @@ const invoke = (toolName, input) => executor({
 });
 
 const initialized = await invoke("git_init", { initial_branch: "main" });
+const auth = await invoke("github_auth_status", {});
+assert.equal(auth.modelResult.authenticated, true);
+assert.equal(auth.modelResult.login, "fixture");
+assert.ok(!JSON.stringify(auth).includes("NEVER_RETURN_THIS"));
 assert.equal(initialized.modelResult.alreadyRepository, true);
 const remotes = await invoke("git_remote_list", {});
 assert.match(remotes.modelResult.remotes, /origin/);

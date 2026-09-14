@@ -1,14 +1,17 @@
-import { app, dialog, ipcMain } from "electron";
+import { app, clipboard, dialog, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { WorkbenchBrowserSession } from "./browser-session.js";
 import { installWorkbenchProvider } from "./runtime-provider.js";
 import { createPersistentProcessManager } from "../runtime/process-runtime.js";
-import { createHostFallbackEnvironment } from "../sandbox-runtime.js";
-import { getVerifiedWorkspaceRoot } from "../runtime/workspace-runtime.js";
+import { getVerifiedWorkspaceRoot, toWorkspaceRelativePath } from "../runtime/workspace-runtime.js";
 import { readWorkbenchFile, searchWorkbenchFiles } from "./files.js";
 import { acceptLayoutGeneration } from "./layout-token.js";
+import { createWorkbenchGitService } from "./git-service.js";
+import { getGitHubAuthStatus, githubLoginCommand } from "./git-setup.js";
+import { appendTerminalOutput, readTerminalOutput, waitForTerminalOutput, wakeTerminalReaders } from "./terminal-buffer.js";
+import { interactiveTerminalEnvironment } from "./terminal-environment.js";
 
 const require = createRequire(import.meta.url);
 export function createWorkbenchService({ getWindow, confirmExternalRead = async (path) => {
@@ -20,6 +23,28 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   return result.response === 1;
 } }) {
   const resources = new Map();
+  const activeRuns = new Set();
+  const git = createWorkbenchGitService({
+    assertWorkspaceIdle(root) {
+      const target = resolve(root).toLowerCase();
+      if ([...activeRuns].some((context) => {
+        const active = resolve(context.workspacePath).toLowerCase();
+        return active === target || active.startsWith(target + "/") || active.startsWith(target + "\\");
+      })) throw new Error("此工作区仍有 Agent 正在运行，请先停止任务或等待完成，再更换分支/拉取文件。");
+    },
+    confirmOperation: async ({ title, message, detail }) => {
+      const result = await dialog.showMessageBox(getWindow(), { type: "question", title, message, detail,
+        buttons: ["取消", "确认继续"], defaultId: 0, cancelId: 0 });
+      return result.response === 1;
+    },
+    confirmPush: async (target) => {
+    const result = await dialog.showMessageBox(getWindow(), {
+      type: "question", title: "确认 Git 推送", message: `将 ${target.branch} 推送到 ${target.remote}？`,
+      detail: `${target.url}\n${target.ref}\n\n这会上传提交中的文件内容。不会强制推送，也不会自动合并。`,
+      buttons: ["取消", "确认推送"], defaultId: 0, cancelId: 0,
+    });
+    return result.response === 1;
+  } });
   let visibleId = null;
   let hideEpoch = 0;
   let acceptedGeneration = 0;
@@ -34,8 +59,10 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   };
   const reserve = (kind) => {
     // Closed resources are safe to forget; living resources must be explicitly stopped.
-    for (const [id, r] of resources) if (r.closed || r.status === "exited") resources.delete(id);
-    if ([...resources.values()].filter((r) => r.kind === kind || (kind === "browser" && r.view)).length >= 12) throw new Error("运行资源已达上限，请先关闭不再使用的会话。");
+    for (const [id, r] of resources) if (r.closed) resources.delete(id);
+    // Keep exited terminal logs available until the user closes their tabs.
+    const matching = [...resources.values()].filter((r) => r.kind === kind || (kind === "browser" && r.view));
+    if (matching.filter((r) => r.status !== "exited").length >= 12 || matching.length >= 24) throw new Error("会话数量已达上限，请先关闭不再使用的标签。");
   };
   function browser(context, owner = "user") {
     reserve("browser");
@@ -105,12 +132,12 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       name: "xterm-256color", cols: 100, rows: 28, cwd,
       // Bundled ConPTY closes the session without the legacy console-list helper race.
       ...(process.platform === "win32" ? { useConptyDll: true } : {}),
-      env: createHostFallbackEnvironment(process.env, "workbench-terminal"),
+      env: interactiveTerminalEnvironment(),
     });
     let closePromise;
     let exited;
     const exitPromise = new Promise((done) => { exited = done; });
-    const r = { ...context, id: `terminal_${randomUUID()}`, kind: "terminal", title: "交互终端", status: "running",
+    const r = { ...context, id: `terminal_${randomUUID()}`, kind: "terminal", title: `${process.platform === "win32" ? "PowerShell" : shell.split("/").at(-1)} · ${cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd}`, status: "running",
       owner: "user", cwd, output: "", offset: 0, child, exitCode: null,
       close: () => {
         if (r.status === "exited") return Promise.resolve();
@@ -128,11 +155,10 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       } };
     resources.set(r.id, r);
     child.onData((data) => {
-      r.output += data;
-      if (r.output.length > 400000) { const removed = r.output.length - 400000; r.offset += removed; r.output = r.output.slice(removed); }
+      appendTerminalOutput(r, data);
       // Output is pulled using cursors, never repeated in saved conversation events.
     });
-    child.onExit(({ exitCode }) => { r.status = "exited"; r.exitCode = exitCode; exited(); publish(state(r)); });
+    child.onExit(({ exitCode }) => { r.status = "exited"; r.exitCode = exitCode; wakeTerminalReaders(r); exited(); publish(state(r)); });
     publish(state(r)); return state(r);
   }
   function browsersInScope(context) {
@@ -153,6 +179,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     return preferred;
   }
   function acquire(context) {
+    activeRuns.add(context);
     const ownedBrowsers = new Map();
     const lazy = (ownerId = "main") => {
       let r = ownedBrowsers.get(ownerId);
@@ -178,7 +205,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       }
     } });
     const presentFile = (path, line = 1) => {
-      const normalized = String(path || "").replaceAll("\\", "/").replace(/^\.\//, "");
+      const normalized = toWorkspaceRelativePath(context.workspacePath, path).replace(/^\.\//, "");
       if (!normalized || normalized.length > 1000 || /[\u0000-\u001f]/.test(normalized)) return;
       publish({
         id: `file:${normalized}`,
@@ -226,6 +253,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
         },
       },
       async release({ aborted } = {}) {
+        activeRuns.delete(context);
         released = true;
         for (const r of ownedBrowsers.values()) {
           if (r.closed) continue;
@@ -252,6 +280,16 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       authorizeExternal: input.approveExternal === true ? confirmExternalRead : undefined,
     });
     if (input.action === "search") return searchWorkbenchFiles(context.workspacePath, input.query);
+    if (input.action === "git") return git.request({ ...input, workspacePath: context.workspacePath });
+    if (input.action === "github-login") {
+      const cwd = await getVerifiedWorkspaceRoot(context.workspacePath);
+      const auth = await getGitHubAuthStatus({ cwd });
+      if (!auth.available) throw new Error(auth.message);
+      const resource = await terminal(context), session = resources.get(resource.id);
+      session.title = "GitHub 登录";
+      session.child.write(githubLoginCommand());
+      publish(state(session)); return state(session);
+    }
     if (input.action === "new-browser") return browser(context).state();
     if (input.action === "new-terminal") return terminal(context);
     if (input.action === "hide") { hide(input.generation); return true; }
@@ -273,9 +311,21 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     if (input.action === "read") {
       if (r.kind === "process") return r.manager.read({ processId: r.id, cursor: input.cursor, maxChars: 80000 });
       if (r.kind !== "terminal") throw new Error("不是终端。");
-      const start = Math.max(0, Number(input.cursor || 0) - r.offset);
-      const output = r.output.slice(start, start + 80000);
-      return { ...state(r), output, cursor: r.offset + start + output.length, cursorExpired: Number(input.cursor || 0) < r.offset };
+      await waitForTerminalOutput(r, input.cursor, input.waitMs);
+      return { ...state(r), ...readTerminalOutput(r, input.cursor), waitSupported: true };
+    }
+    if (["terminal-rename", "terminal-copy", "terminal-paste"].includes(input.action)) {
+      if (r.kind !== "terminal" || r.owner !== "user") throw new Error("不是用户终端。");
+      if (input.action === "terminal-paste") {
+        const text = clipboard.readText();
+        if (text.length > 60000) throw new Error("粘贴内容过大，请控制在 60,000 字符以内。");
+        return { text };
+      }
+      if (typeof input.text !== "string" || input.text.length > (input.action === "terminal-copy" ? 1000000 : 80)) throw new Error("内容长度不受支持。");
+      if (input.action === "terminal-copy") { clipboard.writeText(input.text); return true; }
+      const title = input.text.trim();
+      if (!title || /[\u0000-\u001f\u007f]/.test(title)) throw new Error("请输入有效的终端名称。");
+      r.title = title; publish(state(r)); return state(r);
     }
     if (input.action === "write") {
       if (r.owner !== "user" || r.kind !== "terminal" || r.status !== "running" || typeof input.data !== "string" || input.data.length > 64000) throw new Error("终端不可输入。");

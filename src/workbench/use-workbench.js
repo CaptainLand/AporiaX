@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { classifyLink, normalizeLocalPath } from "../../electron/link-target.js";
+import { classifyLink, toWorkspaceRelativePath } from "../../electron/link-target.js";
+import { disposeTerminalSession, reconcileTerminalSessions, requestTerminalFocus } from "./terminal-session.js";
 import {
   closeTab,
   draftKey,
   drafts,
   dropMissingSessionTabs,
-  canonicalPath,
   loadLayout,
   normalizeLayout,
   openTab,
@@ -75,14 +75,16 @@ export function useWorkbench(task) {
       const presented = resource.present === true && previous?.present !== true;
       if (resource.kind === "file") {
         if (presented) {
+          const path = toWorkspaceRelativePath(task.workspacePath, resource.path);
+          if (!path) return;
           setLayout((current) =>
             openTab(
               current,
               {
-                id: resource.id,
+                id: `file:${path}`,
                 kind: "file",
-                title: resource.title,
-                path: resource.path,
+                title: path.split("/").at(-1) || resource.title,
+                path,
                 line: resource.line,
                 revision: Date.now(),
               },
@@ -132,6 +134,7 @@ export function useWorkbench(task) {
         .then((items) => {
           if (disposed) return;
           const list = Array.isArray(items) ? items : [];
+          reconcileTerminalSessions(key, new Set(list.map((item) => item.id)));
           setLayout((current) => dropMissingSessionTabs(current, new Set(list.map((item) => item.id))));
           list.forEach((resource) => merge(resource));
         })
@@ -150,7 +153,7 @@ export function useWorkbench(task) {
         kind,
         title:
           value.title ||
-          ({ route: "Route", workspace: "Workspace", understanding: "Understanding" }[kind]) ||
+          ({ route: "Route", workspace: "Workspace", understanding: "Understanding", sidechat: "侧边聊天", git: "Git" }[kind]) ||
           kind,
         ...value,
       }),
@@ -158,12 +161,7 @@ export function useWorkbench(task) {
   };
 
   const openFile = (path, line = 1) => {
-    let normalized = normalizeLocalPath(path);
-    const root = canonicalPath(task.workspacePath || "");
-    const full = canonicalPath(normalized);
-    if (root && (full === root || full.startsWith(`${root}/`))) {
-      normalized = full === root ? "." : normalized.slice(root.length + 1);
-    }
+    const normalized = toWorkspaceRelativePath(task.workspacePath, path);
     if (!normalized) return;
     open("file", {
       id: `file:${normalized}`,
@@ -182,12 +180,14 @@ export function useWorkbench(task) {
     open("image", { id: existing?.id || "image:" + crypto.randomUUID(), src, title });
   };
 
-  const create = async (kind) => {
+  const create = async (kind, action) => {
     try {
-      const resource = await request({ action: `new-${kind}` });
+      const resource = await request({ action: action || `new-${kind}` });
       resourcesRef.current = { ...resourcesRef.current, [resource.id]: resource };
       setResources((all) => ({ ...all, [resource.id]: resource }));
+      if (kind === "terminal") requestTerminalFocus(key, resource.id);
       open(kind, resource);
+      return resource;
     } catch (failure) {
       setError(failure.message);
     }
@@ -246,7 +246,11 @@ export function useWorkbench(task) {
       closing.current.add(id);
       const scopeAtClose = key;
       try {
+        if (tab?.kind === "sidechat" && window.desktop?.sideChat) {
+          await window.desktop.sideChat.request({ action: "cancel", taskId: task.id, scope: key });
+        }
         if (tab && SESSION_TAB_KINDS.has(tab.kind)) await request({ action: "stop", id, dispose: true });
+        if (tab?.kind === "terminal") disposeTerminalSession(key, id);
         if (keyRef.current === scopeAtClose) {
           setError("");
           setLayout((current) => closeTab(current, id));

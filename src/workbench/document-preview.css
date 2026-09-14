@@ -1,0 +1,35 @@
+.workbench-document { display: flex; flex-direction: column; flex: 1; height: 100%; min-height: 0; min-width: 0; }
+.workbench-toolbar.document-toolbar { flex: 0 0 auto; min-height: 38px; padding: 6px 10px; flex-wrap: wrap; }
+.document-toolbar > .workbench-status.document-path { flex: 1 1 160px; overflow: hidden; text-overflow: ellipsis; }
+.document-toolbar input { flex: 1 1 100px; max-width: 240px; }
+.workbench-markdown { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding: 24px clamp(16px, 3vw, 34px); color: #302a37; background: #fff; font: inherit; font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; overscroll-behavior: contain; }
+.workbench-markdown > :first-child { margin-top: 0; }
+.workbench-markdown h1 { font-size: 25px; line-height: 1.35; }
+.workbench-markdown h2 { font-size: 20px; line-height: 1.4; border-bottom: 1px solid #e4e2e6; padding-bottom: 8px; }
+.workbench-markdown h3 { font-size: 16px; }
+.workbench-markdown h1, .workbench-markdown h2, .workbench-markdown h3 { margin: 28px 0 12px; font-weight: 650; }
+.workbench-markdown p, .workbench-markdown ul, .workbench-markdown ol { margin: 0 0 16px; }
+.workbench-markdown ul, .workbench-markdown ol { padding-left: 24px; }
+.workbench-markdown a { color: #5a8eaa; text-decoration: underline; text-underline-offset: 3px; }
+.workbench-markdown pre { padding: 14px; border: 1px solid #e4e2e6; border-radius: 9px; background: #f8f7f8; overflow: auto; line-height: 1.65; }
+.workbench-markdown code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12.8px; }
+.workbench-markdown :not(pre) > code { background: #f0f1f2; padding: 2px 4px; border-radius: 4px; }
+.workbench-markdown table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; margin: 16px 0; }
+.workbench-markdown td, .workbench-markdown th { border: 1px solid #dedce2; padding: 8px 12px; text-align: left; min-width: 90px; }
+.workbench-markdown th { background: #f8f7f8; font-weight: 600; }
+.workbench-markdown blockquote { border-left: 3px solid #9dbbc9; padding-left: 16px; margin-left: 0; color: #77727e; }
+.workbench-markdown img { max-width: 100%; height: auto; border-radius: 6px; cursor: zoom-in; }
+.document-image-placeholder { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px dashed #dedce2; border-radius: 8px; color: #77727e; font-size: 12px; }
+.document-image-placeholder button { color: #5a8eaa; background: transparent; cursor: pointer; }
+.workbench-docx-frame { border: 0; flex: 1; min-height: 0; width: 100%; background: #e8e6ea; }
+.workbench-markdown .hljs-keyword { color: #8c5793; }
+.workbench-markdown .hljs-string { color: #287656; }
+.workbench-markdown .hljs-number { color: #a15d26; }
+.workbench-markdown .hljs-comment { color: #77727e; }
+:root[data-theme="dark"] .workbench-markdown { color: #e0dce8; background: #17141d; }
+:root[data-theme="dark"] .workbench-markdown :is(pre,th,:not(pre)>code) { background: #211d29; }
+:root[data-theme="dark"] .workbench-markdown :is(h2,pre,td,th) { border-color: #38313f; }
+:root[data-theme="dark"] .workbench-markdown a { color: #8bc6e3; }
+:root[data-theme="dark"] .workbench-markdown .hljs-keyword { color: #ca9ad5; }
+:root[data-theme="dark"] .workbench-markdown .hljs-string { color: #91cfa6; }
+:root[data-theme="dark"] .workbench-markdown .hljs-number { color: #e2b17b; }

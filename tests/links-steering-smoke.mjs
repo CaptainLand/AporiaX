@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifyLink, messageLinkUrl, splitAutolinkBoundary } from "../electron/link-target.js";
+import { classifyLink, messageLinkUrl, splitAutolinkBoundary, toWorkspaceRelativePath } from "../electron/link-target.js";
 import { completeWithSteering } from "../electron/runtime/steerable-completion.js";
 import { splitSteeredReply } from "../src/state/steering-messages.js";
 
@@ -7,6 +7,16 @@ assert.equal(classifyLink("D:/项目/安装包.exe").target, "D:/项目/安装�
 assert.equal(classifyLink("/D:/项目/安装包.exe").target, "D:/项目/安装包.exe");
 assert.equal(classifyLink("file:///D:/项目/安装包.exe").target, "D:/项目/安装包.exe");
 assert.equal(classifyLink("<D:/项目/a.png>").target, "D:/项目/a.png");
+assert.equal(
+  toWorkspaceRelativePath("D:/市场", "<D:/市场/calculator-pro.html>"),
+  "calculator-pro.html",
+);
+assert.equal(
+  toWorkspaceRelativePath("D:\\市场", "D:/市场/scripts/tmp-calc-pro-test.js"),
+  "scripts/tmp-calc-pro-test.js",
+);
+assert.equal(toWorkspaceRelativePath("D:/市场", "calculator-pro.html"), "calculator-pro.html");
+assert.equal(toWorkspaceRelativePath("D:/市场", "<C:/Temp/photo.png>"), "C:/Temp/photo.png");
 assert.equal(classifyLink("file:///D:/my%20project/a.js:12").line, 12);
 assert.equal(classifyLink("src/main.jsx#L42").line, 42);
 assert.equal(classifyLink("https://example.com:443/a").kind, "web");

@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.8.5",
+  "version": "0.9.0",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -47,6 +47,13 @@
     "test:renderer-modules": "node tests/renderer-modules-smoke.mjs && node tests/composer-attachment-drag-smoke.mjs",
     "test:harness-events-ui": "node tests/harness-event-hook-smoke.mjs",
     "test:provider-stream": "node tests/provider-stream-smoke.mjs",
+    "test:side-chat": "node tests/side-chat-smoke.mjs && node tests/side-chat-browser.mjs",
+    "test:workbench-documents-git": "node tests/workbench-git-smoke.mjs && node tests/workbench-documents-git-browser.mjs",
+    "test:workbench-git-setup": "node tests/workbench-git-setup-smoke.mjs && node tests/workbench-git-setup-browser.mjs",
+    "test:workbench-git-setup-electron": "electron tests/workbench-git-setup-electron.cjs",
+    "test:terminal-v2": "node tests/terminal-buffer-smoke.mjs && node tests/terminal-v2-browser.mjs && electron tests/terminal-v2-electron.cjs",
+    "test:terminal-interaction": "node tests/terminal-native-ui.mjs && electron tests/desktop-icon-smoke.cjs",
+    "test:workbench-document-electron": "electron tests/workbench-document-electron.cjs",
     "test:cloud-model": "node tests/aporia-cloud-model-runtime-smoke.mjs",
     "test:skills": "node tests/skill-system-smoke.mjs",
     "test:browser": "node tests/browser-runtime-smoke.mjs",
@@ -93,6 +100,7 @@
     "@paper-design/shaders": "^0.0.80",
     "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-search": "0.16.0",
     "@xterm/addon-web-links": "0.12.0",
     "@xterm/xterm": "6.0.0",
     "diff": "^9.0.0",
@@ -147,7 +155,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "icon.ico",
+      "icon": "icon-dark.ico",
       "target": [
         {
           "target": "nsis",

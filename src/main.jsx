@@ -2288,6 +2288,7 @@ function TaskWorkspace({
           onNotice={onNotice}
           onNeedWorkspace={onSelectWorkspace}
           builtins={workbenchBuiltins}
+          sideChat={{ providers, isRunning, isPaused, onSendToMain: (content) => onSend(content, [], { taskId: task.id }) }}
         />
       ) : (
         <CollapsedDropRail workbench={workbench} onNotice={onNotice} />

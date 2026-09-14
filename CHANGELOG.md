@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0 — 2026-09-14
+
+A more useful same-screen workbench: side chat, formatted documents, Git setup and responsive terminals.
+
+- Independent side chat with task snapshots, read-only record queries, in-app reference dialogs, a searchable model picker and explicit handoff to the main Agent.
+- Formatted Markdown and styled DOCX previews, source/edit modes, safe links and image loading; workspace-contained absolute paths normalize correctly.
+- Sixth-entry Git panel with diffs, staging, commits, history, initialization/cloning, local branches, remotes, commit identity and GitHub browser authorization. Authentication, repository creation and upload remain distinct operations.
+- Cached terminal screens survive tab switches and sidebar collapse. Search, clipboard confirmation, themes, font size and rename are available. Exited sessions retain their logs and drain all remaining output.
+- Bounded output-triggered IPC reads remove the idle-poll keyboard echo delay. Focused cursors stay visible, while terminal applications can still hide their cursor intentionally.
+- Windows EXE icons now use the same larger AX asset as the window and tray. Installer, portable, update metadata and checksums are published together.
+
+[中文 / English release notes](docs/releases/v0.9.0.md)
+
 ## 0.8.5 — 2026-09-14
 
 Anchor restore still only rewinds workspace files, but the next model run is told those edits are gone.

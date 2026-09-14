@@ -16,6 +16,8 @@ import {
   runGitHubCli as defaultRunGitHubCli,
 } from "./github-runtime.js";
 import { installLanguageServer as defaultInstallLanguageServer } from "./lsp-installer.js";
+import { toWorkspaceRelativePath } from "./workspace-runtime.js";
+import { getGitHubAuthStatus } from "../workbench/git-setup.js";
 
 function countExactOccurrences(content, searchText) {
   let count = 0;
@@ -639,8 +641,9 @@ export function createNativeToolExecutor({
       const presented = { files: [], processId: null, browser: false, url: "" };
       for (const path of uniqueFiles) {
         await verifyExistingTarget(workspaceRoot, path);
-        workbenchPresent.file?.(path, input.line);
-        presented.files.push(path);
+        const relativePath = toWorkspaceRelativePath(workspaceRoot, path);
+        workbenchPresent.file?.(relativePath, input.line);
+        presented.files.push(relativePath);
       }
       if (processId) {
         workbenchPresent.process?.(processId);
@@ -823,6 +826,10 @@ export function createNativeToolExecutor({
       const result = await runGitCommand({ args, cwd: workspaceRoot, signal });
       if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "Git push failed.");
       return { modelResult: { pushed: true, remote, branch, setUpstream: Boolean(input.set_upstream), output: result.stdout.trim() || result.stderr.trim() } };
+    }
+
+    if (toolName === "github_auth_status") {
+      return { modelResult: await getGitHubAuthStatus({ cwd: workspaceRoot, signal, run: runGitHubCli }) };
     }
 
     if (toolName === "github_repo_create") {

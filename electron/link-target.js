@@ -61,7 +61,27 @@ export function normalizeLocalPath(value) {
   }
   target = target.replaceAll("\\", "/");
   if (/^\/[a-zA-Z]:/.test(target)) target = target.slice(1);
+  if (target.startsWith("./")) target = target.slice(2);
   return target;
+}
+
+function canonicalLocalPath(value) {
+  return String(value || "")
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+export function toWorkspaceRelativePath(workspaceRoot, requestedPath) {
+  const requested = normalizeLocalPath(requestedPath);
+  if (!requested) return "";
+  const root = canonicalLocalPath(workspaceRoot);
+  if (!root) return requested;
+  const trimmed = requested.replace(/\/+$/, "");
+  const full = canonicalLocalPath(trimmed);
+  if (full === root) return ".";
+  if (full.startsWith(`${root}/`)) return trimmed.slice(root.length + 1);
+  return requested;
 }
 
 export function classifyLink(value) {

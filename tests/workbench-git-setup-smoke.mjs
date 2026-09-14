@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createWorkbenchGitService, runWorkbenchGit } from "../electron/workbench/git-service.js";
+import { getGitHubAuthStatus, githubLoginCommand, networkRemote } from "../electron/workbench/git-setup.js";
+
+const base = await mkdtemp(join(tmpdir(), "aporiax-git-setup-")), root = join(base, "workspace"), bare = join(base, "remote.git");
+await mkdir(root); await mkdir(bare);
+const git = async (cwd, args) => { const value = await runWorkbenchGit(cwd, args); assert.equal(value.code, 0, value.stderr); return value.stdout.trim(); };
+let allow = true, active = false, creates = 0, confirms = [];
+const runGitHub = async ({ args }) => {
+  if (args[0] === "auth") return { exitCode: 0, stdout: JSON.stringify([{ active: true, state: "success", login: "fixture", token: "NEVER_RETURN" }]), stderr: "" };
+  assert.deepEqual(args.slice(0, 3), ["repo", "create", "fixture/new-repo"]);
+  assert.ok(args.includes("--private")); assert.ok(!args.includes("--push")); creates++;
+  await git(root, ["remote", "add", args.at(-1), "https://github.com/fixture/new-repo.git"]);
+  return { exitCode: 0, stdout: "created", stderr: "" };
+};
+const service = createWorkbenchGitService({ runGitHub, confirmPush: async (target) => { confirms.push(target); return allow; },
+  confirmOperation: async (target) => { confirms.push(target); return allow; }, assertWorkspaceIdle: () => { if (active) throw new Error("Agent still running"); } });
+const call = (operation, extra = {}, workspacePath = root) => service.request({ operation, workspacePath, ...extra });
+let state = await call("status"); assert.equal(state.empty, true);
+state = (await call("init", { branch: "main", addIgnore: true, revision: state.revision })).state;
+assert.equal(state.branch, "main"); assert.match(await readFile(join(root, ".gitignore"), "utf8"), /\.env/);
+await assert.rejects(call("init", { revision: state.revision }), /已属于/);
+await git(root, ["config", "commit.gpgsign", "false"]); const hooks = join(base, "hooks"); await mkdir(hooks); await git(root, ["config", "core.hooksPath", hooks]);
+state = (await call("identity-save", { name: "Fixture", email: "fixture@example.invalid", revision: state.revision })).state;
+assert.equal(await git(root, ["config", "--local", "user.name"]), "Fixture");
+state = (await call("stage", { path: ".gitignore", revision: state.revision })).state;
+state = (await call("commit", { message: "Fixture only", revision: state.revision })).state;
+await assert.rejects(call("branch-create", { branch: "@{-1}", revision: state.revision }), /无效/);
+await writeFile(join(root, "note.txt"), "keep me"); state = await call("status");
+state = (await call("branch-create", { branch: "feature/ui", revision: state.revision })).state;
+assert.equal(state.branch, "feature/ui"); assert.equal(await readFile(join(root, "note.txt"), "utf8"), "keep me");
+await assert.rejects(call("branch-switch", { branch: "main", revision: state.revision }), /未提交/);
+state = (await call("stage", { path: "note.txt", revision: state.revision })).state;
+state = (await call("commit", { message: "Feature", revision: state.revision })).state;
+active = true; await assert.rejects(call("branch-switch", { branch: "main", revision: state.revision }), /Agent still running/); active = false;
+state = (await call("branch-switch", { branch: "main", revision: state.revision })).state;
+assert.equal(state.branch, "main");
+assert.deepEqual((await call("settings")).branches.sort(), ["feature/ui", "main"]);
+await assert.rejects(call("branch-switch", { branch: "does-not-exist", revision: state.revision }));
+allow = false;
+assert.equal((await call("remote-save", { remote: "origin", url: "https://github.com/fixture/demo.git", revision: state.revision })).canceled, true);
+assert.equal((await call("status")).remotes.length, 0);
+allow = true;
+state = (await call("remote-save", { remote: "origin", url: "https://github.com/fixture/demo.git", revision: state.revision })).state;
+const stale = state.revision;
+state = (await call("remote-save", { remote: "origin", url: "https://github.com/fixture/changed.git", revision: state.revision })).state;
+assert.notEqual(state.revision, stale);
+await assert.rejects(call("remote-save", { remote: "origin", url: "https://github.com/fixture/stale.git", revision: stale }), /已变化/);
+await git(root, ["config", "remote.origin.pushurl", "https://github.com/fixture/special.git"]); state = await call("status");
+await assert.rejects(call("remote-save", { remote: "origin", url: "https://github.com/fixture/different.git", revision: state.revision }), /pushurl/);
+for (const url of ["file:///C:/x", "ext::calc", "https://user:secret@github.com/a/b", "https://github.com/a/b?token=secret", "-x", "git@github.com:x\ncommand"]) assert.throws(() => networkRemote(url));
+
+await git(bare, ["init", "--bare"]); await git(root, ["remote", "add", "offline", bare]); state = await call("status");
+allow = false;
+assert.equal((await call("push", { remote: "offline", branch: "demo", revision: state.revision })).canceled, true);
+allow = true;
+state = (await call("push", { remote: "offline", branch: "demo", revision: state.revision })).state;
+assert.equal(state.upstream, "offline/demo"); assert.equal(await git(bare, ["rev-parse", "refs/heads/demo"]), state.head);
+state = (await call("pull", { revision: state.revision })).state;
+assert.equal(state.branch, "main");
+await git(root, ["config", "--local", "user.name", "Fixture"]);
+allow = false; assert.equal((await call("github-create", { name: "fixture/new-repo", remote: "new-remote", revision: state.revision })).canceled, true); assert.equal(creates, 0);
+allow = true; state = (await call("github-create", { name: "fixture/new-repo", remote: "new-remote", revision: state.revision })).state;
+assert.equal(creates, 1); assert.ok(state.remotes.includes("new-remote"));
+assert.equal((await call("github-status")).login, "fixture");
+assert.ok(!JSON.stringify(await call("github-status")).includes("NEVER_RETURN"));
+
+const empty = join(base, "clone"), occupied = join(base, "occupied"); await mkdir(empty); await mkdir(occupied); await writeFile(join(occupied, "keep.txt"), "keep");
+// Route the synthetic HTTPS URL to our bare repository at the process adapter,
+// exercising real git clone without a network request or production credential.
+const cloner = createWorkbenchGitService({ runGit: (cwd, args, options) => runWorkbenchGit(cwd, args[0] === "clone" ? ["clone", "--", bare, "."] : args, options) });
+const noRepo = await cloner.request({ operation: "status", workspacePath: empty });
+const cloned = await cloner.request({ operation: "clone", workspacePath: empty, url: "https://example.invalid/test.git", revision: noRepo.revision });
+assert.equal(cloned.state.repository, true);
+const occupiedState = await call("status", {}, occupied);
+await assert.rejects(call("clone", { url: "https://example.invalid/test.git", revision: occupiedState.revision }, occupied), /空工作区/);
+assert.equal(await readFile(join(occupied, "keep.txt"), "utf8"), "keep");
+await writeFile(join(occupied, ".gitignore"), "custom-ignore\n");
+const beforeInit = await call("status", {}, occupied);
+await call("init", { branch: "main", addIgnore: true, revision: beforeInit.revision }, occupied);
+assert.equal(await readFile(join(occupied, ".gitignore"), "utf8"), "custom-ignore\n");
+
+assert.equal((await getGitHubAuthStatus({ run: async () => { throw new Error("gh not installed"); } })).available, false);
+assert.equal((await getGitHubAuthStatus({ run: async () => ({ exitCode: 1, stderr: "SECRET", stdout: "" }) })).authenticated, false);
+assert.ok(!JSON.stringify(await getGitHubAuthStatus({ run: async () => ({ exitCode: 0, stdout: "SECRET" }) })).includes("SECRET"));
+assert.match(githubLoginCommand("win32"), /--web; if \(\$LASTEXITCODE -eq 0\)/);
+assert.ok(!githubLoginCommand().includes("--insecure-storage"));
+console.log("PASS: Git v2 real temporary repos: init/ignore preservation, identity, branches and dirty/active guard, remote confirmation/routing freshness, first push/upstream, ff-only pull, empty-only clone; mocked GitHub creation/auth allowlist. No external resources changed.");

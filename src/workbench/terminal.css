@@ -1,0 +1,39 @@
+.terminal-pane { --term-bg:#fff;--term-text:#302a37;--term-muted:#77727e;--term-line:#dedce2;--term-alt:#f8f7f8;--term-accent:#5a8eaa; display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;height:100%;position:relative;background:var(--term-bg);color:var(--term-text);font-size:12px; }
+.terminal-pane[data-terminal-theme="dark"] { --term-bg:#17141d;--term-text:#e0dce8;--term-muted:#aaa3b7;--term-line:#38313f;--term-alt:#211d29;--term-accent:#8bc6e3; }
+.terminal-pane button { color:inherit;background:transparent;cursor:pointer; }
+.terminal-pane button:disabled { opacity:.4;cursor:default; }
+.terminal-toolbar { display:flex;align-items:center;gap:5px;min-height:36px;padding:3px 10px;border-bottom:1px solid var(--term-line);flex-shrink:0; }
+.terminal-location { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--term-muted); }
+.terminal-connection { width:5px;height:5px;border-radius:50%;background:var(--term-accent);margin:0 5px; }
+.terminal-connection[data-exited="true"] { background:var(--term-muted); }
+.terminal-toolbar button,.terminal-search button { display:grid;place-items:center;width:27px;height:27px;padding:0;border-radius:6px;flex-shrink:0; }
+.terminal-toolbar button:hover:not(:disabled),.terminal-search button:hover { background:var(--term-alt); }
+.terminal-search { display:flex;align-items:center;gap:5px;padding:6px 10px;border-bottom:1px solid var(--term-line);background:var(--term-alt);flex-shrink:0; }
+.terminal-search input { flex:1;min-width:30px;border:0;background:transparent;color:inherit;font:inherit;outline:none;padding:4px; }
+.terminal-search span { color:var(--term-muted);font-size:11px;white-space:nowrap; }
+.terminal-screen-wrap { position:relative;display:flex;flex:1;min-height:0;overflow:hidden; }
+.terminal-pane .workbench-xterm { flex:1;min-width:0;min-height:0;padding:10px 12px;background:var(--term-bg);color:var(--term-text);box-shadow:none;overflow:hidden; }
+.terminal-session-screen { width:100%;height:100%;min-width:0;min-height:0; }
+.terminal-pane .workbench-xterm .xterm,.terminal-pane .workbench-xterm .xterm-viewport { height:100%;background:var(--term-bg);color:var(--term-text); }
+.terminal-pane .workbench-xterm .xterm-helper-textarea { color:var(--term-text); }
+.terminal-pane .workbench-xterm:focus-within { box-shadow:none; }
+/* Keep the input position visible, even when ConPTY requests cursor blinking.
+   Only style real xterm cursor cells: a TUI's hide-cursor command still works. */
+.terminal-pane .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-block { animation:none !important;background-color:var(--term-text) !important;color:var(--term-bg) !important; }
+.terminal-pane .workbench-xterm a,.terminal-pane .workbench-xterm .xterm-underline { color:var(--term-accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer; }
+.terminal-bottom { position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;background:var(--term-bg) !important;border:1px solid var(--term-line);box-shadow:0 2px 12px #0000000f;border-radius:18px;padding:7px 12px;font-size:11px; }
+.terminal-exit { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 13px;border-top:1px solid var(--term-line);color:var(--term-muted);flex-shrink:0; }
+.terminal-exit button { color:var(--term-accent);font-size:12px; }
+.terminal-notice,.terminal-error { padding:8px 12px;font-size:12px;line-height:1.5;flex-shrink:0;overflow-wrap:anywhere; }
+.terminal-notice { color:var(--term-muted);background:var(--term-alt); }
+.terminal-error { color:#b34e4e;max-height:110px;overflow:auto; }.terminal-error button { margin-left:10px;text-decoration:underline; }
+.terminal-menu { position:absolute;z-index:12;display:flex;flex-direction:column;width:234px;max-width:calc(100% - 16px);max-height:calc(100% - 48px);overflow:auto;padding:5px;border:1px solid var(--term-line);border-radius:10px;background:var(--term-bg);box-shadow:0 10px 35px #00000024; }
+.terminal-menu > button { display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:5px;text-align:left;font-size:12px;min-height:29px; }
+.terminal-menu button:hover:not(:disabled) { background:var(--term-alt); }
+.terminal-menu kbd { margin-left:auto;color:var(--term-muted);font:10.5px Consolas,monospace; }
+.terminal-menu-settings { display:flex;align-items:center;justify-content:space-between;gap:6px;padding:7px 10px;border-top:1px solid var(--term-line);font-size:11.5px; }
+.terminal-menu-settings > div { display:flex;align-items:center;gap:4px; }.terminal-menu-settings button { padding:4px 6px;border-radius:4px;font:inherit; }
+.terminal-menu-settings button[aria-pressed="true"] { color:var(--term-accent);background:var(--term-alt); }
+.terminal-menu > .terminal-menu-danger { color:#b34e4e;border-top:1px solid var(--term-line);border-radius:0; }
+.terminal-paste-preview { white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 Consolas,monospace;margin:0;max-height:280px;overflow:auto;background:var(--sc-bg);padding:12px;border-radius:8px; }
+.terminal-rename { display:flex;gap:8px; }.terminal-rename input { min-width:0;flex:1;padding:8px;border:1px solid var(--sc-line);border-radius:7px;font:inherit;background:var(--sc-bg);color:var(--sc-text); }.terminal-rename button { color:var(--sc-accent);white-space:nowrap; }

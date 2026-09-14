@@ -27,6 +27,7 @@ export function WorkbenchLayout({
   onNotice,
   onNeedWorkspace,
   overlaying,
+  sideChat,
 }) {
   const { tr } = useI18n();
   const { layout, resources } = workbench;
@@ -181,6 +182,7 @@ export function WorkbenchLayout({
             onNotice={onNotice}
             onNeedWorkspace={onNeedWorkspace}
             covered={covered}
+            sideChat={sideChat}
           />
         </div>
       </section>

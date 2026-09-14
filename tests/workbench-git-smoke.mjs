@@ -1,0 +1,73 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile, readFile, rename } from "node:fs/promises";
+import { resolve, join } from "node:path";
+import { tmpdir } from "node:os";
+import { createWorkbenchGitService, runWorkbenchGit, parseGitStatus } from "../electron/workbench/git-service.js";
+
+await mkdir(".tmp/git-tests", { recursive: true });
+const base = await mkdtemp(join(tmpdir(), "aporiax-git-test-"));
+const repo = join(base, "workspace"), remote = join(base, "remote.git");
+await mkdir(repo); await mkdir(remote); await mkdir(join(repo, ".test-hooks"));
+const git = async (cwd, args) => { const result = await runWorkbenchGit(cwd, args); assert.equal(result.code, 0, result.stderr); return result.stdout; };
+await git(repo, ["init", "-b", "main"]);
+await git(repo, ["config", "user.name", "Fixture"]); await git(repo, ["config", "user.email", "fixture@example.invalid"]);
+await git(repo, ["config", "commit.gpgsign", "false"]); await git(repo, ["config", "core.hooksPath", join(repo, ".test-hooks")]);
+let allowPush = false, confirmations = 0;
+const service = createWorkbenchGitService({ confirmPush: async () => { confirmations++; return allowPush; } });
+const call = (operation, extra = {}) => service.request({ workspacePath: repo, operation, ...extra });
+let state = await call("status");
+assert.equal(state.branch, "main"); assert.equal(state.head, ""); assert.deepEqual(await call("log"), []);
+await writeFile(join(repo, "中文 file.md"), "# Hello\n");
+state = await call("status");
+assert.equal(state.files[0].path, "中文 file.md");
+assert.match((await call("diff", { path: "中文 file.md" })).text, /\+# Hello/);
+let result = await call("stage", { path: "中文 file.md", revision: state.revision }); state = result.state;
+assert.equal(state.files[0].staged, true);
+state = (await call("unstage", { path: "中文 file.md", revision: state.revision })).state;
+assert.equal(state.files[0].untracked, true); assert.equal(await readFile(join(repo, "中文 file.md"), "utf8"), "# Hello\n");
+state = (await call("stage", { path: "中文 file.md", revision: state.revision })).state;
+state = (await call("commit", { revision: state.revision, message: "First fixture commit" })).state;
+assert.ok(state.head); assert.equal(state.files.length, 0);
+assert.equal((await call("log"))[0].subject, "First fixture commit");
+
+await writeFile(join(repo, "中文 file.md"), "# Staged\n"); state = await call("status");
+state = (await call("stage", { path: "中文 file.md", revision: state.revision })).state;
+await writeFile(join(repo, "中文 file.md"), "# Unstaged remains\n"); state = await call("status");
+assert.equal(state.files[0].staged && state.files[0].unstaged, true);
+assert.match((await call("diff", { path: "中文 file.md", staged: true })).text, /\+# Staged/);
+assert.match((await call("diff", { path: "中文 file.md", staged: false })).text, /\+# Unstaged remains/);
+state = (await call("commit", { revision: state.revision, message: "Only staged" })).state;
+assert.match(await git(repo, ["show", "HEAD:中文 file.md"]), /Staged/);
+assert.match(await readFile(join(repo, "中文 file.md"), "utf8"), /Unstaged remains/);
+assert.equal(state.files[0].unstaged, true);
+await writeFile(join(repo, "other.txt"), "unrelated\n");
+const stale = state.revision; state = await call("status");
+await assert.rejects(call("stage", { path: "other.txt", revision: stale }), /状态已变化/);
+await assert.rejects(call("stage", { path: "../escape", revision: state.revision }), /不在当前改动列表/);
+await assert.rejects(call("diff", { path: ":(glob)*" }), /不在当前改动列表/);
+await assert.rejects(call("reset", { revision: state.revision }), /不支持/);
+await assert.rejects(call("push", { revision: state.revision }), /远程跟踪/);
+assert.equal(confirmations, 0);
+// Names beginning with '-' and glob metacharacters must stay literal arguments.
+await writeFile(join(repo, "-flag[1].txt"), "literal\n"); state = await call("status");
+state = (await call("stage", { path: "-flag[1].txt", revision: state.revision })).state;
+assert.equal(state.files.find((file) => file.path === "other.txt").untracked, true);
+state = (await call("unstage", { path: "-flag[1].txt", revision: state.revision })).state;
+assert.equal(await readFile(join(repo, "-flag[1].txt"), "utf8"), "literal\n");
+await rename(join(repo, "中文 file.md"), join(repo, "renamed.md")); await git(repo, ["add", "--", "中文 file.md", "renamed.md"]);
+state = await call("status");
+// Also cover NUL rename parsing directly, without relying on similarity scoring.
+assert.equal(parseGitStatus("R  renamed.md\0中文 file.md\0")[0].originalPath, "中文 file.md");
+await mkdir(join(repo, "nested"));
+assert.equal((await service.request({ workspacePath: join(repo, "nested"), operation: "status" })).readOnly, true);
+assert.equal((await service.request({ workspacePath: base, operation: "status" })).repository, false);
+
+await git(remote, ["init", "--bare"]);
+await git(repo, ["remote", "add", "origin", remote]);
+await git(repo, ["push", "-u", "origin", "main"]); // Only this new local bare repository.
+state = await call("status"); assert.equal(state.upstream, "origin/main");
+assert.equal((await call("push", { revision: state.revision })).canceled, true); assert.equal(confirmations, 1);
+allowPush = true;
+state = (await call("push", { revision: state.revision })).state; assert.equal(confirmations, 2);
+assert.equal((await call("fetch", { revision: state.revision })).state.upstream, "origin/main");
+console.log("PASS: Git temporary real repo: unborn/normal staging, unstage preserves files, staged-only commits, Unicode/literal paths, diffs/log, stale revision, traversal rejection, subdirectory/non-repo states, local remote fetch/push confirmation. No user repository changed.");

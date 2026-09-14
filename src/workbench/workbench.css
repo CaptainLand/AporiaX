@@ -588,35 +588,6 @@
   color: #adc8ff;
 }
 
-.workbench-xterm {
-  flex: 1;
-  min-height: 0;
-  padding: 10px 12px;
-  background: #141217;
-  color: #f6f1fa;
-}
-
-.workbench-xterm .xterm,
-.workbench-xterm .xterm-viewport {
-  height: 100%;
-  background: #141217 !important;
-  color: #f6f1fa;
-}
-
-/* xterm owns the screen's measured dimensions. Never stretch its canvas. */
-
-.workbench-xterm .xterm-helper-textarea {
-  color: #f6f1fa;
-}
-
-.workbench-xterm .xterm-underline,
-.workbench-xterm .xterm a {
-  color: #8bb4ff;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
 .workbench-error,
 .workbench-notice {
   padding: 12px 14px;
@@ -657,15 +628,6 @@
 .workbench-code-line { min-height: 1.55em; }
 .workbench-toolbar .workbench-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .workbench-toolbar .workbench-toolbar-btn { flex-shrink: 0; white-space: nowrap; }
-.workbench-terminal-state {
-  display: flex; align-items: center; gap: 7px; padding: 7px 12px; font-size: 11px;
-  color: #a6a0ae; background: #141217; border-bottom: 1px solid #2d2735;
-}
-.workbench-terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: #6d6675; }
-.workbench-terminal-state[data-focused="true"] { color: #a8d9ed; }
-.workbench-terminal-state[data-focused="true"] .workbench-terminal-dot { background: #6ecce8; box-shadow: 0 0 8px #49abc780; }
-.workbench-xterm:focus-within { box-shadow: inset 2px 0 #49abc7; }
-.workbench-xterm { overflow: hidden; }
 .workbench-image[data-fit="contain"] img { max-height: 100%; object-fit: contain; flex-shrink: 1; }
 .workbench-image[data-fit="original"] { align-items: flex-start; justify-content: flex-start; }
 .workbench-image[data-fit="original"] img { flex-shrink: 0; }

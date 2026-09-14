@@ -9,6 +9,7 @@ import {
   resolveWorkspacePath,
   runGitCommand,
   searchWorkspaceText,
+  toWorkspaceRelativePath,
   verifyExistingTarget,
   verifyWritableTarget,
 } from "../electron/runtime/workspace-runtime.js";
@@ -25,13 +26,19 @@ try {
   assert.throws(() => resolveWorkspacePath(root, "../outside"), /escapes/i);
   assert.equal(resolveWorkspacePath(root, "src/a.js"), join(root, "src", "a.js"));
   assert.equal(resolveWorkspacePath(root, join(root, "src", "a.js")), join(root, "src", "a.js"));
+  assert.equal(toWorkspaceRelativePath(root, "src/a.js"), "src/a.js");
+  assert.equal(toWorkspaceRelativePath(root, join(root, "src", "a.js")), "src/a.js");
   if (process.platform === "win32") {
     const posixRoot = root.replaceAll("\\", "/");
     assert.equal(resolveWorkspacePath(root, "/src/a.js"), join(root, "src", "a.js"));
     assert.equal(resolveWorkspacePath(root, `/${posixRoot}/src/a.js`), join(root, "src", "a.js"));
     assert.equal(resolveWorkspacePath(root, `file:///${posixRoot}/src/a.js`), join(root, "src", "a.js"));
     assert.equal(resolveWorkspacePath(root, `<${posixRoot}/src/a.js>`), join(root, "src", "a.js"));
+    assert.equal(toWorkspaceRelativePath(root, `<${posixRoot}/src/a.js>`), "src/a.js");
   }
+  const outsideFile = join(root, "..", "outside.js");
+  assert.equal(toWorkspaceRelativePath(root, outsideFile), outsideFile.replaceAll("\\", "/"));
+  assert.notEqual(toWorkspaceRelativePath(root, outsideFile), "outside.js");
   assert.equal(await verifyExistingTarget(root, "src/a.js"), join(root, "src", "a.js"));
   assert.equal(await verifyWritableTarget(root, "src/new.js"), join(root, "src", "new.js"));
 

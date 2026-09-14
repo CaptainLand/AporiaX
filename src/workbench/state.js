@@ -1,5 +1,7 @@
 export const BUILTINS = ["route", "workspace", "understanding"];
 export const TAB_KINDS = [
+  "sidechat",
+  "git",
   "route",
   "workspace",
   "understanding",

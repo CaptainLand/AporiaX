@@ -13,6 +13,14 @@ const rememberTaskExecutionModes = (tasks) => {
 
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
+  sideChat: {
+    request: (input) => ipcRenderer.invoke("side-chat:request", input),
+    subscribe: (callback) => {
+      const listener = (_event, data) => callback(data);
+      ipcRenderer.on("side-chat:event", listener);
+      return () => ipcRenderer.removeListener("side-chat:event", listener);
+    },
+  },
   workbench: {
     request: (input) => ipcRenderer.invoke("workbench:request", input),
     subscribe: (callback) => {

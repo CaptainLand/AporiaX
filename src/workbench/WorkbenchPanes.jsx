@@ -1,15 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { renderAsync } from "docx-preview";
 import hljs from "highlight.js/lib/common";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { FileText, GitCompare, Globe, TerminalSquare } from "lucide-react";
+import { TerminalPane } from "./TerminalPane.jsx";
+import { FileText, GitCompare, GitBranch, Globe, TerminalSquare, MessagesSquare } from "lucide-react";
+import { SideChatPane } from "./SideChatPane.jsx";
+import { MarkdownPreview } from "./MarkdownPreview.jsx";
+import { DocxPreview } from "./DocxPreview.jsx";
+import { GitPane } from "./GitPane.jsx";
 import { FileExplorerPanel } from "../agent-components.jsx";
 import { useI18n } from "../i18n";
 import { normalizeBrowserUrl } from "../../electron/browser-url.js";
-import "@xterm/xterm/css/xterm.css";
 import { highlightedRows } from "./code-preview.js";
+import { toWorkspaceRelativePath } from "../../electron/link-target.js";
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const LANG = {
@@ -53,6 +54,7 @@ export function WorkbenchContent({
   onNotice,
   onNeedWorkspace,
   covered,
+  sideChat,
 }) {
   const { tr } = useI18n();
   if (!tab) {
@@ -63,6 +65,10 @@ export function WorkbenchContent({
     return (
       <div className="workbench-empty">
         <div className="workbench-empty-grid">
+          <button type="button" className="workbench-empty-card" onClick={() => workbench.open("sidechat")}>
+            <MessagesSquare size={22} strokeWidth={1.6} />
+            {tr("侧边聊天", "Side chat")}
+          </button>
           <button type="button" className="workbench-empty-card" onClick={() => workbench.open("route")}>
             <GitCompare size={22} strokeWidth={1.6} />
             {tr("变更", "Changes")}
@@ -79,11 +85,16 @@ export function WorkbenchContent({
             <FileText size={22} strokeWidth={1.6} />
             {tr("文件", "File")}
           </button>
+          <button type="button" className="workbench-empty-card" onClick={() => workbench.open("git")}>
+            <GitBranch size={22} strokeWidth={1.6} /> Git
+          </button>
         </div>
       </div>
     );
   }
   if (tab.kind === "route") return builtins.route;
+  if (tab.kind === "git") return <GitPane key={workbench.key} workbench={workbench} />;
+  if (tab.kind === "sidechat") return <SideChatPane key={workbench.key} task={task} workbench={workbench} {...sideChat} />;
   if (tab.kind === "understanding") return builtins.understanding;
   if (tab.kind === "workspace") {
     return (
@@ -180,7 +191,8 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
 
 function FilePane({ tab, task, workbench, onNotice }) {
   const { tr, language } = useI18n();
-  const ext = extensionOf(tab.path);
+  const filePath = toWorkspaceRelativePath(task.workspacePath, tab.path) || tab.path;
+  const ext = extensionOf(filePath);
   const [payload, setPayload] = useState(null);
   const [failure, setFailure] = useState("");
   const [reload, setReload] = useState(0);
@@ -193,7 +205,8 @@ function FilePane({ tab, task, workbench, onNotice }) {
   latestContent.current = content;
   const [saved, setSaved] = useState("");
   const [query, setQuery] = useState("");
-  const dirty = mode === "edit" && content !== saved;
+  const isMarkdown = ext === "md" || ext === "markdown";
+  const dirty = content !== saved;
   const languageName =
     (LANG[ext] && hljs.getLanguage(LANG[ext]) && LANG[ext]) || "plaintext";
   const html = useMemo(() => {
@@ -219,11 +232,11 @@ function FilePane({ tab, task, workbench, onNotice }) {
     setPayload(null);
       try {
         const file = IMAGE_EXT.has(ext) || ext === "docx" || approveExternal
-          ? await workbench.request({ action: "file", path: tab.path, approveExternal })
+          ? await workbench.request({ action: "file", path: filePath, approveExternal })
           : null;
         if (generation !== loadGeneration.current) return;
         if (file?.kind === "image" || file?.kind === "docx") { setPayload(file); return; }
-        const preview = file?.readOnly ? file : await window.desktop.workspace.readPreview(task.workspacePath, tab.path);
+        const preview = file?.readOnly ? file : await window.desktop.workspace.readPreview(task.workspacePath, filePath);
         if (generation !== loadGeneration.current) return;
         setPayload({ kind: preview.binary ? "binary" : "text", ...preview });
         const next = preview.binary ? "" : preview.content || "";
@@ -241,7 +254,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
   useEffect(() => {
     void loadFile();
     return () => { loadGeneration.current += 1; };
-  }, [tab.id, tab.path, tab.revision, task.workspacePath, reload]);
+  }, [tab.id, tab.path, filePath, tab.revision, task.workspacePath, reload]);
 
   useEffect(() => {
     if (!payload) return;
@@ -257,7 +270,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
     try {
     const result = await window.desktop.workspace.saveText({
       workspacePath: task.workspacePath,
-      requestedPath: tab.path,
+      requestedPath: filePath,
       content,
       expectedContent: saved,
     });
@@ -274,7 +287,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
 
   const openNative = () => {
     void window.desktop?.links?.activate({
-      href: tab.path,
+      href: filePath,
       action: "open",
       workspacePath: task.workspacePath,
       language,
@@ -285,7 +298,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
     return <div className="workbench-notice">
       {failure ? <><p role="alert">{failure}</p>
         <button className="workbench-toolbar-btn" onClick={() => setReload((n) => n + 1)}>{tr("重试", "Retry")}</button>
-        {/^[a-z]:[/\\]|^\//i.test(tab.path) && <button className="workbench-toolbar-btn" onClick={() => void loadFile(true)}>{tr("授权只读预览此文件", "Authorize read-only preview")}</button>}
+        {/^[a-z]:[/\\]|^\//i.test(filePath) && <button className="workbench-toolbar-btn" onClick={() => void loadFile(true)}>{tr("授权只读预览此文件", "Authorize read-only preview")}</button>}
       </> : tr("正在打开文件", "Opening file")}
     </div>;
   }
@@ -293,7 +306,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
     return <ImagePane src={`data:${payload.mime};base64,${payload.data}`} title={tab.title} />;
   }
   if (payload.kind === "docx") {
-    return <DocxPane data={payload.data} onOpenNative={openNative} />;
+    return <DocxPreview data={payload.data} onOpenNative={openNative} workbench={workbench} />;
   }
   if (payload.binary) {
     return (
@@ -306,14 +319,15 @@ function FilePane({ tab, task, workbench, onNotice }) {
   return (
     <div className="workbench-file">
       {failure && <div role="alert" className="workbench-error">{failure}</div>}
-      <div className="workbench-toolbar">
-        <span className="workbench-status">{tab.path}</span>
-        <input
+      <div className="workbench-toolbar document-toolbar">
+        <span className="workbench-status document-path" title={filePath}>{filePath}</span>
+        {isMarkdown && <><button className="workbench-toolbar-btn" aria-pressed={mode === "read"} onClick={() => setMode("read")}>{tr("阅读", "Read")}</button><button className="workbench-toolbar-btn" aria-pressed={mode === "source"} onClick={() => setMode("source")}>{tr("源码", "Source")}</button></>}
+        {(!isMarkdown || mode !== "read") && <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={tr("搜索", "Search")}
-        />
-        {mode === "read" ? (
+        />}
+        {mode !== "edit" ? (
           <button type="button" className="workbench-toolbar-btn" disabled={payload.readOnly || payload.truncated} onClick={() => setMode("edit")}>
             {tr("编辑", "Edit")}
           </button>
@@ -345,7 +359,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
           spellCheck={false}
         />
         </div>
-      ) : (
+      ) : isMarkdown && mode === "read" ? <MarkdownPreview content={content} path={filePath} workbench={workbench} onError={setFailure} /> : (
         <pre className="workbench-code" dangerouslySetInnerHTML={{ __html: html }} />
       )}
     </div>
@@ -374,77 +388,6 @@ function ImagePane({ src, title }) {
       </div>}
   </div>;
 }
-
-function DocxPane({ data, onOpenNative }) {
-  const { tr } = useI18n();
-  const host = useRef(null);
-  useEffect(() => {
-    const node = host.current;
-    if (!node) return undefined;
-    const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-    const blob = new Blob([bytes], {
-      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
-    node.replaceChildren();
-    void renderAsync(blob, node, undefined, {
-      inWrapper: true,
-      useBase64URL: true,
-      ignoreFonts: true,
-      ignoreWidth: true,
-      ignoreHeight: true,
-      breakPages: false,
-    }).then(() => {
-      node.querySelectorAll("script,iframe,object,embed,link[rel='stylesheet']").forEach((item) => item.remove());
-      node.querySelectorAll("a").forEach((item) => {
-        const href = item.getAttribute("href") || "";
-        if (!href.startsWith("#")) item.setAttribute("href", "#");
-      });
-      node.querySelectorAll("img").forEach((item) => {
-        const src = item.getAttribute("src") || "";
-        if (src && !src.startsWith("data:")) item.remove();
-      });
-    });
-    return undefined;
-  }, [data]);
-  return (
-    <div className="workbench-docx">
-      <div className="workbench-docx-note">
-        <span>{tr("近似预览，复杂排版可能与 Word 不一致。", "Approximate preview. Complex layout may differ from Word.")}</span>
-        <button type="button" className="workbench-toolbar-btn" onClick={onOpenNative}>
-          {tr("打开原文件", "Open original")}
-        </button>
-      </div>
-      <div className="workbench-docx-scroll">
-        <div className="workbench-docx-page" ref={host} />
-      </div>
-    </div>
-  );
-}
-
-const TERMINAL_THEME = {
-  background: "#141217",
-  foreground: "#f6f1fa",
-  cursor: "#ffffff",
-  cursorAccent: "#141217",
-  selectionBackground: "#6ba8d8",
-  selectionForeground: "#141217",
-  black: "#5a5460",
-  red: "#ff8b92",
-  green: "#9ece6a",
-  yellow: "#e0af68",
-  blue: "#8bb4ff",
-  magenta: "#d0b4ff",
-  cyan: "#7dcfff",
-  white: "#f6f1fa",
-  brightBlack: "#8a8490",
-  brightRed: "#ffb0b5",
-  brightGreen: "#c6f08a",
-  brightYellow: "#f4d08a",
-  brightBlue: "#adc8ff",
-  brightMagenta: "#e2ccff",
-  brightCyan: "#b4f0ff",
-  brightWhite: "#ffffff",
-};
 
 function displayBrowserUrl(url) {
   return !url || url === "about:blank" ? "" : url;
@@ -684,110 +627,6 @@ function BrowserPane({ tab, resource, workbench, covered }) {
       ) : null}
     </div>
   );
-}
-
-function TerminalPane({ tab, resource, workbench }) {
-  const { tr } = useI18n();
-  const host = useRef(null);
-  const termRef = useRef(null);
-  const resourceRef = useRef(resource);
-  const workbenchRef = useRef(workbench);
-  const [focused, setFocused] = useState(false);
-  const [failure, setFailure] = useState("");
-  const [session, setSession] = useState(resource);
-  resourceRef.current = resource;
-  workbenchRef.current = workbench;
-  const invoke = async (data) => {
-    try {
-      const result = await workbenchRef.current.request(data);
-      if (result?.missing) throw new Error(tr("终端会话已结束，请新建终端。", "Session ended. Open a new terminal."));
-      setFailure("");
-      return result;
-    } catch (error) { setFailure(error.message); return null; }
-  };
-  useEffect(() => {
-    if (!resource || !host.current) return undefined;
-    let cursor = 0, disposed = false, reading = false, timer;
-    const term = new Terminal({
-      convertEol: true, cursorBlink: true, cursorStyle: "block", cursorInactiveStyle: "outline",
-      fontFamily: 'Consolas, "SF Mono", "Microsoft YaHei", monospace',
-      fontSize: 13, lineHeight: 1.4, theme: TERMINAL_THEME, minimumContrastRatio: 7,
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon((event, uri) => {
-      event?.preventDefault();
-      void workbenchRef.current.openHref(uri).catch((error) => { if (!disposed) setFailure(error.message); });
-    }));
-    term.open(host.current);
-    termRef.current = { term, fit };
-    // Do not steal focus from the conversation when an Agent presents a pane.
-    term.onData((data) => {
-      const current = resourceRef.current;
-      if (current?.owner === "user" && current?.status === "running")
-        void invoke({ action: "write", id: tab.id, data });
-    });
-    const pull = async () => {
-      if (disposed || reading) return;
-      reading = true;
-      try {
-        const chunk = await workbench.request({ action: "read", id: tab.id, cursor });
-        if (disposed) return;
-        if (chunk?.missing) {
-          setSession({ status: "exited" });
-          setFailure(tr("终端会话已结束，请新建终端。", "Session ended. Open a new terminal."));
-          clearInterval(timer); return;
-        }
-        if (chunk.cursorExpired) term.reset();
-        if (chunk.output) term.write(chunk.output);
-        cursor = chunk.cursor ?? cursor;
-        setSession(chunk);
-        if (chunk.status === "exited") { term.options.disableStdin = true; clearInterval(timer); }
-      } catch (error) { if (!disposed) { setFailure(error.message); clearInterval(timer); } }
-      finally { reading = false; }
-    };
-    const resize = () => {
-      if (!disposed && host.current?.clientWidth > 8 && host.current?.clientHeight > 8) {
-        fit.fit();
-        if (resourceRef.current?.status === "running")
-          void invoke({ action: "resize-terminal", id: tab.id, cols: term.cols, rows: term.rows });
-      }
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(host.current);
-    timer = window.setInterval(() => void pull(), 150);
-    void pull();
-    const frame = window.requestAnimationFrame(resize);
-    return () => {
-      disposed = true;
-      window.cancelAnimationFrame(frame);
-      window.clearInterval(timer);
-      observer.disconnect();
-      termRef.current = null;
-      term.dispose();
-    };
-  }, [tab.id, resource?.id]);
-  const exited = session?.status === "exited" || resource?.status === "exited";
-  return <div className="workbench-file workbench-terminal-pane">
-    <div className="workbench-toolbar">
-      <span className="workbench-status" title={resource?.cwd}>{resource?.cwd || tr("交互终端", "Interactive terminal")}</span>
-      <button type="button" className="workbench-toolbar-btn" onClick={() => { termRef.current?.term.clear(); termRef.current?.term.focus(); }}>{tr("清屏", "Clear")}</button>
-      <button type="button" className="workbench-toolbar-btn" disabled={!resource || exited}
-        title={tr("发送 Ctrl+C，中断当前命令但保留 Shell", "Send Ctrl+C; keep the shell")}
-        onClick={async () => { await invoke({ action: "interrupt", id: tab.id }); termRef.current?.term.focus(); }}>{tr("中断", "Interrupt")}</button>
-      {exited && <button type="button" className="workbench-toolbar-btn" onClick={() => workbench.create("terminal")}>{tr("新建终端", "New terminal")}</button>}
-    </div>
-    {failure && <div role="alert" className="workbench-error">{failure}</div>}
-    <div className="workbench-terminal-state" data-focused={focused && !exited}>
-      <span className="workbench-terminal-dot" />
-      {exited ? tr("Shell 已退出", "Shell exited") + (session?.exitCode != null ? " · " + session.exitCode : "")
-        : focused ? tr("键盘已连接 · Ctrl+C 中断命令", "Keyboard connected · Ctrl+C interrupts")
-        : tr("点击终端输入 · 关闭标签会结束会话", "Click to type · Closing the tab ends the session")}
-    </div>
-    <div className="workbench-xterm" ref={host}
-      onFocusCapture={() => setFocused(true)} onBlurCapture={() => setFocused(false)}
-      onMouseDown={() => termRef.current?.term.focus()} />
-  </div>;
 }
 
 function ProcessPane({ tab, resource, workbench }) {

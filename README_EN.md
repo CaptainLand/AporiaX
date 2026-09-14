@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.5" src="https://img.shields.io/badge/source-v0.8.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.0" src="https://img.shields.io/badge/source-v0.9.0-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.8.5`**. The project remains in Preview.
-> 0.8.5 tells later model runs that Anchor restore rewound workspace files, so they must not continue the restored implementation.
+> The current AporiaX source and Windows release version is **`v0.9.0`**. The project remains in Preview.
+> 0.9.0 improves the same-screen workbench with side chat, formatted documents, Git, and a responsive interactive terminal.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -76,6 +76,16 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
+
+## What's new in 0.9.0: a more useful workbench
+
+- **Side chat** opens from the empty sidebar or the plus menu. Ask about public task progress and records, or chat independently; details use in-app dialogs, and forwarding to the main Agent requires confirmation.
+- **Document previews** render Markdown headings, tables, highlighted code and safe links; Word gets styled pages, zoom and fit-to-width. Word layout remains approximate.
+- **Git is the sixth sidebar entry**: inspect diffs, stage, commit, manage local branches, initialize/clone repositories, configure remotes and sign into GitHub in the browser. Remote creation and pushing remain separate confirmed actions.
+- **Terminal** gains themes, search, clipboard actions, font size and rename. Switching tabs preserves the screen, exit drains remaining output, keyboard echo no longer waits for idle polling, and the focused cursor stays visible.
+- **Desktop polish** fixes workspace-contained absolute file paths and aligns packaged taskbar icons with the existing larger AX mark.
+
+[Read the complete bilingual 0.9.0 notes](docs/releases/v0.9.0.md)
 
 ## What's new in 0.8.5: tell the model after Anchor restore
 
@@ -223,13 +233,13 @@ Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet
 
 ## Download
 
-`main` is now the **v0.8.5 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.9.0 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.8.5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.5/AporiaX-Setup-0.8.5-x64.exe) | Recommended Windows x64 installer |
-| [0.8.5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.5/AporiaX-Portable-0.8.5-x64.exe) | No-install Windows x64 package |
+| [0.9.0 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.0/AporiaX-Setup-0.9.0-x64.exe) | Recommended Windows x64 installer |
+| [0.9.0 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.0/AporiaX-Portable-0.9.0-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 
