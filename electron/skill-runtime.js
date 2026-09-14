@@ -45,7 +45,14 @@ function buildSkillContext(skills) {
     );
   }
   sections.push("[End AporiaX activated skills]");
-  return sections.join("\n").slice(0, MAX_SKILL_CONTEXT_CHARS);
+  return sections.join("\n");
+}
+
+function baseSkillMessage(message) {
+  const content = String(message?.content || "");
+  const previous = message?.aporiaSkillContext;
+  return previous && content.endsWith(`\n\n${previous}`)
+    ? content.slice(0, -(previous.length + 2)) : content;
 }
 
 async function activateForText(
@@ -64,7 +71,17 @@ async function activateForText(
     userSkillsDirectory,
     builtinDirectory,
   });
-  return registry.activate(String(text || ""), { limit, catalog });
+  const activation = registry.activate(String(text || ""), { limit, catalog });
+  const selected = activation.skills.filter((skill) => skill.reason === "explicit");
+  if (buildSkillContext(selected).length > MAX_SKILL_CONTEXT_CHARS) {
+    throw new Error(`SKILL_CONTEXT_BUDGET_EXCEEDED: 明确选择的 Skills 超出上下文预算，请减少选择或拆分指令文件：${selected.map((skill) => skill.name).join(", ")}`);
+  }
+  const unresolved = [...activation.unresolved];
+  for (const skill of activation.skills.filter((item) => item.reason !== "explicit")) {
+    if (buildSkillContext([...selected, skill]).length <= MAX_SKILL_CONTEXT_CHARS) selected.push(skill);
+    else unresolved.push(`${skill.name} (context budget exceeded)`);
+  }
+  return { skills: selected, unresolved };
 }
 
 export async function prepareSkillRequest(
@@ -83,9 +100,9 @@ export async function prepareSkillRequest(
     workspacePath,
   });
   if (!activation.skills.length) {
-    return activation.unresolved.length
-      ? { ...request, unresolvedSkills: activation.unresolved }
-      : request;
+    const nextMessages = [...messages];
+    nextMessages[userIndex] = { ...messages[userIndex], content: baseSkillMessage(messages[userIndex]), aporiaSkillContext: "", activatedSkills: [] };
+    return { ...request, messages: nextMessages, activatedSkills: [], unresolvedSkills: activation.unresolved };
   }
 
   const context = buildSkillContext(activation.skills);
@@ -93,7 +110,8 @@ export async function prepareSkillRequest(
   nextMessages[userIndex] = {
     ...messages[userIndex],
     skillOriginalContent: originalContent,
-    content: [String(messages[userIndex]?.content || "").trim(), context]
+    aporiaSkillContext: context,
+    content: [baseSkillMessage(messages[userIndex]).trim(), context]
       .filter(Boolean)
       .join("\n\n"),
     activatedSkills: activation.skills.map(publicSkill),
@@ -121,12 +139,13 @@ export async function prepareSkillMessage(
     ...options,
     workspacePath,
   });
-  if (!activation.skills.length) return message;
+  if (!activation.skills.length) return { ...message, content: baseSkillMessage(message), aporiaSkillContext: "", activatedSkills: [], unresolvedSkills: activation.unresolved };
   const context = buildSkillContext(activation.skills);
   return {
     ...message,
     skillOriginalContent: activationSource,
-    content: [String(message?.content || "").trim(), context]
+    aporiaSkillContext: context,
+    content: [baseSkillMessage(message).trim(), context]
       .filter(Boolean)
       .join("\n\n"),
     activatedSkills: activation.skills.map(publicSkill),

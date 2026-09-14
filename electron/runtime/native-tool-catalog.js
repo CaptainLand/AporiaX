@@ -9,17 +9,40 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "finish_task",
+      description: "End this attempt with an explicit outcome and concise user-facing summary. Use partial for unfinished work, blocked for an external obstacle, needs_input for a required user choice, completed only when the requested work is done. Include useful file/preview links. Call alone; no other tools in the same response.",
+      parameters: { type: "object", properties: {
+        status: { type: "string", enum: ["completed", "partial", "blocked", "needs_input"] },
+        summary: { type: "string", minLength: 1 },
+      }, required: ["status", "summary"], additionalProperties: false },
+    },
+  },
+  ...["followup_subagent", "cancel_subagent"].map((name) => ({
+    type: "function",
+    function: {
+      name,
+      description: name === "followup_subagent"
+        ? "Continue an existing worker with its retained context and evidence. A running worker receives guidance at its next boundary. Does not broaden its role or scope."
+        : "Cancel one worker in this task without cancelling unrelated workers. Cancellation is cooperative; collect its final status before relying on it.",
+      parameters: { type: "object", properties: { agent_id: { type: "string" },
+        ...(name === "followup_subagent" ? { task: { type: "string", minLength: 1, maxLength: 4000 }, max_rounds: { type: "integer", minimum: 2, maximum: 20 } } : {}) },
+        required: name === "followup_subagent" ? ["agent_id", "task"] : ["agent_id"], additionalProperties: false },
+    },
+  })),
+  {
+    type: "function",
+    function: {
       name: "delegate_subagent",
       description:
-        "Delegate an independent exploration, code review, or verification task to a restricted subagent with its own context. Issue multiple delegate_subagent calls in one response when the tasks are independent; AporiaX runs them concurrently. Use background=true for a long verification while the main agent continues other work.",
+        "Delegate a focused independent exploration, review, verification, or isolated Builder implementation with its own context. Builder requires explicit write_scopes. Multiple independent calls may run concurrently; excess active workers queue within budget. Use background=true while continuing useful main work.",
       parameters: {
         type: "object",
         properties: {
           role: {
             type: "string",
-            enum: ["explore", "review", "verify", "curator"],
+            enum: ["explore", "review", "verify", "curator", "builder"],
             description:
-              "explore searches and explains, review inspects correctness without editing, verify may run project checks, and curator extracts durable project understanding with evidence.",
+              "explore searches, review inspects, verify runs checks, curator extracts knowledge. builder implements a scoped change in an isolated Git worktree; requires write_scopes, cannot recursively delegate or run shell commands. Main/verify handles validation after integration.",
           },
           task: {
             type: "string",
@@ -74,8 +97,13 @@ export const TOOL_DEFINITIONS = [
           wait: {
             type: "boolean",
             description:
-              "Wait for running agents to finish. Defaults to true.",
+              "Wait for a result within timeout_ms. Defaults to true; false returns an immediate snapshot.",
           },
+          write_scopes: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" },
+            description: "Required for builder: explicit non-root paths it may modify. Other workers and main must not edit these paths until collection. Integration rejects conflicts; not a global filesystem sandbox." },
+          wait_mode: { type: "string", enum: ["any", "all"], description: "Defaults to any: return as soon as one result is available. Use all only for real dependencies." },
+          detail: { type: "string", enum: ["summary", "full"], description: "Default summary reduces context cost. Request full with explicit agent_ids when additional evidence is needed; already-collected results remain available." },
+          timeout_ms: { type: "integer", minimum: 0, maximum: 30000, description: "Bounded wait, default 30000 ms. Unfinished workers keep running." },
         },
         additionalProperties: false,
       },
@@ -839,6 +867,9 @@ export const TOOL_DEFINITIONS = [
 ];
 
 export const TOOL_RISKS = {
+  finish_task: "control",
+  followup_subagent: "control",
+  cancel_subagent: "control",
   delegate_subagent: "control",
   collect_subagents: "control",
   remember_project_fact: "control",

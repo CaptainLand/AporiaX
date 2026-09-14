@@ -1,12 +1,41 @@
 import assert from "node:assert/strict";
-import { classifyLink, messageLinkUrl } from "../electron/link-target.js";
+import { classifyLink, messageLinkUrl, splitAutolinkBoundary } from "../electron/link-target.js";
 import { completeWithSteering } from "../electron/runtime/steerable-completion.js";
 import { splitSteeredReply } from "../src/state/steering-messages.js";
 
 assert.equal(classifyLink("D:/项目/安装包.exe").target, "D:/项目/安装包.exe");
+assert.equal(classifyLink("/D:/项目/安装包.exe").target, "D:/项目/安装包.exe");
+assert.equal(classifyLink("file:///D:/项目/安装包.exe").target, "D:/项目/安装包.exe");
+assert.equal(classifyLink("<D:/项目/a.png>").target, "D:/项目/a.png");
 assert.equal(classifyLink("file:///D:/my%20project/a.js:12").line, 12);
 assert.equal(classifyLink("src/main.jsx#L42").line, 42);
 assert.equal(classifyLink("https://example.com:443/a").kind, "web");
+const swallowed = "http://localhost:8080/todo.html（仅本机可访问；8080";
+assert.equal(classifyLink(swallowed).href, "http://localhost:8080/todo.html");
+assert.deepEqual(splitAutolinkBoundary(swallowed, swallowed), {
+  href: "http://localhost:8080/todo.html",
+  label: "http://localhost:8080/todo.html",
+  suffix: "（仅本机可访问；8080",
+});
+assert.deepEqual(
+  splitAutolinkBoundary("http://www.example.com（说明", "www.example.com（说明"),
+  { href: "http://www.example.com", label: "www.example.com", suffix: "（说明" },
+);
+assert.equal(splitAutolinkBoundary("https://example.com/a", "说明文字"), null);
+
+const { unified } = await import("unified");
+const { default: remarkParse } = await import("remark-parse");
+const { default: remarkGfm } = await import("remark-gfm");
+const { remarkAutolinkBoundary } = await import("../src/conversation/remark-autolink-boundary.js");
+const markdown = unified().use(remarkParse).use(remarkGfm).use(remarkAutolinkBoundary);
+const tree = markdown.runSync(markdown.parse(`见 ${swallowed} 结束`));
+const paragraph = tree.children.find((node) => node.type === "paragraph");
+const link = paragraph.children.find((node) => node.type === "link");
+const after = paragraph.children.find((node) => node.type === "text" && String(node.value).includes("仅本机"));
+assert.equal(link.url, "http://localhost:8080/todo.html");
+assert.equal(link.children[0].value, "http://localhost:8080/todo.html");
+assert.match(after.value, /^（仅本机可访问；8080/);
+
 for (const bad of ["javascript:alert(1)", "data:text/html,hi", "cmd:run", "file://server/share", "//server/share", "file:///C:/a%00b"]) assert.equal(classifyLink(bad), null, bad);
 assert.equal(messageLinkUrl("javascript:alert(1)"), "");
 

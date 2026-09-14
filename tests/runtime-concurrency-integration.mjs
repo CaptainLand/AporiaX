@@ -73,7 +73,7 @@ try {
     for (const path of ["a.txt", "b.txt", "shared.txt"]) assert.equal(await readFile(join(root, path), "utf8"), "version two\n");
     return sse({ content: "All scoped work integrated." });
   };
-  const result = await runHarness({ runId: "concurrent-main-test", taskId: "test", provider, modelId: "test", workspacePath: root,
+  const result = await runHarness({ builderOrchestration: true, runId: "concurrent-main-test", taskId: "test", provider, modelId: "test", workspacePath: root,
     agentBudget: { profile: "large" },
     permission: "workspace-write", approvalMode: "manual", thinking: false, signal: controller.signal, language: "en",
     messages: [{ role: "user", content: "Large multi-module architecture refactor with independent Builder tasks and Main work." }],

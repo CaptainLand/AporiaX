@@ -43,6 +43,7 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
       taskId = "",
       emit = null,
       signal,
+      continuation = false,
       execute,
     } = {}) {
       if (typeof execute !== "function") {
@@ -57,7 +58,8 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
       if (!definition) {
         throw new Error(`Agent role is not registered in Harness Kernel: ${safeRole}`);
       }
-      if (kernel.sessions.get(safeAgentId)) {
+      const existingSession = kernel.sessions.get(safeAgentId);
+      if (existingSession && !continuation) {
         throw new Error(`Agent session already exists: ${safeAgentId}`);
       }
 
@@ -75,7 +77,8 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
         }
       };
 
-      kernel.sessions.create({
+      if (existingSession) kernel.sessions.resume(safeAgentId);
+      else kernel.sessions.create({
         id: safeAgentId,
         role: safeRole,
         task: String(task || "").slice(0, 4_000),

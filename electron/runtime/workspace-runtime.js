@@ -11,7 +11,9 @@ import {
   isAbsolute,
   relative,
   resolve,
+  sep,
 } from "node:path";
+import { normalizeLocalPath } from "../link-target.js";
 
 export const MAX_COMMAND_OUTPUT_CHARS = 80_000;
 export const MAX_SEARCH_FILE_BYTES = 2_000_000;
@@ -215,10 +217,17 @@ function throwIfAborted(signal) {
 }
 
 export function isPathInside(rootPath, candidatePath) {
-  const pathFromRoot = relative(rootPath, candidatePath);
+  const root = resolve(rootPath);
+  const candidate = resolve(candidatePath);
+  const pathFromRoot = relative(root, candidate);
   return (
     pathFromRoot === "" ||
-    (!pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot))
+    (
+      pathFromRoot !== ".." &&
+      !pathFromRoot.startsWith(`..${sep}`) &&
+      !pathFromRoot.startsWith("..") &&
+      !isAbsolute(pathFromRoot)
+    )
   );
 }
 
@@ -226,8 +235,23 @@ export function resolveWorkspacePath(workspaceRoot, requestedPath) {
   if (typeof requestedPath !== "string" || requestedPath.includes("\0")) {
     throw new Error("Invalid workspace path.");
   }
-  const targetPath = resolve(workspaceRoot, requestedPath || ".");
-  if (!isPathInside(workspaceRoot, targetPath)) {
+  let requested = normalizeLocalPath(requestedPath);
+  if (!requested || requested.includes("\0")) {
+    throw new Error("Invalid workspace path.");
+  }
+  // Markdown and agents often write "/src/a.png" as workspace-root relative.
+  // On Windows that would otherwise resolve to the drive root and escape.
+  if (process.platform === "win32" && requested.startsWith("/") && !/^[a-zA-Z]:/.test(requested.slice(1))) {
+    requested = requested.replace(/^\/+/, "");
+  }
+  const root = resolve(workspaceRoot || ".");
+  const targetPath =
+    !requested || requested === "."
+      ? root
+      : isAbsolute(requested) || /^[a-zA-Z]:\//.test(requested)
+        ? resolve(requested)
+        : resolve(root, requested);
+  if (!isPathInside(root, targetPath)) {
     throw new Error("Path escapes the authorized workspace.");
   }
   return targetPath;

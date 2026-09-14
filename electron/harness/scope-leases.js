@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, posix } from "node:path";
 
 function namespace(options = {}) {
   if (!options.workspaceRoot) return "";
@@ -15,13 +15,13 @@ function normalizePath(value) {
     .replace(/\/$/, "") || ".";
   if (
     path.startsWith("/") ||
-    /^[a-zA-Z]:\//.test(path) ||
+    /^[a-zA-Z]:/.test(path) ||
     path.split("/").includes("..") ||
     path.includes("\0")
   ) {
     throw new Error(`Invalid workspace scope: ${value}`);
   }
-  return path;
+  return posix.normalize(path).replace(/\/$/, "") || ".";
 }
 
 export function normalizeBuilderScopes(values, { allowRoot = false } = {}) {
@@ -31,11 +31,12 @@ export function normalizeBuilderScopes(values, { allowRoot = false } = {}) {
     throw new Error("Builder write scope cannot be the workspace root. Delegate explicit non-overlapping paths.");
   }
   for (const scope of scopes) {
+    const reserved = scope.toLowerCase();
     if (
-      scope === ".git" ||
-      scope.startsWith(".git/") ||
-      scope === ".aporiax/worktrees" ||
-      scope.startsWith(".aporiax/worktrees/")
+      reserved === ".git" ||
+      reserved.startsWith(".git/") ||
+      reserved === ".aporiax/worktrees" ||
+      reserved.startsWith(".aporiax/worktrees/")
     ) {
       throw new Error(`Builder write scope is reserved: ${scope}`);
     }

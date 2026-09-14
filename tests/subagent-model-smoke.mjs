@@ -52,7 +52,9 @@ assert.deepEqual(
     maxRounds: 5,
   },
 );
-assert.throws(() => normalizeSubagentInput({ role: "builder", task: "x" }), /role must be/i);
+assert.throws(() => normalizeSubagentInput({ role: "builder", task: "x" }), /write scope/i);
+assert.deepEqual(normalizeSubagentInput({ role: "builder", task: "x", write_scopes: ["src/a.js"] }).writeScopes, ["src/a.js"]);
+assert.throws(() => normalizeSubagentInput({ role: "unknown", task: "x" }), /role must be/i);
 
 assert.equal(pathIsInsideScope("src/a.js", ["src"]), true);
 assert.equal(pathIsInsideScope("docs/a.md", ["src"]), false);

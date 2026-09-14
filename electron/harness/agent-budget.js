@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { normalizeBuilderCount } from "./builder-count.js";
 
 const budgetStorage = new AsyncLocalStorage();
 const EXECUTION_MODES = new Set(["direct", "safe", "isolated"]);
@@ -140,7 +141,19 @@ export function planAgentBudget(options = {}) {
   const classified = classifyRequest(options);
   const requestedProfile = String(options?.agentBudget?.profile || "").toLowerCase();
   const profile = PROFILE_LIMITS[requestedProfile] ? requestedProfile : classified.profile;
-  const limits = mergeLimits(PROFILE_LIMITS[profile], options?.agentBudget || {});
+  const builderCount = normalizeBuilderCount(options.builderLimit);
+  const requestedBudget = { ...(options?.agentBudget || {}) };
+  if (builderCount != null) {
+    const extra = Math.max(0, builderCount - PROFILE_LIMITS[profile].roles.builder);
+    requestedBudget.roles = { ...requestedBudget.roles, builder: builderCount };
+    if (requestedBudget.maxTotalSubagents == null) {
+      requestedBudget.maxTotalSubagents = PROFILE_LIMITS[profile].maxTotalSubagents + extra;
+    }
+    if (requestedBudget.maxActiveSubagents == null) {
+      requestedBudget.maxActiveSubagents = PROFILE_LIMITS[profile].maxActiveSubagents + extra;
+    }
+  }
+  const limits = mergeLimits(PROFILE_LIMITS[profile], requestedBudget);
   const executionMode = normalizeExecutionMode(options?.executionMode);
   return Object.freeze({
     version: 1,
@@ -149,7 +162,14 @@ export function planAgentBudget(options = {}) {
     reason: requestedProfile ? "explicit-override" : classified.reason,
     score: classified.score,
     limits,
+    hardLimits: Object.freeze({
+      ...Object.fromEntries(["maxTotalSubagents", "maxActiveSubagents"].filter((key) =>
+        requestedBudget[key] != null && Number.isFinite(Number(requestedBudget[key])) && Number(requestedBudget[key]) >= 0
+      ).map((key) => [key, Math.floor(Number(requestedBudget[key]))])),
+      roles: Object.freeze({ ...(requestedBudget.roles || {}) }),
+    }),
     requestPreview: classified.text.replace(/\s+/g, " ").slice(0, 240),
+    mayDelegate: Boolean(options.workspacePath),
   });
 }
 
@@ -164,6 +184,7 @@ function publicPlan(context) {
       totalStarted: context.state.totalStarted,
       active: context.state.activeIds.size,
       byRole: { ...context.state.byRole },
+      startedIds: [...context.state.startedIds],
       changedFiles: context.state.changedFiles.size,
       planSteps: context.state.planSteps,
     },
@@ -181,7 +202,7 @@ function notify(context, event) {
 function elevate(context, nextProfile, reason) {
   if (!PROFILE_LIMITS[nextProfile] || profileAtLeast(context.profile, nextProfile)) return false;
   context.profile = nextProfile;
-  context.limits = PROFILE_LIMITS[nextProfile];
+  context.limits = mergeLimits(PROFILE_LIMITS[nextProfile], context.plan.hardLimits || {});
   notify(context, {
     type: "agent_budget.escalated",
     profile: nextProfile,
@@ -236,6 +257,7 @@ export function enforceAgentBudgetEvent(event) {
     if (context.state.activeIds.has(agentId)) return;
     const role = roleBucket(event.role);
     const roleCount = context.state.byRole[role] || 0;
+    const continuing = context.state.startedIds.has(agentId);
     const roleLimit = context.limits.roles[role] ?? context.limits.roles.other ?? 0;
     const detail = {
       agentId,
@@ -249,9 +271,9 @@ export function enforceAgentBudgetEvent(event) {
       roleLimit,
     };
     if (
-      context.state.totalStarted >= context.limits.maxTotalSubagents ||
+      (!continuing && context.state.totalStarted >= context.limits.maxTotalSubagents) ||
       context.state.activeIds.size >= context.limits.maxActiveSubagents ||
-      roleCount >= roleLimit
+      (!continuing && roleCount >= roleLimit)
     ) {
       notify(context, { type: "agent_budget.denied", ...detail });
       throw budgetError(
@@ -259,8 +281,11 @@ export function enforceAgentBudgetEvent(event) {
         detail,
       );
     }
-    context.state.totalStarted += 1;
-    context.state.byRole[role] = roleCount + 1;
+    if (!continuing) {
+      context.state.totalStarted += 1;
+      context.state.byRole[role] = roleCount + 1;
+      context.state.startedIds.add(agentId);
+    }
     context.state.activeIds.add(agentId);
     notify(context, {
       type: "agent_budget.consumed",
@@ -272,7 +297,7 @@ export function enforceAgentBudgetEvent(event) {
     return;
   }
 
-  if (["subagent.completed", "subagent.failed"].includes(event.type) && event.agentId) {
+  if (["subagent.completed", "subagent.failed", "subagent.cancelled"].includes(event.type) && event.agentId) {
     context.state.activeIds.delete(String(event.agentId));
   }
 }
@@ -281,11 +306,53 @@ export function agentBudgetAllowsTool(toolName) {
   const context = budgetStorage.getStore();
   if (!context) return true;
   if (toolName !== "delegate_subagent") return true;
-  return context.limits.maxTotalSubagents > 0;
+  return context.limits.maxTotalSubagents > 0 || context.plan.mayDelegate && context.plan.hardLimits?.maxTotalSubagents !== 0;
+}
+
+export function requestAgentBudgetRole(role) {
+  const context = budgetStorage.getStore();
+  if (!context || !context.plan.mayDelegate || context.limits.roles[role] > 0) return;
+  if (context.plan.hardLimits?.roles?.[role] === 0 || context.plan.hardLimits?.maxTotalSubagents === 0) return;
+  elevate(context, role === "builder" ? "large" : "standard", "model-requested-focused-delegation");
+}
+
+// Admission queues execution instead of charging failed launch attempts.
+// A slot covers the worker's full execution including Builder integration.
+export async function withAgentBudgetAdmission({ role, signal, systemOwned = false }, execute) {
+  const context = budgetStorage.getStore();
+  if (!context || systemOwned) return execute();
+  requestAgentBudgetRole(role);
+  const limit = context.limits.maxActiveSubagents;
+  if (!limit) throw budgetError("Task budget prohibits active subagents.", { role });
+  await new Promise((resolveWait, rejectWait) => {
+    const entry = { grant: () => { signal?.removeEventListener("abort", abort); context.admissionActive++; resolveWait(); } };
+    const abort = () => {
+      context.admissionQueue = context.admissionQueue.filter((item) => item !== entry);
+      rejectWait(Object.assign(new Error("Queued worker cancelled."), { name: "AbortError" }));
+    };
+    if (signal?.aborted) return abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (context.admissionActive < context.limits.maxActiveSubagents) entry.grant();
+    else context.admissionQueue.push(entry);
+  });
+  try { return await execute(); }
+  finally {
+    context.admissionActive--;
+    while (context.admissionQueue.length && context.admissionActive < context.limits.maxActiveSubagents) context.admissionQueue.shift().grant();
+  }
 }
 
 export function currentAgentBudget() {
   return publicPlan(budgetStorage.getStore());
+}
+
+export function restoreAgentBudget(snapshot) {
+  const context = budgetStorage.getStore();
+  if (!context || !snapshot?.state) return;
+  elevate(context, snapshot.profile, "restore-task-budget");
+  context.state.totalStarted = Math.max(context.state.totalStarted, Number(snapshot.state.totalStarted) || 0);
+  for (const [role, count] of Object.entries(snapshot.state.byRole || {})) context.state.byRole[role] = Math.max(context.state.byRole[role] || 0, Number(count) || 0);
+  for (const id of snapshot.state.startedIds || []) context.state.startedIds.add(String(id));
 }
 
 export function currentExecutionMode() {
@@ -304,9 +371,12 @@ export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
       : parentContext?.executionMode || "safe",
     limits: normalized.limits,
     onEvent,
+    admissionActive: 0,
+    admissionQueue: [],
     state: {
       totalStarted: 0,
       activeIds: new Set(),
+      startedIds: new Set(),
       byRole: {},
       changedFiles: new Set(),
       planSteps: 0,

@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
-import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
+import { classifyLink, messageLinkUrl, splitAutolinkBoundary } from "../../electron/link-target.js";
 import { useWorkbenchContext } from "../workbench/use-workbench.js";
 import remarkGfm from "remark-gfm";
+import { remarkAutolinkBoundary } from "./remark-autolink-boundary.js";
 import { diffLines } from "diff";
 import { createPortal } from "react-dom";
 import {
@@ -36,6 +37,7 @@ import { useI18n } from "../i18n";
 import {
   FoldableUserPrompt,
   RunDurationChip,
+  ExtensionNotices,
 } from "./RuntimeMessageUI.jsx";
 
 function MarkdownCodeBlock({ children }) {
@@ -76,20 +78,31 @@ function MarkdownCodeBlock({ children }) {
 
 const LinkWorkspace = createContext("");
 
+function childText(children) {
+  return React.Children.toArray(children).map((child) => {
+    if (typeof child === "string" || typeof child === "number") return String(child);
+    if (React.isValidElement(child) && child.props?.children != null) return childText(child.props.children);
+    return "";
+  }).join("");
+}
+
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
   const workbench = useWorkbenchContext();
   const { language, tr } = useI18n();
   const [error, setError] = useState("");
-  const link = classifyLink(href);
+  const split = splitAutolinkBoundary(href, childText(children));
+  const resolvedHref = split?.href || href;
+  const link = classifyLink(resolvedHref);
   const activate = async (event, action) => {
     if (!link || link.kind === "anchor") return;
     if (!window.desktop?.links && link.kind === "web") return;
     event.preventDefault();
     setError("");
+    const target = resolvedHref;
     if (action === "open" && workbench?.openHref) {
       try {
-        if (await workbench.openHref(href)) return;
+        if (await workbench.openHref(target)) return;
       } catch (failure) {
         setError(failure.message);
         return;
@@ -100,17 +113,18 @@ function MessageLink({ href, children, title }) {
       return;
     }
     try {
-      const result = await window.desktop.links.activate({ href, action, workspacePath, language });
+      const result = await window.desktop.links.activate({ href: target, action, workspacePath, language });
       if (!result?.ok) setError(result?.error || tr("无法打开链接", "Could not open link"));
     } catch (failure) { setError(failure.message); }
   };
   if (!link) return <span>{children}</span>;
   return <>
-    <a href={href} title={title || href} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
+    <a href={resolvedHref} title={title || resolvedHref} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
       onClick={(event) => void activate(event, "open")}
       onContextMenu={(event) => void activate(event, "menu")}
       onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void activate(event, "menu"); }}
-    >{children}</a>
+    >{split?.suffix ? split.label : children}</a>
+    {split?.suffix || null}
     {error && <span role="alert"> — {error}</span>}
   </>;
 }
@@ -127,17 +141,26 @@ function MarkdownMessage({ content }) {
   return (
     <div className="markdown-message">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkAutolinkBoundary]}
         urlTransform={(url, key) => key === "href" ? messageLinkUrl(url) : defaultUrlTransform(url)}
         components={{
           pre: MarkdownCodeBlock,
           a: MessageLink,
+          img: MessageImage,
         }}
       >
         {normalizedContent}
       </ReactMarkdown>
     </div>
   );
+}
+
+function MessageImage({ src, alt }) {
+  const workbench = useWorkbenchContext();
+  if (!workbench) return <img src={src} alt={alt} />;
+  return <img src={src} alt={alt} role="button" tabIndex={0} title="在侧栏打开"
+    onClick={() => workbench.openImage(src, alt)}
+    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); workbench.openImage(src, alt); } }} />;
 }
 
 function FileIcon({ path }) {
@@ -826,7 +849,9 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
     >
       <div className="assistant-message-heading">
         <strong>
-          {blocked ? tr("验证受阻 · 实现已保存", "Verification unavailable · Work saved") : failed
+          {message.status === "needs_input" ? tr("等待补充信息", "Input needed")
+            : message.status === "partial" ? tr("部分完成", "Partially complete")
+            : blocked ? tr("任务受阻", "Task blocked") : failed
             ? tr("运行失败", "Run failed")
             : interrupted
               ? tr("任务已停止", "Task stopped")
@@ -863,6 +888,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           </button>
         )}
       </div>
+      <ExtensionNotices message={message} />
       {Array.isArray(message.progressUpdates) &&
         message.progressUpdates.length > 0 && (
           <div className="assistant-progress-journal">
@@ -1224,6 +1250,7 @@ export function Conversation({
   onNotice,
 }) {
   const { tr } = useI18n();
+  const workbench = useWorkbenchContext();
   const [reviewRequest, setReviewRequest] = useState(null);
   const [anchorRequest, setAnchorRequest] = useState(null);
   const [reverting, setReverting] = useState(false);
@@ -1276,6 +1303,22 @@ export function Conversation({
   return (
     <div className="message-list">
       {task.messages.map((message) => {
+        if (message.kind === "anchor-restore") {
+          return (
+            <article className="anchor-restore-notice" key={message.id}>
+              <Undo2 size={13} />
+              <div>
+                <strong>{tr("工作区已回退", "Workspace restored")}</strong>
+                <span>
+                  {tr(
+                    "已告知后续模型：以当前文件为准，不要继续被回退的实现。",
+                    "Later runs are told to treat current files as truth and not continue the restored work.",
+                  )}
+                </span>
+              </div>
+            </article>
+          );
+        }
         if (message.role === "user") {
           return (
           <article
@@ -1285,7 +1328,7 @@ export function Conversation({
             {message.content && (
               <FoldableUserPrompt content={message.content} />
             )}
-            <UserAttachments attachments={message.attachments} />
+            <UserAttachments attachments={message.attachments} onOpenImage={workbench?.openImage} />
             {message.queued && (
               <span className="queued-message-state">
                 <LoaderCircle size={12} />
@@ -1723,4 +1766,3 @@ export function RouteView({
     </>
   );
 }
-

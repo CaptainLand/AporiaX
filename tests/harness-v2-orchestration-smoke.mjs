@@ -255,6 +255,7 @@ try {
   const orchestrationEvents = [];
   const { runHarness } = await import("../electron/agent-runtime.js");
   const orchestrated = await runHarness({
+    builderOrchestration: true,
     runId: "builder-orchestration-smoke",
     taskId: "builder-orchestration-smoke-task",
     provider: modelProvider,

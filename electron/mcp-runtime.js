@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createMcpResultStore } from "./mcp-result-store.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StdioClientTransport,
@@ -16,11 +17,13 @@ const CORE_RESOURCE_LIST = "mcp_list_resources";
 const CORE_RESOURCE_READ = "mcp_read_resource";
 const CORE_PROMPT_LIST = "mcp_list_prompts";
 const CORE_PROMPT_GET = "mcp_get_prompt";
+const CORE_RESULT_READ = "mcp_read_result";
 const CORE_NAMES = new Set([
   CORE_RESOURCE_LIST,
   CORE_RESOURCE_READ,
   CORE_PROMPT_LIST,
   CORE_PROMPT_GET,
+  CORE_RESULT_READ,
 ]);
 
 function timeout(promise, timeoutMs, label) {
@@ -180,12 +183,17 @@ function defaultTransport(server) {
 
 async function collectPages(fetchPage, key, limit) {
   const items = [];
+  const cursors = new Set();
   let cursor = undefined;
   do {
     const payload = await fetchPage(cursor);
-    const next = Array.isArray(payload?.[key]) ? payload[key] : [];
+    if (!Array.isArray(payload?.[key])) throw new Error(`Invalid MCP ${key} discovery response.`);
+    const next = payload[key];
     items.push(...next.slice(0, Math.max(0, limit - items.length)));
     cursor = payload?.nextCursor || undefined;
+    if (cursor && cursors.has(cursor)) throw new Error(`MCP ${key} discovery returned a repeated cursor.`);
+    if (cursor) cursors.add(cursor);
+    if (cursors.size > 50) throw new Error(`MCP ${key} discovery exceeded the page limit.`);
   } while (cursor && items.length < limit);
   return items;
 }
@@ -282,7 +290,10 @@ export class AporiaXMcpRuntime {
   #transportFactory;
   #capabilities;
   #scopeId;
-  #discovered = false;
+  #discoveryPromise = null;
+  #errors = new Map();
+  #closed = false;
+  #resultStore = createMcpResultStore();
 
   constructor({
     servers = [],
@@ -305,17 +316,23 @@ export class AporiaXMcpRuntime {
   }
 
   serverSummaries() {
-    return [...this.#connections.values()].map((connection) => ({
+    const ready = [...this.#connections.values()].map((connection) => ({
       id: connection.server.id,
       name: connection.server.name,
       transport: connection.server.transport,
       connected: true,
+      discoveryStatus: "ready",
       toolCount: connection.tools.length,
       resourceCount: connection.resources.length + connection.resourceTemplates.length,
       promptCount: connection.prompts.length,
       serverVersion: connection.serverVersion || null,
       capabilities: connection.capabilities || {},
     }));
+    return [...ready, ...[...this.#errors].map(([id, error]) => ({
+      id, name: this.#servers.find((server) => server.id === id)?.name || id,
+      connected: false, discoveryStatus: "failed", error,
+      toolCount: 0, resourceCount: 0, promptCount: 0,
+    }))];
   }
 
   toolCatalog(permissionMode = "read-only") {
@@ -355,6 +372,13 @@ export class AporiaXMcpRuntime {
     const connections = [...this.#connections.values()];
     return [
       ...dynamic,
+      ...(connections.length ? [{ type: "function", function: {
+        name: CORE_RESULT_READ,
+        description: "Read the full saved JSON of a large MCP result in UTF-8 byte pages. Use resultRef.id and nextOffset. References expire when this task runtime closes; this never repeats the original tool action.",
+        parameters: { type: "object", properties: {
+          result_id: { type: "string" }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 4, maximum: 32000 },
+        }, required: ["result_id"], additionalProperties: false },
+      } }] : []),
       ...helperDefinitions(
         connections.map((connection) => connection.server.id),
         connections.some(
@@ -370,29 +394,23 @@ export class AporiaXMcpRuntime {
   }
 
   async discover({ permissionMode = "read-only" } = {}) {
-    if (this.#discovered) {
-      return {
-        servers: this.serverSummaries(),
-        tools: this.toolCatalog(permissionMode),
-      };
+    if (this.#closed) throw new Error("MCP runtime is closed.");
+    if (!this.#discoveryPromise) {
+      this.#discoveryPromise = Promise.allSettled(
+        this.#servers.slice(0, 32).filter((server) => !this.#connections.has(server.id))
+          .map(async (server) => {
+            try { await this.#connectServer(server); this.#errors.delete(server.id); }
+            catch (error) { this.#errors.set(server.id, String(error?.message || error)); }
+          }),
+      );
     }
-    this.#discovered = true;
-    const results = await Promise.allSettled(
-      this.#servers.slice(0, 32).map((server) => this.#connectServer(server)),
-    );
-    const errors = [];
-    results.forEach((result, index) => {
-      if (result.status === "rejected") {
-        errors.push({
-          serverId: this.#servers[index]?.id || "unknown",
-          error: String(result.reason?.message || result.reason),
-        });
-      }
-    });
+    const pending = this.#discoveryPromise;
+    try { await pending; }
+    finally { if (this.#discoveryPromise === pending) this.#discoveryPromise = null; }
     return {
       servers: this.serverSummaries(),
       tools: this.toolCatalog(permissionMode),
-      errors,
+      errors: [...this.#errors].map(([serverId, error]) => ({ serverId, error })),
     };
   }
 
@@ -404,32 +422,33 @@ export class AporiaXMcpRuntime {
       await timeout(client.connect(transport), server.timeoutMs, `MCP ${server.id} connect`);
       const capabilities = client.getServerCapabilities?.() || {};
       const serverVersion = client.getServerVersion?.() || null;
-      const tools = await collectPages(
+      const tools = capabilities.tools ? await collectPages(
         (cursor) => timeout(client.listTools(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listTools`),
         "tools",
         MAX_DYNAMIC_TOOLS,
-      ).catch(() => []);
+      ) : [];
       const resources = capabilities.resources
         ? await collectPages(
             (cursor) => timeout(client.listResources(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listResources`),
             "resources",
             MAX_RESOURCE_ITEMS,
-          ).catch(() => [])
+          )
         : [];
       const resourceTemplates = capabilities.resources && client.listResourceTemplates
         ? await collectPages(
             (cursor) => timeout(client.listResourceTemplates(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listResourceTemplates`),
             "resourceTemplates",
             MAX_RESOURCE_ITEMS,
-          ).catch(() => [])
+          ).catch((error) => { if (error?.code === -32601) return []; throw error; })
         : [];
       const prompts = capabilities.prompts
         ? await collectPages(
             (cursor) => timeout(client.listPrompts(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listPrompts`),
             "prompts",
             MAX_PROMPT_ITEMS,
-          ).catch(() => [])
+          )
         : [];
+      if (this.#closed) throw new Error("MCP runtime closed during discovery.");
       const connection = {
         server,
         client,
@@ -574,6 +593,8 @@ export class AporiaXMcpRuntime {
 
   async call(name, args = {}, { requestApproval } = {}) {
     const localName = String(name || "");
+    if (this.#closed) throw new Error("MCP runtime is closed.");
+    if (localName === CORE_RESULT_READ) return this.#resultStore.read(args);
     if (localName === CORE_RESOURCE_LIST) {
       const connection = this.#connection(args.server);
       return {
@@ -591,10 +612,10 @@ export class AporiaXMcpRuntime {
         connection.server.timeoutMs,
         `MCP ${connection.server.id} readResource`,
       );
-      return {
+      return this.#modelResult({
         server: connection.server.id,
-        contents: (result?.contents || []).slice(0, 64).map(compactResourceContent),
-      };
+        ...result,
+      });
     }
     if (localName === CORE_PROMPT_LIST) {
       const connection = this.#connection(args.server);
@@ -619,7 +640,7 @@ export class AporiaXMcpRuntime {
         connection.server.timeoutMs,
         `MCP ${connection.server.id} getPrompt`,
       );
-      return compactMcpResult(result);
+      return this.#modelResult(result);
     }
 
     const record = this.#tools.get(localName);
@@ -641,7 +662,7 @@ export class AporiaXMcpRuntime {
         record.connection.server.timeoutMs,
         `MCP ${record.public.serverId}/${record.public.remoteName}`,
       );
-      const compacted = compactMcpResult(result);
+      const compacted = await this.#modelResult(result);
       this.#emit({
         type: "mcp.tool.completed",
         serverId: record.public.serverId,
@@ -664,9 +685,12 @@ export class AporiaXMcpRuntime {
   }
 
   async close() {
+    this.#closed = true;
+    await this.#discoveryPromise;
     const connections = [...this.#connections.values()];
     this.#connections.clear();
     this.#tools.clear();
+    this.#errors.clear();
     if (this.#capabilities && this.#scopeId) {
       this.#capabilities.unregisterScope(this.#scopeId);
     }
@@ -683,7 +707,24 @@ export class AporiaXMcpRuntime {
         }
       }),
     );
+    await this.#resultStore.close();
     this.#emit({ type: "mcp.closed", servers: connections.length });
+  }
+
+  async #modelResult(result) {
+    const text = JSON.stringify(result) ?? "null";
+    const compacted = compactMcpResult(result);
+    if (text.length <= 24_000 && JSON.stringify(compacted) === text) return compacted;
+    let resultRef = null;
+    let storageError;
+    try { resultRef = await this.#resultStore.put(text); }
+    catch (error) { storageError = String(error?.message || error); }
+    return {
+      ...(typeof result?.isError === "boolean" ? { isError: result.isError } : {}),
+      content: [{ type: "text", text: `${text.slice(0, 12_000)}\n[MCP result preview; full JSON is ${text.length} characters]` }],
+      truncated: true, resultRef,
+      ...(storageError ? { storageError, warning: "The original tool completed but its full result could not be saved. Do not repeat a side-effecting action just to retrieve output." } : {}),
+    };
   }
 }
 

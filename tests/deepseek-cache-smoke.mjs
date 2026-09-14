@@ -97,7 +97,9 @@ const stableMessages = conversation.filter((message) =>
   ),
 );
 assert.equal(stableMessages.length, 1);
-assert.equal(stableMessages[0].content, stableContent);
+assert.notEqual(stableMessages[0].content, stableContent, "changed knowledge must refresh retrieval");
+assert.equal(conversation[0].content, "Stable system prompt", "dynamic retrieval must not replace the stable prefix");
+assert.equal(stableMessages[0].aporiaSource, "retrieval");
 
 upsertRelevantContextMessage(conversation, {
   checkpoints: [
@@ -116,6 +118,7 @@ const afterCompactionMessages = conversation.filter((message) =>
   ),
 );
 assert.equal(afterCompactionMessages.length, 1);
-assert.equal(afterCompactionMessages[0].content, stableContent);
+assert.match(afterCompactionMessages[0].content, /checkpoint-1/);
+assert.equal(conversation[0].content, "Stable system prompt");
 
 console.log("deepseek cache smoke: PASS");

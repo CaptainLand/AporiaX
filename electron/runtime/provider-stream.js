@@ -254,6 +254,7 @@ export async function callModelProviderOnce({
     const decoder = new TextDecoder();
     let finishReason = null;
     let sawDone = false;
+    let lastActivityAt = 0;
     const processLine = (line) => {
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) return;
@@ -280,6 +281,11 @@ export async function callModelProviderOnce({
       throwIfAborted(signal);
       if (chunk?.byteLength) receivedStreamBytes = true;
       resetIdleTimeout();
+      const activityAt = Date.now();
+      if (chunk?.byteLength && activityAt - lastActivityAt >= 1000) {
+        lastActivityAt = activityAt;
+        onEvent?.({ type: "response.activity" });
+      }
       buffer += decoder.decode(chunk, { stream: true });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || "";
@@ -307,6 +313,7 @@ export async function callModelProviderOnce({
       } catch { failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE"); }
     }
     if (finishReason === "tool_calls" && !toolCalls.filter(Boolean).length) failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE");
+    if (!toolCalls.filter(Boolean).length && !content.trim()) failIncomplete("MODEL_EMPTY_RESPONSE");
 
     return {
       finishReason: finishReason || (toolCalls.length ? "tool_calls" : "stop"),

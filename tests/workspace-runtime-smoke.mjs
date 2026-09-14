@@ -23,6 +23,15 @@ try {
   assert.equal(isPathInside(root, join(root, "src", "a.js")), true);
   assert.equal(isPathInside(root, join(root, "..", "outside")), false);
   assert.throws(() => resolveWorkspacePath(root, "../outside"), /escapes/i);
+  assert.equal(resolveWorkspacePath(root, "src/a.js"), join(root, "src", "a.js"));
+  assert.equal(resolveWorkspacePath(root, join(root, "src", "a.js")), join(root, "src", "a.js"));
+  if (process.platform === "win32") {
+    const posixRoot = root.replaceAll("\\", "/");
+    assert.equal(resolveWorkspacePath(root, "/src/a.js"), join(root, "src", "a.js"));
+    assert.equal(resolveWorkspacePath(root, `/${posixRoot}/src/a.js`), join(root, "src", "a.js"));
+    assert.equal(resolveWorkspacePath(root, `file:///${posixRoot}/src/a.js`), join(root, "src", "a.js"));
+    assert.equal(resolveWorkspacePath(root, `<${posixRoot}/src/a.js>`), join(root, "src", "a.js"));
+  }
   assert.equal(await verifyExistingTarget(root, "src/a.js"), join(root, "src", "a.js"));
   assert.equal(await verifyWritableTarget(root, "src/new.js"), join(root, "src", "new.js"));
 

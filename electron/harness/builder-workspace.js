@@ -524,11 +524,18 @@ export class BuilderWorkspaceManager {
         };
       };
 
+      const snapshot = async () => {
+        if (closed) throw new Error("Builder workspace is already closed.");
+        const after = await captureScope(worktreeRoot, scopes);
+        return changedPaths(baseline, after).map((path) => createCheckpoint(path, baseline.get(path), after.get(path)));
+      };
+
       return Object.freeze({
         agentId: owner,
         workspaceRoot: worktreeRoot,
         writeScopes: Object.freeze([...scopes]),
         merge,
+        snapshot,
         close,
       });
     } catch (error) {

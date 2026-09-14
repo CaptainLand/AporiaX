@@ -46,6 +46,17 @@ export class HarnessSessionStore {
     return this.get(id);
   }
 
+  resume(id) {
+    const session = this.#sessions.get(String(id));
+    if (!session || !TERMINAL_STATES.has(session.state)) throw new Error(`Session is not resumable: ${id}`);
+    session.state = "created";
+    session.result = null;
+    session.error = null;
+    session.updatedAt = new Date().toISOString();
+    session.metadata.continuations = (session.metadata.continuations || 0) + 1;
+    return this.get(id);
+  }
+
   get(id) {
     const session = this.#sessions.get(String(id));
     return session ? { ...session, metadata: { ...session.metadata } } : null;

@@ -123,4 +123,34 @@ const greetingHistory = sanitizeConversation([
 ]);
 assert.deepEqual(greetingHistory, [{ role: "user", content: "你好" }]);
 
+const restoreNotice = {
+  id: "restore-1",
+  role: "user",
+  kind: "anchor-restore",
+  aporiaSource: "harness",
+  content: "AporiaX workspace restore notice:\nfiles restored",
+};
+const restoredAfterFailure = sanitizeConversation([
+  { id: "calc-user", role: "user", content: "给计算器加点功能吧" },
+  {
+    id: "calc-assistant",
+    role: "assistant",
+    sourceUserId: "calc-user",
+    content: "I will change the calculator files.",
+    status: "failed",
+  },
+  restoreNotice,
+  { id: "follow-user", role: "user", content: "按回退后的文件再看一遍" },
+]);
+assert.equal(restoredAfterFailure.at(-1).content, "按回退后的文件再看一遍");
+assert.equal(restoredAfterFailure.at(-1).aporiaSource, undefined);
+const notice = restoredAfterFailure.find((message) => message.kind === "anchor-restore");
+assert.equal(notice.aporiaSource, "harness");
+assert.equal(notice.aporiaPinned, true);
+assert.match(notice.content, /workspace restore notice/);
+assert.equal(
+  restoredAfterFailure.some((message) => message.content === "I will change the calculator files."),
+  false,
+);
+
 console.log("conversation runtime smoke: PASS");

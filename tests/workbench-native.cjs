@@ -28,6 +28,11 @@ app.whenReady().then(async () => {
   await run.browserRuntime.click({ role: "button", name: "Apply" });
   assert.match((await run.browserRuntime.snapshot()).visibleText, /test-123/);
   assert.equal(await service.resources.get(id).wc.executeJavaScript("typeof window.desktop"), "undefined");
+  assert.equal(service.resources.get(id).view.getVisible(), false);
+  const firstShow = await service.request({ ...context, id, action: "layout", rect: { x: 50, y: 50, width: 420, height: 300 } });
+  assert.equal(service.resources.get(id).view.getVisible(), true);
+  assert.ok(firstShow.width >= 1);
+  assert.ok(service.resources.get(id).view.getBounds().width >= 1);
   for (const zoom of [1, 1.25, 1.5, 2]) {
     console.log("native: zoom", zoom);
     win.webContents.setZoomFactor(zoom);
@@ -43,11 +48,19 @@ app.whenReady().then(async () => {
   assert.match((await run.browserRuntime.snapshot()).visibleText, /test-456/);
   await service.request({ ...context, action: "hide" });
   assert.match((await run.browserRuntime.snapshot()).visibleText, /test-456/);
-  await assert.rejects(service.request({ ...context, taskId: "other", id, action: "stop" }), /不属于/);
+  // A foreign/missing resource is opaque and must never be stopped.
+  assert.deepEqual(await service.request({ ...context, taskId: "other", id, action: "stop" }), { missing: true });
+  assert.equal(service.resources.get(id).closed, false);
   const second = await run.browserRuntime.forOwner("builder").open({ url: `http://127.0.0.1:${server.address().port}` });
   assert.notEqual(first.browserSessionId, second.browserSessionId);
   const term = await service.request({ ...context, action: "new-terminal" });
   console.log("native: PTY started");
+  // This test has no xterm frontend, so answer ConPTY's terminal queries.
+  service.resources.get(term.id).child.onData((data) => {
+    if (data.includes("\x1b[c")) service.resources.get(term.id)?.child.write("\x1b[?1;2c");
+    if (data.includes("\x1b[6n")) service.resources.get(term.id)?.child.write("\x1b[1;1R");
+  });
+  await new Promise((r) => setTimeout(r, 400));
   await service.request({ ...context, id: term.id, action: "write", data: "Write-Output 'PTY-中文-OK'\r" });
   let out = "";
   for (let i = 0; i < 40 && !out.includes("PTY-中文-OK"); i++) { await new Promise((r) => setTimeout(r, 150)); out = (await service.request({ ...context, id: term.id, action: "read" })).output; }

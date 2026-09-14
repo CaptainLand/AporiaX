@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+import { app, dialog, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -8,12 +8,21 @@ import { createPersistentProcessManager } from "../runtime/process-runtime.js";
 import { createHostFallbackEnvironment } from "../sandbox-runtime.js";
 import { getVerifiedWorkspaceRoot } from "../runtime/workspace-runtime.js";
 import { readWorkbenchFile, searchWorkbenchFiles } from "./files.js";
+import { acceptLayoutGeneration } from "./layout-token.js";
 
 const require = createRequire(import.meta.url);
-export function createWorkbenchService({ getWindow }) {
+export function createWorkbenchService({ getWindow, confirmExternalRead = async (path) => {
+  const result = await dialog.showMessageBox(getWindow(), {
+    type: "question", title: "只读预览工作区外文件", message: "允许侧栏读取此文件一次？",
+    detail: path + "\n\n仅用于本次预览，不允许修改，也不会授权整个目录。",
+    buttons: ["取消", "允许只读预览"], defaultId: 0, cancelId: 0,
+  });
+  return result.response === 1;
+} }) {
   const resources = new Map();
   let visibleId = null;
-  let layoutSeq = 0;
+  let hideEpoch = 0;
+  let acceptedGeneration = 0;
   const publish = (state) => {
     const window = getWindow();
     if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("workbench:event", state);
@@ -37,15 +46,55 @@ export function createWorkbenchService({ getWindow }) {
   }
   function state(r) { return r.state ? r.state() : { id: r.id, taskId: r.taskId, workspacePath: r.workspacePath, kind: r.kind,
     title: r.title, status: r.status, owner: r.owner, cwd: r.cwd, exitCode: r.exitCode, keepAlive: Boolean(r.keepAlive), present: Boolean(r.present) }; }
-  function hide() {
+  function hideView(r) {
+    if (!r?.view || r.closed) return;
+    try { r.wc?.setAudioMuted?.(true); } catch { /* ignore */ }
+    try { r.view.setVisible(false); } catch { /* Native view may already be gone. */ }
+    try { getWindow()?.contentView.removeChildView(r.view); } catch { /* already detached */ }
+  }
+  function attachView(r, bounds) {
+    const win = getWindow();
+    if (!win || !r?.view || r.closed) return false;
+    hideView(r);
+    try {
+      win.contentView.addChildView(r.view);
+      r.view.setBounds(bounds);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function revealView(r, bounds) {
+    if (!r?.view || r.closed) return false;
+    try {
+      r.view.setBounds(bounds);
+      r.view.setVisible(true);
+      // Windows often skips compositing a WebContentsView that was attached
+      // hidden at 1×1 and then shown at the same bounds. Nudge once.
+      const nudged = {
+        ...bounds,
+        width: Math.max(1, bounds.width + (bounds.width > 1 ? -1 : 1)),
+      };
+      r.view.setBounds(nudged);
+      r.view.setBounds(bounds);
+      try { r.wc.setAudioMuted(false); } catch { /* ignore */ }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function hide(generation) {
+    const incoming = Number(generation);
+    if (Number.isFinite(incoming)) {
+      const token = acceptLayoutGeneration(incoming, acceptedGeneration);
+      if (!token.apply) return false;
+      acceptedGeneration = token.accepted;
+    }
+    hideEpoch += 1;
     const r = resources.get(visibleId);
     visibleId = null;
-    if (!r?.view || r.closed) return;
-    try {
-      r.view.setVisible(false);
-    } catch {
-      /* Native view may already be gone after a restart or renderer crash. */
-    }
+    hideView(r);
+    return true;
   }
   async function terminal(context) {
     reserve("terminal");
@@ -54,18 +103,36 @@ export function createWorkbenchService({ getWindow }) {
     const shell = process.platform === "win32" ? join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : process.env.SHELL || "/bin/sh";
     const child = pty.spawn(shell, process.platform === "win32" ? ["-NoLogo"] : [], {
       name: "xterm-256color", cols: 100, rows: 28, cwd,
+      // Bundled ConPTY closes the session without the legacy console-list helper race.
+      ...(process.platform === "win32" ? { useConptyDll: true } : {}),
       env: createHostFallbackEnvironment(process.env, "workbench-terminal"),
     });
+    let closePromise;
+    let exited;
+    const exitPromise = new Promise((done) => { exited = done; });
     const r = { ...context, id: `terminal_${randomUUID()}`, kind: "terminal", title: "交互终端", status: "running",
       owner: "user", cwd, output: "", offset: 0, child, exitCode: null,
-      close: async () => { child.kill(); r.status = "exited"; publish(state(r)); } };
+      close: () => {
+        if (r.status === "exited") return Promise.resolve();
+        if (closePromise) return closePromise;
+        closePromise = (async () => {
+          child.kill();
+          let timer;
+          try {
+            await Promise.race([exitPromise, new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("终端关闭超时，请重试。")), 7000);
+            })]);
+          } finally { clearTimeout(timer); }
+        })().catch((error) => { closePromise = null; throw error; });
+        return closePromise;
+      } };
     resources.set(r.id, r);
     child.onData((data) => {
       r.output += data;
       if (r.output.length > 400000) { const removed = r.output.length - 400000; r.offset += removed; r.output = r.output.slice(removed); }
       // Output is pulled using cursors, never repeated in saved conversation events.
     });
-    child.onExit(({ exitCode }) => { r.status = "exited"; r.exitCode = exitCode; publish(state(r)); });
+    child.onExit(({ exitCode }) => { r.status = "exited"; r.exitCode = exitCode; exited(); publish(state(r)); });
     publish(state(r)); return state(r);
   }
   function browsersInScope(context) {
@@ -181,14 +248,27 @@ export function createWorkbenchService({ getWindow }) {
         .filter((r) => r.taskId === context.taskId && resolve(r.workspacePath || ".") === root)
         .map(state);
     }
-    if (input.action === "file") return readWorkbenchFile(context.workspacePath, input.path);
+    if (input.action === "file") return readWorkbenchFile(context.workspacePath, input.path, {
+      authorizeExternal: input.approveExternal === true ? confirmExternalRead : undefined,
+    });
     if (input.action === "search") return searchWorkbenchFiles(context.workspacePath, input.query);
     if (input.action === "new-browser") return browser(context).state();
     if (input.action === "new-terminal") return terminal(context);
-    if (input.action === "hide") { hide(); return true; }
+    if (input.action === "hide") { hide(input.generation); return true; }
     const r = scope(resources.get(input.id), context);
     if (!r) return { missing: true };
-    if (input.action === "stop") { await r.close(); return state(r); }
+    if (input.action === "stop") {
+      if (visibleId === r.id) hide();
+      await r.close();
+      if (r.view) getWindow()?.contentView.removeChildView(r.view);
+      // Keep stopped logs readable until their tab is explicitly closed.
+      if (r.view || input.dispose === true) resources.delete(r.id);
+      return state(r);
+    }
+    if (input.action === "interrupt") {
+      if (r.owner !== "user" || r.kind !== "terminal" || r.status !== "running") throw new Error("终端不可中断。");
+      r.child.write("\x03"); return true;
+    }
     if (input.action === "keep") { r.keepAlive = Boolean(input.value); publish(state(r)); return state(r); }
     if (input.action === "read") {
       if (r.kind === "process") return r.manager.read({ processId: r.id, cursor: input.cursor, maxChars: 80000 });
@@ -207,32 +287,43 @@ export function createWorkbenchService({ getWindow }) {
     }
     if (!r.view || r.closed) return { missing: true };
     if (input.action === "layout") {
-      const gen = Number(input.generation) || 0;
-      if (gen && gen < layoutSeq) return false;
-      if (gen) layoutSeq = gen;
-      hide(); const win = getWindow(); if (!win || input.visible === false) return false;
+      if (input.visible === false) {
+        hide(input.generation);
+        return false;
+      }
+      const token = acceptLayoutGeneration(input.generation, acceptedGeneration);
+      if (Number.isFinite(Number(input.generation)) && !token.apply) return false;
+      if (Number.isFinite(Number(input.generation))) acceptedGeneration = token.accepted;
+      const epoch = hideEpoch;
+      hideView(resources.get(visibleId));
+      visibleId = null;
+      const win = getWindow();
+      if (!win) return false;
       const z = win.webContents.getZoomFactor(); const [w, h] = win.getContentSize();
       const box = input.rect || {}; const vals = ["x", "y", "width", "height"].map((k) => Number(box[k]) * z);
       if (!vals.every(Number.isFinite) || vals[2] < 1 || vals[3] < 1) throw new Error("无效视图尺寸。");
       const x = Math.max(0, Math.min(w - 1, Math.round(vals[0]))), y = Math.max(0, Math.min(h - 1, Math.round(vals[1])));
       const bounds = { x, y, width: Math.max(1, Math.min(w - x, Math.round(vals[2]))), height: Math.max(1, Math.min(h - y, Math.round(vals[3]))) };
-      try {
-        win.contentView.addChildView(r.view);
-        r.view.setBounds(bounds);
-      } catch {
-        return false;
-      }
+      if (!attachView(r, bounds)) return false;
       await r.ready.catch(() => undefined);
-      if (gen && gen < layoutSeq) return false;
-      try { r.view.setBounds(bounds); } catch { return false; }
-      await r.setViewport(bounds.width, bounds.height);
-      if (gen && gen < layoutSeq) return false;
-      try {
-        r.view.setVisible(true);
-        visibleId = r.id;
-      } catch {
+      if (epoch !== hideEpoch || r.closed) {
+        hideView(r);
         return false;
       }
+      if (Number.isFinite(Number(input.generation))) {
+        const latest = acceptLayoutGeneration(input.generation, acceptedGeneration);
+        if (!latest.apply) {
+          hideView(r);
+          return false;
+        }
+      }
+      await r.setViewport(bounds.width, bounds.height);
+      if (epoch !== hideEpoch || r.closed) {
+        hideView(r);
+        return false;
+      }
+      if (!revealView(r, bounds)) return false;
+      visibleId = r.id;
       return bounds;
     }
     if (input.action === "takeover") return r.takeover();

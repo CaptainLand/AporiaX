@@ -112,6 +112,7 @@ export function createWitnessMonitor({
       command: clipped(input.command, 700),
       parallel: Boolean(input.parallel),
       startedAt: isoTime(timestamp),
+      lastActivityAt: isoTime(timestamp),
       completedAt:
         input.status === "running" || input.status === "waiting"
           ? null
@@ -240,6 +241,18 @@ export function createWitnessMonitor({
     let meaningful = true;
 
     switch (event.type) {
+      case "response.activity":
+      case "response.delta":
+      case "subagent.activity": {
+        for (const record of records) {
+          if (record.status !== "running") continue;
+          if (event.agentId ? record.agentId !== event.agentId : record.kind !== "thinking") continue;
+          record.lastActivityAt = isoTime(timestamp);
+          const index = alerts.findIndex((alert) => alert.code === `stalled:${record.id}`);
+          if (index >= 0) alerts.splice(index, 1);
+        }
+        return; // Heartbeat publishes activity at a bounded rate, not per token.
+      }
       case "turn.started":
         status = "running";
         phase = "preparing";
@@ -529,15 +542,15 @@ export function createWitnessMonitor({
         });
         break;
       case "turn.completed":
-        status = "completed";
+        status = ["partial", "blocked", "needs_input"].includes(event.status) ? event.status : "completed";
         phase = "delivery";
-        closeAllRunning(timestamp, "completed");
+        closeAllRunning(timestamp, status);
         addRecord({
           key: `turn:completed:${timestamp}`,
           timestamp,
           kind: "status",
           eventType: "turn.completed",
-          status: "completed",
+          status,
           detail: recordDetail(event),
         });
         break;
@@ -583,12 +596,13 @@ export function createWitnessMonitor({
     );
     for (const record of active) {
       const age = timestamp - Date.parse(record.startedAt);
+      const idle = timestamp - Date.parse(record.lastActivityAt || record.startedAt);
       if (age >= LONG_RUNNING_MS) record.longRunning = true;
-      if (age >= STALLED_MS) {
+      if (idle >= STALLED_MS && record.status !== "waiting") {
         addAlert({
           code: `stalled:${record.id}`,
           severity: "warning",
-          detail: `${record.tool || record.eventType} has made no observable progress for ${Math.round(age / 1000)} seconds.`,
+          detail: `${record.tool || record.eventType} has had no observable activity for ${Math.round(idle / 1000)} seconds. Activity is not proof of task progress.`,
           timestamp,
         });
       }

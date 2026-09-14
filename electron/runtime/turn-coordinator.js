@@ -7,7 +7,11 @@ const PHASES = new Set([
   "completed",
   "failed",
   "interrupted",
+  "partial",
+  "blocked",
+  "needs_input",
 ]);
+const TERMINAL = new Set(["completed", "failed", "interrupted", "partial", "blocked", "needs_input"]);
 
 function abortError() {
   const error = new Error("The run was interrupted.");
@@ -68,6 +72,9 @@ export class TurnCoordinator {
       this.transition("tools", { toolCalls: toolCalls.length });
       return { kind: "tools", toolCalls };
     }
+    if (typeof message?.content !== "string" || !message.content.trim()) {
+      throw Object.assign(new Error("MODEL_EMPTY_RESPONSE: the model returned no answer or tool call; completion is not established."), { code: "MODEL_EMPTY_RESPONSE" });
+    }
     this.transition("finalizing", { reason: "model-no-tools" });
     return { kind: "final", toolCalls: [] };
   }
@@ -105,13 +112,13 @@ export class TurnCoordinator {
   transition(nextPhase, detail = {}) {
     const next = String(nextPhase || "").trim();
     if (!PHASES.has(next)) throw new Error(`Unsupported turn coordinator phase: ${next}`);
-    if (this.#terminal && !["completed", "failed", "interrupted"].includes(next)) {
+    if (this.#terminal && !TERMINAL.has(next)) {
       throw new Error("Cannot leave a terminal turn phase.");
     }
     if (this.#phase === next && !detail?.force) return this.snapshot();
     const previous = this.#phase;
     this.#phase = next;
-    if (["completed", "failed", "interrupted"].includes(next)) this.#terminal = true;
+    if (TERMINAL.has(next)) this.#terminal = true;
     this.#emit({
       type: "turn.phase.changed",
       runId: this.#runId || undefined,
@@ -126,7 +133,7 @@ export class TurnCoordinator {
   }
 
   complete(detail = {}) {
-    return this.transition("completed", { reason: "run-completed", ...detail });
+    return this.transition(detail.status || "completed", { reason: "run-ended", ...detail });
   }
 
   fail(error) {

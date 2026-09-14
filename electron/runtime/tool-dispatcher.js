@@ -99,7 +99,7 @@ export async function dispatchNativeTool({
     input,
     signal,
     permissionDecision: decision,
-  }), requestApproval);
+  }), requestApproval, { scope: executeContext.durableScope });
   assertNotAborted(signal);
   return result;
 }

@@ -25,6 +25,19 @@ const PROMPT_CHAR_LIMIT = 900;
 const PROMPT_LINE_LIMIT = 12;
 const PROMPT_HEIGHT_LIMIT = 240;
 
+export function ExtensionNotices({ message }) {
+  const { tr } = useI18n();
+  const notices = [
+    ...(message?.unresolvedSkills || []).map((name) => `Skill ${name}: ${tr("未加载，请检查名称或上下文容量", "not loaded; check its name or context capacity")}`),
+    ...(message?.mcpErrors || []).map((item) => `MCP ${item.serverId}: ${item.error}`),
+  ];
+  if (!notices.length) return null;
+  return <details className="aporiax-skill-error" aria-label={tr("扩展提示", "Extension notices")}>
+    <summary>{tr("部分扩展未就绪", "Some extensions are not ready")} ({notices.length})</summary>
+    <ul>{notices.map((notice, index) => <li key={index}>{notice}</li>)}</ul>
+  </details>;
+}
+
 function processStepIcon(status) {
   if (status === "running") {
     return <LoaderCircle className="spin" size={13} />;

@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { UnderstandingControls } from "./settings/UnderstandingControls.jsx";
+import { AppUpdateControls, AppUpdateToast, updateToastKey } from "./settings/AppUpdateControls.jsx";
+import { buildAnchorRestoreNotice } from "../electron/anchor-restore-notice.js";
 import { taskApprovalMode } from "./state/approval-mode.js";
 import { taskExecutionMode } from "./state/execution-mode.js";
 import { providerModelsById, buildProviderModels } from "./state/provider-models.js";
@@ -81,6 +84,7 @@ import {
 } from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
 import { WorkbenchLayout } from "./workbench/WorkbenchLayout.jsx";
+import { CollapsedDropRail } from "./workbench/CollapsedDropRail.jsx";
 import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
@@ -92,6 +96,10 @@ import {
   getDefaultTaskConfig,
   getModel,
 } from "./models/model-catalog.js";
+import {
+  DEFAULT_BUILDER_LIMIT,
+  normalizeBuilderCount,
+} from "../electron/harness/builder-count.js";
 import {
   replaceAssistantForRetry,
   serializeTaskCache,
@@ -1379,20 +1387,24 @@ function ProjectUnderstandingPanel({
   const [error, setError] = useState("");
   const [confirmRevision, setConfirmRevision] = useState("");
   const [reverting, setReverting] = useState("");
+  const understandingLoad = useRef(0);
 
   const loadUnderstanding = async () => {
     if (!task.workspacePath || !window.desktop?.understanding?.get) return;
+    const loadId = ++understandingLoad.current;
     setLoading(true);
     setError("");
     try {
-      setState(await window.desktop.understanding.get(task.workspacePath));
+      const next = await window.desktop.understanding.get(task.workspacePath);
+      if (understandingLoad.current === loadId) setState(next);
     } catch (loadError) {
+      if (understandingLoad.current !== loadId) return;
       setError(
         loadError?.message ||
           tr("无法加载项目理解", "Unable to load Project Understanding"),
       );
     } finally {
-      setLoading(false);
+      if (understandingLoad.current === loadId) setLoading(false);
     }
   };
 
@@ -1400,6 +1412,7 @@ function ProjectUnderstandingPanel({
     setState(null);
     setConfirmRevision("");
     void loadUnderstanding();
+    return () => { understandingLoad.current++; };
   }, [task.workspacePath, refreshToken]);
 
   const revertTo = async (revision) => {
@@ -1462,8 +1475,8 @@ function ProjectUnderstandingPanel({
           <h2>Project Understanding</h2>
           <p>
             {tr(
-              "由同一工作区的任务共同维护。每条理解都带有证据，并通过 revision 保留完整演进路径。",
-              "Maintained across every task in this workspace. Each fact carries evidence and every change is preserved as a revision.",
+              "可选的项目知识参考。保留来源与修订历史，不替代当前文件和你的最新要求。",
+              "Optional project knowledge with sources and revision history, not a substitute for current files or your latest instructions.",
             )}
           </p>
         </div>
@@ -1491,10 +1504,11 @@ function ProjectUnderstandingPanel({
       ) : (
         <div className="understanding-layout">
           <main className="understanding-facts">
+            <UnderstandingControls key={task.workspacePath} workspacePath={task.workspacePath} state={state} onChange={setState} />
             <div className="understanding-summary">
               <div>
                 <strong>{state?.facts?.length || 0}</strong>
-                <span>{tr("条已验证理解", "verified facts")}</span>
+                <span>{tr("条已保存知识", "saved facts")}</span>
               </div>
               <div>
                 <strong>{state?.currentRevision || 0}</strong>
@@ -1512,8 +1526,8 @@ function ProjectUnderstandingPanel({
                 <h3>{tr("这个项目还没有形成共享理解", "This project has no shared Understanding yet")}</h3>
                 <p>
                   {tr(
-                    "完成一次包含实际修改和验证的任务后，Curator 子 Agent 会提炼第一条带证据的 revision。",
-                    "Complete a task with verified workspace changes and the Curator subagent will create the first evidence-backed revision.",
+                    "可以选择启用自动整理；只查看知识不会额外消耗模型额度。",
+                    "You can opt into automatic curation. Viewing saved knowledge does not use model quota.",
                   )}
                 </p>
               </div>
@@ -1628,6 +1642,7 @@ function TaskWorkspace({
   sidebarCollapsed,
   onToggleSidebar,
   settingsOpen,
+  coverBrowser = false,
   onToggleSettings,
   onSend,
   onStop,
@@ -1696,11 +1711,6 @@ function TaskWorkspace({
   );
   const restoreOnceRef = useRef(true);
   const persistTimerRef = useRef(null);
-  const model = getModel(
-    providers,
-    task.providerId,
-    task.modelId,
-  );
   const latestMessage = task.messages.at(-1);
   const latestMessageContentLength =
     latestMessage?.role === "assistant"
@@ -1996,10 +2006,6 @@ function TaskWorkspace({
             </div>
           </div>
           <div className="thread-actions">
-            <span className="thread-model-badge">
-              <model.icon size={14} />
-              {model.shortName}
-            </span>
             <IconButton
               label={
                 theme === "dark"
@@ -2278,12 +2284,14 @@ function TaskWorkspace({
       {workbench.layout.open ? (
         <WorkbenchLayout
           workbench={workbench}
-          overlaying={settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu)}
+          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu)}
           onNotice={onNotice}
           onNeedWorkspace={onSelectWorkspace}
           builtins={workbenchBuiltins}
         />
-      ) : null}
+      ) : (
+        <CollapsedDropRail workbench={workbench} onNotice={onNotice} />
+      )}
 
       {settingsOpen ? (
         <>
@@ -3076,6 +3084,7 @@ function ApplicationSettingsModal({
                     )}
                   </strong>
                 </div>
+                <AppUpdateControls />
                 <span className="application-preview-label">
                   {tr("本地优先 · Preview", "Local-first · Preview")}
                 </span>
@@ -3127,6 +3136,8 @@ function App() {
   const [welcomeOpen, setWelcomeOpen] = useState(
     () => FORCE_WELCOME_EACH_LAUNCH || !sessionUi?.welcomeDismissed,
   );
+  const [updateNotice, setUpdateNotice] = useState(null);
+  const dismissedUpdateKeyRef = useRef("");
   const runsRef = useRef(new Map());
   const tasksRef = useRef(tasks);
   const remoteSyncSignatureRef = useRef("");
@@ -3449,6 +3460,24 @@ function App() {
     const timeout = window.setTimeout(() => setNotice(""), 3200);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => {
+    if (welcomeOpen || !window.desktop?.update?.check) return undefined;
+    const timeout = window.setTimeout(() => {
+      void window.desktop.update.check({ force: false });
+    }, 8_000);
+    return () => window.clearTimeout(timeout);
+  }, [welcomeOpen]);
+
+  useEffect(() => {
+    if (!window.desktop?.update?.subscribe) return undefined;
+    return window.desktop.update.subscribe((next) => {
+      if (next?.phase !== "available" && next?.phase !== "downloaded") return;
+      const key = updateToastKey(next);
+      if (!key || dismissedUpdateKeyRef.current === key) return;
+      setUpdateNotice(next);
+    });
+  }, []);
 
   useEffect(() => {
     if (!completionNotice) return undefined;
@@ -3797,6 +3826,10 @@ function App() {
         permission: targetTask.permission,
         executionMode: taskExecutionMode(targetTask.executionMode),
         approvalMode: taskApprovalMode(targetTask.approvalMode),
+        builderLimit: normalizeBuilderCount(
+          targetTask.builderLimit,
+          DEFAULT_BUILDER_LIMIT,
+        ),
         language,
         messages: [
           ...targetTask.messages.filter(
@@ -3867,7 +3900,11 @@ function App() {
           ),
         );
         if (result.status === "blocked") {
-          setNotice(tr("验证受阻，已有实现已保存", "Verification unavailable; existing work was saved"));
+          setNotice(tr("任务受阻，请查看具体原因", "Task blocked; see the reported reason"));
+        } else if (result.status === "partial") {
+          setNotice(tr("任务部分完成，可以继续处理剩余工作", "Partially complete; remaining work can be continued"));
+        } else if (result.status === "needs_input") {
+          setNotice(tr("需要你补充信息后继续", "Your input is needed to continue"));
         } else if (result.status === "failed") {
           setNotice(tr("Harness 运行失败", "Harness run failed"));
         } else if (result.status === "interrupted") {
@@ -4434,6 +4471,16 @@ function App() {
       const restoredIds = new Set(result.restoredCheckpoints || []);
       const restoredAt =
         result.restoredAt || new Date().toISOString();
+      const restoreNotice = {
+        ...buildAnchorRestoreNotice({
+          id: crypto.randomUUID(),
+          restoredAt,
+          mode: restoreMode,
+          restoredFiles: result.restoredFiles || 0,
+          restoredCheckpoints: result.restoredCheckpoints || [],
+          language,
+        }),
+      };
       setTasks((current) =>
         current.map((candidate) =>
           candidate.id === taskId
@@ -4449,19 +4496,22 @@ function App() {
                     restoredFiles: result.restoredFiles || 0,
                   },
                 ],
-                messages: candidate.messages.map((message) =>
-                  restoredIds.has(message.id)
-                    ? {
-                        ...message,
-                        anchorRestoredAt: restoredAt,
-                        changes: message.changes.map((change) =>
-                          change.reverted
-                            ? change
-                            : { ...change, reverted: true },
-                        ),
-                      }
-                    : message,
-                ),
+                messages: [
+                  ...candidate.messages.map((message) =>
+                    restoredIds.has(message.id)
+                      ? {
+                          ...message,
+                          anchorRestoredAt: restoredAt,
+                          changes: message.changes.map((change) =>
+                            change.reverted
+                              ? change
+                              : { ...change, reverted: true },
+                          ),
+                        }
+                      : message,
+                  ),
+                  restoreNotice,
+                ],
               }
             : candidate,
         ),
@@ -4618,6 +4668,7 @@ function App() {
                 setSidebarCollapsed((current) => !current)
               }
               settingsOpen={settingsOpen}
+              coverBrowser={applicationSettingsOpen || newTaskOpen}
               onToggleSettings={() => setSettingsOpen((open) => !open)}
               onSend={sendMessage}
               onStop={stopActiveRun}
@@ -4707,6 +4758,34 @@ function App() {
         />
       )}
       {welcomeOpen && <WelcomeOverlay onContinue={dismissWelcome} />}
+      <AppUpdateToast
+        status={updateNotice}
+        onClose={() => {
+          dismissedUpdateKeyRef.current = updateToastKey(updateNotice);
+          setUpdateNotice(null);
+        }}
+        onAction={() => {
+          if (!updateNotice) return;
+          if (updateNotice.phase === "downloaded") {
+            void window.desktop?.update?.install?.().then((next) => {
+              if (next?.error === "TASK_RUNNING") {
+                setNotice(
+                  tr(
+                    "有任务正在运行。完成或暂停后再安装。",
+                    "A task is still running. Finish or pause it before installing.",
+                  ),
+                );
+              }
+            });
+            return;
+          }
+          if (updateNotice.channel === "portable") {
+            void window.desktop?.update?.openRelease?.();
+            return;
+          }
+          void window.desktop?.update?.download?.();
+        }}
+      />
       <TaskCompletionToast
         notification={completionNotice}
         onClose={() => setCompletionNotice(null)}

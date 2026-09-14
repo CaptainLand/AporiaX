@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   classifyAgentTask,
+  currentAgentBudget,
   planAgentBudget,
+  requestAgentBudgetRole,
   runWithAgentBudget,
 } from "../electron/harness/agent-budget.js";
 import { ScopeLeaseManager } from "../electron/harness/scope-leases.js";
@@ -46,6 +48,7 @@ assert.equal(simple.limits.maxTotalSubagents, 0);
 assert.equal(
   shouldUseBuilderOrchestration(
     {
+      builderOrchestration: true,
       workspacePath: "C:/repo",
       permission: "workspace-write",
     },
@@ -62,7 +65,7 @@ const smallWrite = planAgentBudget({
 assert.equal(smallWrite.profile, "light");
 assert.equal(smallWrite.limits.maxTotalSubagents, 1);
 
-const large = planAgentBudget({
+const largeWrite = {
   workspacePath: "C:/repo",
   permission: "workspace-write",
   messages: [
@@ -72,13 +75,15 @@ const large = planAgentBudget({
         "重构整个 harness architecture，接入 server、plugin、scheduler 和 worktree，多模块并行 builder，并运行 build 和 test 验证。",
     },
   ],
-});
+};
+const large = planAgentBudget(largeWrite);
 assert.equal(large.profile, "large");
 assert.equal(large.limits.roles.builder, 2);
 assert(large.limits.maxActiveSubagents >= 2);
 assert.equal(
   shouldUseBuilderOrchestration(
     {
+      builderOrchestration: true,
       workspacePath: "C:/repo",
       permission: "workspace-write",
     },
@@ -86,6 +91,48 @@ assert.equal(
   ),
   true,
 );
+
+const largeNoBuilders = planAgentBudget({
+  ...largeWrite,
+  builderLimit: 0,
+});
+assert.equal(largeNoBuilders.profile, "large");
+assert.equal(largeNoBuilders.limits.roles.builder, 0);
+assert.equal(largeNoBuilders.limits.roles.explore, large.limits.roles.explore);
+assert.equal(largeNoBuilders.limits.roles.review, large.limits.roles.review);
+assert.equal(largeNoBuilders.limits.roles.verify, large.limits.roles.verify);
+assert.equal(largeNoBuilders.hardLimits.roles.builder, 0);
+assert.equal(
+  shouldUseBuilderOrchestration(
+    {
+      builderOrchestration: true,
+      workspacePath: "C:/repo",
+      permission: "workspace-write",
+    },
+    largeNoBuilders,
+  ),
+  false,
+);
+
+const largeFourBuilders = planAgentBudget({
+  ...largeWrite,
+  builderLimit: 4,
+});
+assert.equal(largeFourBuilders.limits.roles.builder, 4);
+assert.equal(
+  largeFourBuilders.limits.maxTotalSubagents,
+  large.limits.maxTotalSubagents + 2,
+);
+assert.equal(
+  largeFourBuilders.limits.maxActiveSubagents,
+  large.limits.maxActiveSubagents + 2,
+);
+assert.equal(largeFourBuilders.limits.roles.explore, large.limits.roles.explore);
+
+await runWithAgentBudget(largeNoBuilders, {}, () => {
+  requestAgentBudgetRole("builder");
+  assert.equal(currentAgentBudget().limits.roles.builder, 0);
+});
 assert.equal(
   classifyAgentTask({
     workspacePath: "C:/repo",

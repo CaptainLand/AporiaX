@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("workspace:restore-anchor", request),
   },
   understanding: {
+    setSettings: (request) => ipcRenderer.invoke("understanding:settings", request),
     get: (workspacePath) =>
       ipcRenderer.invoke("understanding:get", workspacePath),
     revert: (request) =>
@@ -120,6 +121,18 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("core:set-extension-policy", request),
     sessions: () => ipcRenderer.invoke("core:sessions"),
     events: (request = {}) => ipcRenderer.invoke("core:events", request),
+  },
+  update: {
+    status: () => ipcRenderer.invoke("update:status"),
+    check: (request = {}) => ipcRenderer.invoke("update:check", request),
+    download: () => ipcRenderer.invoke("update:download"),
+    install: () => ipcRenderer.invoke("update:install"),
+    openRelease: () => ipcRenderer.invoke("update:open-release"),
+    subscribe: (callback) => {
+      const listener = (_event, data) => callback(data);
+      ipcRenderer.on("update:event", listener);
+      return () => ipcRenderer.removeListener("update:event", listener);
+    },
   },
   notifications: {
     taskCompleted: (payload) =>

@@ -5,6 +5,9 @@ import {
 } from "../p0-model.js";
 
 export const PURE_TASK_EVENT_TYPES = new Set([
+  "mcp.server.failed",
+  "mcp.server.connected",
+  "mcp.config.warning",
   "skill.activated",
   "skill.unresolved",
   "plan.updated",
@@ -63,6 +66,15 @@ export function reduceHarnessTaskEvent(
 ) {
   if (!run || !event || !PURE_TASK_EVENT_TYPES.has(event.type)) return tasks;
 
+  if (["mcp.server.failed", "mcp.server.connected", "mcp.config.warning"].includes(event.type)) {
+    return updateRunAssistant(tasks, run, (message) => {
+      const id = event.serverId || "configuration";
+      const errors = (message.mcpErrors || []).filter((item) => item.serverId !== id);
+      if (event.type !== "mcp.server.connected") errors.push({ serverId: id, error: String(event.error || "Discovery failed").slice(0, 1200) });
+      return { ...message, mcpErrors: errors };
+    });
+  }
+
   if (event.type === "skill.activated") {
     return updateRunAssistant(tasks, run, (message) => ({
       ...message,
@@ -81,6 +93,7 @@ export function reduceHarnessTaskEvent(
   if (event.type === "plan.updated") {
     return updateRunAssistant(tasks, run, (message) => ({
       ...message,
+      activatedSkills: [],
       plan: event.plan,
       progressUpdates: appendProgressUpdate(message, {
         id: routeId(event, "progress-plan"),

@@ -10,6 +10,7 @@ import {
   markRunRecoveryStarted,
   updateRunJournalMetadata,
   saveRunCheckpoint,
+  saveRunContext,
   saveRunOperation,
   findConfirmedRunOperation,
 } from "../run-store.js";
@@ -391,6 +392,9 @@ export class HarnessTaskRuntime {
         for (const [scopeId, checkpoint] of Object.entries(recoveryContext?.checkpoint?.agents || {})) {
           await durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, { ...checkpoint, scopeId: scopeId === recoveryContext.runId ? safeRunId : scopeId }));
         }
+        for (const [scopeId, state] of Object.entries(recoveryContext?.contexts || {})) {
+          await durableWrite(() => saveRunContext(this.#directory(), safeRunId, scopeId === recoveryContext.runId ? safeRunId : scopeId, state));
+        }
         const inheritedOperations = new Map([...(recoveryContext?.operations || []), ...(recoveryContext?.unresolvedOperations || [])].map((operation) => [operation.operationId, operation]));
         const copiedOperations = [];
         for (const operation of inheritedOperations.values()) {
@@ -410,6 +414,7 @@ export class HarnessTaskRuntime {
             : null,
           signal: controller.signal,
           checkpoint: (value) => durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, value)),
+          context: (scopeId, state) => durableWrite(() => saveRunContext(this.#directory(), safeRunId, scopeId, state)),
           operation: (value) => durableWrite(() => saveRunOperation(this.#directory(), safeRunId, value)),
         }, () => execute({
           signal: controller.signal,

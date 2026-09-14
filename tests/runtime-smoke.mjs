@@ -1311,6 +1311,9 @@ try {
     if (!delta) throw new Error("Unexpected extra model request.");
     return createSseResponse(delta);
   };
+  await (await createProjectUnderstandingStore({
+    baseDirectory: join(testRoot, "understanding-integration"), workspaceRoot: testRoot,
+  })).setSettings({ autoCurate: true, useForContext: true });
   const harnessResult = await runTestHarness({
     runId: "runtime-understanding-run",
     taskId: "runtime-understanding-task",
@@ -1500,6 +1503,9 @@ try {
           },
     );
   };
+  await (await createProjectUnderstandingStore({
+    baseDirectory: unifiedUnderstandingDirectory, workspaceRoot: unifiedMemoryRoot,
+  })).setSettings({ autoCurate: true, useForContext: true });
   const unifiedMemoryResult = await runTestHarness({
     runId: "unified-understanding-run",
     taskId: "unified-understanding-task",
@@ -1591,6 +1597,9 @@ try {
         : { content: "The durable preference has been staged." },
     );
   };
+  await (await createProjectUnderstandingStore({
+    baseDirectory: deferredUnderstandingDirectory, workspaceRoot: deferredUnderstandingRoot,
+  })).setSettings({ autoCurate: true, useForContext: true });
   const deferredResult = await runTestHarness({
     runId: "deferred-understanding-run",
     taskId: "deferred-understanding-task",

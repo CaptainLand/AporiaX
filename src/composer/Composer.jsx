@@ -9,13 +9,25 @@ import {
   Play,
   Plus,
   Square,
+  Users,
   X,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { getModel, getModelGroups } from "../models/model-catalog.js";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
-import { attachmentImageSrc } from "../attachments.js";
+import {
+  attachmentImageSrc,
+  beginComposerAttachmentDrag,
+  endComposerAttachmentDrag,
+  filePathOf,
+  isComposerAttachmentDrag,
+} from "../attachments.js";
+import {
+  BUILDER_COUNT_CHOICES,
+  DEFAULT_BUILDER_LIMIT,
+  normalizeBuilderCount,
+} from "../../electron/harness/builder-count.js";
 
 function ModelMenu({ task, providers, onUpdate, onClose }) {
   const { tr } = useI18n();
@@ -109,6 +121,50 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
   );
 }
 
+function BuilderCountMenu({ value, onChange, onClose }) {
+  const { tr } = useI18n();
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (!menuRef.current?.contains(event.target)) onClose();
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="builder-count-menu" ref={menuRef} role="menu">
+      <div className="model-menu-heading">{tr("Builder 数量", "Builder count")}</div>
+      <p className="builder-count-note">
+        {tr("只限制自主 Builder，探索 / 审查 / 验证不受影响。", "Limits autonomous Builders only. Explore, review, and verify are unchanged.")}
+      </p>
+      {BUILDER_COUNT_CHOICES.map((count) => (
+        <button
+          className={`builder-count-option${value === count ? " selected" : ""}`}
+          key={count}
+          type="button"
+          role="menuitemradio"
+          aria-checked={value === count}
+          onClick={() => {
+            onChange(count);
+            onClose();
+          }}
+        >
+          {count === 0 ? tr("无", "None") : String(count)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function bytesToDataUrl(type, bytes) {
   let binary = "";
   const chunk = 0x8000;
@@ -140,6 +196,7 @@ async function storeImageFile(file) {
     type,
     size: file.size,
     hash,
+    path: filePathOf(file),
     dataUrl: bytesToDataUrl(type, data),
   };
 }
@@ -221,6 +278,7 @@ export function Composer({
   const [attachments, setAttachments] = useState([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [builderMenuOpen, setBuilderMenuOpen] = useState(false);
   const textareaRef = useRef(null);
   const imageInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
@@ -229,6 +287,7 @@ export function Composer({
     task.providerId,
     task.modelId,
   );
+  const builderLimit = normalizeBuilderCount(task.builderLimit, DEFAULT_BUILDER_LIMIT);
   const mentionAutocomplete = useWorkspaceMentionAutocomplete({
     value: message,
     setValue: setMessage,
@@ -321,6 +380,7 @@ export function Composer({
           ...result,
           id: crypto.randomUUID(),
           kind: "document",
+          path: filePathOf(file),
         });
       }
       setAttachments((current) => [...current, ...parsed].slice(0, 6));
@@ -372,8 +432,21 @@ export function Composer({
   return (
     <div
       className="composer-shell"
-      onDragOver={(event) => event.preventDefault()}
+      onDragOver={(event) => {
+        if (isComposerAttachmentDrag(event.dataTransfer)) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = "none";
+          return;
+        }
+        event.preventDefault();
+      }}
       onDrop={(event) => {
+        if (isComposerAttachmentDrag(event.dataTransfer)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         event.preventDefault();
         const dropped = [...event.dataTransfer.files];
         const images = dropped.filter((file) =>
@@ -394,6 +467,11 @@ export function Composer({
                 <div
                   className="composer-document-attachment"
                   key={attachment.id}
+                  draggable
+                  onDragStart={(event) => {
+                    beginComposerAttachmentDrag(event, attachment);
+                  }}
+                  onDragEnd={endComposerAttachmentDrag}
                 >
                   <span className="composer-document-icon">
                     <FileText size={17} />
@@ -413,6 +491,7 @@ export function Composer({
                   <button
                     type="button"
                     aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() =>
                       setAttachments((current) =>
                         current.filter(
@@ -425,12 +504,20 @@ export function Composer({
                   </button>
                 </div>
               ) : (
-                <figure key={attachment.id}>
-                  <img src={attachmentImageSrc(attachment)} alt={attachment.name} />
+                <figure
+                  key={attachment.id}
+                  draggable
+                  onDragStart={(event) => {
+                    beginComposerAttachmentDrag(event, attachment);
+                  }}
+                  onDragEnd={endComposerAttachmentDrag}
+                >
+                  <img src={attachmentImageSrc(attachment)} alt={attachment.name} draggable={false} />
                   <figcaption>{attachment.name}</figcaption>
                   <button
                     type="button"
                     aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() =>
                       setAttachments((current) =>
                         current.filter(
@@ -539,6 +626,7 @@ export function Composer({
                 className={`model-trigger ${modelMenuOpen ? "active" : ""}`}
                 onClick={(event) => {
                   event.stopPropagation();
+                  setBuilderMenuOpen(false);
                   setModelMenuOpen((open) => !open);
                 }}
               >
@@ -547,6 +635,30 @@ export function Composer({
                 {task.thinking && (
                   <span className="thinking-pill">{task.effort}</span>
                 )}
+                <ChevronDown size={14} />
+              </button>
+            </div>
+            <div className="builder-control">
+              {builderMenuOpen && (
+                <BuilderCountMenu
+                  value={builderLimit}
+                  onClose={() => setBuilderMenuOpen(false)}
+                  onChange={(count) => onUpdateTask({ builderLimit: count })}
+                />
+              )}
+              <button
+                className={`builder-trigger ${builderMenuOpen ? "active" : ""}`}
+                type="button"
+                aria-label={tr("Builder 数量", "Builder count")}
+                title={tr("Builder 数量", "Builder count")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setModelMenuOpen(false);
+                  setBuilderMenuOpen((open) => !open);
+                }}
+              >
+                <Users size={15} />
+                <span>{builderLimit === 0 ? tr("无", "None") : builderLimit}</span>
                 <ChevronDown size={14} />
               </button>
             </div>

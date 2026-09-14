@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { classifyLink } from "../../electron/link-target.js";
+import { classifyLink, normalizeLocalPath } from "../../electron/link-target.js";
 import {
   closeTab,
   draftKey,
   drafts,
   dropMissingSessionTabs,
+  canonicalPath,
   loadLayout,
   normalizeLayout,
   openTab,
@@ -13,6 +14,7 @@ import {
   sameScope,
   saveLayout,
   scopeKey,
+  SESSION_TAB_KINDS,
   setFollow,
   DEFAULT_WIDTH,
 } from "./state.js";
@@ -30,6 +32,7 @@ export function useWorkbench(task) {
   const [error, setError] = useState("");
   const [covered, setCovered] = useState(false);
   const dirty = useRef(new Set());
+  const closing = useRef(new Set());
 
   const request = (data) => {
     if (!window.desktop?.workbench) {
@@ -69,7 +72,7 @@ export function useWorkbench(task) {
         resource.kind === "browser" &&
         resource.owner === "agent" &&
         previous?.owner !== "agent";
-      const presented = resource.present === true;
+      const presented = resource.present === true && previous?.present !== true;
       if (resource.kind === "file") {
         if (presented) {
           setLayout((current) =>
@@ -91,7 +94,7 @@ export function useWorkbench(task) {
       }
       resourcesRef.current = { ...resourcesRef.current, [resource.id]: resource };
       setResources((all) => ({ ...all, [resource.id]: resource }));
-      if (resource.status === "closed") return;
+      if (resource.status === "closed" || closing.current.has(resource.id)) return;
       if (presented || claimed) {
         setLayout((current) =>
           openTab(
@@ -155,7 +158,12 @@ export function useWorkbench(task) {
   };
 
   const openFile = (path, line = 1) => {
-    const normalized = String(path || "").replaceAll("\\", "/");
+    let normalized = normalizeLocalPath(path);
+    const root = canonicalPath(task.workspacePath || "");
+    const full = canonicalPath(normalized);
+    if (root && (full === root || full.startsWith(`${root}/`))) {
+      normalized = full === root ? "." : normalized.slice(root.length + 1);
+    }
     if (!normalized) return;
     open("file", {
       id: `file:${normalized}`,
@@ -163,6 +171,15 @@ export function useWorkbench(task) {
       path: normalized,
       line,
     });
+  };
+
+  const openImage = (src, title = "图片") => {
+    if (!/^(data:image\/(?:png|jpeg|webp|gif);base64,|aporiax-blob:\/\/[a-f0-9]{64}$|https?:\/\/)/i.test(String(src || ""))) {
+      if (src) openFile(src);
+      return;
+    }
+    const existing = layout.tabs.find((tab) => tab.kind === "image" && tab.src === src);
+    open("image", { id: existing?.id || "image:" + crypto.randomUUID(), src, title });
   };
 
   const create = async (kind) => {
@@ -177,13 +194,13 @@ export function useWorkbench(task) {
   };
 
   const hideBrowser = () => {
-    layoutGen.current += 1;
-    return request({ action: "hide" }).catch(() => {});
+    const generation = ++layoutGen.current;
+    return request({ action: "hide", generation }).catch(() => {});
   };
 
   const layoutBrowser = (id, rect, visible) => {
-    const generation = ++layoutGen.current;
     if (!visible || !id) return hideBrowser();
+    const generation = ++layoutGen.current;
     if (!resourcesRef.current[id]) return Promise.resolve({ missing: true });
     return request({
       action: "layout",
@@ -192,6 +209,7 @@ export function useWorkbench(task) {
       visible: true,
       generation,
     }).then((result) => {
+      if (generation !== layoutGen.current) return result;
       if (result?.missing) {
         setLayout((current) => dropMissingSessionTabs(current, new Set(Object.keys(resourcesRef.current))));
       }
@@ -209,6 +227,7 @@ export function useWorkbench(task) {
     request,
     open,
     openFile,
+    openImage,
     create,
     setLayout,
     dirty,
@@ -218,11 +237,23 @@ export function useWorkbench(task) {
     layoutBrowser,
     select: (id) => setLayout((current) => ({ ...current, active: id, open: true, follow: false })),
     reorder: (id, before) => setLayout((current) => moveTab(current, id, before)),
-    close: (id) => {
+    close: async (id) => {
+      if (closing.current.has(id)) return;
       if (dirty.current.has(id) && !window.confirm("此文件有未保存修改。关闭标签并保留草稿？")) {
         return;
       }
-      setLayout((current) => closeTab(current, id));
+      const tab = layout.tabs.find((item) => item.id === id);
+      closing.current.add(id);
+      const scopeAtClose = key;
+      try {
+        if (tab && SESSION_TAB_KINDS.has(tab.kind)) await request({ action: "stop", id, dispose: true });
+        if (keyRef.current === scopeAtClose) {
+          setError("");
+          setLayout((current) => closeTab(current, id));
+        }
+      } catch (failure) {
+        if (keyRef.current === scopeAtClose) setError("关闭失败，标签已保留：" + failure.message);
+      } finally { closing.current.delete(id); }
     },
     collapse: () => setLayout((current) => ({ ...current, open: false, follow: false })),
     expand: () => setLayout((current) => ({ ...current, open: true })),
@@ -235,6 +266,7 @@ export function useWorkbench(task) {
         }),
       ),
     async openHref(href) {
+      if (/^(data:image\/|aporiax-blob:\/\/)/i.test(href || "")) { openImage(href); return true; }
       const link = classifyLink(href);
       if (link?.kind === "web") {
         const resource = await request({ action: "new-browser" });

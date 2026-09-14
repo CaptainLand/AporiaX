@@ -18,12 +18,16 @@ try {
   await page.getByRole("link", { name: "网页", exact: true }).click();
   await page.getByRole("link", { name: "缺失", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "File does not exist" }).waitFor();
+  assert.equal(await page.getByRole("link", { name: /仅本机可访问/ }).count(), 0);
+  await page.getByText("（仅本机可访问；8080").waitFor();
+  await page.getByRole("link", { name: "http://localhost:8080/todo.html", exact: true }).click();
   const calls = await page.evaluate(() => window.linkCalls);
   assert.equal(calls[0].action, "open");
   assert.equal(calls[1].action, "menu");
   assert.equal(calls[1].workspacePath, "D:/Agent开发");
   assert.equal(calls[1].language, "zh-CN");
   assert.equal(calls[2].href, "https://example.com");
+  assert.equal(calls[4].href, "http://localhost:8080/todo.html");
   await page.evaluate(() => window.fixtureInsert());
   await page.getByText("改为便携版", { exact: true }).waitFor();
   // A delta still buffered when guidance is applied must stay in the old segment.

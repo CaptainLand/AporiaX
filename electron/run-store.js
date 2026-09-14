@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isReplaySafeNativeTool } from "./runtime/durable-run.js";
@@ -99,6 +100,14 @@ function initializeSchema(database) {
       payload_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_run_operations_run ON run_operations(run_id);
+    CREATE TABLE IF NOT EXISTS run_contexts (
+      run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+      scope_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      payload BLOB NOT NULL,
+      PRIMARY KEY (run_id, scope_id)
+    );
   `);
 }
 
@@ -362,6 +371,25 @@ export async function appendRunJournalEvents(dataDirectory, runId, events) {
   }
 }
 
+export async function saveRunContext(dataDirectory, runId, scopeId, state) {
+  const database = await getDatabase(dataDirectory);
+  const bytes = Buffer.from(typeof state === "string" ? state : JSON.stringify(state));
+  if (bytes.length > 16_000_000) throw new Error("RUN_CONTEXT_TOO_LARGE");
+  const checksum = createHash("sha256").update(bytes).digest("hex");
+  database.prepare("INSERT OR REPLACE INTO run_contexts (run_id, scope_id, updated_at, checksum, payload) VALUES (?, ?, ?, ?, ?)")
+    .run(assertRunId(runId), String(scopeId), new Date().toISOString(), checksum, gzipSync(bytes, { level: 1 }));
+}
+
+function readRunContexts(database, runId) {
+  const result = Object.create(null);
+  for (const row of database.prepare("SELECT scope_id, checksum, payload FROM run_contexts WHERE run_id = ?").all(runId)) {
+    const bytes = gunzipSync(row.payload, { maxOutputLength: 16_000_000 });
+    if (createHash("sha256").update(bytes).digest("hex") !== row.checksum) throw new Error("RUN_CONTEXT_CORRUPT");
+    result[row.scope_id] = JSON.parse(bytes.toString("utf8"));
+  }
+  return result;
+}
+
 export async function saveRunCheckpoint(dataDirectory, runId, checkpoint) {
   const database = await getDatabase(dataDirectory);
   const previous = database.prepare("SELECT payload_json FROM run_checkpoints WHERE run_id = ?").get(assertRunId(runId));
@@ -450,7 +478,7 @@ export async function listRecoverableRuns(dataDirectory) {
     .prepare(
       `SELECT * FROM runs
        WHERE (status IN ('running', 'paused') OR
-         (status IN ('failed', 'interrupted', 'blocked') AND
+         (status IN ('failed', 'interrupted', 'blocked', 'partial', 'needs_input') AND
            (EXISTS (SELECT 1 FROM run_checkpoints WHERE run_checkpoints.run_id = runs.run_id) OR
             EXISTS (SELECT 1 FROM run_operations WHERE run_operations.run_id = runs.run_id))))
          AND recovered_at IS NULL AND resumed_by_run_id = ''
@@ -524,6 +552,7 @@ export async function getRunRecoveryContext(dataDirectory, runId) {
     }));
   return {
     checkpoint: checkpointRow ? { ...safeJsonParse(checkpointRow.payload_json, {}), savedAt: checkpointRow.updated_at } : null,
+    contexts: readRunContexts(database, safeRunId),
     operations,
     unresolvedOperations,
     runId: metadata.runId,

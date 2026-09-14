@@ -864,6 +864,7 @@ textarea::placeholder {
 }
 
 .task-workspace {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -1074,6 +1075,43 @@ textarea::placeholder {
   margin-bottom: 18px;
 }
 
+.anchor-restore-notice {
+  display: flex;
+  width: min(100%, 520px);
+  margin: 0 auto 16px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid rgba(94, 152, 178, 0.22);
+  border-radius: 12px;
+  color: #5b6b73;
+  background: rgba(255, 255, 255, 0.55);
+  gap: 10px;
+}
+
+.anchor-restore-notice strong {
+  display: block;
+  color: #2f4149;
+  font-size: 12.5px;
+  font-weight: 620;
+}
+
+.anchor-restore-notice span {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+:root[data-theme="dark"] .anchor-restore-notice {
+  border-color: rgba(82, 164, 202, 0.22);
+  color: #8a9aa3;
+  background: rgba(16, 22, 27, 0.55);
+}
+
+:root[data-theme="dark"] .anchor-restore-notice strong {
+  color: #d3dee4;
+}
+
 .message-bubble {
   max-width: 75%;
   padding: 10px 14px;
@@ -1193,11 +1231,13 @@ textarea::placeholder {
   background: #f0f1f2;
 }
 
-.model-control {
+.model-control,
+.builder-control {
   position: relative;
 }
 
-.model-trigger {
+.model-trigger,
+.builder-trigger {
   display: inline-flex;
   height: 30px;
   align-items: center;
@@ -1211,7 +1251,9 @@ textarea::placeholder {
 }
 
 .model-trigger:hover,
-.model-trigger.active {
+.model-trigger.active,
+.builder-trigger:hover,
+.builder-trigger.active {
   color: #303438;
   background: #f0f1f2;
 }
@@ -1253,7 +1295,8 @@ textarea::placeholder {
   text-align: center;
 }
 
-.model-menu {
+.model-menu,
+.builder-count-menu {
   position: absolute;
   z-index: 20;
   bottom: calc(100% + 10px);
@@ -1264,6 +1307,35 @@ textarea::placeholder {
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 15px 40px rgba(24, 29, 34, 0.16);
+}
+
+.builder-count-menu {
+  width: 228px;
+}
+
+.builder-count-note {
+  margin: 0 7px 6px;
+  color: #7a838a;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.builder-count-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #33383c;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.builder-count-option:hover,
+.builder-count-option.selected {
+  background: #f0f1f2;
 }
 
 .model-menu-heading {
@@ -2869,6 +2941,7 @@ body.panel-is-resizing * {
 .composer-attachments figure {
   width: 72px;
   height: 54px;
+  cursor: grab;
 }
 
 .composer-document-attachment {
@@ -2883,6 +2956,12 @@ body.panel-is-resizing * {
   color: #344148;
   background: rgba(237, 246, 249, 0.8);
   gap: 9px;
+  cursor: grab;
+}
+
+.composer-attachments figure:active,
+.composer-document-attachment:active {
+  cursor: grabbing;
 }
 
 .composer-attachments button {
@@ -2977,27 +3056,39 @@ body.panel-is-resizing * {
 .approval-card {
   margin: 0 0 22px;
   overflow: hidden;
-  border: 1px solid #d9dee2;
-  border-radius: 12px;
+  border: 1px solid rgba(48, 56, 62, 0.12);
+  border-left: 3px solid #8aa4b3;
+  border-radius: 10px;
   background: #fff;
-  box-shadow: 0 8px 24px rgba(29, 34, 39, 0.06);
+}
+
+.approval-card.is-host {
+  border-left-color: #3e7d99;
+}
+
+.approval-card.is-sandbox {
+  border-left-color: #5b93ab;
 }
 
 .approval-card-heading {
-  display: flex;
-  padding: 13px 14px 11px;
-  gap: 10px;
+  display: grid;
+  padding: 12px 14px 10px;
+  gap: 4px;
 }
 
-.approval-card-heading > span {
-  display: grid;
-  flex: 0 0 auto;
-  width: 31px;
-  height: 31px;
-  place-items: center;
-  border-radius: 8px;
-  color: #5a646c;
-  background: #edf0f2;
+.approval-kicker {
+  color: #7a858d;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.approval-card.is-host .approval-kicker {
+  color: #3e7d99;
+}
+
+.approval-card-heading > span:not(.approval-kicker) {
+  display: none;
 }
 
 .approval-card-heading > div {
@@ -3005,28 +3096,28 @@ body.panel-is-resizing * {
 }
 
 .approval-card-heading strong {
-  color: #363b3f;
-  font-size: 12.7px;
+  color: #2f353a;
+  font-size: 13.2px;
   font-weight: 650;
 }
 
 .approval-card-heading p {
-  margin: 4px 0 0;
-  color: #7f878d;
-  font-size: 10.5px;
+  margin: 2px 0 0;
+  color: #6e777e;
+  font-size: 11.4px;
   line-height: 1.45;
 }
 
 .approval-command {
   display: flex;
   margin: 0 14px;
-  padding: 10px 11px;
+  padding: 9px 11px;
   overflow: hidden;
   flex-direction: column;
-  border: 1px solid #e0e4e6;
+  border: 0;
   border-radius: 8px;
-  background: #f4f6f7;
-  gap: 6px;
+  background: #f3f6f8;
+  gap: 5px;
 }
 
 .approval-command code {
@@ -3034,53 +3125,59 @@ body.panel-is-resizing * {
   color: #2c3338;
   font-family:
     "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 11.6px;
-  white-space: pre;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .approval-command span {
-  color: #6f787e;
-  font-size: 9.4px;
+  color: #7a848b;
+  font-size: 10px;
 }
 
 .approval-warning {
   display: flex;
-  align-items: center;
-  padding: 9px 14px 10px;
-  color: #8b6d45;
-  gap: 6px;
-  font-size: 9.9px;
+  align-items: flex-start;
+  padding: 8px 14px 6px;
+  color: #5a7380;
+  gap: 7px;
+  font-size: 11.2px;
+  line-height: 1.45;
 }
 
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  padding: 10px 14px;
-  border-top: 1px solid #e8eaec;
-  background: #fafbfb;
+  padding: 10px 14px 12px;
+  border-top: 0;
+  background: transparent;
   gap: 8px;
 }
 
 .approval-actions button {
   display: inline-flex;
-  height: 31px;
+  height: 30px;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 13px;
   cursor: pointer;
-  border: 1px solid #d9dde0;
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: #4d555b;
-  background: #fff;
+  color: #556066;
+  background: #eef1f3;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .approval-actions button.approve {
-  border-color: #34383b;
+  border-color: transparent;
   color: #fff;
-  background: #34383b;
+  background: #3e7d99;
+}
+
+.approval-actions button.approve:hover:not(:disabled) {
+  background: #356c85;
 }
 
 .assistant-progress-journal {
@@ -4485,6 +4582,20 @@ body.panel-is-resizing * {
   background: #181e24;
 }
 
+:root[data-theme="dark"] .approval-kicker {
+  color: #8b98a1;
+}
+
+:root[data-theme="dark"] .approval-card.is-host .approval-kicker {
+  color: #8eb8cc;
+}
+
+:root[data-theme="dark"] .approval-actions button.approve {
+  border-color: transparent;
+  color: #fff;
+  background: #4a88a4;
+}
+
 :root[data-theme="dark"] .secondary-button:hover,
 :root[data-theme="dark"] .workspace-settings-button:hover,
 :root[data-theme="dark"] .review-files-button:hover,
@@ -4505,6 +4616,7 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .rename-task-modal,
 :root[data-theme="dark"] .task-more-menu,
 :root[data-theme="dark"] .model-menu,
+:root[data-theme="dark"] .builder-count-menu,
 :root[data-theme="dark"] .composer,
 :root[data-theme="dark"] .edited-files-card,
 :root[data-theme="dark"] .approval-card,
@@ -4555,7 +4667,6 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .model-choice-icon,
 :root[data-theme="dark"] .connection-note-icon,
 :root[data-theme="dark"] .edited-files-icon,
-:root[data-theme="dark"] .approval-card-heading > span,
 :root[data-theme="dark"] .office-artifact-icon {
   color: #a8b7c2;
   background: #252e36;
@@ -4609,6 +4720,8 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .composer-add:hover,
 :root[data-theme="dark"] .model-trigger:hover,
 :root[data-theme="dark"] .model-trigger.active,
+:root[data-theme="dark"] .builder-trigger:hover,
+:root[data-theme="dark"] .builder-trigger.active,
 :root[data-theme="dark"] .settings-link:hover {
   color: #e0e7ec;
   background: #252e36;
@@ -4616,6 +4729,19 @@ body.panel-is-resizing * {
 
 :root[data-theme="dark"] .task-more-menu button:disabled {
   color: #5e6870;
+}
+
+:root[data-theme="dark"] .builder-count-note {
+  color: #8b969e;
+}
+
+:root[data-theme="dark"] .builder-count-option {
+  color: #d5dde3;
+}
+
+:root[data-theme="dark"] .builder-count-option:hover,
+:root[data-theme="dark"] .builder-count-option.selected {
+  background: #252e36;
 }
 
 :root[data-theme="dark"] .thread-model-badge {
@@ -4665,6 +4791,7 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .model-trigger,
+:root[data-theme="dark"] .builder-trigger,
 :root[data-theme="dark"] .composer-add {
   color: #9aa5ad;
 }
@@ -5052,6 +5179,7 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .rename-task-modal,
 :root[data-theme="dark"] .task-more-menu,
 :root[data-theme="dark"] .model-menu,
+:root[data-theme="dark"] .builder-count-menu,
 :root[data-theme="dark"] .composer,
 :root[data-theme="dark"] .edited-files-card,
 :root[data-theme="dark"] .approval-card,
@@ -5087,6 +5215,8 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .composer-add:hover,
 :root[data-theme="dark"] .model-trigger:hover,
 :root[data-theme="dark"] .model-trigger.active,
+:root[data-theme="dark"] .builder-trigger:hover,
+:root[data-theme="dark"] .builder-trigger.active,
 :root[data-theme="dark"] .settings-link:hover {
   background: var(--aporia-fur-raised);
 }
@@ -5126,7 +5256,6 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .model-choice-icon,
 :root[data-theme="dark"] .connection-note-icon,
 :root[data-theme="dark"] .edited-files-icon,
-:root[data-theme="dark"] .approval-card-heading > span,
 :root[data-theme="dark"] .office-artifact-icon {
   color: #75b6dc;
   background: #30263a;
@@ -7550,6 +7679,67 @@ body.panel-is-resizing * {
   font-size: 9.5px;
   letter-spacing: 0.11em;
   text-transform: uppercase;
+}
+
+.application-about-update {
+  display: flex;
+  width: min(100%, 420px);
+  margin-top: 22px;
+  padding: 14px 16px;
+  flex-direction: column;
+  border: 1px solid rgba(94, 152, 178, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.42);
+  gap: 12px;
+  text-align: left;
+}
+
+.application-about-update strong {
+  color: #2c3c44;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.application-about-update p {
+  margin: 6px 0 0;
+  color: #6f818a;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.application-about-update [role="alert"] {
+  color: #a45b4a;
+}
+
+.application-about-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.application-about-update-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-update-toast {
+  bottom: 182px;
+  z-index: 93;
+}
+
+:root[data-theme="dark"] .application-about-update {
+  border-color: rgba(82, 164, 202, 0.22);
+  background: rgba(16, 22, 27, 0.55);
+}
+
+:root[data-theme="dark"] .application-about-update strong {
+  color: #d5e0e5;
+}
+
+:root[data-theme="dark"] .application-about-update p {
+  color: #83969f;
 }
 
 :root[data-theme="dark"] .titlebar-brand:hover {

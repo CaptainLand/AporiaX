@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, writeFile, rename, unlink, open, realpath, stat } from "node:fs/promises";
+import { dirname, join, resolve, relative, isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 
 const STORE_VERSION = 1;
 const MAX_FACTS = 320;
@@ -9,6 +10,46 @@ const MAX_FACT_CHARS = 1_600;
 const MAX_SUMMARY_CHARS = 1_200;
 const MAX_EVIDENCE_ITEMS = 12;
 const MAX_EVIDENCE_CHARS = 600;
+const MAX_CONTEXT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const writeQueues = new Map();
+
+// Reload under a shared writer lock; never overwrite another run's newer state.
+async function serializeStore(filePath, action, lockFile = true) {
+  const key = filePath || action;
+  const previous = writeQueues.get(key) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    if (!filePath || !lockFile) return action();
+    await mkdir(dirname(filePath), { recursive: true });
+    let lock;
+    const deadline = Date.now() + 5_000;
+    while (!lock) {
+      try { lock = await open(`${filePath}.lock`, "wx"); }
+      catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (Date.now() >= deadline) throw new Error("Understanding store is busy; retry after the other writer finishes.");
+        await new Promise((done) => setTimeout(done, 25));
+      }
+    }
+    try { return await action(); }
+    finally { await lock.close(); await unlink(`${filePath}.lock`); }
+  });
+  writeQueues.set(key, pending);
+  try { return await pending; }
+  finally { if (writeQueues.get(key) === pending) writeQueues.delete(key); }
+}
+
+async function evidenceFingerprint(workspaceRoot, reference) {
+  if (!workspaceRoot || !reference) return null;
+  try {
+    const root = await realpath(workspaceRoot);
+    const target = await realpath(resolve(root, reference));
+    const child = relative(root, target);
+    if (isAbsolute(child) || child === ".." || child.startsWith("../") || child.startsWith("..\\")) return null;
+    const info = await stat(target);
+    if (!info.isFile() || info.size > 5_000_000) return null;
+    return createHash("sha256").update(await readFile(target)).digest("hex");
+  } catch { return null; }
+}
 
 const CATEGORIES = new Set([
   "architecture",
@@ -125,6 +166,7 @@ function relevanceScore(fact, queryTokens) {
   for (const token of queryTokens) {
     if (factTokens.has(token)) overlap += token.length > 1 ? 2 : 1;
   }
+  if (!overlap) return 0;
   return overlap * 10 + (fact.confidence || 0) * 2 + Math.log2((fact.occurrences || 1) + 1);
 }
 
@@ -141,6 +183,10 @@ function normalizeLoadedData(parsed, workspaceRoot) {
     projectId: projectDigest(workspaceRoot || parsed?.workspace || "."),
     currentRevision: Number(parsed?.currentRevision) || 0,
     updatedAt: parsed?.updatedAt || null,
+    settings: {
+      useForContext: parsed?.settings?.useForContext === true,
+      autoCurate: parsed?.settings?.autoCurate === true,
+    },
     facts,
     revisions,
   };
@@ -153,6 +199,7 @@ function publicState(data) {
     projectId: data.projectId,
     currentRevision: data.currentRevision,
     updatedAt: data.updatedAt,
+    settings: { ...data.settings },
     facts: clone(data.facts),
     revisions: data.revisions
       .slice()
@@ -182,23 +229,29 @@ export async function createProjectUnderstandingStore({
       : null;
   let data = normalizeLoadedData(null, workspaceRoot || "");
 
-  if (filePath) {
+  const refresh = async () => {
+    if (!filePath) return;
     try {
       data = normalizeLoadedData(
         JSON.parse(await readFile(filePath, "utf8")),
         workspaceRoot,
       );
     } catch (error) {
-      if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) {
-        throw error;
-      }
+      if (error?.code !== "ENOENT") throw error;
     }
-  }
+  };
+  await refresh();
 
   const persist = async () => {
     if (!filePath) return;
     await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
+    const temporary = `${filePath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify(data, null, 2), "utf8");
+      await rename(temporary, filePath);
+    } finally {
+      await unlink(temporary).catch((error) => { if (error.code !== "ENOENT") throw error; });
+    }
   };
 
   const appendRevision = async ({
@@ -239,16 +292,46 @@ export async function createProjectUnderstandingStore({
     return data.revisions.at(-1);
   };
 
-  return {
+  const store = {
     path: filePath,
     snapshot() {
       return publicState(data);
+    },
+    refresh: () => serializeStore(filePath, refresh, false),
+    async setSettings(patch = {}) {
+      return serializeStore(filePath, async () => {
+        await refresh();
+        for (const key of ["useForContext", "autoCurate"]) {
+          if (typeof patch[key] === "boolean") data.settings[key] = patch[key];
+        }
+        await persist();
+        return publicState(data);
+      });
+    },
+    async contextFacts(query, limit = 8) {
+      await store.refresh();
+      if (!data.settings.useForContext || !String(query || "").trim()) return [];
+      const valid = [];
+      let chars = 0;
+      for (const fact of store.retrieve(query, 40)) {
+        const confirmed = Date.parse(fact.lastConfirmedAt || "");
+        if (!Number.isFinite(confirmed) || Date.now() - confirmed > MAX_CONTEXT_AGE_MS) continue;
+        const files = (fact.evidence || []).filter((item) => item.type === "file");
+        if (files.length && !(await Promise.all(files.map(async (item) =>
+          Boolean(item.fingerprint) && item.fingerprint === await evidenceFingerprint(workspaceRoot, item.reference)
+        ))).every(Boolean)) continue;
+        const size = JSON.stringify(fact).length;
+        if (chars + size > 8_000) continue;
+        valid.push(clone(fact)); chars += size;
+        if (valid.length >= Math.max(1, Math.min(8, limit))) break;
+      }
+      return valid;
     },
     retrieve(query, limit = 12) {
       const queryTokens = tokenize(query);
       return data.facts
         .map((fact) => ({ fact, score: relevanceScore(fact, queryTokens) }))
-        .filter((item) => !queryTokens.size || item.score > 2)
+        .filter((item) => queryTokens.size > 0 && item.score > 0)
         .sort((left, right) => right.score - left.score)
         .slice(0, Math.max(1, Math.min(40, limit)))
         .map((item) => clone(item.fact));
@@ -260,6 +343,8 @@ export async function createProjectUnderstandingStore({
       source = "agent-curator",
       changes = [],
     }) {
+      return serializeStore(filePath, async () => {
+      await refresh();
       const nextFacts = clone(data.facts);
       const applied = [];
       const now = new Date().toISOString();
@@ -277,6 +362,9 @@ export async function createProjectUnderstandingStore({
         }
 
         const normalized = normalizeFact(rawChange);
+        for (const evidence of normalized.evidence) {
+          if (evidence.type === "file") evidence.fingerprint = await evidenceFingerprint(workspaceRoot, evidence.reference);
+        }
         if (normalized.confidence < 0.55) continue;
         const requestedId = String(rawChange?.factId || "");
         const index = nextFacts.findIndex(
@@ -287,7 +375,7 @@ export async function createProjectUnderstandingStore({
         if (index >= 0) {
           const before = clone(nextFacts[index]);
           const evidence = [
-            ...(nextFacts[index].evidence || []),
+            ...(nextFacts[index].evidence || []).filter((old) => !normalized.evidence.some((item) => item.type === old.type && item.reference === old.reference)),
             ...normalized.evidence,
           ].filter(
             (item, itemIndex, all) =>
@@ -295,7 +383,7 @@ export async function createProjectUnderstandingStore({
                 (candidate) =>
                   candidate.type === item.type &&
                   candidate.reference === item.reference &&
-                  candidate.detail === item.detail,
+                  candidate.detail === item.detail && candidate.fingerprint === item.fingerprint,
               ) === itemIndex,
           ).slice(-MAX_EVIDENCE_ITEMS);
           nextFacts[index] = {
@@ -343,8 +431,11 @@ export async function createProjectUnderstandingStore({
         facts: nextFacts,
       });
       return { committed: true, revision: clone(revision), state: publicState(data) };
+      });
     },
     async revertTo(revisionId, { taskId = "", runId = "" } = {}) {
+      return serializeStore(filePath, async () => {
+      await refresh();
       const target = data.revisions.find(
         (revision) =>
           revision.id === revisionId || revision.number === Number(revisionId),
@@ -375,6 +466,8 @@ export async function createProjectUnderstandingStore({
         revertedFrom: target.id,
       });
       return { committed: true, revision: clone(revision), state: publicState(data) };
+      });
     },
   };
+  return store;
 }

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.0" src="https://img.shields.io/badge/source-v0.8.0-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.5" src="https://img.shields.io/badge/source-v0.8.5-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX 当前源码与 Windows 发行版本为 **`v0.8.0`**，仍处于 Preview 阶段。
-> 0.8.0 在对话右侧加入同屏工作台：文件、Browser 和进程日志由 Agent 决定何时打开。
+> AporiaX 当前源码与 Windows 发行版本为 **`v0.8.5`**，仍处于 Preview 阶段。
+> 0.8.5 在 Anchor 回退文件后，会把「那些修改已经不在了」写进后续模型上下文。
 > Aporia Account、Aporia Cloud、BYOK 与本地模型路径继续保持相互独立。
 
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
@@ -67,6 +67,23 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
     <td align="center"><strong>扩展</strong><br><sub>安装可审查的方法，而不是新权限</sub></td>
   </tr>
 </table>
+
+## 0.8.5 更新：回退后告知模型
+
+- Anchor 仍然只回退工作区文件，不删对话。
+- 回退成功后写入一条运行时说明：以当前文件为准，不要继续被回退的实现。这条说明不是新的用户任务。
+
+[查看完整 0.8.5 中英文更新记录](docs/releases/v0.8.5.md)
+
+## 0.8.4 更新：Browser 首屏、Understanding / MCP / Skill
+
+- 打开网页链接时原生 Browser 会立刻画出页面，不必再拖分割条。
+- 欢迎页结束后检查 GitHub 是否有新版本。安装版可在应用内下载并重启安装；便携版打开下载页。
+- Understanding 默认只查看；注入模型和自动整理要在设置里打开。过期或文件已变的知识不进上下文。
+- MCP 大结果分页读取；单个服务器失败不再打掉整次发现。明确选中的 Skill 不会被自动匹配上限丢掉。
+- 本包同时带上 0.8.1–0.8.3：终端中断与代码高亮、长任务 Builder、附件拖到工作台预览、Builder 数量可选。
+
+[查看完整 0.8.4 中英文更新记录](docs/releases/v0.8.4.md)
 
 ## 0.8.0 更新：同屏工作台
 
@@ -197,13 +214,13 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 
 ## 下载
 
-`main` 当前是 **v0.8.0 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
+`main` 当前是 **v0.8.5 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 所有历史版本与发行说明 |
-| [0.8.0 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Setup-0.8.0-x64.exe) | 推荐的 Windows x64 安装包 |
-| [0.8.0 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Portable-0.8.0-x64.exe) | 无需安装的 Windows x64 便携包 |
+| [0.8.5 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.5/AporiaX-Setup-0.8.5-x64.exe) | 推荐的 Windows x64 安装包 |
+| [0.8.5 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.5/AporiaX-Portable-0.8.5-x64.exe) | 无需安装的 Windows x64 便携包 |
 
 首次启动后：
 

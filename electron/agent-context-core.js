@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { isHumanMessage } from "./runtime/task-conversation.js";
+import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
 import { conversationTokenMaterial } from "./runtime/multimodal-budget.js";
 import {
   lstat,
@@ -236,8 +238,8 @@ export function buildStructuredContextCheckpoint(
 
   for (const message of messages || []) {
     const text = messageText(message).replace(/\s+/g, " ").trim();
-    if (message?.role === "user" && text) {
-      requirements.push(text.slice(0, 1_400));
+    if (isHumanMessage(message) && text) {
+      requirements.push(text);
     } else if (message?.role === "assistant") {
       if (text) decisions.push(text.slice(0, 1_200));
       for (const call of message.tool_calls || []) {
@@ -281,7 +283,8 @@ export function buildStructuredContextCheckpoint(
           steps: (plan.steps || []).slice(0, 20),
         }
       : null,
-    relevantMemory: (relevantMemory || []).slice(0, 10),
+    // Project recall is replaceable; never freeze it into a task checkpoint.
+    relevantMemory: [],
     compactedMessages: (messages || []).length,
     recoveryInstruction:
       "Treat this checkpoint as a durable index. Re-read files or rerun tools before relying on exact older output.",
@@ -329,7 +332,11 @@ export function compactConversationForRequest({
     if (message.role === "tool" && groups.at(-1)?.[0]?.tool_calls?.length) groups.at(-1).push(message);
     else groups.push([message]);
   }
-  const latestUser = groups.findLastIndex((group) => group[0].role === "user");
+  const latestUser = groups.findLastIndex((group) => isHumanMessage(group[0]));
+  const protectedGroup = (index) => index === latestUser ||
+    groups[index].some((message) => message.aporiaPinned && isHumanMessage(message)) ||
+    groups[index].some((message) => isAnchorRestoreNotice(message)) ||
+    (groups[index][0].role === "system" && groups[index][0].aporiaSource !== "retrieval");
   const retained = new Set(groups.map((_, index) => index));
   let omitted = [];
   let checkpoint;
@@ -352,13 +359,13 @@ export function compactConversationForRequest({
   let count = 0;
   for (let index = groups.length - 1; index >= 0; index--) {
     count += groups[index].length;
-    if (count > 16 && index !== latestUser && groups[index][0].role !== "system") retained.delete(index);
+    if (count > 16 && !protectedGroup(index)) retained.delete(index);
   }
   const updateOmitted = () => { omitted = groups.flatMap((group, index) => retained.has(index) ? [] : group); };
   updateOmitted();
   rebuild();
   while (estimateConversationTokens(candidate, accounting) > compactAtTokens) {
-    const removable = [...retained].find((index) => index !== latestUser && index !== groups.length - 1 && groups[index][0].role !== "system");
+    const removable = [...retained].find((index) => !protectedGroup(index) && index !== groups.length - 1);
     if (removable !== undefined) {
       retained.delete(removable);
       updateOmitted();

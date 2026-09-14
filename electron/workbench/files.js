@@ -1,17 +1,42 @@
-import { lstat, readFile, readdir } from "node:fs/promises";
-import { extname } from "node:path";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
+import { extname, isAbsolute, resolve } from "node:path";
 import JSZip from "jszip";
-import { getVerifiedWorkspaceRoot, verifyExistingTarget } from "../runtime/workspace-runtime.js";
+import { normalizeLocalPath } from "../link-target.js";
+import {
+  getVerifiedWorkspaceRoot,
+  verifyExistingTarget,
+} from "../runtime/workspace-runtime.js";
 
-export async function readWorkbenchFile(workspacePath, requestedPath) {
-  const root = await getVerifiedWorkspaceRoot(workspacePath);
-  const path = await verifyExistingTarget(root, requestedPath);
+async function resolveWorkbenchReadPath(workspacePath, requestedPath, authorizeExternal) {
+  try {
+    const root = await getVerifiedWorkspaceRoot(workspacePath);
+    return { path: await verifyExistingTarget(root, requestedPath), external: false };
+  } catch (error) {
+    const normalized = normalizeLocalPath(requestedPath);
+    if (authorizeExternal && normalized && isAbsolute(normalized)) {
+      const candidate = await realpath(resolve(normalized));
+      if (!(await lstat(candidate)).isFile()) throw new Error("只能预览普通文件。");
+      if (!await authorizeExternal(candidate)) throw new Error("已取消工作区外文件预览。");
+      if (await realpath(resolve(normalized)) !== candidate) throw new Error("文件位置已变化，请重新授权。");
+      return { path: candidate, external: true };
+    }
+    throw error;
+  }
+}
+
+export async function readWorkbenchFile(workspacePath, requestedPath, { authorizeExternal } = {}) {
+  const { path, external } = await resolveWorkbenchReadPath(workspacePath, requestedPath, authorizeExternal);
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error("预览仅支持不超过 16 MB 的普通文件。");
   const extension = extname(path).slice(1).toLowerCase();
   const mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" }[extension];
-  if (!mime && extension !== "docx") return { kind: "text" };
+  if (!mime && extension !== "docx" && !external) return { kind: "text" };
   const buffer = await readFile(path);
+  if (!mime && extension !== "docx") {
+    const binary = buffer.includes(0);
+    return { kind: binary ? "binary" : "text", binary, readOnly: true,
+      truncated: buffer.length > 200000, content: binary ? "" : buffer.toString("utf8").slice(0, 200000), path: requestedPath };
+  }
   if (extension === "docx") {
     const zip = await JSZip.loadAsync(buffer);
     const files = Object.values(zip.files);

@@ -1,6 +1,7 @@
 export * from "./agent-context-core.js";
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import {
   loadProjectInstructionContext as loadProjectInstructionContextCore,
   mergeTokenUsage as mergeTokenUsageCore,
@@ -99,30 +100,11 @@ function messageText(message) {
     .join("\n");
 }
 
-function leadingSystemCount(conversation) {
-  let count = 0;
-  while (conversation[count]?.role === "system") count += 1;
-  return count;
-}
-
 function isRelevantContextMessage(message) {
   return (
     message?.role === "system" &&
     String(message?.content || "").startsWith(RELEVANT_CONTEXT_PREFIX)
   );
-}
-
-function parseRelevantContextMessage(message) {
-  const content = String(message?.content || "");
-  if (!isRelevantContextMessage(message)) return [];
-  try {
-    const parsed = JSON.parse(content.slice(RELEVANT_CONTEXT_PREFIX.length).trim());
-    return Array.isArray(parsed)
-      ? parsed.map(({ kind, value }) => ({ kind, value }))
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 function removeRelevantContextMessages(conversation) {
@@ -137,46 +119,50 @@ export function upsertRelevantContextMessage(
   conversation,
   { checkpoints = [], memoryFacts = [], plan = null, refresh = false } = {},
 ) {
-  const existingIndex = conversation.findIndex(isRelevantContextMessage);
+  // Old saved runs may contain project recall copied into a checkpoint. Keep
+  // task evidence and decisions, but reload optional knowledge from its store.
+  const checkpointPrefix = "AporiaX durable context checkpoint:\n";
+  for (const message of conversation) {
+    if (message?.role !== "system" || typeof message.content !== "string" || !message.content.startsWith(checkpointPrefix)) continue;
+    try {
+      const checkpoint = JSON.parse(message.content.slice(checkpointPrefix.length));
+      if (checkpoint.relevantMemory?.length) {
+        checkpoint.relevantMemory = [];
+        message.content = checkpointPrefix + JSON.stringify(checkpoint);
+      }
+    } catch { /* Preserve malformed legacy evidence; recovery reports its integrity separately. */ }
+  }
   const state = relevantContextState.get(conversation);
-
-  // DeepSeek KV cache reuse is prefix-sensitive. Freeze this injected prefix
-  // for the lifetime of the conversation. Compaction already writes its own
-  // checkpoint into history, so refreshing this earlier system message after
-  // compaction would cause a second, avoidable cache-prefix reset.
-  if (!refresh) {
-    if (state) return state.items;
-    if (existingIndex >= 0) {
-      const items = parseRelevantContextMessage(conversation[existingIndex]);
-      relevantContextState.set(conversation, { items });
-      return items;
-    }
-  }
-
-  if (existingIndex >= 0) {
-    removeRelevantContextMessages(conversation);
-  }
-
+  const history = conversation.filter((message) => message?.role !== "system" && !isRelevantContextMessage(message));
   const query = [
-    ...conversation.slice(-8).map(messageText),
-    ...(plan?.steps || []).map((step) => `${step.title} ${step.detail || ""}`),
+    ...history.slice(-8).map((message) => messageText(message).slice(-2400)),
+    ...(plan?.steps || []).filter((step) => step.status === "in_progress").map((step) => `${step.title} ${step.detail || ""}`),
   ]
     .filter(Boolean)
     .join("\n")
     .slice(-24_000);
-  const relevant = retrieveRelevantContext({
+  const key = createHash("sha256").update(JSON.stringify({ query, checkpoints, memoryFacts })).digest("hex");
+  const relevant = !refresh && state?.key === key ? state.items : retrieveRelevantContext({
     query,
     checkpoints,
     memoryFacts,
   }).map(({ kind, value }) => ({ kind, value }));
-
+  // Dynamic retrieval belongs near the tail, never before the stable system
+  // prefix. Remove obsolete context, including the old prefix-style injection.
+  const existing = conversation.find(isRelevantContextMessage);
+  if (existing && existing.aporiaSource === "retrieval" &&
+      existing.content === `${RELEVANT_CONTEXT_PREFIX}\n${JSON.stringify(relevant)}`) {
+    relevantContextState.set(conversation, { key, items: relevant });
+    return relevant;
+  }
+  removeRelevantContextMessages(conversation);
   if (relevant.length) {
-    const insertAt = leadingSystemCount(conversation);
-    conversation.splice(insertAt, 0, {
+    conversation.push({
       role: "system",
+      aporiaSource: "retrieval",
       content: `${RELEVANT_CONTEXT_PREFIX}\n${JSON.stringify(relevant)}`,
     });
   }
-  relevantContextState.set(conversation, { items: relevant });
+  relevantContextState.set(conversation, { key, items: relevant });
   return relevant;
 }

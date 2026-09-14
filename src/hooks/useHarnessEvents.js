@@ -121,6 +121,11 @@ export function useHarnessEvents({
         return;
       }
 
+      if (["mcp.server.failed", "mcp.server.connected", "mcp.config.warning"].includes(event.type)) {
+        reduceTaskEvent();
+        return;
+      }
+
       if (event.type === "model.vision-disabled") {
         onNativeVisionDisabled?.(event);
         return;

@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.8.0",
+  "version": "0.8.5",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -44,7 +44,7 @@
     "test:process-ui": "node tests/agent-process-mentions-smoke.mjs",
     "test:task-store": "node tests/task-store-smoke.mjs && node tests/task-history-store-smoke.mjs",
     "test:renderer-architecture": "node tests/native-renderer-architecture-smoke.mjs",
-    "test:renderer-modules": "node tests/renderer-modules-smoke.mjs",
+    "test:renderer-modules": "node tests/renderer-modules-smoke.mjs && node tests/composer-attachment-drag-smoke.mjs",
     "test:harness-events-ui": "node tests/harness-event-hook-smoke.mjs",
     "test:provider-stream": "node tests/provider-stream-smoke.mjs",
     "test:cloud-model": "node tests/aporia-cloud-model-runtime-smoke.mjs",
@@ -80,22 +80,25 @@
     "test:v06-architecture": "node tests/v06-architecture-freeze-smoke.mjs",
     "test:v061-capabilities": "node tests/v061-capabilities-smoke.mjs",
     "test:account-ui": "node tests/local-account-ui-smoke.mjs",
+    "test:app-update": "node tests/app-update-smoke.mjs",
     "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs && node tests/gpu-guard-smoke.mjs",
     "test:welcome-gem": "node tests/welcome-gem-browser.mjs",
     "test:run-retry": "node tests/run-retry-core-smoke.mjs",
     "test:github-workflow": "node tests/github-workflow-smoke.mjs",
     "test:lsp-installer": "node tests/lsp-installer-smoke.mjs",
-    "test:workbench-state": "node tests/workbench-state-smoke.mjs && node tests/workbench-present-smoke.mjs"
+    "test:workbench-state": "node tests/workbench-state-smoke.mjs && node tests/workbench-present-smoke.mjs && node tests/composer-workbench-browser.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@paper-design/shaders": "^0.0.80",
     "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-web-links": "0.12.0",
     "@xterm/xterm": "6.0.0",
     "diff": "^9.0.0",
     "docx": "^9.7.1",
     "docx-preview": "0.4.0",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "highlight.js": "11.12.0",
     "jszip": "^3.10.1",
@@ -170,6 +173,11 @@
     },
     "portable": {
       "artifactName": "AporiaX-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "CaptainLand",
+      "repo": "AporiaX"
     }
   },
   "engines": {

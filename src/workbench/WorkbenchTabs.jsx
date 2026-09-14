@@ -4,6 +4,7 @@ import {
   GitCompare,
   Globe,
   Plus,
+  PanelRightClose,
   TerminalSquare,
   X,
 } from "lucide-react";
@@ -144,7 +145,7 @@ export function WorkbenchTabs({
         title={tr("收起侧栏", "Collapse sidebar")}
         onClick={onCollapse}
       >
-        <X size={14} />
+        <PanelRightClose size={14} />
       </button>
     </div>
   );

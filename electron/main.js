@@ -764,6 +764,12 @@ ipcMain.handle("understanding:revert", async (event, request) => {
   });
 });
 
+ipcMain.handle("understanding:settings", async (event, request) => {
+  assertTrustedSender(event);
+  const store = await openProjectUnderstanding(request?.workspacePath);
+  return store.setSettings(request?.settings);
+});
+
 ipcMain.handle("attachments:parse", async (event, request) => {
   assertTrustedSender(event);
   const parsed = await parseAttachment(request);

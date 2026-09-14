@@ -4,6 +4,7 @@ export const TAB_KINDS = [
   "workspace",
   "understanding",
   "file",
+  "image",
   "browser",
   "terminal",
   "process",
@@ -61,10 +62,15 @@ function normalizeTab(tab) {
     title: String(tab.title || tab.kind).slice(0, 160),
   };
   if (tab.kind === "file") {
-    next.path = canonicalPath(tab.path).slice(0, 1000);
+    next.path = String(tab.path || "").replaceAll("\\", "/").slice(0, 1000);
     next.line = Math.max(1, Number(tab.line) || 1);
     next.revision = Math.max(0, Number(tab.revision) || 0);
     if (!next.path) return null;
+  }
+  if (tab.kind === "image") {
+    const src = String(tab.src || "");
+    if (!/^(data:image\/(?:png|jpeg|webp|gif);base64,|aporiax-blob:\/\/[a-f0-9]{64}$|https?:\/\/)/i.test(src) || src.length > 24000000) return null;
+    next.src = src;
   }
   return next;
 }
@@ -108,7 +114,8 @@ export function loadLayout(key) {
 export function persistableLayout(layout) {
   const next = normalizeLayout(layout);
   return {
-    tabs: next.tabs,
+    // Inline attachments can be large; their bytes already live in task history.
+    tabs: next.tabs.filter((tab) => tab.kind !== "image" || !tab.src.startsWith("data:")),
     active: next.active,
     open: next.open,
     dock: "right",

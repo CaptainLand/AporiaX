@@ -6,6 +6,7 @@ import { registerBlobScheme } from "./blob-protocol.js";
 registerBlobScheme();
 import "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
+import { installAppUpdate } from "./app-update.js";
 import { showApprovalToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
@@ -51,6 +52,9 @@ import {
 } from "./extension-library.js";
 
 const desktopBackground = installDesktopBackground();
+installAppUpdate({
+  getActiveRunCount: () => desktopBackground.snapshot().activeRuns,
+});
 const activeRunMetadata = new Map();
 let kernel = null;
 
@@ -103,7 +107,7 @@ function seedSkillOriginalContent(request = {}) {
   const nextMessages = [...messages];
   nextMessages[userIndex] = {
     ...messages[userIndex],
-    skillOriginalContent: String(messages[userIndex]?.content || ""),
+    skillOriginalContent: String(messages[userIndex]?.skillOriginalContent ?? messages[userIndex]?.content ?? ""),
   };
   return { ...request, messages: nextMessages };
 }

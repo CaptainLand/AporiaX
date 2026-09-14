@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { acceptLayoutGeneration } from "../electron/workbench/layout-token.js";
 import {
   clampWorkbenchWidth,
   closeTab,
@@ -13,6 +14,11 @@ import {
   sameWorkspace,
   scopeKey,
 } from "../src/workbench/state.js";
+
+assert.deepEqual(acceptLayoutGeneration(2, 1), { apply: true, accepted: 2 });
+assert.deepEqual(acceptLayoutGeneration(1, 4), { apply: false, accepted: 4 });
+assert.equal(acceptLayoutGeneration(undefined, 3).apply, true);
+assert.equal(acceptLayoutGeneration("8", 8).apply, true);
 
 const empty = normalizeLayout();
 assert.equal(empty.dock, "right");

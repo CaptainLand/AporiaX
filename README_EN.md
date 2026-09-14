@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.0" src="https://img.shields.io/badge/source-v0.8.0-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.8.5" src="https://img.shields.io/badge/source-v0.8.5-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.8.0`**. The project remains in Preview.
-> 0.8.0 adds a same-screen workbench: files, Browser, and process logs open when the Agent decides the user should look.
+> The current AporiaX source and Windows release version is **`v0.8.5`**. The project remains in Preview.
+> 0.8.5 tells later model runs that Anchor restore rewound workspace files, so they must not continue the restored implementation.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -76,6 +76,23 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
+
+## What's new in 0.8.5: tell the model after Anchor restore
+
+- Anchor still restores workspace files only; the conversation stays as an audit trail.
+- A successful restore adds a harness notice so later runs treat current files as truth and do not continue the restored work unless the user asks to redo it.
+
+[Read the complete bilingual 0.8.5 notes](docs/releases/v0.8.5.md)
+
+## What's new in 0.8.4: Browser first paint, Understanding / MCP / Skills
+
+- Opening a web link paints the native Browser immediately; dragging the splitter is no longer required.
+- After welcome, the app checks GitHub Releases. Installed builds can download in-app and restart to install when idle. Portable builds open the download page.
+- Understanding is view-only by default. Model injection and auto-curation are explicit settings. Stale or changed file evidence stays out of context.
+- MCP pages large results and isolates server failures. Explicit Skills are never dropped by the auto-match cap.
+- This package also includes 0.8.1–0.8.3: terminal interrupt and syntax-colored previews, long-task Builder, composer-to-workbench drag, and selectable Builder count.
+
+[Read the complete bilingual 0.8.4 notes](docs/releases/v0.8.4.md)
 
 ## What's new in 0.8.0: same-screen workbench
 
@@ -206,13 +223,13 @@ Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet
 
 ## Download
 
-`main` is now the **v0.8.0 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.8.5 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.8.0 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Setup-0.8.0-x64.exe) | Recommended Windows x64 installer |
-| [0.8.0 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.0/AporiaX-Portable-0.8.0-x64.exe) | No-install Windows x64 package |
+| [0.8.5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.5/AporiaX-Setup-0.8.5-x64.exe) | Recommended Windows x64 installer |
+| [0.8.5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.8.5/AporiaX-Portable-0.8.5-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 

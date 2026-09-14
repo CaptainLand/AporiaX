@@ -104,7 +104,8 @@ export class WorkbenchBrowserSession {
     });
     // Chromium needs a committed frame before debugger/Emulation commands.
     // Attaching on a newly constructed WebContentsView can crash GPU/renderer.
-    this.metrics = { width: 0, height: 0 };
+    // Agent tools can run before the sidebar is laid out; never inspect at 1×1.
+    this.metrics = { width: 1024, height: 768 };
     this.ready = this.wc.loadURL("about:blank").then(async () => {
       if (!this.ensureDebugger()) return;
       await this.wc.debugger.sendCommand("Network.enable").catch((e) => this.note("error", e.message));
@@ -245,8 +246,26 @@ export class WorkbenchBrowserSession {
     return this.state();
   }
   async close() {
-    this.closed = true; this.status = "closed";
-    if (!this.wc.isDestroyed()) this.wc.close({ waitForBeforeUnload: false });
-    this.changed(); return { closed: true };
+    if (this.closed) return { closed: true };
+    if (this.closing) return this.closing;
+    this.closing = (async () => {
+      if (!this.wc.isDestroyed()) {
+        this.wc.setAudioMuted(true);
+        this.view.setVisible(false);
+        await new Promise((done, reject) => {
+          const finish = () => { clearTimeout(timer); done(); };
+          const timer = setTimeout(() => {
+            this.wc.removeListener("destroyed", finish);
+            reject(new Error("浏览器关闭超时，请重试。"));
+          }, 5000);
+          this.wc.once("destroyed", finish);
+          try { this.wc.close({ waitForBeforeUnload: false }); }
+          catch (error) { clearTimeout(timer); this.wc.removeListener("destroyed", finish); reject(error); }
+        });
+      }
+      this.closed = true; this.status = "closed";
+      this.changed(); return { closed: true };
+    })().catch((error) => { this.closing = null; throw error; });
+    return this.closing;
   }
 }

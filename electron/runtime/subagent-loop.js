@@ -11,11 +11,14 @@ import {
 import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js";
 import { ToolProgressGuard } from "./tool-progress-guard.js";
 import { dispatchNativeTool } from "./tool-dispatcher.js";
-import { saveRuntimeCheckpoint } from "./durable-run.js";
+import { saveRuntimeCheckpoint, saveRuntimeContext } from "./durable-run.js";
+import { taskRequest, providerMessages } from "./task-conversation.js";
+import { runIsolatedBuilder } from "./delegated-builder.js";
+import { withAgentBudgetAdmission } from "../harness/agent-budget.js";
 import {
   MAX_SUBAGENT_RESULT_CHARS,
   SUBAGENT_ROLE_CONFIG,
-  assertSubagentScope,
+  assertSubagentRealScope,
   compactSubagentEvidence,
   compactSubagentModelResult,
   createSubagentPermissionPolicy,
@@ -55,6 +58,8 @@ async function mapWithConcurrency(items, limit, worker) {
 }
 
 export async function runSubagentTask(options = {}) {
+  if (!options.__budgetAdmitted) return withAgentBudgetAdmission({ role: options.input?.role, signal: options.signal, systemOwned: options.systemOwned },
+    () => runSubagentTask({ ...options, __budgetAdmitted: true }));
   const broker = getDefaultAgentRuntimeBroker();
   if (broker && options.__kernelRouted !== true) {
     return broker.run({
@@ -66,6 +71,7 @@ export async function runSubagentTask(options = {}) {
       parentRunId: String(options.agentId || "").replace(/-sub-\d+$/, ""),
       emit: options.emit,
       signal: options.signal,
+      continuation: Boolean(options.session?.conversation),
       execute: ({ definition }) =>
         runSubagentTask({
           ...options,
@@ -75,6 +81,14 @@ export async function runSubagentTask(options = {}) {
     });
   }
 
+  const requestedModel = options.agentDefinition?.model;
+  if (requestedModel && requestedModel !== "inherit" && requestedModel !== options.modelId && !options.__modelResolved) {
+    if (typeof options.resolveModel !== "function") throw new Error(`SUBAGENT_MODEL_NOT_CONFIGURED: ${requestedModel}`);
+    const resolved = await options.resolveModel(requestedModel);
+    if (!resolved?.provider || !resolved?.modelId || !resolved?.modelConfig) throw new Error(`SUBAGENT_MODEL_NOT_CONFIGURED: ${requestedModel}`);
+    return runSubagentTask({ ...options, ...resolved, __modelResolved: true });
+  }
+  if (options.input?.role === "builder" && !options.__builderIsolated) return runIsolatedBuilder(options, runSubagentTask);
   const {
     agentId,
     input,
@@ -124,8 +138,9 @@ export async function runSubagentTask(options = {}) {
   const permissionPolicy = createSubagentPermissionPolicy(
     parentPermissionPolicy,
     input.role,
+    runtimeDefinition,
   );
-  const definitionTools = runtimeDefinition?.tools?.length
+  const definitionTools = Array.isArray(runtimeDefinition?.tools)
     ? new Set(runtimeDefinition.tools)
     : null;
   const enabledTools = toolRegistry
@@ -136,7 +151,8 @@ export async function runSubagentTask(options = {}) {
         (!definitionTools || definitionTools.has(definition.function.name)),
     );
   const instructionContext = await loadProjectInstructionContext(workspaceRoot);
-  const contextCheckpoints = [];
+  const session = options.session || {};
+  const contextCheckpoints = session.contextCheckpoints || [];
   const tokenAccounting = createTokenAccounting();
   tokenAccounting.providerOverheadTokens = estimateManagedConversationTokens([
     {
@@ -145,13 +161,13 @@ export async function runSubagentTask(options = {}) {
     },
   ]);
   let usageTotal = null;
-  const evidence = [];
-  const toolSteps = [];
+  const evidence = session.evidence || [];
+  const toolSteps = session.steps || [];
   const effectiveMaxRounds = Math.min(
     input.maxRounds,
     Math.max(2, Number(runtimeDefinition?.maxRounds || input.maxRounds)),
   );
-  const conversation = [
+  const conversation = session.conversation || [
     {
       role: "system",
       content: [
@@ -159,21 +175,30 @@ export async function runSubagentTask(options = {}) {
         runtimeDefinition?.description || roleConfig.description,
         runtimeDefinition?.systemPrompt || "",
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
+        ...(input.role === "builder" ? [`Modify only these write scopes: ${input.writeScopes.join(", ")}. Changes are provisional until the Harness merges them. Do not run commands, delegate, or publish. Report unverified checks to the parent.`] : []),
         "Work independently and return a concise evidence-backed report to the parent agent.",
         "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
         "Do not expose hidden reasoning. Report conclusions, evidence, commands, and uncertainty only.",
         instructionContext.root.content
           ? `Project instructions:\n${instructionContext.root.content}`
           : "",
-        memoryFacts?.length
-          ? `Relevant project memory:\n${JSON.stringify(memoryFacts.slice(0, 10))}`
-          : "",
       ]
         .filter(Boolean)
         .join("\n"),
     },
-    { role: "user", content: input.task },
+    taskRequest({ role: "user", content: input.task }),
   ];
+  // Migrate resumed workers from the old fixed-prefix memory injection.
+  if (conversation[0]?.role === "system" && typeof conversation[0].content === "string") {
+    conversation[0].content = conversation[0].content.replace(/\nRelevant project memory:\n[\s\S]*$/, "");
+  }
+  Object.assign(session, { conversation, contextCheckpoints, evidence, steps: toolSteps });
+  const persistSession = async (status = "running", result = null) => {
+    await options.snapshotProvisional?.();
+    await saveRuntimeContext(agentId, {
+      kind: "worker", workspaceRoot: options.ownerWorkspaceRoot || workspaceRoot, input, session, status, result,
+    });
+  };
   const contextWindowTokens = Math.max(
     32_000,
     Number(modelConfig.contextWindow || DEFAULT_CONTEXT_WINDOW_TOKENS),
@@ -189,15 +214,20 @@ export async function runSubagentTask(options = {}) {
     systemOwned,
     runtime: runtimeDefinition ? "kernel" : "compatibility",
   });
+  emit({ type: "subagent.configured", agentId, role: input.role, provider: provider.id, model: modelId,
+    permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: effectiveMaxRounds });
 
   const toolProgress = new ToolProgressGuard();
   try {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
+      if (session.pendingGuidance?.length) {
+        conversation.push(...session.pendingGuidance.splice(0).map((content) => taskRequest({ role: "user", content })));
+      }
       await saveRuntimeCheckpoint({ scopeId: agentId, role: input.role, task: input.task, workspaceRoot, status: "running", round, evidence: compactSubagentEvidence(evidence) });
       const relevant = upsertRelevantContextMessage(conversation, {
         checkpoints: contextCheckpoints,
-        memoryFacts,
+        memoryFacts: options.getMemoryFacts ? await options.getMemoryFacts() : memoryFacts,
       });
       compactManagedConversation({
         conversation,
@@ -208,13 +238,16 @@ export async function runSubagentTask(options = {}) {
         accounting: tokenAccounting,
         relevantMemory: relevant,
       });
+      await persistSession();
       const requestConversation = conversation;
       const { message, usage } = await provider.complete({
         signal,
-        onStreamEvent: () => undefined,
+        onStreamEvent: (event) => {
+          if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
+        },
         body: {
           model: modelId,
-          messages: requestConversation,
+          messages: providerMessages(requestConversation),
           ...(provider.supportsTools && enabledTools.length
             ? { tools: enabledTools, tool_choice: "auto" }
             : {}),
@@ -241,6 +274,11 @@ export async function runSubagentTask(options = {}) {
       usageTotal = mergeTokenUsage(usageTotal, usage);
       options.onUsage?.(usage);
       if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
+        if (typeof message.content !== "string" || !message.content.trim()) throw new Error("MODEL_EMPTY_RESPONSE: subagent returned no evidence or report.");
+        if (session.pendingGuidance?.length) {
+          conversation.push({ role: "assistant", content: message.content });
+          continue;
+        }
         const summary = String(message.content || "")
           .trim()
           .slice(0, MAX_SUBAGENT_RESULT_CHARS);
@@ -259,6 +297,8 @@ export async function runSubagentTask(options = {}) {
           rounds: round,
           instructionFiles: [...instructionContext.loadedFiles],
         };
+        conversation.push({ role: "assistant", content: message.content });
+        await persistSession("completed", result);
         await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
         emit({
           type: "subagent.completed",
@@ -277,8 +317,10 @@ export async function runSubagentTask(options = {}) {
       conversation.push({
         role: "assistant",
         content: message.content ?? null,
+        ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
         tool_calls: message.tool_calls,
       });
+      await persistSession();
       const parallelBatch = subagentToolsAreParallel(message.tool_calls);
       const executeCall = async (toolCall) => {
         const toolName = toolCall.function.name;
@@ -306,7 +348,7 @@ export async function runSubagentTask(options = {}) {
             throw new Error(`Tool is not enabled by Agent Registry for ${input.role}: ${toolName}`);
           }
           const parsedInput = parseToolArguments(toolCall);
-          assertSubagentScope(toolName, parsedInput, input.scope);
+          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
           const scoped = await resolveScopedInstructions(
             instructionContext,
             subagentToolPaths(toolName, parsedInput),
@@ -341,6 +383,7 @@ export async function runSubagentTask(options = {}) {
               workspaceRoot,
               sandboxExecutor,
               sandboxStatus,
+              durableScope: agentId,
             },
           });
           modelResult = compactSubagentModelResult(executed.modelResult);
@@ -372,6 +415,9 @@ export async function runSubagentTask(options = {}) {
           exitCode: item.exitCode,
           detail: item.error || item.preview,
         });
+        // Builder edits reach durable storage at each tool boundary, not only
+        // after its model eventually produces a final answer.
+        if (input.role === "builder") await persistSession();
         return { toolCall, modelResult };
       };
       const results = parallelBatch
@@ -395,6 +441,7 @@ export async function runSubagentTask(options = {}) {
           content: JSON.stringify(modelResult),
         });
       }
+      await persistSession();
     }
 
     const result = {
@@ -412,6 +459,7 @@ export async function runSubagentTask(options = {}) {
       instructionFiles: [...instructionContext.loadedFiles],
     };
     await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
+    await persistSession("budget_exhausted", result);
     emit({
       type: "subagent.completed",
       agentId,
@@ -426,6 +474,8 @@ export async function runSubagentTask(options = {}) {
     return result;
   } catch (error) {
     if (error?.name === "AbortError") {
+      await persistSession("interrupted");
+      emit({ type: "subagent.cancelled", agentId, role: input.role, systemOwned });
       // A cancelled optional worker can have completed billable rounds.
       error.usage = usageTotal;
       error.evidence = compactSubagentEvidence(evidence);
@@ -442,6 +492,7 @@ export async function runSubagentTask(options = {}) {
       usage: usageTotal,
     };
     await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
+    await persistSession("failed", result);
     emit({
       type: "subagent.failed",
       agentId,

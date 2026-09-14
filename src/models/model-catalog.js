@@ -23,6 +23,7 @@ export const DEFAULT_TASK_OPTIONS = {
   permission: "workspace-write",
   approvalMode: "full-auto",
   executionMode: "direct",
+  builderLimit: 2,
 };
 
 const MODEL_SOURCE_GROUPS = [

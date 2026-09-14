@@ -18,7 +18,7 @@ const translate = (zh) => zh;
 function Fixture() {
   const [tasks, setTasks] = useState([{ id: "t", workspacePath: "D:/Agent开发", messages: [
     { id: "u", role: "user", content: "Build it" },
-    { id: "a", role: "assistant", status: "running", content: "[便携版](D:/项目/app.exe) [代码](src/main.jsx:42) [网页](https://example.com) [缺失](D:/missing.txt)", steps: [], changes: [], route: [], progressUpdates: [] },
+    { id: "a", role: "assistant", status: "running", content: "[便携版](D:/项目/app.exe) [代码](src/main.jsx:42) [网页](https://example.com) [缺失](D:/missing.txt) http://localhost:8080/todo.html（仅本机可访问；8080", steps: [], changes: [], route: [], progressUpdates: [] },
   ] }]);
   const runsRef = useRef(new Map([["r", { taskId: "t", assistantId: "a" }]]));
   useHarnessEvents({ language: "zh-CN", tr: translate, runsRef, setTasks, setRunPaused: noop, setRunStatus: noop, setSandboxStatus: noop, setApproval: noop, normalizeWorkspacePath: (p) => p });

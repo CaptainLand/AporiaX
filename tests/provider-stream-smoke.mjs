@@ -96,7 +96,7 @@ try {
   );
   assert.equal(result.usage.total_tokens, 16);
   assert.deepEqual(
-    observed.map((event) => event.delta),
+    observed.filter((event) => event.type === "response.delta").map((event) => event.delta),
     ["Hello ", "world"],
   );
 

@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { renderAsync } from "docx-preview";
 import hljs from "highlight.js/lib/common";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { FileText, GitCompare, Globe, TerminalSquare } from "lucide-react";
 import { FileExplorerPanel } from "../agent-components.jsx";
 import { useI18n } from "../i18n";
 import { normalizeBrowserUrl } from "../../electron/browser-url.js";
 import "@xterm/xterm/css/xterm.css";
+import { highlightedRows } from "./code-preview.js";
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const LANG = {
@@ -91,16 +93,19 @@ export function WorkbenchContent({
     );
   }
   if (tab.kind === "file") {
-    return <FilePane tab={tab} task={task} workbench={workbench} onNotice={onNotice} />;
+    return <FilePane key={workbench.key + tab.id} tab={tab} task={task} workbench={workbench} onNotice={onNotice} />;
+  }
+  if (tab.kind === "image") {
+    return <ImagePane key={tab.id} src={tab.src} title={tab.title} />;
   }
   if (tab.kind === "browser") {
-    return <BrowserPane tab={tab} resource={resource} workbench={workbench} covered={covered} />;
+    return <BrowserPane key={workbench.key + tab.id} tab={tab} resource={resource} workbench={workbench} covered={covered} />;
   }
   if (tab.kind === "terminal") {
-    return <TerminalPane tab={tab} resource={resource} workbench={workbench} />;
+    return <TerminalPane key={workbench.key + tab.id} tab={tab} resource={resource} workbench={workbench} />;
   }
   if (tab.kind === "process") {
-    return <ProcessPane tab={tab} resource={resource} workbench={workbench} />;
+    return <ProcessPane key={workbench.key + tab.id} tab={tab} resource={resource} workbench={workbench} />;
   }
   return <div className="workbench-notice">{tr("未知内容类型。", "Unknown content type.")}</div>;
 }
@@ -121,6 +126,7 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState(null);
   useEffect(() => {
+    let cancelled = false;
     if (!query.trim()) {
       setHits(null);
       return undefined;
@@ -128,10 +134,10 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
     const timer = window.setTimeout(() => {
       workbench
         .request({ action: "search", query })
-        .then(setHits)
-        .catch((error) => onNotice(error.message));
+        .then((result) => { if (!cancelled) setHits(result); })
+        .catch((error) => { if (!cancelled) onNotice(error.message); });
     }, 180);
-    return () => window.clearTimeout(timer);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [query, workbench.key, task.id]);
   return (
     <div className="workbench-file">
@@ -176,12 +182,17 @@ function FilePane({ tab, task, workbench, onNotice }) {
   const { tr, language } = useI18n();
   const ext = extensionOf(tab.path);
   const [payload, setPayload] = useState(null);
+  const [failure, setFailure] = useState("");
+  const [reload, setReload] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const loadGeneration = useRef(0);
+  const editMirror = useRef(null);
+  const latestContent = useRef("");
   const [mode, setMode] = useState("read");
   const [content, setContent] = useState("");
+  latestContent.current = content;
   const [saved, setSaved] = useState("");
   const [query, setQuery] = useState("");
-  const [fit, setFit] = useState("contain");
-  const [zoom, setZoom] = useState(1);
   const dirty = mode === "edit" && content !== saved;
   const languageName =
     (LANG[ext] && hljs.getLanguage(LANG[ext]) && LANG[ext]) || "plaintext";
@@ -192,7 +203,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
     }).value;
     const lines = (content || "").split("\n");
     const needle = query.trim().toLowerCase();
-    return highlighted.split("\n").map((line, index) => {
+    return highlightedRows(highlighted).map((line, index) => {
       const plain = lines[index] || "";
       const mark =
         (needle && plain.toLowerCase().includes(needle)) || tab.line === index + 1
@@ -202,20 +213,18 @@ function FilePane({ tab, task, workbench, onNotice }) {
     }).join("");
   }, [content, languageName, query, tab.line]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const loadFile = async (approveExternal = false) => {
+    const generation = ++loadGeneration.current;
+    setFailure("");
+    setPayload(null);
       try {
-        if (IMAGE_EXT.has(ext) || ext === "docx") {
-          const file = await workbench.request({ action: "file", path: tab.path });
-          if (!cancelled) setPayload(file);
-          return;
-        }
-        const preview = await window.desktop.workspace.readPreview(
-          task.workspacePath,
-          tab.path,
-        );
-        if (cancelled) return;
+        const file = IMAGE_EXT.has(ext) || ext === "docx" || approveExternal
+          ? await workbench.request({ action: "file", path: tab.path, approveExternal })
+          : null;
+        if (generation !== loadGeneration.current) return;
+        if (file?.kind === "image" || file?.kind === "docx") { setPayload(file); return; }
+        const preview = file?.readOnly ? file : await window.desktop.workspace.readPreview(task.workspacePath, tab.path);
+        if (generation !== loadGeneration.current) return;
         setPayload({ kind: preview.binary ? "binary" : "text", ...preview });
         const next = preview.binary ? "" : preview.content || "";
         const draft = workbench.draft(tab.id);
@@ -224,24 +233,28 @@ function FilePane({ tab, task, workbench, onNotice }) {
         if (typeof draft === "string" && draft !== next) {
           workbench.dirty.current.add(tab.id);
           setMode("edit");
-        }
+        } else setMode("read");
       } catch (error) {
-        if (!cancelled) onNotice(error.message);
+        if (generation === loadGeneration.current) setFailure(error.message);
       }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [tab.id, tab.path, tab.revision, task.workspacePath]);
+  };
+  useEffect(() => {
+    void loadFile();
+    return () => { loadGeneration.current += 1; };
+  }, [tab.id, tab.path, tab.revision, task.workspacePath, reload]);
 
   useEffect(() => {
+    if (!payload) return;
     if (dirty) workbench.dirty.current.add(tab.id);
     else workbench.dirty.current.delete(tab.id);
     if (mode === "edit") workbench.saveDraft(tab.id, content);
-  }, [content, dirty, mode, tab.id]);
+  }, [content, dirty, mode, tab.id, payload]);
 
   const save = async () => {
+    if (saving || payload?.readOnly || payload?.truncated) return;
+    setSaving(true); setFailure("");
+    const submitted = content;
+    try {
     const result = await window.desktop.workspace.saveText({
       workspacePath: task.workspacePath,
       requestedPath: tab.path,
@@ -249,10 +262,14 @@ function FilePane({ tab, task, workbench, onNotice }) {
       expectedContent: saved,
     });
     setSaved(result.content);
-    setContent(result.content);
-    workbench.saveDraft(tab.id, null);
-    workbench.dirty.current.delete(tab.id);
+    if (latestContent.current === submitted) {
+      setContent(result.content);
+      workbench.saveDraft(tab.id, null);
+      workbench.dirty.current.delete(tab.id);
+    }
     onNotice(tr("已保存 {path}", "Saved {path}", { path: result.path }));
+    } catch (error) { setFailure(error.message); }
+    finally { setSaving(false); }
   };
 
   const openNative = () => {
@@ -261,39 +278,19 @@ function FilePane({ tab, task, workbench, onNotice }) {
       action: "open",
       workspacePath: task.workspacePath,
       language,
-    });
+    }).catch((error) => setFailure(error.message));
   };
 
   if (!payload) {
-    return <div className="workbench-notice">{tr("正在打开文件", "Opening file")}</div>;
+    return <div className="workbench-notice">
+      {failure ? <><p role="alert">{failure}</p>
+        <button className="workbench-toolbar-btn" onClick={() => setReload((n) => n + 1)}>{tr("重试", "Retry")}</button>
+        {/^[a-z]:[/\\]|^\//i.test(tab.path) && <button className="workbench-toolbar-btn" onClick={() => void loadFile(true)}>{tr("授权只读预览此文件", "Authorize read-only preview")}</button>}
+      </> : tr("正在打开文件", "Opening file")}
+    </div>;
   }
   if (payload.kind === "image") {
-    return (
-      <div className="workbench-file">
-        <div className="workbench-toolbar">
-          <button type="button" className="workbench-icon" onClick={() => setFit("contain")}>
-            {tr("适应", "Fit")}
-          </button>
-          <button type="button" className="workbench-icon" onClick={() => setFit("original")}>
-            {tr("原始", "Original")}
-          </button>
-          <button type="button" className="workbench-icon" onClick={() => setZoom((value) => Math.min(4, value + 0.25))}>
-            +
-          </button>
-          <button type="button" className="workbench-icon" onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}>
-            −
-          </button>
-          <span className="workbench-status">{Math.round((payload.size || 0) / 1024)} KB</span>
-        </div>
-        <div className="workbench-image" data-fit={fit}>
-          <img
-            alt={tab.title}
-            src={`data:${payload.mime};base64,${payload.data}`}
-            style={{ transform: `scale(${zoom})`, transformOrigin: "center center" }}
-          />
-        </div>
-      </div>
-    );
+    return <ImagePane src={`data:${payload.mime};base64,${payload.data}`} title={tab.title} />;
   }
   if (payload.kind === "docx") {
     return <DocxPane data={payload.data} onOpenNative={openNative} />;
@@ -308,6 +305,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
 
   return (
     <div className="workbench-file">
+      {failure && <div role="alert" className="workbench-error">{failure}</div>}
       <div className="workbench-toolbar">
         <span className="workbench-status">{tab.path}</span>
         <input
@@ -316,11 +314,11 @@ function FilePane({ tab, task, workbench, onNotice }) {
           placeholder={tr("搜索", "Search")}
         />
         {mode === "read" ? (
-          <button type="button" className="workbench-icon" onClick={() => setMode("edit")}>
+          <button type="button" className="workbench-toolbar-btn" disabled={payload.readOnly || payload.truncated} onClick={() => setMode("edit")}>
             {tr("编辑", "Edit")}
           </button>
         ) : (
-          <button type="button" className="workbench-icon" disabled={!dirty} onClick={() => void save()}>
+          <button type="button" className="workbench-toolbar-btn" disabled={!dirty || saving || payload.readOnly || payload.truncated} onClick={() => void save()}>
             {tr("保存", "Save")}
           </button>
         )}
@@ -330,18 +328,51 @@ function FilePane({ tab, task, workbench, onNotice }) {
           </span>
         ) : null}
       </div>
+      {(payload.readOnly || payload.truncated) && <div className="workbench-search-hint">{tr("只读预览；截断内容不能覆盖原文件。", "Read-only preview; truncated content cannot overwrite the file.")}</div>}
       {mode === "edit" ? (
+        <div className="workbench-code-editor">
+        <pre ref={editMirror} className="workbench-code editor-mirror" aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }} />
         <textarea
           className="workbench-editor"
+          aria-label={tr("代码编辑器", "Code editor")}
+          wrap="off"
           value={content}
+          onScroll={(event) => {
+            if (editMirror.current) { editMirror.current.scrollTop = event.target.scrollTop; editMirror.current.scrollLeft = event.target.scrollLeft; }
+          }}
           onChange={(event) => setContent(event.target.value)}
+          onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "s") { event.preventDefault(); void save(); } }}
           spellCheck={false}
         />
+        </div>
       ) : (
         <pre className="workbench-code" dangerouslySetInnerHTML={{ __html: html }} />
       )}
     </div>
   );
+}
+
+function ImagePane({ src, title }) {
+  const { tr } = useI18n();
+  const [zoom, setZoom] = useState(1);
+  const [fit, setFit] = useState(true);
+  const [size, setSize] = useState(null);
+  const [failed, setFailed] = useState(false);
+  return <div className="workbench-file">
+    <div className="workbench-toolbar">
+      <button className="workbench-toolbar-btn" onClick={() => { setFit(true); setZoom(1); }}>{tr("适应", "Fit")}</button>
+      <button className="workbench-toolbar-btn" onClick={() => { setFit(false); setZoom(1); }}>{tr("原始", "Original")}</button>
+      <button className="workbench-icon" aria-label={tr("缩小", "Zoom out")} onClick={() => { setFit(false); setZoom((z) => Math.max(0.25, z - 0.25)); }}>−</button>
+      <button className="workbench-icon" aria-label={tr("放大", "Zoom in")} onClick={() => { setFit(false); setZoom((z) => Math.min(4, z + 0.25)); }}>+</button>
+      <span className="workbench-status">{fit ? tr("适应窗口", "Fit") : Math.round(zoom * 100) + "%"}{size ? ` · ${size.width} × ${size.height}` : ""}</span>
+    </div>
+    {failed ? <div role="alert" className="workbench-error">{tr("图片已失效或无法读取，请重新添加附件。", "Image unavailable. Please attach it again.")}</div> :
+      <div className="workbench-image" data-fit={fit ? "contain" : "original"}>
+        <img src={src} alt={title} onError={() => setFailed(true)}
+          onLoad={(event) => setSize({ width: event.target.naturalWidth, height: event.target.naturalHeight })}
+          style={!fit && size ? { width: size.width * zoom, maxWidth: "none", maxHeight: "none" } : undefined} />
+      </div>}
+  </div>;
 }
 
 function DocxPane({ data, onOpenNative }) {
@@ -393,7 +424,7 @@ function DocxPane({ data, onOpenNative }) {
 const TERMINAL_THEME = {
   background: "#141217",
   foreground: "#f6f1fa",
-  cursor: "#f6f1fa",
+  cursor: "#ffffff",
   cursorAccent: "#141217",
   selectionBackground: "#6ba8d8",
   selectionForeground: "#141217",
@@ -440,7 +471,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
   useEffect(() => {
     setUrl(displayBrowserUrl(resource?.url));
   }, [resource?.url]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!resource) {
       void workbench.hideBrowser();
       return undefined;
@@ -449,21 +480,38 @@ function BrowserPane({ tab, resource, workbench, covered }) {
     if (!node) return undefined;
     let frame = 0;
     let cancelled = false;
-    const send = () => {
+    const send = (attempt = 0) => {
       if (cancelled) return;
       const box = node.getBoundingClientRect();
+      if (covered) {
+        void workbench.hideBrowser();
+        return;
+      }
+      if (box.width <= 8 || box.height <= 8) {
+        if (attempt < 8) {
+          window.cancelAnimationFrame(frame);
+          frame = window.requestAnimationFrame(() => send(attempt + 1));
+        }
+        return;
+      }
       void workbench.layoutBrowser(
         tab.id,
         { x: box.x, y: box.y, width: box.width, height: box.height },
-        !covered && box.width > 8 && box.height > 8,
-      );
+        true,
+      ).then((result) => {
+        if (cancelled || result?.missing) return;
+        if (result === false && attempt < 8) {
+          window.cancelAnimationFrame(frame);
+          frame = window.requestAnimationFrame(() => send(attempt + 1));
+        }
+      });
     };
     const observe = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(send);
+      frame = window.requestAnimationFrame(() => send(0));
     });
     observe.observe(node);
-    frame = window.requestAnimationFrame(() => window.requestAnimationFrame(send));
+    send();
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frame);
@@ -474,18 +522,24 @@ function BrowserPane({ tab, resource, workbench, covered }) {
 
   useEffect(() => {
     if (!consoleOpen || !resource) return undefined;
+    let disposed = false, reading = false;
     const pull = async () => {
+      if (disposed || reading) return;
+      reading = true;
+      try {
       const result = await workbench.request({ action: "console", id: tab.id });
-      if (result?.missing) return;
+      if (disposed || result?.missing) return;
       const network = (result.network || []).map((item) => ({
         type: "network",
         text: `${item.status} ${item.url}`,
       }));
       setLogs([...(result.entries || []), ...network].slice(-120));
+      } catch (error) { if (!disposed) workbench.setError(error.message); }
+      finally { reading = false; }
     };
-    void pull().catch(() => {});
-    const timer = window.setInterval(() => void pull().catch(() => {}), 700);
-    return () => window.clearInterval(timer);
+    void pull();
+    const timer = window.setInterval(() => void pull(), 700);
+    return () => { disposed = true; window.clearInterval(timer); };
   }, [consoleOpen, tab.id, workbench.key]);
 
   const go = async (event) => {
@@ -524,7 +578,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           className="workbench-icon"
           disabled={busy}
           title={tr("后退", "Back")}
-          onClick={() => workbench.request({ action: "history", id: tab.id, direction: "back" })}
+          onClick={() => workbench.request({ action: "history", id: tab.id, direction: "back" }).catch((error) => workbench.setError(error.message))}
         >
           ←
         </button>
@@ -533,7 +587,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           className="workbench-icon"
           disabled={busy}
           title={tr("前进", "Forward")}
-          onClick={() => workbench.request({ action: "history", id: tab.id, direction: "forward" })}
+          onClick={() => workbench.request({ action: "history", id: tab.id, direction: "forward" }).catch((error) => workbench.setError(error.message))}
         >
           →
         </button>
@@ -542,7 +596,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           className="workbench-icon"
           disabled={busy}
           title={tr("刷新", "Reload")}
-          onClick={() => workbench.request({ action: "history", id: tab.id, direction: "reload" })}
+          onClick={() => workbench.request({ action: "history", id: tab.id, direction: "reload" }).catch((error) => workbench.setError(error.message))}
         >
           ↻
         </button>
@@ -575,7 +629,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           <button
             type="button"
             className="workbench-toolbar-btn"
-            onClick={() => workbench.request({ action: "takeover", id: tab.id })}
+            onClick={() => workbench.request({ action: "takeover", id: tab.id }).catch((error) => workbench.setError(error.message))}
           >
             {tr("接管", "Take over")}
           </button>
@@ -583,7 +637,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           <button
             type="button"
             className="workbench-toolbar-btn"
-            onClick={() => workbench.request({ action: "release", id: tab.id })}
+            onClick={() => workbench.request({ action: "release", id: tab.id }).catch((error) => workbench.setError(error.message))}
           >
             {tr("交还", "Return")}
           </button>
@@ -636,89 +690,104 @@ function TerminalPane({ tab, resource, workbench }) {
   const { tr } = useI18n();
   const host = useRef(null);
   const termRef = useRef(null);
-  const cursor = useRef(0);
   const resourceRef = useRef(resource);
+  const workbenchRef = useRef(workbench);
+  const [focused, setFocused] = useState(false);
+  const [failure, setFailure] = useState("");
+  const [session, setSession] = useState(resource);
   resourceRef.current = resource;
+  workbenchRef.current = workbench;
+  const invoke = async (data) => {
+    try {
+      const result = await workbenchRef.current.request(data);
+      if (result?.missing) throw new Error(tr("终端会话已结束，请新建终端。", "Session ended. Open a new terminal."));
+      setFailure("");
+      return result;
+    } catch (error) { setFailure(error.message); return null; }
+  };
   useEffect(() => {
     if (!resource || !host.current) return undefined;
+    let cursor = 0, disposed = false, reading = false, timer;
     const term = new Terminal({
-      convertEol: true,
-      cursorBlink: true,
-      fontFamily: 'ui-monospace, Consolas, "Microsoft YaHei", monospace',
-      fontSize: 13,
-      lineHeight: 1.35,
-      theme: TERMINAL_THEME,
-      minimumContrastRatio: 7,
+      convertEol: true, cursorBlink: true, cursorStyle: "block", cursorInactiveStyle: "outline",
+      fontFamily: 'Consolas, "SF Mono", "Microsoft YaHei", monospace',
+      fontSize: 13, lineHeight: 1.4, theme: TERMINAL_THEME, minimumContrastRatio: 7,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon((event, uri) => {
+      event?.preventDefault();
+      void workbenchRef.current.openHref(uri).catch((error) => { if (!disposed) setFailure(error.message); });
+    }));
     term.open(host.current);
     termRef.current = { term, fit };
+    // Do not steal focus from the conversation when an Agent presents a pane.
     term.onData((data) => {
       const current = resourceRef.current;
-      if (current?.owner === "user" && current?.status === "running") {
-        void workbench.request({ action: "write", id: tab.id, data });
-      }
+      if (current?.owner === "user" && current?.status === "running")
+        void invoke({ action: "write", id: tab.id, data });
     });
     const pull = async () => {
-      const chunk = await workbench.request({
-        action: "read",
-        id: tab.id,
-        cursor: cursor.current,
-      });
-      if (chunk?.missing) return;
-      if (chunk.cursorExpired) {
-        term.clear();
-        cursor.current = 0;
-      }
-      if (chunk.output) term.write(chunk.output);
-      cursor.current = chunk.cursor || cursor.current;
+      if (disposed || reading) return;
+      reading = true;
+      try {
+        const chunk = await workbench.request({ action: "read", id: tab.id, cursor });
+        if (disposed) return;
+        if (chunk?.missing) {
+          setSession({ status: "exited" });
+          setFailure(tr("终端会话已结束，请新建终端。", "Session ended. Open a new terminal."));
+          clearInterval(timer); return;
+        }
+        if (chunk.cursorExpired) term.reset();
+        if (chunk.output) term.write(chunk.output);
+        cursor = chunk.cursor ?? cursor;
+        setSession(chunk);
+        if (chunk.status === "exited") { term.options.disableStdin = true; clearInterval(timer); }
+      } catch (error) { if (!disposed) { setFailure(error.message); clearInterval(timer); } }
+      finally { reading = false; }
     };
-    const timer = window.setInterval(() => void pull().catch(() => {}), 120);
     const resize = () => {
-      if (host.current?.clientWidth > 8) {
+      if (!disposed && host.current?.clientWidth > 8 && host.current?.clientHeight > 8) {
         fit.fit();
-        void workbench.request({
-          action: "resize-terminal",
-          id: tab.id,
-          cols: term.cols,
-          rows: term.rows,
-        });
+        if (resourceRef.current?.status === "running")
+          void invoke({ action: "resize-terminal", id: tab.id, cols: term.cols, rows: term.rows });
       }
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host.current);
-    void pull().catch(() => {});
-    window.requestAnimationFrame(resize);
+    timer = window.setInterval(() => void pull(), 150);
+    void pull();
+    const frame = window.requestAnimationFrame(resize);
     return () => {
+      disposed = true;
+      window.cancelAnimationFrame(frame);
       window.clearInterval(timer);
       observer.disconnect();
+      termRef.current = null;
       term.dispose();
     };
   }, [tab.id, resource?.id]);
-  if (!resource) {
-    return <div className="workbench-file"><div className="workbench-host" /></div>;
-  }
-  return (
-    <div className="workbench-file">
-      <div className="workbench-toolbar">
-        <span className="workbench-status" title={resource?.cwd}>
-          {resource?.cwd || tr("交互终端", "Interactive terminal")}
-        </span>
-        <button type="button" className="workbench-toolbar-btn" onClick={() => termRef.current?.term.reset()}>
-          {tr("清屏", "Clear")}
-        </button>
-        <button
-          type="button"
-          className="workbench-toolbar-btn"
-          onClick={() => workbench.request({ action: "stop", id: tab.id })}
-        >
-          {tr("停止", "Stop")}
-        </button>
-      </div>
-      <div className="workbench-xterm" ref={host} />
+  const exited = session?.status === "exited" || resource?.status === "exited";
+  return <div className="workbench-file workbench-terminal-pane">
+    <div className="workbench-toolbar">
+      <span className="workbench-status" title={resource?.cwd}>{resource?.cwd || tr("交互终端", "Interactive terminal")}</span>
+      <button type="button" className="workbench-toolbar-btn" onClick={() => { termRef.current?.term.clear(); termRef.current?.term.focus(); }}>{tr("清屏", "Clear")}</button>
+      <button type="button" className="workbench-toolbar-btn" disabled={!resource || exited}
+        title={tr("发送 Ctrl+C，中断当前命令但保留 Shell", "Send Ctrl+C; keep the shell")}
+        onClick={async () => { await invoke({ action: "interrupt", id: tab.id }); termRef.current?.term.focus(); }}>{tr("中断", "Interrupt")}</button>
+      {exited && <button type="button" className="workbench-toolbar-btn" onClick={() => workbench.create("terminal")}>{tr("新建终端", "New terminal")}</button>}
     </div>
-  );
+    {failure && <div role="alert" className="workbench-error">{failure}</div>}
+    <div className="workbench-terminal-state" data-focused={focused && !exited}>
+      <span className="workbench-terminal-dot" />
+      {exited ? tr("Shell 已退出", "Shell exited") + (session?.exitCode != null ? " · " + session.exitCode : "")
+        : focused ? tr("键盘已连接 · Ctrl+C 中断命令", "Keyboard connected · Ctrl+C interrupts")
+        : tr("点击终端输入 · 关闭标签会结束会话", "Click to type · Closing the tab ends the session")}
+    </div>
+    <div className="workbench-xterm" ref={host}
+      onFocusCapture={() => setFocused(true)} onBlurCapture={() => setFocused(false)}
+      onMouseDown={() => termRef.current?.term.focus()} />
+  </div>;
 }
 
 function ProcessPane({ tab, resource, workbench }) {
@@ -727,23 +796,31 @@ function ProcessPane({ tab, resource, workbench }) {
   const cursor = useRef(0);
   useEffect(() => {
     if (!resource) return undefined;
+    let disposed = false, reading = false;
+    cursor.current = 0;
+    setOutput("");
     const pull = async () => {
+      if (disposed || reading) return;
+      reading = true;
+      try {
       const chunk = await workbench.request({
         action: "read",
         id: tab.id,
         cursor: cursor.current,
       });
-      if (chunk?.missing) return;
+      if (disposed || chunk?.missing) return;
       if (chunk.cursorExpired) {
         setOutput("");
         cursor.current = 0;
       }
       if (chunk.output) setOutput((current) => `${current}${chunk.output}`.slice(-200000));
       cursor.current = chunk.cursor || cursor.current;
+      } catch (error) { if (!disposed) workbench.setError(error.message); }
+      finally { reading = false; }
     };
-    const timer = window.setInterval(() => void pull().catch(() => {}), 250);
-    void pull().catch(() => {});
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => void pull(), 250);
+    void pull();
+    return () => { disposed = true; window.clearInterval(timer); };
   }, [tab.id, resource?.id]);
   if (!resource) {
     return <div className="workbench-file"><div className="workbench-host" /></div>;
@@ -757,7 +834,8 @@ function ProcessPane({ tab, resource, workbench }) {
         <button
           type="button"
           className="workbench-toolbar-btn"
-          onClick={() => workbench.request({ action: "stop", id: tab.id })}
+          disabled={resource.status === "exited"}
+          onClick={() => workbench.request({ action: "stop", id: tab.id }).catch((error) => workbench.setError(error.message))}
         >
           {tr("停止", "Stop")}
         </button>
@@ -765,7 +843,7 @@ function ProcessPane({ tab, resource, workbench }) {
           type="button"
           className="workbench-toolbar-btn"
           onClick={() =>
-            workbench.request({ action: "keep", id: tab.id, value: !resource?.keepAlive })
+            workbench.request({ action: "keep", id: tab.id, value: !resource?.keepAlive }).catch((error) => workbench.setError(error.message))
           }
         >
           {resource?.keepAlive ? tr("取消保留", "Do not keep") : tr("保留服务", "Keep alive")}
@@ -780,4 +858,3 @@ function ProcessPane({ tab, resource, workbench }) {
     </div>
   );
 }
-

@@ -1,4 +1,8 @@
 import { getToolPermission } from "../agent-core.js";
+import { posix, resolve, relative, isAbsolute, dirname, basename } from "node:path";
+import { realpath } from "node:fs/promises";
+import { normalizeBuilderScopes } from "../harness/scope-leases.js";
+import { parsePatch } from "diff";
 
 export const DEFAULT_SUBAGENT_ROUNDS = 8;
 export const MAX_SUBAGENT_ROUNDS = 20;
@@ -29,6 +33,10 @@ export function resolveSubagentReasoningPolicy({
 }
 
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
+  builder: Object.freeze({
+    description: "Implement the delegated task only within explicit write scopes in an isolated Git worktree. Return changes, verification evidence and remaining issues. Do not delegate again or publish.",
+    tools: new Set(["list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "apply_patch"]),
+  }),
   explore: Object.freeze({
     description:
       "Search and understand the codebase. Return concise findings with exact file and line evidence. Do not edit files.",
@@ -107,7 +115,7 @@ export function normalizeWorkspaceScope(values) {
 export function normalizeSubagentInput(input) {
   const role = String(input?.role || "").trim();
   if (!SUBAGENT_ROLE_CONFIG[role]) {
-    throw new Error("Subagent role must be explore, review, verify, or curator.");
+    throw new Error("Subagent role must be explore, review, verify, curator, or builder.");
   }
   const task = String(input?.task || "").trim();
   if (!task || task.length > MAX_SUBAGENT_TASK_CHARS) {
@@ -123,6 +131,7 @@ export function normalizeSubagentInput(input) {
     role,
     task,
     scope: normalizeWorkspaceScope(input?.scope),
+    ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
     background: Boolean(input?.background),
     requiredForCompletion: !(input?.background && input?.required_for_completion === false && ["explore", "curator"].includes(role)),
     maxRounds,
@@ -130,6 +139,11 @@ export function normalizeSubagentInput(input) {
 }
 
 export function subagentToolPaths(toolName, input = {}) {
+  if (toolName === "apply_patch" && typeof input.patch === "string") {
+    const patches = parsePatch(input.patch);
+    if (!patches.length) throw new Error("Patch contains no file changes.");
+    return patches.map((patch) => String(patch.newFileName === "/dev/null" ? patch.oldFileName : patch.newFileName).replace(/^[ab][\\/]/, ""));
+  }
   if (toolName === "run_command") return [input.cwd || "."];
   if (toolName === "git_diff") return input.path ? [input.path] : ["."];
   if (
@@ -138,6 +152,8 @@ export function subagentToolPaths(toolName, input = {}) {
       "read_file",
       "search_text",
       "inspect_office_file",
+      "write_file",
+      "apply_patch",
     ].includes(toolName)
   ) {
     return [input.path || "."];
@@ -146,17 +162,49 @@ export function subagentToolPaths(toolName, input = {}) {
 }
 
 export function pathIsInsideScope(path, scope = []) {
-  const normalized =
-    String(path || ".")
-      .replace(/\\/g, "/")
-      .replace(/^\.\//, "")
-      .replace(/\/$/, "") || ".";
+  const value = String(path || ".").replace(/\\/g, "/");
+  if (value.includes("\0") || value.startsWith("/") || /^[a-z]:/i.test(value)) return false;
+  const normalize = (item) => {
+    const result = posix.normalize(String(item || ".").replace(/\\/g, "/")).replace(/\/$/, "");
+    return process.platform === "win32" ? result.toLowerCase() : result;
+  };
+  const normalized = normalize(value);
+  if (normalized === ".." || normalized.startsWith("../")) return false;
   return scope.some(
-    (allowed) =>
+    (entry) => {
+      const allowed = normalize(entry);
+      return (
       allowed === "." ||
       normalized === allowed ||
-      normalized.startsWith(`${allowed}/`),
+      normalized.startsWith(`${allowed}/`));
+    },
   );
+}
+
+async function realCandidate(path) {
+  try { return await realpath(path); }
+  catch (error) {
+    if (error.code !== "ENOENT" || dirname(path) === path) throw error;
+    return resolve(await realCandidate(dirname(path)), basename(path));
+  }
+}
+
+export async function assertSubagentRealScope(toolName, input, scope, workspaceRoot) {
+  assertSubagentScope(toolName, input, scope);
+  if (!workspaceRoot) throw new Error("Subagent requires a verified workspace.");
+  const root = await realpath(workspaceRoot);
+  const inside = (base, target) => {
+    const rel = relative(base, target);
+    return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
+  };
+  const allowed = await Promise.all(scope.map((path) => realCandidate(resolve(root, path))));
+  if (allowed.some((path) => !inside(root, path))) throw new Error("Subagent scope resolves outside the workspace.");
+  for (const path of subagentToolPaths(toolName, input)) {
+    const target = await realCandidate(resolve(root, path));
+    if (!inside(root, target) || !allowed.some((base) => inside(base, target))) {
+      throw new Error(`Subagent path resolves outside its delegated scope: ${path}`);
+    }
+  }
 }
 
 export function assertSubagentScope(toolName, input, scope) {
@@ -183,12 +231,16 @@ export function assertSubagentScope(toolName, input, scope) {
   }
 }
 
-export function createSubagentPermissionPolicy(parentPolicy, role) {
+export function createSubagentPermissionPolicy(parentPolicy, role, definition = null) {
   const allowed = SUBAGENT_ROLE_CONFIG[role]?.tools;
   if (!allowed) throw new Error(`Unknown subagent role: ${role}`);
   const policy = { "*": "deny" };
+  const rank = { allow: 0, ask: 1, deny: 2 };
   for (const toolName of allowed) {
-    policy[toolName] = getToolPermission(parentPolicy, toolName);
+    const parent = getToolPermission(parentPolicy, toolName);
+    const configured = definition?.permissions?.[toolName] ?? definition?.permissions?.["*"] ?? "allow";
+    const restriction = Object.hasOwn(rank, configured) ? configured : "deny";
+    policy[toolName] = rank[parent] >= rank[restriction] ? parent : restriction;
   }
   return Object.freeze(policy);
 }

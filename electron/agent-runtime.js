@@ -34,8 +34,7 @@ import { getDefaultHarnessEventBus } from "./harness/event-bus.js";
 import { HarnessScheduler } from "./harness/scheduler.js";
 import { scopesOverlap, normalizeBuilderScopes } from "./harness/scope-leases.js";
 import { createTaskGraph } from "./harness/task-graph.js";
-
-const MAX_BUILDERS = 2;
+import { MAX_BUILDERS } from "./harness/builder-count.js";
 const MAX_PLANNER_RESULT_CHARS = 32_000;
 const FINAL_LIFECYCLE_EVENTS = new Set([
   "turn.started",
@@ -160,7 +159,7 @@ export function shouldUseBuilderOrchestration(options = {}, budget = null) {
   const activeBudget = budget || orchestrationBudget(options);
   const builderLimit = Number(activeBudget?.limits?.roles?.builder || 0);
   return Boolean(
-    options?.builderOrchestration !== false &&
+    options?.builderOrchestration === true &&
       options?.workspacePath &&
       options?.permission === "workspace-write" &&
       builderLimit > 0 &&
@@ -1205,7 +1204,7 @@ async function runOrchestratedHarness(options) {
   };
 
   const lifecycleType =
-    status === "completed"
+    ["completed", "partial", "blocked", "needs_input"].includes(status)
       ? "turn.completed"
       : status === "interrupted"
         ? "turn.cancelled"

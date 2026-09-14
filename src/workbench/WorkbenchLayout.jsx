@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { clampWorkbenchWidth, MIN_DIALOGUE_WIDTH, MIN_WIDTH } from "./state.js";
 import { WorkbenchContent } from "./WorkbenchPanes.jsx";
 import { WorkbenchTabs } from "./WorkbenchTabs.jsx";
+import {
+  composerAttachmentFromDataTransfer,
+  isComposerAttachmentDrag,
+  presentComposerAttachment,
+} from "../attachments.js";
 import "./workbench.css";
 
 function roomForWorkbench(shell) {
@@ -26,13 +31,20 @@ export function WorkbenchLayout({
   const { tr } = useI18n();
   const { layout, resources } = workbench;
   const shellRef = useRef(null);
+  const resizeCleanup = useRef(null);
+  useEffect(() => () => resizeCleanup.current?.(), []);
   const roomRef = useRef(Number.POSITIVE_INFINITY);
   const [room, setRoom] = useState(Number.POSITIVE_INFINITY);
   const [menuOpen, setMenuOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
+  const [dropReady, setDropReady] = useState(false);
   const active = layout.tabs.find((tab) => tab.id === layout.active) || null;
   const covered = overlaying || resizing || menuOpen;
   const displayWidth = clampWorkbenchWidth(layout.width, room);
+
+  useLayoutEffect(() => {
+    if (overlaying) void workbench.hideBrowser();
+  }, [overlaying]);
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -60,6 +72,7 @@ export function WorkbenchLayout({
   const startResize = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    resizeCleanup.current?.();
     setResizing(true);
     document.body.classList.add("panel-is-resizing");
     const start = event.clientX;
@@ -73,10 +86,14 @@ export function WorkbenchLayout({
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", finish);
+      resizeCleanup.current = null;
     };
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", finish);
+    resizeCleanup.current = finish;
   };
 
   const handleKeyDown = (event) => {
@@ -104,9 +121,26 @@ export function WorkbenchLayout({
   return (
     <div
       ref={shellRef}
-      className={`workbench-shell${resizing ? " workbench-is-resizing" : ""}`}
+      className={`workbench-shell${resizing ? " workbench-is-resizing" : ""}${dropReady ? " workbench-drop-ready" : ""}`}
       data-dock="right"
       style={{ flexBasis: `${displayWidth}px`, width: displayWidth }}
+      onDragOver={(event) => {
+        if (!isComposerAttachmentDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDropReady(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setDropReady(false);
+      }}
+      onDrop={(event) => {
+        const attachment = composerAttachmentFromDataTransfer(event.dataTransfer);
+        setDropReady(false);
+        if (!attachment) return;
+        event.preventDefault();
+        event.stopPropagation();
+        presentComposerAttachment(workbench, attachment, onNotice, tr);
+      }}
     >
       <div
         className="workbench-resizer"

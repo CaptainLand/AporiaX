@@ -1,3 +1,5 @@
+import { isAnchorRestoreNotice } from "../anchor-restore-notice.js";
+
 const MAX_HISTORY_MESSAGES = 30;
 const MAX_FILE_READ_CHARS = 120_000;
 const MAX_TEXT_CONTENT_CHARS = 100_000;
@@ -21,6 +23,7 @@ function coherentConversationMessages(messages) {
   const latestUserIndex = messages.findLastIndex(
     (message) =>
       message?.role === "user" &&
+      !isAnchorRestoreNotice(message) &&
       typeof message?.content === "string" &&
       (message.content.trim() || message.attachments?.length),
   );
@@ -42,6 +45,7 @@ function coherentConversationMessages(messages) {
 
   return messages.filter((message, index) => {
     if (message?.role !== "user") return true;
+    if (isAnchorRestoreNotice(message)) return true;
     if (index === latestUserIndex) return true;
     // Steering is consumed by the active run. Re-injecting it as a later
     // standalone user turn makes a future run repeat work that already ran.
@@ -131,6 +135,15 @@ export function sanitizeConversation(
     .slice(-Math.max(1, maxHistoryMessages))
     .map((message) => {
       const text = message.content.slice(0, MAX_TEXT_CONTENT_CHARS);
+      if (isAnchorRestoreNotice(message)) {
+        return {
+          role: "user",
+          content: text,
+          aporiaSource: "harness",
+          aporiaPinned: true,
+          kind: "anchor-restore",
+        };
+      }
       if (message.role !== "user" || !message.attachments?.length) {
         return { role: message.role, content: text };
       }

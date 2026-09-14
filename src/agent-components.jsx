@@ -15,7 +15,6 @@ import {
   RefreshCw,
   Save,
   Search,
-  Terminal,
   Undo2,
   X,
 } from "lucide-react";
@@ -186,7 +185,7 @@ function BinaryCheckpointReview({ change }) {
   );
 }
 
-export function UserAttachments({ attachments }) {
+export function UserAttachments({ attachments, onOpenImage }) {
   const { tr } = useI18n();
   if (!attachments?.length) return null;
   return (
@@ -218,6 +217,15 @@ export function UserAttachments({ attachments }) {
             <img
               src={attachmentImageSrc(attachment)}
               alt={attachment.name || tr("图片附件", "Image attachment")}
+              role={onOpenImage ? "button" : undefined}
+              tabIndex={onOpenImage ? 0 : undefined}
+              title={onOpenImage ? tr("在侧栏打开", "Open in sidebar") : undefined}
+              onClick={() => onOpenImage?.(attachmentImageSrc(attachment), attachment.name)}
+              onKeyDown={(event) => {
+                if (onOpenImage && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault(); onOpenImage(attachmentImageSrc(attachment), attachment.name);
+                }
+              }}
             />
             <figcaption>{attachment.name || tr("图片", "Image")}</figcaption>
           </figure>
@@ -230,20 +238,18 @@ export function UserAttachments({ attachments }) {
 export function ApprovalCard({ approval, onRespond, responding }) {
   const { tr } = useI18n();
   if (!approval) return null;
+  const hostFallback = approval.kind === "execute" && !approval.sandbox?.available;
+  const sandboxed = approval.kind === "execute" && approval.sandbox?.available;
   return (
-    <section className="approval-card">
-      <div className="approval-card-heading">
-        <span>
-          <Terminal size={16} />
-        </span>
-        <div>
-          <strong>{approval.title || tr("需要批准", "Approval required")}</strong>
-          <p>{approval.reason}</p>
-        </div>
-      </div>
+    <section className={`approval-card${hostFallback ? " is-host" : sandboxed ? " is-sandbox" : ""}`}>
+      <header className="approval-card-heading">
+        <span className="approval-kicker">{tr("需要确认", "Needs confirmation")}</span>
+        <strong>{approval.title || tr("需要批准", "Approval required")}</strong>
+        {approval.reason ? <p>{approval.reason}</p> : null}
+      </header>
       <div className="approval-command">
         <code>{approval.command}</code>
-        <span>{tr("工作目录：{path}", "Working directory: {path}", { path: approval.cwd || "." })}</span>
+        <span>{tr("工作目录 {path}", "Working directory {path}", { path: approval.cwd || "." })}</span>
       </div>
       {approval.kind === "recovery-reconciliation" && approval.unresolved?.length > 0 && (
         <div className="approval-warning">

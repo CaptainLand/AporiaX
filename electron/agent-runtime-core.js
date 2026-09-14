@@ -35,6 +35,12 @@ import {
   extractPdfText,
 } from "./attachment-parser.js";
 import { createOpenAICompatibleProvider } from "./runtime/provider-stream.js";
+import { taskRequest, harnessFeedback, providerMessages, recoverConversation, isHumanMessage } from "./runtime/task-conversation.js";
+import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
+import { waitForWorkers, workerResultForModel } from "./runtime/collect-workers.js";
+import { readTaskOutcome } from "./runtime/task-outcome.js";
+import { currentAgentBudget, restoreAgentBudget } from "./harness/agent-budget.js";
+import { resolveToolExecutionPermission, buildToolApprovalRequest } from "./runtime/tool-permissions.js";
 import {
   dispatchNativeTool,
   projectNativeToolCatalog,
@@ -93,7 +99,7 @@ import { verificationDirective, onlyStandaloneDeliverables } from "./runtime/del
 import { assessDelivery, deliveryNotice, normalizeVerificationSelection } from "./runtime/workflow-policy.js";
 import { isReadOnlyNativeTool } from "./runtime/durable-run.js";
 import { ToolProgressGuard } from "./runtime/tool-progress-guard.js";
-import { saveRuntimeCheckpoint, executeDurableTool } from "./runtime/durable-run.js";
+import { saveRuntimeCheckpoint, saveRuntimeContext, executeDurableTool } from "./runtime/durable-run.js";
 import {
   getSandboxStatus,
   runCommandWithFallback,
@@ -1098,12 +1104,6 @@ export async function runHarness({
   );
   const projectInstructions = instructionContext.root;
   const projectConfig = await loadProjectConfig(workspaceRoot);
-  const initialMemoryQuery = (messages || [])
-    .slice(-8)
-    .map((message) => String(message?.content || ""))
-    .filter(Boolean)
-    .join("\n")
-    .slice(-24_000);
   let latestUserPrompt = String(
     [...(Array.isArray(messages) ? messages : [])]
       .reverse()
@@ -1150,13 +1150,6 @@ export async function runHarness({
       })
       .catch(() => null);
   }
-  const initialMemoryFacts = projectUnderstanding.snapshot().facts.length
-    ? []
-    : projectMemory.retrieve(initialMemoryQuery, 10);
-  const initialUnderstandingFacts = projectUnderstanding.retrieve(
-    initialMemoryQuery,
-    14,
-  );
   const effectiveApprovalMode =
     ["full-auto", "sandbox-auto", "smart-auto"].includes(approvalMode) ? approvalMode : "manual";
   requestApproval = createFullAutoApproval({ approvalMode: effectiveApprovalMode, workspaceRoot, requestApproval, emit });
@@ -1253,15 +1246,16 @@ export async function runHarness({
       }).filter((tool) => browserEnabled || !String(tool.name || "").startsWith("browser_"))
     : [];
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
-  const staticToolDefinitions = hasWorkspace
+  const resolveToolDefinitions = () => hasWorkspace
     ? TOOL_REGISTRY.definitions(permissionPolicy).filter((definition) => {
         const name = definition.function.name;
+        if (name === "remember_project_fact" && !projectUnderstanding.snapshot().settings.autoCurate) return false;
         if (!browserEnabled && String(name || "").startsWith("browser_")) return false;
         return name !== "run_command" || commandToolAvailable;
       })
     : [];
-  const enabledToolDefinitions = provider.supportsTools
-    ? [...staticToolDefinitions, ...mcpRuntime.toolDefinitions(permission)]
+  let enabledToolDefinitions = provider.supportsTools
+    ? [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)]
     : [];
   emit({
     type: "turn.started",
@@ -1294,9 +1288,15 @@ export async function runHarness({
   });
   let supportsImages = Boolean(provider.supportsImages);
   let visionFallbackAttempted = false;
-  const latestUserIndex = sanitizedHistory.findLastIndex(
-    (message) => message.role === "user",
+  const latestUserIndex = sanitizedHistory.findLastIndex((message) =>
+    isHumanMessage(message),
   );
+  if (latestUserIndex >= 0) sanitizedHistory[latestUserIndex] = taskRequest(sanitizedHistory[latestUserIndex]);
+  const restoredWorkspace = sanitizedHistory.some((message) =>
+    isAnchorRestoreNotice(message),
+  );
+  const restoreBoundary =
+    "If a workspace restore notice is present, those file edits are gone. Re-read the current workspace. Do not continue the restored implementation unless this final request explicitly asks to redo it.";
   const activeRequestBoundary = {
     role: "system",
     content: recoveryContext
@@ -1307,9 +1307,13 @@ export async function runHarness({
           "Unfinished operations may already have taken effect. Inspect actual state first; never blindly replay uncertain effects.",
           "Records marked replaySafe are browser navigation/close operations, not unresolved mutations. Check the current browser state as needed, but do not block unrelated work or ask for recovery approval because of these navigation errors.",
           JSON.stringify({ checkpoint: recoveryContext.checkpoint, operations: recoveryContext.operations, unresolvedOperations: recoveryContext.unresolvedOperations }),
-          `Recovery checkpoint:\n${JSON.stringify(recoveryContext).slice(0, 8_000)}`,
-        ].join("\n")
-      : "The final user message below is the only active request for this run. Earlier turns are context, not pending work. Never resume a failed, interrupted, or unrelated earlier task unless this final request explicitly asks you to do so.",
+          "Saved conversations are restored separately. Recheck current file versions before using older evidence.",
+          restoredWorkspace ? restoreBoundary : "",
+        ].filter(Boolean).join("\n")
+      : [
+          "The final user message below is the only active request for this run. Earlier turns are context, not pending work. Never resume a failed, interrupted, or unrelated earlier task unless this final request explicitly asks you to do so.",
+          restoredWorkspace ? restoreBoundary : "",
+        ].filter(Boolean).join("\n"),
   };
   const boundedHistory =
     latestUserIndex >= 0
@@ -1331,7 +1335,7 @@ export async function runHarness({
         "For Git/GitHub work, use native Git tools end-to-end. If the workspace is not a Git repository, use git_init instead of asking the user to run git init. Local init/stage/commit/branch operations may proceed automatically when policy allows; adding remotes, pulling, pushing, creating GitHub repositories, and creating PRs must respect approval boundaries.",
         "Use read_file line ranges or offset continuation when a file is truncated. Use read_external_file only when the user task genuinely needs a specific file outside the workspace; it remains read-only and uses the configured approval mode.",
         "Use workspace-relative paths only.",
-        "Never claim a file was changed unless write_file or apply_patch succeeded.",
+        "Never claim a file was changed unless a file-writing tool succeeded or a Builder result explicitly reports integrated=true. Provisional Builder edits are not changes in the parent workspace.",
         "Prefer apply_patch for localized edits and write_file for new files or complete rewrites.",
         "Use concise Markdown headings and GFM tables when structure helps.",
         "When handing off an existing file, use a Markdown link with a descriptive label and a verified absolute path (forward slashes on Windows), for example [Report](<D:/Project/Report.pdf>). Code links may append :line. Never invent artifact paths; the desktop can open, save a copy, reveal and open these links in an IDE.",
@@ -1351,13 +1355,17 @@ export async function runHarness({
           : "",
         "For work that needs more than one meaningful action, call update_plan before changing files. Keep one step in_progress at a time and update the plan whenever the route changes.",
         "For multi-step work, accompany the initial plan and each meaningful milestone with one short user-facing progress update in the assistant content before the relevant tool calls. Report what was decided, what materially changed, or what was verified; do not expose hidden chain-of-thought, narrate every tool call, or repeat raw logs. AporiaX preserves these updates in the Dialogue view, so make each one useful on its own.",
-        "Delegate independent codebase exploration, review, and verification to delegate_subagent. Give each subagent a focused task and path scope. Issue multiple delegate_subagent calls in one response when they do not depend on each other; AporiaX can run them concurrently.",
+        "Use delegate_subagent when a focused, independent task justifies the extra model work; do not delegate merely because tools are available. You may delegate exploration, review, verification, or a Builder implementation with explicit non-overlapping write_scopes. Issue multiple calls together only for independent work. Keep meaningful work on the main path while workers run.",
         "Use background subagents while continuing independent work. Collect required results before final delivery and any result before relying on it. Only independent optional explore/curator work may set required_for_completion=false; Review/Verify always remain required.",
-        "Subagents are read-only by design. The parent agent remains responsible for every file edit and for fixing review findings.",
-        "Self-check is adaptive. Do not request it for casual conversation, explanation-only answers, or straightforward work with no meaningful risk. Call request_self_check with a concrete reason when your implementation may be wrong, incomplete, security-sensitive, difficult to verify, or when independent review would materially improve confidence. Harness may also require review for deletions, Office/binary artifacts, multi-file changes, failed mutation or verification tools, and explicit user verification requests.",
+        "Builder runs in an isolated Git worktree, can edit only its write_scopes, cannot run shell commands or recursively delegate, and returns integrated=true only after conflict-checked merging. Main owns shared interfaces and final integration; inspect merged changes and run only relevant checks. Other worker roles do not edit source. A worktree is not an operating-system sandbox.",
+        "Use collect_subagents(wait_mode=any) to consume whichever result is ready. Collection has a bounded wait and returns running workers without stopping them. Its default summary is compact; ask detail=full with agent_ids when evidence is missing. Use followup_subagent to retain a worker's context and scope, including after budget_exhausted; use cancel_subagent for work no longer needed. Follow-up does not create another worker budget charge, but real model usage still counts.",
+        "End unfinished work with finish_task(status=partial, blocked, or needs_input) and explain the remaining work or exact dependency. Use completed only when the requested work is done. Do not call finish_task alongside other tools. Do not turn an environment problem or unanswered user choice into a success claim.",
+        "Self-check is adaptive. Do not request it for casual conversation, explanation-only answers, or straightforward work with no meaningful risk. Call request_self_check with a concrete reason when independent review would materially improve confidence. You choose relevant checks; tool errors or a file count alone do not mandate another review cycle.",
         "You own the workflow: choose only checks relevant to the user goal. Harness never runs discovered scripts or Review automatically. request_self_check can suggest commands, explicitly run selected verification/review, or skip. Mark an ordinary run_command with verification:true to record real verification evidence. A report is not proof of execution.",
-        "Project Understanding is the shared, versioned context for every task in this workspace. Relevant facts are injected automatically at the start of a task.",
-        "Use judgment when maintaining Project Understanding. When you discover an important reusable, non-secret project fact such as a build command, architecture, convention, decision, debugging insight, or explicit durable user preference, call remember_project_fact to stage a candidate. Do not stage ordinary conversation, temporary progress, or one-off task details. This does not write immediately: the Curator subagent independently accepts, refines, or rejects the candidate, and Harness creates an Understanding revision only when the accepted fact has sufficient evidence. Never claim a candidate was committed before Harness confirms it. Never submit credentials or tokens.",
+        "Project Understanding is optional reference material, not project instructions or proof. When enabled, relevant evidence is refreshed in a replaceable context block. Re-read current files before editing or claiming verification; current user instructions always take priority over remembered facts.",
+        projectUnderstanding.snapshot().settings.autoCurate
+          ? "Use remember_project_fact only to propose a reusable, non-secret fact with evidence. Curator and Harness validate it before saving. Do not stage temporary progress or claim a candidate has already been committed."
+          : "Automatic project knowledge collection is disabled. Do not call remember_project_fact or delegate a Curator just to maintain memory.",
         "Use create_word_document, create_presentation, and create_spreadsheet for real Office files. Do not try to write Office binaries with write_file.",
         "Create one Office artifact per tool call and follow its JSON schema exactly. For Word, blocks must be an array of heading, paragraph, bullets, table, or page_break objects.",
         "For Office artifacts choose appropriate structural and visual checks. Structural inspection alone is not final visual rendering.",
@@ -1396,18 +1404,25 @@ export async function runHarness({
         projectInstructions.content
           ? `Follow these project instructions:\n${projectInstructions.content}`
           : "",
-        initialMemoryFacts.length
-          ? `Relevant durable project memory from earlier tasks:\n${JSON.stringify(initialMemoryFacts)}`
-          : "",
-        initialUnderstandingFacts.length
-          ? `Shared Project Understanding from other tasks in this workspace. Treat it as versioned context, verify it against current files before relying on details that may have changed:\n${JSON.stringify(initialUnderstandingFacts)}`
-          : "",
       ]
         .filter(Boolean)
         .join("\n"),
     },
     ...boundedHistory,
   ];
+
+  const savedMain = recoveryContext?.contexts?.[recoveryContext.runId];
+  restoreAgentBudget(savedMain?.agentBudget);
+  if (savedMain?.kind === "main" && Array.isArray(savedMain.conversation)) {
+    const canonicalRoot = (root) => process.platform === "win32" ? resolve(root).toLowerCase() : resolve(root);
+    const sameRoot = workspaceRoot == null && savedMain.workspaceRoot == null ||
+      workspaceRoot && savedMain.workspaceRoot && canonicalRoot(savedMain.workspaceRoot) === canonicalRoot(workspaceRoot);
+    if (!sameRoot) throw new Error("RECOVERY_WORKSPACE_MISMATCH");
+    const restored = recoverConversation(savedMain.conversation);
+    const stableInstructions = conversation[0];
+    conversation.splice(0, conversation.length, stableInstructions, ...restored.slice(restored[0]?.role === "system" ? 1 : 0),
+      activeRequestBoundary, ...sanitizedHistory.slice(latestUserIndex).map(taskRequest));
+  }
 
   if (conversation.length < 2) {
     throw new Error("At least one user message is required.");
@@ -1416,7 +1431,7 @@ export async function runHarness({
   const steps = [];
   const understandingCandidates = [];
   const changeMap = new Map();
-  const contextCheckpoints = [];
+  const contextCheckpoints = savedMain?.contextCheckpoints || [];
   const tokenAccounting = createTokenAccounting();
   tokenAccounting.providerOverheadTokens =
     estimateManagedConversationTokens([
@@ -1429,8 +1444,18 @@ export async function runHarness({
   const subagentController = new AbortController();
   const abortSubagents = () => subagentController.abort();
   signal?.addEventListener("abort", abortSubagents, { once: true });
-  let subagentCounter = 0;
-  let plan = null;
+  let subagentCounter = savedMain?.subagentCounter || 0;
+  let plan = savedMain?.plan || null;
+  for (const worker of savedMain?.workers || []) {
+    const saved = recoveryContext?.contexts?.[worker.agentId] || { input: worker.input, status: "interrupted", workspaceRoot, session: {} };
+    if (!saved.input || !workspaceRoot || resolve(saved.workspaceRoot || "") !== resolve(workspaceRoot)) continue;
+    const status = ["running", "integrating"].includes(saved.status) ? "interrupted" : saved.status;
+    const result = saved.result || { agentId: worker.agentId, role: worker.role, status,
+      summary: "Worker context recovered. Use followup_subagent to continue; previous uncertain tool calls require inspection.", evidence: saved.session.evidence || [] };
+    subagents.set(worker.agentId, { ...worker, status, result, input: saved.input,
+      session: { ...saved.session, ...(saved.session.conversation ? { conversation: recoverConversation(saved.session.conversation) } : {}) },
+      promise: Promise.resolve(result), controller: null });
+  }
   const anchorStartedAt = new Date().toISOString();
   let anchorBaseline = null;
   let anchorLatest = null;
@@ -1473,6 +1498,11 @@ export async function runHarness({
   };
   const discoverVerificationCommands = (root, changes) => selfCheck.verificationWaived ? Promise.resolve([]) : discoverProjectVerificationCommands(root, changes);
   let totalUsage = null;
+  const persistMainContext = () => saveRuntimeContext(runId, {
+    kind: "main", workspaceRoot, conversation, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
+    workers: [...subagents.values()].map(({ agentId, role, task, background, requiredForCompletion, collected, input }) =>
+      ({ agentId, role, task, background, requiredForCompletion, collected, input })),
+  });
 
   const applyRuntimeControlBoundary = async () => {
     await control?.waitIfPaused?.(signal);
@@ -1484,7 +1514,8 @@ export async function runHarness({
     if (!sanitizedSteering.length) return;
     toolProgress.reset();
     await saveRuntimeCheckpoint({ scopeId: runId, phase: "guidance-applied", latestGuidance: steeringMessages });
-    conversation.push(...sanitizedSteering);
+    conversation.push(...sanitizedSteering.map(taskRequest));
+    await persistMainContext();
     latestUserPrompt = steeringMessages.map((message) => String(message.content || "")).join("\n").slice(-24_000);
     const directive = verificationDirective(latestUserPrompt);
     if (directive !== null) {
@@ -1611,10 +1642,10 @@ export async function runHarness({
     return candidate;
   };
 
-  const automaticUnderstandingCandidates = collectAutomaticUnderstandingCandidates(
+  const automaticUnderstandingCandidates = projectUnderstanding.snapshot().settings.autoCurate ? collectAutomaticUnderstandingCandidates(
     messages,
     projectUnderstanding.snapshot().facts.length,
-  );
+  ) : [];
   for (const candidate of automaticUnderstandingCandidates) {
     try {
       stageUnderstandingCandidate(candidate, {
@@ -1629,26 +1660,36 @@ export async function runHarness({
     }
   }
 
+  const authorizeSubagentControl = async (toolName, input) => {
+    const decision = resolveToolExecutionPermission({ toolName, permissionAction: getToolPermission(permissionPolicy, toolName),
+      approvalMode: effectiveApprovalMode, sandboxStatus, input });
+    if (decision.denied) throw new Error(`Permission denied for tool: ${toolName}`);
+    if (decision.requiresApproval) {
+      const approval = await requestApproval?.(buildToolApprovalRequest({ toolName, descriptor: TOOL_REGISTRY.get(toolName), input, sandboxStatus, permissionDecision: decision }));
+      if (!approval?.approved) throw new Error(`The user rejected tool: ${toolName}`);
+    }
+    throwIfAborted(signal);
+  };
   const startSubagent = async (
     rawInput,
     callId = "",
-    { systemOwned = false } = {},
+    { systemOwned = false, resumeRecord = null } = {},
   ) => {
+    if (!systemOwned && !resumeRecord) await authorizeSubagentControl("delegate_subagent", rawInput);
     const input = normalizeSubagentInput(rawInput);
+    if (input.role === "builder") {
+      if (permission !== "workspace-write" || !canWriteWorkspace) throw new Error("Builder requires parent workspace-write permission.");
+      await ensureAnchorBaseline();
+    }
     const reasoningPolicy = resolveSubagentReasoningPolicy({
       role: input.role,
       thinking,
       effort,
     });
-    subagentCounter += 1;
-    const agentId = `${runId || "run"}-sub-${subagentCounter}`;
-    const relevantMemory = [
-      ...projectUnderstanding.retrieve(input.task, 12),
-      ...(projectUnderstanding.snapshot().facts.length
-        ? []
-        : projectMemory.retrieve(input.task, 8)),
-    ].slice(0, 18);
-    const record = {
+    if (!resumeRecord) subagentCounter += 1;
+    const agentId = resumeRecord?.agentId || `${runId || "run"}-sub-${subagentCounter}`;
+    const relevantMemory = await projectUnderstanding.contextFacts(input.task);
+    const record = Object.assign(resumeRecord || {}, {
       agentId,
       callId,
       role: input.role,
@@ -1659,7 +1700,9 @@ export async function runHarness({
       collected: false,
       result: null,
       promise: null,
-    };
+      input,
+      session: resumeRecord?.session || {},
+    });
     const childController = new AbortController();
     const abortChild = () => childController.abort();
     record.controller = childController;
@@ -1668,10 +1711,16 @@ export async function runHarness({
     record.promise = runSubagentTask({
       agentId,
       input,
+      session: record.session,
       provider,
       modelId,
       modelConfig,
       thinking: reasoningPolicy.thinking,
+      resolveModel: async (requestedModel) => {
+        const configured = providerConfig.models.find((item) => item.id === requestedModel);
+        if (!configured) throw new Error(`SUBAGENT_MODEL_NOT_CONFIGURED: ${requestedModel}`);
+        return { provider: createOpenAICompatibleProvider({ config: providerConfig, model: configured, onEvent: emit }), modelId: configured.id, modelConfig: configured };
+      },
       effort: reasoningPolicy.effort,
       workspaceRoot,
       parentPermissionPolicy: permissionPolicy,
@@ -1682,11 +1731,21 @@ export async function runHarness({
       sandboxStatus,
       language,
       memoryFacts: relevantMemory,
+      getMemoryFacts: () => projectUnderstanding.contextFacts(input.task),
       emit,
       onUsage: (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); },
       toolRegistry: TOOL_REGISTRY,
       parseToolArguments,
       executeAuthorizedTool: executeTrackedTool,
+      onBuilderMerge: async ({ checkpoints }) => {
+        for (const change of checkpoints) {
+          const previous = changeMap.get(change.path);
+          changeMap.set(change.path, previous ? { ...change, beforeContent: previous.beforeContent, beforeMissing: previous.beforeMissing } : change);
+          emit({ type: "file.changed", path: change.path, source: "builder-merge" });
+        }
+        anchorDirty = true;
+        await refreshAnchorSnapshot();
+      },
       describeToolActivity,
       describeCapability: (toolName, phase = "work") =>
         capabilityRegistry?.describeTool(toolName, phase) || null,
@@ -1731,6 +1790,8 @@ export async function runHarness({
     }
     const result = await record.promise;
     record.collected = true;
+    // Internal review/curator consumers parse structured reports and need the
+    // complete result. Only model-facing background collection is summarized.
     return result;
   };
 
@@ -1944,6 +2005,7 @@ export async function runHarness({
   const sealProgressiveSelfCheck = selfCheckCoordinator.seal;
 
   const collectSubagents = async (rawInput = {}) => {
+    await authorizeSubagentControl("collect_subagents", rawInput);
     const requestedIds = Array.isArray(rawInput.agent_ids)
       ? rawInput.agent_ids.map(String)
       : [];
@@ -1956,8 +2018,9 @@ export async function runHarness({
     }
     const results = [];
     const running = [];
+    if (wait) await waitForWorkers(records, { mode: rawInput.wait_mode || "any", timeoutMs: rawInput.timeout_ms ?? 30000, signal });
     for (const record of records) {
-      if (!wait && record.status === "running") {
+      if (record.status === "running") {
         running.push({
           agentId: record.agentId,
           role: record.role,
@@ -1968,7 +2031,7 @@ export async function runHarness({
       }
       const result = await record.promise;
       record.collected = true;
-      results.push(result);
+      results.push(workerResultForModel(result, rawInput.detail));
     }
     emit({
       type: "subagent.collected",
@@ -1985,7 +2048,7 @@ export async function runHarness({
     if (!records.length) return [];
     const results = [];
     for (const record of records) {
-      if (record.requiredForCompletion === false) {
+      if (record.requiredForCompletion === false && record.status === "running") {
         record.collected = true;
         if (record.status === "running") record.controller.abort();
         emit({ type: "subagent.optional.skipped", agentId: record.agentId, role: record.role, reason: "Not required for final delivery; no correctness gate was skipped." });
@@ -1993,7 +2056,7 @@ export async function runHarness({
       }
       const result = await record.promise;
       record.collected = true;
-      results.push(result);
+      results.push(workerResultForModel(result));
     }
     emit({
       type: "subagent.collected",
@@ -2112,23 +2175,32 @@ export async function runHarness({
         signal,
         applyControlBoundary: applyRuntimeControlBoundary,
       });
+      if (provider.supportsTools) {
+        const nextDefinitions = [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)];
+        if (JSON.stringify(nextDefinitions) !== JSON.stringify(enabledToolDefinitions)) {
+          enabledToolDefinitions = nextDefinitions;
+          tokenAccounting.providerOverheadTokens = estimateManagedConversationTokens([{ role: "system", content: JSON.stringify(enabledToolDefinitions) }]);
+          emit({ type: "turn.tools.updated", tools: enabledToolDefinitions.map((item) => item.function.name) });
+        }
+      }
       const completedReviewFeedback = await consumeProgressiveReviewJob();
       if (completedReviewFeedback) {
-        conversation.push({
-          role: "user",
-          content: completedReviewFeedback,
-        });
+        conversation.push(harnessFeedback(completedReviewFeedback));
       }
       emit({
         type: "response.reset",
         round: step + 1,
         phase: selfCheck.started ? "self-check" : "work",
       });
+      const memoryFacts = await projectUnderstanding.contextFacts([
+        latestUserPrompt,
+        ...(plan?.steps || []).filter((item) => item.status === "in_progress").map((item) => item.title),
+      ].join("\n"));
       const relevantDurableContext = upsertRelevantContextMessage(
         conversation,
         {
           checkpoints: contextCheckpoints,
-          memoryFacts: projectMemory.facts,
+          memoryFacts,
           plan,
         },
       );
@@ -2141,10 +2213,11 @@ export async function runHarness({
         plan,
         relevantMemory: relevantDurableContext,
       });
+      await persistMainContext();
       const requestConversation = conversation;
       const completionBody = (requestMessages) => ({
           model: modelId,
-          messages: requestMessages,
+          messages: providerMessages(requestMessages),
           ...(provider.supportsTools && enabledToolDefinitions.length
             ? {
                 tools: enabledToolDefinitions,
@@ -2213,7 +2286,8 @@ export async function runHarness({
           throw error;
         }
       }
-      const { message, usage, interrupted: steered } = completion;
+      let { message } = completion;
+      const { usage, interrupted: steered } = completion;
       recordProviderUsage(
         tokenAccounting,
         usage,
@@ -2242,15 +2316,27 @@ export async function runHarness({
         assistantSummary: String(message.content || "").slice(0, 6000),
         pendingTools: (message.tool_calls || []).map((call) => ({ id: call.id, tool: call.function?.name })),
       });
+      const outcome = readTaskOutcome(message, parseToolArguments);
+      if (outcome) {
+        await authorizeSubagentControl("finish_task", outcome);
+        conversation.push({ role: "assistant", content: message.content ?? null, tool_calls: message.tool_calls,
+          ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}) });
+        conversation.push({ role: "tool", tool_call_id: message.tool_calls[0].id, content: JSON.stringify({ status: outcome.status, accepted: true }) });
+        message = { role: "assistant", content: outcome.summary };
+        await persistMainContext();
+      }
+      const outcomeStatus = outcome?.status || "completed";
       const turnDecision = turnCoordinator.observeModelResponse(message);
       if (turnDecision.kind === "final") {
         if (control?.hasSteering?.()) {
           conversation.push({ role: "assistant", content: message.content || "" });
           continue;
         }
-        const outstandingSubagentResults =
-          await collectOutstandingSubagents();
-        if (outstandingSubagentResults.length) {
+        if (outcomeStatus !== "completed") {
+          for (const worker of subagents.values()) if (worker.status === "running") worker.controller?.abort();
+        }
+        const outstandingSubagentResults = await collectOutstandingSubagents();
+        if (outstandingSubagentResults.length && outcomeStatus === "completed") {
           conversation.push({
             role: "assistant",
             content:
@@ -2259,19 +2345,16 @@ export async function runHarness({
                 ? "I finished the independent work while the background subagents were running."
                 : "后台子 Agent 运行期间，我已完成其余独立工作。"),
           });
-          conversation.push({
-            role: "user",
-            content: [
+          conversation.push(harnessFeedback([
               "AporiaX Harness automatically collected the remaining background subagents.",
               "Integrate their evidence, resolve conflicts, and continue the task before giving the final answer:",
               JSON.stringify(outstandingSubagentResults),
-            ].join("\n"),
-          });
+            ].join("\n")));
           continue;
         }
         const changes = buildChanges(changeMap);
         // Workflow evidence informs delivery; it is not an automatic veto.
-        const finalizedAnchor = await finalizeAnchor("completed");
+        const finalizedAnchor = await finalizeAnchor(outcomeStatus);
         refreshVerification(selfCheck, changeMap);
         const deliveryAssessment = assessDelivery(selfCheck, buildChanges(changeMap), verificationVersion(changeMap));
         selfCheck.delivery = deliveryAssessment;
@@ -2303,7 +2386,8 @@ export async function runHarness({
           finalAnswer: finalContent,
           changes: finalizedAnchor.changes,
         };
-        const shouldCurate = Boolean(understandingDirectory && workspaceRoot) &&
+        await projectUnderstanding.refresh();
+        const shouldCurate = projectUnderstanding.snapshot().settings.autoCurate && outcomeStatus === "completed" && Boolean(understandingDirectory && workspaceRoot) &&
           shouldCurateProjectUnderstanding({
             changes: finalizedAnchor.changes,
             candidates: understandingCandidates,
@@ -2349,7 +2433,7 @@ export async function runHarness({
           continue;
         }
         const completedResult = {
-          status: "completed",
+          status: outcomeStatus,
           content: finalContent,
           steps,
           changes: finalizedAnchor.changes,
@@ -2384,6 +2468,7 @@ export async function runHarness({
           })),
         };
         turnCoordinator.complete({
+          status: outcomeStatus,
           changedFiles: completedResult.changes.length,
           toolSteps: steps.length,
         });
@@ -2394,6 +2479,8 @@ export async function runHarness({
           toolSteps: steps.length,
         });
         completedResult.witness = witness.snapshot();
+        conversation.push({ role: "assistant", content: finalContent });
+        await persistMainContext();
         if (curationPromise) {
           void curationPromise.then(
             () => subagentController.abort(),
@@ -2416,6 +2503,7 @@ export async function runHarness({
           message.reasoning_content;
       }
       conversation.push(assistantToolMessage);
+      await persistMainContext();
 
       const retryAfterScopedInstructions =
         await loadScopedContextForToolCalls(message.tool_calls);
@@ -2550,6 +2638,7 @@ export async function runHarness({
           count: parallelResults.length,
           succeeded: parallelResults.filter((item) => item.success).length,
         });
+        await persistMainContext();
         continue;
       }
 
@@ -2617,7 +2706,29 @@ export async function runHarness({
                 parseToolArguments(toolCall),
               ),
             };
+          } else if (["followup_subagent", "cancel_subagent"].includes(toolCall.function.name)) {
+            const input = parseToolArguments(toolCall);
+            await authorizeSubagentControl(toolCall.function.name, input);
+            const record = subagents.get(input.agent_id);
+            if (!record) throw new Error("Unknown subagent id in this task.");
+            if (toolCall.function.name === "cancel_subagent") {
+              record.controller?.abort();
+              result = { modelResult: { agentId: record.agentId, status: record.status === "running" ? "cancellation_requested" : record.status } };
+            } else {
+              const task = String(input.task || "").trim();
+              if (!task || task.length > 4000) throw new Error("Follow-up task must contain 1–4000 characters.");
+              (record.session.pendingGuidance ||= []).push(task);
+              await saveRuntimeContext(record.agentId, { kind: "worker", workspaceRoot, input: record.input, session: record.session, status: record.status, result: record.result });
+              result = { modelResult: record.status === "running"
+                ? { agentId: record.agentId, status: "running", message: "Follow-up queued for the next worker boundary." }
+                : await startSubagent({ ...record.input, task, max_rounds: input.max_rounds ?? record.input.maxRounds, background: true,
+                    required_for_completion: record.requiredForCompletion }, toolCall.id, { resumeRecord: record }) };
+            }
           } else if (toolCall.function.name === "remember_project_fact") {
+            await projectUnderstanding.refresh();
+            if (!projectUnderstanding.snapshot().settings.autoCurate) {
+              result = { modelResult: { proposed: false, committed: false, reason: "Automatic project knowledge collection is disabled; knowledge remains view-only unless enabled by the user." } };
+            } else {
             const candidate = stageUnderstandingCandidate(
               parseToolArguments(toolCall),
             );
@@ -2633,6 +2744,7 @@ export async function runHarness({
                 next: "Curator review and Harness evidence validation",
               },
             };
+            }
           } else if (toolCall.function.name === "request_self_check") {
             const request = parseToolArguments(toolCall);
             const reason = String(request.reason || "").trim().slice(0, 1_000);
@@ -2897,11 +3009,14 @@ export async function runHarness({
           tool_call_id: toolCall.id,
           content: JSON.stringify(modelResult),
         });
+        await persistMainContext();
       }
     }
 
   } catch (error) {
     subagentController.abort();
+    await waitForWorkers([...subagents.values()], { mode: "all", timeoutMs: 3000 });
+    await persistMainContext();
     signal?.removeEventListener("abort", abortSubagents);
     if (error?.name === "AbortError" || signal?.aborted) {
       const finalizedAnchor = await finalizeAnchor("interrupted");

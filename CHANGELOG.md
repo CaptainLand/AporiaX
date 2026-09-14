@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.8.5 — 2026-09-14
+
+Anchor restore still only rewinds workspace files, but the next model run is told those edits are gone.
+
+- Restoring an Anchor appends a harness notice to the task. Later runs treat current files as source of truth and do not continue the restored implementation unless the user asks to redo it.
+- The notice is not a new user task and cannot become user authorization. Dialogue shows a short restore marker instead of a user bubble.
+
+## 0.8.4 — 2026-09-14
+
+Workbench Browser paints on the first open, Project Understanding, MCP, and Skills stop leaking stale or oversized context, and the app can check GitHub for a newer build.
+
+- Opening a web link attaches the native Browser at the real sidebar size and nudges bounds once so Windows composites it without dragging the splitter.
+- Project Understanding is view-only by default. Recalling facts into the model and auto-curation are explicit per-workspace settings; stale or changed file evidence stays out of context.
+- MCP discovery isolates server failures, guards cursor loops, and pages large tool results through `mcp_read_result` instead of truncating silently.
+- Explicit Skills are never dropped by the auto-match cap. Follow-up turns no longer double-append skill text, and over-budget automatic skills are skipped with a clear unresolved reason.
+- After the welcome screen, AporiaX checks GitHub Releases. Installed builds can download the NSIS package in-app and restart to install when no task is running. Portable builds open the download page. Dev launches do not check.
+
+## 0.8.3 — 2026-09-14
+
+Composer attachments can be dragged onto the right workbench to preview, Builder count is selectable, and the header no longer repeats the current model.
+
+- Dragging a composer image or file onto the workbench opens a preview copy; the attachment stays in the input.
+- If the sidebar is closed, drag to the far right and release to open it. The sidebar does not jump open at drag start.
+- A Builder count control sits next to the model selector: None / 2 / 3 / 4. Explore, review, and verify limits are unchanged.
+- The current-model badge next to the theme toggle is removed. Fullwidth punctuation no longer swallows autolinks, and application settings cover the native Browser view.
+
+## 0.8.2 — 2026-09-13
+
+Long-task reliability and first autonomous Builder: the main agent can delegate scoped writes mid-run, keep real user constraints across compression, and finish as completed, partial, blocked, or needs input.
+
+- Human task instructions stay pinned through context compression; harness review and scheduler text cannot become new user authorization.
+- Project memory retrieval refreshes when the plan or work changes instead of freezing on the first empty result.
+- `delegate_subagent` can spawn an isolated Builder with explicit write scopes; unfinished edits persist, merge conflicts stay blocked, and the old pre-planner remains an opt-in compatibility path.
+- Workers can be followed up, collected with wait-any, or cancelled individually. Interrupt recovery keeps constraints and evidence and does not replay uncertain tool calls.
+- `finish_task` and the conversation heading distinguish completed, partial, blocked, and needs-input outcomes.
+
+## 0.8.1 — 2026-09-12
+
+Workbench follow-up after 0.8.0: interrupt keeps the shell, code preview has syntax colors, chat images open in the sidebar, and closing a Browser tab waits until the page is actually destroyed.
+
+- Terminal toolbar sends Ctrl+C to interrupt the current command; closing the tab ends the session. Exited shells show the exit code and a New terminal action.
+- File preview loads highlight.js colors in light and dark themes. Failed opens show an error plus retry instead of spinning forever.
+- Conversation attachments and data/blob images open in a sidebar image tab. Workspace-outside files need a one-time read-only prompt.
+- Closing a Browser tab awaits WebContents destruction and keeps the tab if stop fails. Collapsing the sidebar still only hides and mutes.
+
 ## 0.8.0 — 2026-09-12
 
 AporiaX 0.8.0 adds a same-screen workbench so the Agent can show files, the in-app browser, and process logs beside the conversation.

@@ -3,6 +3,11 @@ import { join } from "node:path";
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/;
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
+const readPermissions = (extra = {}) => Object.freeze({
+  "*": "deny",
+  ...Object.fromEntries(["list_directory", "read_file", "search_text", "git_status", "git_diff", "inspect_office_file"].map((name) => [name, "allow"])),
+  ...extra,
+});
 
 const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
   explore: Object.freeze({
@@ -17,7 +22,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_diff",
       "inspect_office_file",
     ]),
-    permissions: Object.freeze({ "*": "deny" }),
+    permissions: readPermissions(),
     maxRounds: 8,
     background: false,
     triggers: Object.freeze([]),
@@ -36,7 +41,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_diff",
       "inspect_office_file",
     ]),
-    permissions: Object.freeze({ "*": "deny" }),
+    permissions: readPermissions(),
     maxRounds: 6,
     background: true,
     triggers: Object.freeze(["plan.step.completed", "changes.batch.ready"]),
@@ -56,7 +61,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "inspect_office_file",
       "run_command",
     ]),
-    permissions: Object.freeze({ "*": "deny", run_command: "ask" }),
+    permissions: readPermissions({ run_command: "ask" }),
     maxRounds: 4,
     background: true,
     triggers: Object.freeze(["verification.requested"]),
@@ -75,7 +80,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_diff",
       "inspect_office_file",
     ]),
-    permissions: Object.freeze({ "*": "deny" }),
+    permissions: readPermissions(),
     maxRounds: 6,
     background: true,
     triggers: Object.freeze(["task.completed"]),

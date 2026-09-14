@@ -3,7 +3,6 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 const SKILL_NAME = /^[a-z][a-z0-9_-]{1,63}$/;
 const MAX_SKILL_FILE_BYTES = 128_000;
-const MAX_SKILL_INSTRUCTIONS = 48_000;
 const SOURCE_PRIORITY = {
   builtin: 1,
   user: 2,
@@ -93,7 +92,8 @@ export function parseSkillDocument(source, options = {}) {
   if (!SKILL_NAME.test(name)) {
     throw new Error(`Invalid skill name: ${name || "<empty>"}`);
   }
-  const instructions = String(body || "").slice(0, MAX_SKILL_INSTRUCTIONS);
+  const instructions = String(body || "");
+  if (instructions.length > MAX_SKILL_FILE_BYTES) throw new Error(`Skill ${name} is too large; split it into referenced files.`);
   if (!instructions.trim()) {
     throw new Error(`Skill ${name} has no instructions.`);
   }
@@ -315,7 +315,8 @@ export class HarnessSkillRegistry {
       matched.push(item);
     }
     return {
-      skills: matched.slice(0, Math.max(1, limit)).map((item) => ({
+      // The limit bounds automatic matching, never the user's explicit selection.
+      skills: matched.map((item) => ({
         ...summary(item.skill),
         reason: item.reason,
         score: item.score,
