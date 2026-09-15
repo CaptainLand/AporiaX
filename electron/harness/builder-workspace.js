@@ -9,7 +9,6 @@ import {
   readdir,
   realpath,
   rm,
-  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -20,6 +19,7 @@ import {
 } from "./scope-leases.js";
 
 import { sharedScopeLeases } from "./shared-scope-leases.js";
+import { mergeBuilderFiles } from "./builder-merge.js";
 
 const SNAPSHOT_MAX_FILES = 800;
 const SNAPSHOT_MAX_BYTES = 24_000_000;
@@ -343,10 +343,12 @@ function createCheckpoint(path, beforeState, afterState) {
 export class BuilderWorkspaceManager {
   #leases;
   #eventBus;
+  #onMergePrepared;
 
-  constructor({ eventBus = null, leases = null } = {}) {
+  constructor({ eventBus = null, leases = null, onMergePrepared = null } = {}) {
     this.#eventBus = eventBus;
     this.#leases = leases || sharedScopeLeases;
+    this.#onMergePrepared = onMergePrepared;
   }
 
   leases() {
@@ -379,8 +381,14 @@ export class BuilderWorkspaceManager {
       });
 
       let closed = false;
-      const close = async () => {
+      let mergeInProgress = false;
+      let mergeRecovery = null;
+      const close = async ({ discardRecovery = false } = {}) => {
         if (closed) return;
+        if (mergeInProgress) throw new Error("Builder merge is in progress.");
+        if (mergeRecovery?.unresolved?.length && !discardRecovery) {
+          throw new Error(`Builder recovery files were retained: ${mergeRecovery.manifestPath}`);
+        }
         closed = true;
         try {
           await runGit(
@@ -405,7 +413,7 @@ export class BuilderWorkspaceManager {
         });
       };
 
-      const merge = async () => {
+      const performMerge = async () => {
         if (closed) throw new Error("Builder workspace is already closed.");
         const worktreeDirtyAfter = await snapshotDirtyState(worktreeRoot);
         const workerTouched = changedDirtyPaths(
@@ -461,47 +469,14 @@ export class BuilderWorkspaceManager {
           };
         }
 
-        const applied = [];
-        try {
-          for (const path of paths) {
-            const next =
-              after.get(path) || {
-                missing: true,
-                hash: null,
-                content: null,
-              };
-            const target = resolve(workspaceRoot, ...path.split("/"));
-            if (next.missing) {
-              await rm(target, { recursive: true, force: true });
-            } else {
-              await mkdir(dirname(target), { recursive: true });
-              await writeFile(target, next.content);
-            }
-            applied.push(path);
-          }
-        } catch (error) {
-          for (const path of applied.reverse()) {
-            const previous =
-              currentStates.get(path) || {
-                missing: true,
-                content: null,
-              };
-            const target = resolve(workspaceRoot, ...path.split("/"));
-            if (previous.missing) {
-              await rm(target, { recursive: true, force: true }).catch(
-                () => undefined,
-              );
-            } else {
-              await mkdir(dirname(target), { recursive: true }).catch(
-                () => undefined,
-              );
-              await writeFile(target, previous.content).catch(
-                () => undefined,
-              );
-            }
-          }
-          throw error;
-        }
+        mergeRecovery = await mergeBuilderFiles({ workspaceRoot, paths, before: currentStates, after,
+          recoveryRoot: baseDirectory,
+          onPrepared: async (recovery) => {
+            mergeRecovery = recovery;
+            await this.#onMergePrepared?.(recovery);
+          },
+          emit: (event) => this.#eventBus?.emit({ agentId: owner, ...event }),
+        });
 
         const changes = checkpoints.map((checkpoint) => ({
           path: checkpoint.path,
@@ -521,7 +496,17 @@ export class BuilderWorkspaceManager {
           conflicts: [],
           changes,
           checkpoints,
+          recovery: mergeRecovery,
         };
+      };
+
+      const merge = async () => {
+        if (mergeInProgress) throw new Error("Builder merge is already in progress.");
+        if (mergeRecovery?.unresolved?.length) throw new Error(`Resolve the previous Builder merge first: ${mergeRecovery.manifestPath}`);
+        mergeInProgress = true;
+        try { return await performMerge(); }
+        catch (error) { if (error.mergeRecovery) mergeRecovery = error.mergeRecovery; throw error; }
+        finally { mergeInProgress = false; }
       };
 
       const snapshot = async () => {

@@ -641,6 +641,7 @@ async function startHarnessTask(
         messages,
         provider,
         memoryDirectory: join(app.getPath("userData"), "project-memory"),
+        userSkillsDirectory: join(app.getPath("userData"), "skills"),
         understandingDirectory: getProjectUnderstandingDirectory(),
         recoveryContext,
         signal,
@@ -917,12 +918,13 @@ ipcMain.handle(
   "harness:approval-response",
   (event, { runId, approvalId, approved, scope = "once" }) => {
     assertTrustedSender(event);
-    if (approvalToastApprovalId() === String(approvalId || "")) closeApprovalToast();
-    return harnessTaskRuntime.respondApproval(runId, approvalId, {
+    const accepted = harnessTaskRuntime.respondApproval(runId, approvalId, {
       approved,
       scope,
       clientId: String(event.sender.id),
     });
+    if (accepted && approvalToastApprovalId() === approvalId) closeApprovalToast();
+    return accepted;
   },
 );
 

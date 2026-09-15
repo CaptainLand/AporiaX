@@ -2,18 +2,21 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, open, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runtimeEvidenceStore } from "./runtime/durable-run.js";
 
 // Task-owned output, never an arbitrary filesystem path supplied by the model.
 // Retained for this runtime; close removes only this store's own temporary directory.
-export function createMcpResultStore() {
+export function createMcpResultStore({ persistent = runtimeEvidenceStore() } = {}) {
   let directory;
   let bytes = 0;
   let closed = false;
   let pending = Promise.resolve();
   const records = new Map();
   return {
+    persistent: Boolean(persistent),
     async put(text) {
       if (closed) throw new Error("MCP result store is closed.");
+      if (persistent) return persistent.put(text);
       const operation = pending.then(async () => {
       const size = Buffer.byteLength(text);
       if (size > 64_000_000 || bytes + size > 256_000_000) throw new Error("MCP result storage limit exceeded.");
@@ -29,6 +32,8 @@ export function createMcpResultStore() {
       return operation;
     },
     async read({ result_id: id, offset = 0, limit = 16_000 } = {}) {
+      if (closed) throw new Error("MCP result store is closed.");
+      if (persistent) return persistent.read({ result_id: id, offset, limit });
       const record = records.get(id);
       if (!record) throw new Error("Unknown or expired MCP result reference.");
       const start = Number(offset);

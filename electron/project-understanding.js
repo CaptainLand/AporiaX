@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, rename, unlink, open, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, unlink, realpath, stat } from "node:fs/promises";
+import { withUnderstandingWriteLock } from "./understanding-write-lock.js";
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -20,18 +21,7 @@ async function serializeStore(filePath, action, lockFile = true) {
   const pending = previous.catch(() => {}).then(async () => {
     if (!filePath || !lockFile) return action();
     await mkdir(dirname(filePath), { recursive: true });
-    let lock;
-    const deadline = Date.now() + 5_000;
-    while (!lock) {
-      try { lock = await open(`${filePath}.lock`, "wx"); }
-      catch (error) {
-        if (error.code !== "EEXIST") throw error;
-        if (Date.now() >= deadline) throw new Error("Understanding store is busy; retry after the other writer finishes.");
-        await new Promise((done) => setTimeout(done, 25));
-      }
-    }
-    try { return await action(); }
-    finally { await lock.close(); await unlink(`${filePath}.lock`); }
+    return withUnderstandingWriteLock(filePath, action);
   });
   writeQueues.set(key, pending);
   try { return await pending; }

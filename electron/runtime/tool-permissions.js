@@ -32,7 +32,8 @@ export function resolveToolExecutionPermission({
     permissionAction === "deny" || commandPolicy?.action === "deny";
   const explicitAsk = permissionAction === "ask";
   const automaticMode = isAutomaticApprovalMode(approvalMode);
-  const commandPolicyAllowsAuto = commandPolicy?.action === "allow";
+  const isolatedProject = commandPolicy?.category === "project-script" && backend.osIsolation && backend.available;
+  const commandPolicyAllowsAuto = commandPolicy?.action === "allow" || isolatedProject;
   const backendReady = backend.available;
   const autoApproved = Boolean(
     !denied &&

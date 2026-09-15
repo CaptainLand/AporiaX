@@ -20,6 +20,9 @@ function publicSkill(skill) {
     description: skill.description,
     source: skill.source,
     path: skill.path,
+    packageRoot: skill.packageRoot || "",
+    license: skill.license || "",
+    runtime: skill.runtime || null,
     tools: [...(skill.tools || [])],
     reason: skill.reason || "auto",
   };
@@ -36,6 +39,8 @@ function buildSkillContext(skills) {
       [
         `\n## Skill: ${skill.title} (${skill.name})`,
         `Source: ${skill.source}`,
+        skill.runtime?.executable ? `Configured Python interpreter: ${skill.runtime.executable}. File detected only; verify imports before use. It is outside the versioned package so updates do not replace it.` : "",
+        skill.packageRoot ? `Package root: ${skill.packageRoot}\nRead package resources with read_skill_resource(skill="${skill.name}", path="relative/path"). This root is read-only; write outputs to the task workspace. Upstream Bash/terminal commands must use AporiaX run_command and current task permissions, never setup scripts during discovery.` : "",
         skill.tools?.length
           ? `Recommended tools: ${skill.tools.join(", ")}`
           : "Recommended tools: none declared",
@@ -61,7 +66,7 @@ async function activateForText(
     registry,
     workspacePath = "",
     userSkillsDirectory = "",
-    builtinDirectory = "",
+    builtinDirectory,
     limit = MAX_ACTIVE_SKILLS,
   },
 ) {
@@ -111,9 +116,7 @@ export async function prepareSkillRequest(
     ...messages[userIndex],
     skillOriginalContent: originalContent,
     aporiaSkillContext: context,
-    content: [baseSkillMessage(messages[userIndex]).trim(), context]
-      .filter(Boolean)
-      .join("\n\n"),
+    content: baseSkillMessage(messages[userIndex]),
     activatedSkills: activation.skills.map(publicSkill),
   };
   return {
@@ -145,9 +148,7 @@ export async function prepareSkillMessage(
     ...message,
     skillOriginalContent: activationSource,
     aporiaSkillContext: context,
-    content: [baseSkillMessage(message).trim(), context]
-      .filter(Boolean)
-      .join("\n\n"),
+    content: baseSkillMessage(message),
     activatedSkills: activation.skills.map(publicSkill),
     unresolvedSkills: activation.unresolved,
   };

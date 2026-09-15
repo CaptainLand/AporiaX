@@ -47,8 +47,9 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("account:set-remote-file-access", enabled),
     syncTasks: (payload) => ipcRenderer.invoke("account:sync-tasks", payload),
     remoteCommands: () => ipcRenderer.invoke("account:remote-commands"),
-    acknowledgeRemoteCommand: (commandId, status, result = "") =>
-      ipcRenderer.invoke("account:ack-remote-command", commandId, status, result),
+    claimRemoteCommand: (commandId) => ipcRenderer.invoke("account:claim-remote-command", commandId),
+    acknowledgeRemoteCommand: (commandId, status, result = "", claim) =>
+      ipcRenderer.invoke("account:ack-remote-command", commandId, status, result, claim),
     executeRemoteFileCommand: (command) =>
       ipcRenderer.invoke("account:execute-remote-file-command", command),
   },
@@ -111,10 +112,17 @@ contextBridge.exposeInMainWorld("desktop", {
     skills: (request = {}) => ipcRenderer.invoke("core:skills", request),
     mcp: (request = {}) => ipcRenderer.invoke("core:mcp", request),
     library: (request = {}) => ipcRenderer.invoke("core:library", request),
+    searchOnlineExtensions: (request) => ipcRenderer.invoke("core:library:search-online", request),
+    onlineExtensionDetails: (request) => ipcRenderer.invoke("core:library:online-details", request),
+    installOnlineSkill: (request) => ipcRenderer.invoke("core:library:install-online-skill", request),
+    verifyLibrarySkill: (request) => ipcRenderer.invoke("core:library:verify-skill", request),
     installLibrarySkill: (request) =>
       ipcRenderer.invoke("core:library:install-skill", request),
     importLibrarySkill: () =>
       ipcRenderer.invoke("core:library:import-skill"),
+    rollbackLibrarySkill: (request) => ipcRenderer.invoke("core:library:rollback-skill", request),
+    toggleLibraryMcp: (request) => ipcRenderer.invoke("core:library:toggle-mcp", request),
+    probeLibraryMcp: (request) => ipcRenderer.invoke("core:library:probe-mcp", request),
     removeLibrarySkill: (request) =>
       ipcRenderer.invoke("core:library:remove-skill", request),
     saveLibraryMcp: (request) =>

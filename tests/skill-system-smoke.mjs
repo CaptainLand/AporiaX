@@ -89,10 +89,12 @@ Validate server-side changes before delivery.
     registry.catalog({
       workspacePath: workspaceA,
       userSkillsDirectory: userSkills,
+      builtinDirectory: "",
     }),
     registry.catalog({
       workspacePath: workspaceB,
       userSkillsDirectory: userSkills,
+      builtinDirectory: "",
     }),
   ]);
 
@@ -143,8 +145,9 @@ Validate server-side changes before delivery.
   assert.equal(prepared.messages[0].role, "user");
   assert.equal(prepared.messages[0].skillOriginalContent, "帮我翻译 localization 文件");
   assert.match(prepared.messages[0].content, /^帮我翻译 localization 文件/);
-  assert.match(prepared.messages[0].content, /Preserve keys and variables/);
-  assert.match(prepared.messages[0].content, /do not grant additional permissions/i);
+  assert.equal(prepared.messages[0].content, "帮我翻译 localization 文件");
+  assert.match(prepared.messages[0].aporiaSkillContext, /Preserve keys and variables/);
+  assert.match(prepared.messages[0].aporiaSkillContext, /do not grant additional permissions/i);
 } finally {
   await rm(root, { recursive: true, force: true });
 }

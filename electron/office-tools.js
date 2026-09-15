@@ -3,6 +3,10 @@ import {
   BorderStyle,
   Document,
   HeadingLevel,
+  Header,
+  Footer,
+  ImageRun,
+  PageNumber,
   PageBreak,
   Packer,
   Paragraph,
@@ -36,6 +40,13 @@ export const OFFICE_TOOL_DEFINITIONS = [
           },
           title: { type: "string" },
           subtitle: { type: "string" },
+          template: { type: "string", enum: ["technical-report", "business-report", "resume"] },
+          latin_font: { type: "string", maxLength: 80 },
+          cjk_font: { type: "string", maxLength: 80 },
+          accent_color: { type: "string", pattern: "^[0-9A-Fa-f]{6}$" },
+          header: { type: "string", maxLength: 300 },
+          footer: { type: "string", maxLength: 300 },
+          page_numbers: { type: "boolean" },
           blocks: {
             type: "array",
             maxItems: 100,
@@ -50,9 +61,17 @@ export const OFFICE_TOOL_DEFINITIONS = [
                     "bullets",
                     "table",
                     "page_break",
+                    "image",
                   ],
                 },
                 text: { type: "string" },
+                path: { type: "string", description: "For image blocks: a workspace-local PNG/JPEG path." },
+                width: { type: "number", minimum: 24, maximum: 1200 },
+                caption: { type: "string", maxLength: 500 },
+                runs: { type: "array", maxItems: 100, items: {
+                  type: "object", properties: { text: { type: "string" }, bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" } },
+                  required: ["text"], additionalProperties: false,
+                } },
                 level: { type: "integer", minimum: 1, maximum: 3 },
                 items: {
                   type: "array",
@@ -330,7 +349,7 @@ function wordParagraph(text, options = {}) {
     children: [
       new TextRun({
         text,
-        font: "Aptos",
+        font: options.font || { ascii: "Aptos", hAnsi: "Aptos", eastAsia: "Microsoft YaHei" },
         size: options.size || 22,
         bold: Boolean(options.bold),
         color: options.color || "28323C",
@@ -374,6 +393,20 @@ async function createWordDocument(input) {
   const title = requireText(input.title, "title", 300);
   const subtitle = optionalText(input.subtitle, "subtitle", 500);
   const blocks = requireArray(input.blocks, "blocks", 100);
+  const template = input.template || "technical-report";
+  if (!["technical-report", "business-report", "resume"].includes(template)) throw new Error("Unknown Word template.");
+  const compact = template === "resume";
+  const accent = input.accent_color || (template === "business-report" ? "334155" : "244B70");
+  if (!/^[0-9a-f]{6}$/i.test(accent)) throw new Error("Invalid Word accent color.");
+  const fonts = {
+    ascii: optionalText(input.latin_font, "latin_font", 80) || "Aptos",
+    hAnsi: optionalText(input.latin_font, "latin_font", 80) || "Aptos",
+    eastAsia: optionalText(input.cjk_font, "cjk_font", 80) || "Microsoft YaHei",
+  };
+  const bodySize = compact ? 21 : 22;
+  const margin = compact ? 1080 : 1440;
+  const contentWidth = 11906 - margin * 2;
+  const paragraph = (text, options = {}) => wordParagraph(text, { font: fonts, size: bodySize, ...options });
   const children = [
     new Paragraph({
       alignment: AlignmentType.LEFT,
@@ -381,8 +414,8 @@ async function createWordDocument(input) {
       children: [
         new TextRun({
           text: title,
-          font: "Aptos Display",
-          size: 46,
+          font: fonts,
+          size: compact ? 36 : 44,
           bold: true,
           color: "1F2D3D",
         }),
@@ -391,18 +424,19 @@ async function createWordDocument(input) {
   ];
   if (subtitle) {
     children.push(
-      wordParagraph(subtitle, {
+      paragraph(subtitle, {
         size: 24,
         color: "657484",
         spacing: { after: 360 },
       }),
     );
   } else {
-    children.push(new Paragraph({ spacing: { after: 220 } }));
+    // Title spacing belongs to the title, not an empty padding paragraph.
   }
 
   let paragraphCount = subtitle ? 2 : 1;
   let tableCount = 0;
+  let imageCount = 0;
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index] || {};
     if (block.type === "page_break") {
@@ -429,11 +463,40 @@ async function createWordDocument(input) {
       paragraphCount += 1;
       continue;
     }
+    if (block.type === "image") {
+      const asset = input._wordImages instanceof Map ? input._wordImages.get(block.path) : null;
+      if (!asset) throw new Error("Image must be loaded through the authorized workspace tool.");
+      const maxWidth = contentWidth / 15;
+      const maxHeight = (16838 - 2160) / 15 * 0.8;
+      const desiredWidth = Math.min(maxWidth, Number(block.width) || 420);
+      if (!Number.isFinite(desiredWidth) || desiredWidth < 24) throw new Error("Invalid image width.");
+      const ratio = Math.min(desiredWidth / asset.width, maxHeight / asset.height);
+      children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({
+        data: asset.data, type: asset.type,
+        transformation: { width: Math.round(asset.width * ratio), height: Math.round(asset.height * ratio) },
+      })] }));
+      const caption = optionalText(block.caption, "caption", 500);
+      if (caption) children.push(paragraph(caption, { size: 19, color: "657484", alignment: AlignmentType.CENTER }));
+      imageCount++;
+      continue;
+    }
+    if (block.type === "paragraph" && Array.isArray(block.runs)) {
+      const runs = requireArray(block.runs, "runs", 100, 1).map((run) => new TextRun({
+        text: (() => {
+          if (typeof run.text !== "string" || !run.text.length || run.text.length > 8000) throw new Error("run.text must be 1–8000 characters.");
+          return run.text;
+        })(), font: fonts, size: bodySize,
+        bold: run.bold === true, italics: run.italic === true, ...(run.underline === true ? { underline: {} } : {}),
+      }));
+      children.push(new Paragraph({ children: runs, spacing: { after: compact ? 100 : 170, line: 276 }, widowControl: true }));
+      paragraphCount++;
+      continue;
+    }
     if (block.type === "paragraph") {
       children.push(
-        wordParagraph(
+        paragraph(
           requireText(block.text, `blocks[${index}].text`, 8_000),
-          { spacing: { after: 170, line: 276 } },
+          { spacing: { after: compact ? 100 : 170, line: 276 }, widowControl: true },
         ),
       );
       paragraphCount += 1;
@@ -459,7 +522,7 @@ async function createWordDocument(input) {
             children: [
               new TextRun({
                 text,
-                font: "Aptos",
+                font: fonts,
                 size: 22,
                 color: "28323C",
               }),
@@ -472,7 +535,7 @@ async function createWordDocument(input) {
     }
     if (block.type === "table") {
       const { headers, rows } = normalizeTableBlock(block, index);
-      const columnWidth = Math.floor(9_360 / headers.length);
+      const columnWidth = Math.floor(contentWidth / headers.length);
       const borders = {
         top: { style: BorderStyle.SINGLE, color: "CBD4DC", size: 4 },
         bottom: { style: BorderStyle.SINGLE, color: "CBD4DC", size: 4 },
@@ -502,7 +565,7 @@ async function createWordDocument(input) {
                 },
                 margins: { top: 120, bottom: 120, left: 120, right: 120 },
                 children: [
-                  wordParagraph(header, {
+                  paragraph(header, {
                     bold: true,
                     size: 20,
                     spacing: { after: 0 },
@@ -526,7 +589,7 @@ async function createWordDocument(input) {
                       right: 120,
                     },
                     children: [
-                      wordParagraph(value || " ", {
+                      paragraph(value || " ", {
                         size: 20,
                         spacing: { after: 0, line: 240 },
                       }),
@@ -538,7 +601,7 @@ async function createWordDocument(input) {
       ];
       children.push(
         new Table({
-          width: { size: 9_360, type: WidthType.DXA },
+          width: { size: contentWidth, type: WidthType.DXA },
           columnWidths: headers.map(() => columnWidth),
           borders,
           rows: tableRows,
@@ -558,19 +621,19 @@ async function createWordDocument(input) {
     styles: {
       default: {
         document: {
-          run: { font: "Aptos", size: 22, color: "28323C" },
+          run: { font: fonts, size: bodySize, color: "28323C" },
           paragraph: { spacing: { after: 160, line: 276 } },
         },
         heading1: {
-          run: { font: "Aptos Display", size: 32, bold: true, color: "244B70" },
+          run: { font: fonts, size: 32, bold: true, color: accent },
           paragraph: { spacing: { before: 280, after: 120 } },
         },
         heading2: {
-          run: { font: "Aptos Display", size: 27, bold: true, color: "315C8C" },
+          run: { font: fonts, size: 27, bold: true, color: accent },
           paragraph: { spacing: { before: 220, after: 100 } },
         },
         heading3: {
-          run: { font: "Aptos", size: 23, bold: true, color: "3F596F" },
+          run: { font: fonts, size: 23, bold: true, color: accent },
           paragraph: { spacing: { before: 180, after: 80 } },
         },
       },
@@ -579,14 +642,20 @@ async function createWordDocument(input) {
       {
         properties: {
           page: {
+            size: { width: 11906, height: 16838 },
             margin: {
               top: 1_080,
-              right: 1_440,
+              right: margin,
               bottom: 1_080,
-              left: 1_440,
+              left: margin,
             },
           },
         },
+        ...(input.header ? { headers: { default: new Header({ children: [paragraph(optionalText(input.header, "header", 300), { size: 18, color: "657484" })] }) } } : {}),
+        ...(input.footer || input.page_numbers === true ? { footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [
+          new TextRun({ text: optionalText(input.footer, "footer", 300), font: fonts, size: 18 }),
+          ...(input.page_numbers === true ? [new TextRun({ children: ["  ", PageNumber.CURRENT, " / ", PageNumber.TOTAL_PAGES], font: fonts, size: 18 })] : []),
+        ] })] }) } } : {}),
         children,
       },
     ],
@@ -603,6 +672,11 @@ async function createWordDocument(input) {
         blockCount: blocks.length,
         paragraphCount,
         tableCount,
+        imageCount,
+        template,
+        fonts,
+        fontValidation: "not-verified",
+        fieldResults: input.page_numbers === true ? "requires-renderer-update" : "not-applicable",
       },
       buffer.length,
     ),

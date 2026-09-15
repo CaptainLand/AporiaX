@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validateApprovalResponse } from "./approval-response.js";
 import { withDurableRun } from "../runtime/durable-run.js";
 import {
   acknowledgeRecoverableRun,
@@ -13,6 +14,8 @@ import {
   saveRunContext,
   saveRunOperation,
   findConfirmedRunOperation,
+  putRunEvidence,
+  readRunEvidence,
 } from "../run-store.js";
 
 function createAbortError(message = "The task was interrupted.") {
@@ -185,7 +188,10 @@ export class HarnessTaskRuntime {
 
   #persistenceFailed(record, cause) {
     if (record.persistenceError) return;
-    record.persistenceError = Object.assign(new Error("RUN_PERSISTENCE_FAILED: 无法保存任务进度，已停止执行。请检查磁盘空间和数据目录权限。", { cause }), { code: "RUN_PERSISTENCE_FAILED" });
+    const last = record.lastSuccessfulContext;
+    const reason = /RUN_CONTEXT_TOO_(?:LARGE|DEEP)/.test(String(cause?.message)) ? "任务存储容量或结构超过上限。" : "请检查磁盘空间和数据目录权限。";
+    record.persistenceError = Object.assign(new Error(`RUN_PERSISTENCE_FAILED: 无法保存任务进度，已停止执行。${reason}最后成功快照：${last?.savedAt || "本轮尚未保存"}。不要直接重复未知结果的操作。`, { cause }),
+      { code: "RUN_PERSISTENCE_FAILED", lastSuccessfulContext: last || null });
     try { record.onEvent?.({ type: "run.persistence_failed", error: record.persistenceError.message }); } catch {}
     try { this.#eventBus?.emit({ runId: record.runId, taskId: record.taskId, type: "run.persistence_failed", error: record.persistenceError.message }); } catch {}
     record.controller.abort();
@@ -331,7 +337,10 @@ export class HarnessTaskRuntime {
       if (controller.signal.aborted) {
         return Promise.resolve({ approved: false, interrupted: true });
       }
-      const grantKey = details?.kind === "recovery-reconciliation" ? "" : String(this.#approvalGrantKey(details) || "");
+      const grantKey = details?.kind === "recovery-reconciliation" ? ""
+        : details?.kind === "project-script-trust"
+          ? (details.projectFingerprint ? `project-script:${details.projectFingerprint}` : "")
+          : String(this.#approvalGrantKey(details) || "");
       if (grantKey && record.approvalGrants.has(grantKey)) {
         return Promise.resolve({ approved: true, remembered: true });
       }
@@ -414,7 +423,14 @@ export class HarnessTaskRuntime {
             : null,
           signal: controller.signal,
           checkpoint: (value) => durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, value)),
-          context: (scopeId, state) => durableWrite(() => saveRunContext(this.#directory(), safeRunId, scopeId, state)),
+          context: async (scopeId, state) => {
+            await durableWrite(() => saveRunContext(this.#directory(), safeRunId, scopeId, state));
+            if (scopeId === safeRunId) record.lastSuccessfulContext = { runId: safeRunId, scopeId, savedAt: new Date().toISOString() };
+          },
+          evidenceStore: {
+            put: (text) => durableWrite(() => putRunEvidence(this.#directory(), safeRunId, text)),
+            read: (page) => readRunEvidence(this.#directory(), safeRunId, page),
+          },
           operation: (value) => durableWrite(() => saveRunOperation(this.#directory(), safeRunId, value)),
         }, () => execute({
           signal: controller.signal,
@@ -423,7 +439,8 @@ export class HarnessTaskRuntime {
           requestApproval,
         }));
         await this.#flushJournal(record);
-        if (record.persistenceError) throw record.persistenceError;
+        if (record.persistenceError) return { ...result, status: "blocked", error: true, content: record.persistenceError.message,
+          persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         await finishRunJournal(this.#directory(), safeRunId, result);
         return result;
       } catch (error) {
@@ -432,6 +449,8 @@ export class HarnessTaskRuntime {
           status: controller.signal.aborted ? "interrupted" : "failed",
           changes: [],
         }).catch(() => undefined);
+        if (record.persistenceError) return { status: "blocked", error: true, content: record.persistenceError.message, changes: [],
+          persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         throw error;
       } finally {
         clearTimeout(record.journalTimer);
@@ -515,8 +534,9 @@ export class HarnessTaskRuntime {
   respondApproval(
     runId,
     approvalId,
-    { approved = false, scope = "once", clientId = "" } = {},
+    response,
   ) {
+    const { approved, scope, clientId } = validateApprovalResponse(runId, approvalId, response);
     const approval = this.#pendingApprovals.get(String(approvalId || ""));
     if (
       !approval ||
@@ -527,7 +547,7 @@ export class HarnessTaskRuntime {
     }
     this.#pendingApprovals.delete(approval.approvalId);
     const shouldRemember =
-      Boolean(approved) && scope === "run" && Boolean(approval.grantKey);
+      approved && scope === "run" && Boolean(approval.grantKey);
     if (shouldRemember) {
       this.#activeRuns.get(approval.runId)?.approvalGrants.add(approval.grantKey);
     }
@@ -536,11 +556,11 @@ export class HarnessTaskRuntime {
       record.journalTail = record.journalTail
         .then(() => saveRunCheckpoint(this.#directory(), approval.runId, {
           scopeId: "approval:" + approval.approvalId, phase: "approval-resolved",
-          approved: Boolean(approved), requiresFreshApproval: true,
+          approved, requiresFreshApproval: true,
         }))
         .catch((error) => this.#persistenceFailed(record, error));
     }
-    approval.resolve({ approved: Boolean(approved), remembered: shouldRemember });
+    approval.resolve({ approved, remembered: shouldRemember });
     return true;
   }
 

@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
+import { validateApprovalResponse } from "./approval-response.js";
 
 const MAX_JSON_BODY_BYTES = 128_000;
 
@@ -116,9 +117,11 @@ export function createHarnessCoreServer({
             ok = taskRuntime.steer(task.runId, body.message || body);
           } else if (task.action === "approvals" && task.childId) {
             const body = await readJsonBody(req);
+            const decision = validateApprovalResponse(task.runId, task.childId, body);
+            // HTTP authority comes from the authenticated server connection,
+            // never from a caller-supplied renderer clientId.
             ok = taskRuntime.respondApproval(task.runId, task.childId, {
-              approved: Boolean(body.approved),
-              scope: body.scope === "run" ? "run" : "once",
+              approved: decision.approved, scope: decision.scope,
             });
           } else if (task.action === "acknowledge-recovery") {
             ok = await taskRuntime.acknowledgeRecovery(task.runId);

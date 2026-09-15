@@ -3142,7 +3142,6 @@ function App() {
   const runsRef = useRef(new Map());
   const tasksRef = useRef(tasks);
   const remoteSyncSignatureRef = useRef("");
-  const handledRemoteCommandIdsRef = useRef(new Set());
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
   const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
@@ -4046,17 +4045,23 @@ function App() {
 
 
   useEffect(() => {
-    if (!storageReady || !window.desktop?.account?.remoteCommands) return undefined;
+    if (!storageReady || !window.desktop?.account?.claimRemoteCommand) return undefined;
     let disposed = false;
     let timer = null;
-    const acknowledge = (commandId, status, result = "") =>
-      window.desktop.account.acknowledgeRemoteCommand?.(commandId, status, result);
     const poll = async () => {
       try {
         const commands = await window.desktop.account.remoteCommands();
-        for (const command of Array.isArray(commands) ? commands : []) {
-          if (!command?.id || handledRemoteCommandIdsRef.current.has(command.id)) continue;
-          handledRemoteCommandIdsRef.current.add(command.id);
+        for (const candidate of Array.isArray(commands) ? commands : []) {
+          if (disposed) break;
+          if (!candidate?.id) continue;
+          const command = await window.desktop.account.claimRemoteCommand(candidate.id);
+          if (!command) continue;
+          const acknowledge = (id, status, result = "") =>
+            window.desktop.account.acknowledgeRemoteCommand(id, status, result, command.claim);
+          if (disposed) {
+            await acknowledge(command.id, "failed", "Desktop view changed before dispatch; this command was not executed.");
+            break;
+          }
           try {
             if (["files_roots", "files_list", "file_preview", "file_download"].includes(command.type)) {
               if (!window.desktop.account.executeRemoteFileCommand) {
@@ -4278,6 +4283,14 @@ function App() {
     if (retryResult.started) {
       setNotice(tr("已重新启动本轮任务", "This turn has been restarted"));
       return true;
+    }
+    if (retryResult.reason === "main-status-unavailable") {
+      setNotice(tr("暂时无法确认后台任务状态，未中断任何任务。请稍后重试。", "Could not confirm the backend run status. No runs were interrupted; please try again shortly."));
+      return false;
+    }
+    if (retryResult.reason === "task-still-active") {
+      setNotice(tr("当前任务仍在运行，未启动历史重试。请先停止或等待完成。", "The current task is still running. Stop it or wait before retrying an earlier turn."));
+      return false;
     }
     if (retryResult.reason === "retry-error") {
       const detail = cleanIpcError(

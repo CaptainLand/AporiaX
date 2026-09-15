@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
+export const runtimeEvidenceStore = () => storage.getStore()?.evidenceStore || null;
 export async function saveRuntimeCheckpoint(checkpoint) {
   await storage.getStore()?.checkpoint(checkpoint);
 }
@@ -16,7 +17,7 @@ export async function saveRuntimeContext(scopeId, state) {
   await context.contextGate;
 }
 // Unknown tools, MCP calls and process tools are conservatively effectful.
-const READ_ONLY = new Set(["read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "present_to_user"]);
+const READ_ONLY = new Set(["read_skill_resource", "read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "present_to_user", "read_conversation_history", "mcp_search_tools", "mcp_read_result"]);
 export const isReadOnlyNativeTool = (name) => READ_ONLY.has(name);
 function stableInput(value) {
   if (Array.isArray(value)) return value.map(stableInput);

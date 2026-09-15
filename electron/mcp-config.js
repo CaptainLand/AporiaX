@@ -14,7 +14,7 @@ async function readJsonFile(path, { root = "" } = {}) {
   try {
     const stats = await lstat(path);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_CONFIG_BYTES) {
-      return null;
+      throw new Error(`MCP config must be a regular, non-linked file under ${MAX_CONFIG_BYTES} bytes: ${path}`);
     }
     const target = await realpath(path);
     if (root) {
@@ -37,11 +37,15 @@ function stringArray(value, limit = 64) {
 }
 
 function stringRecord(value, limit = 64) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("MCP env/headers must be a JSON object.");
+  if (Object.keys(value).length > limit) throw new Error("Too many MCP environment/header entries.");
   return Object.fromEntries(
     Object.entries(value)
-      .slice(0, limit)
-      .map(([key, item]) => [String(key).slice(0, 160), String(item ?? "").slice(0, 8_000)]),
+      .map(([key, item]) => {
+        if (!key || key.length > 160 || (item !== null && typeof item === "object") || String(item ?? "").length > 8000 || String(item ?? "").includes("\0")) throw new Error("Invalid MCP environment/header entry.");
+        return [key, String(item ?? "")];
+      }),
   );
 }
 
@@ -67,6 +71,12 @@ export function normalizeMcpServer(record = {}, { environment = process.env } = 
   if (!new Set(["stdio", "streamable-http"]).has(transport)) {
     throw new Error(`Unsupported MCP transport for ${id}: ${transport}`);
   }
+  const references = [...JSON.stringify([record.args, record.env, record.url, record.headers]).matchAll(ENV_REFERENCE)].map((match) => match[1]);
+  const placeholders = [...JSON.stringify([record.args, record.env, record.url, record.headers]).matchAll(/\$\{([^}]+)\}/g)];
+  if (placeholders.some((match) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(match[1]))) throw new Error("Unsupported MCP placeholder: use ${ENV_NAME}, not editor-specific input references.");
+  const missingEnvironment = [...new Set(references.filter((name) => environment[name] === undefined || environment[name] === ""))];
+  const privateValues = Object.values(interpolateRecord(stringRecord(transport === "stdio" ? record.env : record.headers, 96), environment));
+  const redactValues = [...new Set([...references.map((name) => String(environment[name] || "")), ...privateValues, ...privateValues.map((value) => value.replace(/^Bearer\s+/i, ""))].filter((value) => value.length >= 4))];
   const enabled = record.enabled !== false;
   const autoApproveReadOnly = record.autoApproveReadOnly === true;
   const timeoutMs = Math.max(3_000, Math.min(120_000, Number(record.timeoutMs) || 30_000));
@@ -82,11 +92,21 @@ export function normalizeMcpServer(record = {}, { environment = process.env } = 
       transport,
       enabled,
       command,
-      args: stringArray(record.args, 64).map((item) => interpolateEnvironment(item, environment)),
+      // argv is an ordered sequence: repeated flags, empty strings and spaces are meaningful.
+      args: (() => {
+        if (record.args !== undefined && !Array.isArray(record.args)) throw new Error("MCP args must be an array.");
+        if ((record.args?.length || 0) > 64) throw new Error("MCP args exceed the 64 argument limit.");
+        return (record.args || []).map((item) => {
+          if (typeof item !== "string" || item.includes("\0")) throw new Error("MCP arguments must be strings without NUL.");
+          return interpolateEnvironment(item, environment);
+        });
+      })(),
       cwd: String(record.cwd || "").trim().slice(0, 2_000),
       env: interpolateRecord(stringRecord(record.env, 96), environment),
       autoApproveReadOnly,
       timeoutMs,
+      missingEnvironment,
+      redactValues,
     });
   }
 
@@ -102,6 +122,7 @@ export function normalizeMcpServer(record = {}, { environment = process.env } = 
   if (url.username || url.password) {
     throw new Error(`MCP HTTP server ${id} must not embed credentials in its URL.`);
   }
+  redactValues.push(...[...url.searchParams.values()].filter((value) => value.length >= 4));
   return Object.freeze({
     id,
     name: String(record.name || id).trim().slice(0, 120),
@@ -111,6 +132,8 @@ export function normalizeMcpServer(record = {}, { environment = process.env } = 
     headers: interpolateRecord(stringRecord(record.headers, 96), environment),
     autoApproveReadOnly,
     timeoutMs,
+    missingEnvironment,
+    redactValues,
   });
 }
 
@@ -122,6 +145,8 @@ export function publicMcpServerSummary(server) {
     enabled: server.enabled,
     autoApproveReadOnly: server.autoApproveReadOnly,
     timeoutMs: server.timeoutMs,
+    configurationStatus: server.missingEnvironment?.length ? "needs-environment" : server.enabled ? "configured-not-tested" : "disabled",
+    missingEnvironment: [...(server.missingEnvironment || [])],
     ...(server.transport === "stdio"
       ? {
           command: server.command,
@@ -151,10 +176,14 @@ export async function loadMcpConfiguration({
   const userConfig = (await readJsonFile(userConfigPath)) || {};
   const rawServers = Array.isArray(userConfig.servers) ? userConfig.servers : [];
   const normalized = [];
-  const errors = [];
+  const errors = rawServers.length > 64 ? ["MCP config exceeds 64 entries; extra entries were not loaded."] : [];
+  const seen = new Set();
   for (const raw of rawServers.slice(0, 64)) {
     try {
-      normalized.push(normalizeMcpServer(raw, { environment }));
+      const server = normalizeMcpServer(raw, { environment });
+      if (seen.has(server.id)) throw new Error(`Duplicate MCP server id: ${server.id}`);
+      seen.add(server.id);
+      normalized.push(server);
     } catch (error) {
       errors.push(String(error?.message || error));
     }

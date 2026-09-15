@@ -858,10 +858,11 @@ try {
       cwd: ".",
       reason: "验证运行环境。",
     }),
-    { content: "Local sandbox command completed automatically." },
+    { content: "Local workspace command completed after project-script approval." },
   ];
   let localSandboxIndex = 0;
   let localSandboxExecutorCalled = false;
+  let localSandboxApprovals = 0;
   let englishSystemPrompt = "";
   globalThis.fetch = async (_url, options) => {
     const requestBody = JSON.parse(options.body);
@@ -909,14 +910,18 @@ try {
         },
       };
     },
-    requestApproval: async () => {
-      throw new Error(
-        "Local sandbox commands must not request approval in automatic mode.",
-      );
+    requestApproval: async (request) => {
+      // A workspace copy is not OS isolation. sandbox-auto still needs trust
+      // for project scripts; only full-auto deliberately bypasses that prompt.
+      localSandboxApprovals++;
+      assert.equal(request.toolName, "run_command");
+      assert.equal(request.riskCategory, "project-script");
+      return { approved: true };
     },
   });
   assert.equal(localSandboxHarnessResult.status, "completed");
   assert.equal(localSandboxExecutorCalled, true);
+  assert.equal(localSandboxApprovals, 1);
   assert.equal(localSandboxHarnessResult.steps[0]?.success, true);
   assert.equal(
     localSandboxHarnessResult.steps[0]?.command,

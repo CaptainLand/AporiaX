@@ -62,8 +62,8 @@ const localAuto = resolveToolExecutionPermission({
   input: { command: "npm run build" },
   sandboxStatus: { available: false, localAvailable: true, autoApprovalSafe: true },
 });
-assert.equal(localAuto.requiresApproval, false);
-assert.equal(localAuto.executionMode, "safe-auto-approval");
+assert.equal(localAuto.requiresApproval, true);
+assert.equal(localAuto.executionMode, "safe-manual-approval");
 
 const unknownLocalCommand = resolveToolExecutionPermission({
   toolName: "run_command",

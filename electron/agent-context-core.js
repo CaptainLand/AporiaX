@@ -238,7 +238,7 @@ export function buildStructuredContextCheckpoint(
 
   for (const message of messages || []) {
     const text = messageText(message).replace(/\s+/g, " ").trim();
-    if (isHumanMessage(message) && text) {
+    if (isHumanMessage(message) && text && !message.aporiaSupersededBy) {
       requirements.push(text);
     } else if (message?.role === "assistant") {
       if (text) decisions.push(text.slice(0, 1_200));

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { initializeChunkSchema, encodeContext, decodeContext, storeBytes, loadBytes, loadByteRange, digest } from "./context-chunks.js";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -109,6 +110,20 @@ function initializeSchema(database) {
       PRIMARY KEY (run_id, scope_id)
     );
   `);
+  initializeChunkSchema(database);
+  if (!database.prepare("PRAGMA table_info(run_contexts)").all().some((column) => column.name === "format"))
+    database.exec("ALTER TABLE run_contexts ADD COLUMN format TEXT NOT NULL DEFAULT 'json-gzip'");
+  database.exec(`CREATE TABLE IF NOT EXISTS run_evidence (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    manifest TEXT NOT NULL, created_at TEXT NOT NULL
+  );`);
+  if (!database.prepare("PRAGMA table_info(run_evidence)").all().some((column) => column.name === "checksum"))
+    database.exec("ALTER TABLE run_evidence ADD COLUMN checksum TEXT NOT NULL DEFAULT ''");
+  if (!database.prepare("PRAGMA table_info(run_evidence)").all().some((column) => column.name === "bytes")) {
+    database.exec("ALTER TABLE run_evidence ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0");
+    for (const row of database.prepare("SELECT id,manifest FROM run_evidence").all())
+      database.prepare("UPDATE run_evidence SET bytes=? WHERE id=?").run(JSON.parse(row.manifest).bytes, row.id);
+  }
 }
 
 function insertEvent(database, runId, event, { at = null } = {}) {
@@ -373,21 +388,62 @@ export async function appendRunJournalEvents(dataDirectory, runId, events) {
 
 export async function saveRunContext(dataDirectory, runId, scopeId, state) {
   const database = await getDatabase(dataDirectory);
-  const bytes = Buffer.from(typeof state === "string" ? state : JSON.stringify(state));
-  if (bytes.length > 16_000_000) throw new Error("RUN_CONTEXT_TOO_LARGE");
-  const checksum = createHash("sha256").update(bytes).digest("hex");
-  database.prepare("INSERT OR REPLACE INTO run_contexts (run_id, scope_id, updated_at, checksum, payload) VALUES (?, ?, ?, ?, ?)")
-    .run(assertRunId(runId), String(scopeId), new Date().toISOString(), checksum, gzipSync(bytes, { level: 1 }));
+  const parsed = typeof state === "string" ? JSON.parse(state) : state;
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const bytes = encodeContext(database, parsed);
+    if (bytes.length > 16_000_000) throw new Error("RUN_CONTEXT_TOO_LARGE: snapshot manifest exceeds 16 MB.");
+    database.prepare("INSERT OR REPLACE INTO run_contexts (run_id, scope_id, updated_at, checksum, payload, format) VALUES (?, ?, ?, ?, ?, 'chunks-v1')")
+      .run(assertRunId(runId), String(scopeId), new Date().toISOString(), digest(bytes), gzipSync(bytes, { level: 1 }));
+    database.exec("COMMIT");
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
 }
 
 function readRunContexts(database, runId) {
   const result = Object.create(null);
-  for (const row of database.prepare("SELECT scope_id, checksum, payload FROM run_contexts WHERE run_id = ?").all(runId)) {
+  for (const row of database.prepare("SELECT scope_id, checksum, payload, format FROM run_contexts WHERE run_id = ?").all(runId)) {
     const bytes = gunzipSync(row.payload, { maxOutputLength: 16_000_000 });
     if (createHash("sha256").update(bytes).digest("hex") !== row.checksum) throw new Error("RUN_CONTEXT_CORRUPT");
-    result[row.scope_id] = JSON.parse(bytes.toString("utf8"));
+    result[row.scope_id] = row.format === "chunks-v1" ? decodeContext(database, bytes) : JSON.parse(bytes.toString("utf8"));
   }
   return result;
+}
+
+export async function putRunEvidence(dataDirectory, runId, text) {
+  const database = await getDatabase(dataDirectory);
+  const bytes = Buffer.from(text);
+  if (bytes.length > 64_000_000) throw new Error("MCP result storage limit exceeded.");
+  const id = randomUUID();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const used = database.prepare("SELECT COALESCE(SUM(bytes),0) AS total FROM run_evidence WHERE run_id=?").get(assertRunId(runId)).total;
+    if (used + bytes.length > 256_000_000) throw new Error("MCP result storage limit exceeded: 256 MB per run.");
+    const manifest = JSON.stringify(storeBytes(database, bytes));
+    database.prepare("INSERT INTO run_evidence(id, run_id, manifest, created_at, checksum, bytes) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, assertRunId(runId), manifest, new Date().toISOString(), digest(Buffer.from(manifest)), bytes.length);
+    database.exec("COMMIT");
+    return { id, bytes: bytes.length, format: "json", lifetime: "task recovery chain", readTool: "mcp_read_result" };
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
+}
+
+export async function readRunEvidence(dataDirectory, runId, { result_id, offset = 0, limit = 16000 } = {}) {
+  const database = await getDatabase(dataDirectory);
+  const row = database.prepare(`WITH RECURSIVE ancestors(id, task_id, depth) AS (
+    SELECT run_id, task_id, 0 FROM runs WHERE run_id = ? UNION ALL
+    SELECT r.recovery_of_run_id, a.task_id, a.depth + 1 FROM runs r JOIN ancestors a ON r.run_id = a.id
+    JOIN runs parent ON parent.run_id = r.recovery_of_run_id AND parent.task_id = a.task_id WHERE a.depth < 100
+  ) SELECT e.manifest,e.checksum FROM run_evidence e JOIN ancestors a ON a.id = e.run_id WHERE e.id = ? LIMIT 1`).get(assertRunId(runId), String(result_id || ""));
+  if (!row) throw new Error("Unknown or expired MCP result reference for this task.");
+  if (row.checksum && digest(Buffer.from(row.manifest)) !== row.checksum) throw new Error("RUN_CONTEXT_CORRUPT");
+  const manifest = JSON.parse(row.manifest);
+  const total = manifest.bytes;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > total || !Number.isSafeInteger(limit) || limit < 4 || limit > 32000) throw new Error("Invalid MCP result page.");
+  const end = Math.min(total, offset + limit);
+  const bytes = row.checksum ? loadByteRange(database, manifest, offset, end) : loadBytes(database, manifest).subarray(offset, end);
+  if (bytes.length && (bytes[0] & 0xc0) === 0x80) throw new Error("Offset must be a UTF-8 boundary.");
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: end < total });
+  const next = offset + Buffer.byteLength(text);
+  return { resultId: result_id, text, offset, nextOffset: next < total ? next : null, totalBytes: total, complete: next >= total };
 }
 
 export async function saveRunCheckpoint(dataDirectory, runId, checkpoint) {

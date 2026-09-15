@@ -14,9 +14,11 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  RotateCcw,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { Switch } from "../components/Controls.jsx";
+import { ExtensionDiscovery } from "./ExtensionDiscovery.jsx";
 import "./extensions.css";
 
 const MANAGED_SOURCES = ["browser", "skill", "mcp", "plugin"];
@@ -29,6 +31,7 @@ const EMPTY_MCP = {
   argsText: "",
   secretsText: "{}",
   autoApproveReadOnly: false,
+  enabled: false,
 };
 
 function sourceLabel(source, tr) {
@@ -80,6 +83,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
   const [busyId, setBusyId] = useState("");
   const [showMcpForm, setShowMcpForm] = useState(false);
   const [mcpDraft, setMcpDraft] = useState(EMPTY_MCP);
+  const [verification, setVerification] = useState({});
   const [state, setState] = useState({
     loading: true,
     capabilities: [],
@@ -106,6 +110,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
       capabilities: capabilities?.capabilities || [],
       summary: capabilities?.summary || { total: 0, bySource: {}, byKind: {} },
       skills: skills?.skills || [],
+      skillDiagnostics: skills?.diagnostics || [],
       mcp,
       plugins: plugins?.plugins || [],
       policy,
@@ -166,17 +171,19 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
   const catalogSkillByName = new Map(
     skillCatalogEntries.map((entry) => [entry.name, entry]),
   );
-  const installedSkillNames = new Set(state.library?.installed?.skillNames || []);
+  const installedSkillNames = new Set([...(state.library?.installed?.skillNames || []), ...state.skills.map((skill) => skill.name)]);
   const configuredMcp = state.mcp?.allServers || state.mcp?.servers || [];
 
   const runLibraryAction = async (id, action, successMessage) => {
     setBusyId(id);
     try {
-      await action();
+      const result = await action();
       await refresh();
-      onNotice(successMessage);
+      onNotice(typeof successMessage === "function" ? successMessage(result) : successMessage);
+      return true;
     } catch (error) {
       onNotice(String(error?.message || error));
+      return false;
     } finally {
       setBusyId("");
     }
@@ -207,6 +214,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
       transport: template.transport || "streamable-http",
       url: template.url === "https://" ? "" : template.url || "",
       command: template.command || "",
+      secretsText: JSON.stringify(template.transport === "stdio" ? template.env || {} : template.headers || {}, null, 2),
       argsText: (template.args || [])
         .map((argument) => argument === "{workspace}" ? workspacePath : argument)
         .join("\n"),
@@ -222,10 +230,11 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
         name: mcpDraft.name || mcpDraft.id,
         transport: mcpDraft.transport,
         autoApproveReadOnly: mcpDraft.autoApproveReadOnly,
+        enabled: mcpDraft.enabled,
         ...(mcpDraft.transport === "stdio"
           ? {
               command: mcpDraft.command,
-              args: mcpDraft.argsText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+              args: mcpDraft.argsText === "" ? [] : mcpDraft.argsText.split(/\r?\n/),
               env: parseObject(mcpDraft.secretsText, "Environment"),
             }
           : {
@@ -233,13 +242,15 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
               headers: parseObject(mcpDraft.secretsText, "Headers"),
             }),
       };
-      await runLibraryAction(
+      const saved = await runLibraryAction(
         `mcp:${server.id}`,
-        () => window.desktop.core.saveLibraryMcp({ server }),
-        tr("MCP Server 已保存", "MCP server saved"),
+        () => window.desktop.core.saveLibraryMcp({ server, createOnly: true }),
+        tr("MCP 已保存。请点击探测，检查认证与工具目录。", "MCP saved. Probe it to check authentication and tools."),
       );
+      if (!saved) return;
       setShowMcpForm(false);
       setMcpDraft(EMPTY_MCP);
+      setTab("installed");
     } catch (error) {
       onNotice(String(error?.message || error));
     }
@@ -265,7 +276,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
       const result = await window.desktop.core.importLibraryMcp();
       if (result?.canceled) return;
       await refresh();
-      onNotice(tr("已导入 {count} 个 MCP Server", "Imported {count} MCP server(s)", { count: result?.imported?.length || 0 }));
+      onNotice(tr("已导入 {count} 个 MCP Server（默认停用）", "Imported {count} MCP server(s), disabled by default", { count: result?.imported?.length || 0 }) + (result?.errors?.length ? ` · ${result.errors.join("; ")}` : ""));
     } catch (error) {
       onNotice(String(error?.message || error));
     } finally {
@@ -279,8 +290,8 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
         <span>Extensions Library</span>
         <h3>{tr("给 AporiaX 安装新的方法，而不是新的权限。", "Install new methods for AporiaX, not new privileges.")}</h3>
         <p>{tr(
-          "Skill 是可审阅的工作流说明；MCP 是你明确配置并信任的外部工具。安装不会绕过工作区、审批或沙箱边界。",
-          "Skills are reviewable workflows. MCP servers are explicitly configured external tools. Installation never bypasses workspace, approval, or sandbox boundaries.",
+          "Skill 是可审阅的工作流说明；MCP 是需要信任的外部工具。导入不执行脚本；本地 MCP 进程不等于被操作系统沙箱隔离。",
+          "Skills are reviewable workflows; MCP servers are trusted external tools. Importing runs no scripts. A local MCP process is not an OS sandbox.",
         )}</p>
       </div>
 
@@ -300,6 +311,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
         <>
           {tab === "discover" && (
             <div className="extensions-library-view">
+              <ExtensionDiscovery onConfigure={configureTemplate} onInstalled={async () => setState(await loadData())} />
               <div className="extensions-import-actions">
                 <div>
                   <strong>{tr("从本机导入", "Import from this computer")}</strong>
@@ -316,10 +328,10 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                   </button>
                 </span>
               </div>
-              <label className="extensions-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("搜索 Skill、MCP 或用途", "Search Skills, MCP, or a use case")} /></label>
+              <label className="extensions-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("筛选下方精选适配", "Filter curated adapters below")} /></label>
               <div className="extensions-library-section">
                 <div className="extensions-library-section-heading">
-                  <div><Sparkles size={16} /><strong>{tr("Skills 工作流", "Skills")}</strong></div>
+                  <div><Sparkles size={16} /><strong>{tr("精选 Skills 适配", "Curated Skill adapters")}</strong></div>
                   <p>{tr("为 Agent 增加可审阅、可复用的专业工作方法，不会自行获得新权限。", "Reviewable, reusable methods that guide the Agent without granting new permissions.")}</p>
                 </div>
                 <div className="extensions-catalog-grid">
@@ -331,7 +343,8 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                         <div className="extension-catalog-copy">
                           <div><strong>{entry.displayTitle}</strong><span>Skill</span></div>
                           <p>{entry.displayDescription}</p>
-                          <small>{entry.author} · {entry.version} · {entry.trust}</small>
+                          <small>{entry.author} · {entry.version} · {entry.license || entry.trust}</small>
+                          {!!entry.requirements?.length && <small>{entry.requirements.join(" · ")}</small>}
                         </div>
                         <button type="button" className="extension-primary-action" disabled={installed || busyId === entry.id} onClick={() => void runLibraryAction(entry.id, () => window.desktop.core.installLibrarySkill({ catalogId: entry.id }), tr("Skill 已安装", "Skill installed"))}>
                           {busyId === entry.id ? <LoaderCircle className="spin" size={14} /> : installed ? <Check size={14} /> : <Download size={14} />}
@@ -345,7 +358,7 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
               <div className="extensions-library-section">
                 <div className="extensions-library-section-heading">
                   <div><Box size={16} /><strong>{tr("MCP 工具服务", "MCP servers")}</strong></div>
-                  <p>{tr("连接本地或远程工具服务；每个工具仍受工作区、审批与沙箱策略约束。", "Connect local or remote tool servers; every tool remains constrained by workspace, approval, and sandbox policy.")}</p>
+                  <p>{tr("配置不等于可用。先探测工具目录，再为后续任务启用；工具调用仍遵循任务审批策略。", "Configuration is not readiness. Probe the catalog before enabling a server for future tasks; tool calls still follow task approval policy.")}</p>
                 </div>
                 <div className="extensions-catalog-grid">
                   {mcpCatalogEntries.map((entry) => (
@@ -354,7 +367,8 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                       <div className="extension-catalog-copy">
                         <div><strong>{entry.displayTitle}</strong><span>MCP</span></div>
                         <p>{entry.displayDescription}</p>
-                        <small>{entry.author} · {entry.version} · {entry.trust}</small>
+                        <small>{entry.author} · {entry.version} · {entry.license || entry.trust}</small>
+                        {!!entry.requirements?.length && <small>{entry.requirements.join(" · ")}</small>}
                       </div>
                       <button type="button" className="extension-primary-action" onClick={() => configureTemplate(entry)}><Plus size={14} />{tr("配置", "Configure")}</button>
                     </article>
@@ -373,8 +387,13 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                   const catalogSkill = catalogSkillByName.get(skill.name);
                   return (
                     <div className="extensions-item" key={`${skill.source}:${skill.name}`}>
-                      <span><Sparkles size={14} /></span><div><strong>{catalogSkill?.displayTitle || skill.title || skill.name}</strong><small>{catalogSkill?.displayDescription || `${skill.name} · ${skill.source} · ${skill.auto ? "Auto" : "Manual"}`}</small></div>
-                      {skill.source === "user" ? <button className="extension-icon-action danger" type="button" title={tr("卸载", "Uninstall")} onClick={() => void runLibraryAction(`skill:${skill.name}`, () => window.desktop.core.removeLibrarySkill({ name: skill.name }), tr("Skill 已卸载", "Skill removed"))}><Trash2 size={14} /></button> : <span className="extensions-state">{skill.source}</span>}
+                      <span><Sparkles size={14} /></span><div><strong>{catalogSkill?.displayTitle || skill.title || skill.name}</strong><small>{catalogSkill?.displayDescription || `${skill.name} · ${skill.source} · ${skill.auto ? "Auto" : "Manual"}`}</small>{skill.compatibility && <small title={skill.compatibility}>{skill.compatibility}</small>}{!!skill.compatibilityWarnings?.length && <small title={skill.compatibilityWarnings.join("; ")}>{skill.compatibilityWarnings.join("; ")}</small>}</div>
+                      <span className="extensions-row-actions" title={skill.runtime?.executable || ""}>
+                      {skill.source === "user" && <button className="extension-icon-action extension-text-action" type="button" disabled={!!busyId} onClick={() => void runLibraryAction(`verify:${skill.name}`, async () => { const r = await window.desktop.core.verifyLibrarySkill({ name: skill.name }); setVerification((v) => ({ ...v, [`skill:${skill.name}`]: `${tr("结构与文件校验通过；未执行脚本或验证依赖", "Files verified; scripts and dependencies not tested")} · ${new Date(r.checkedAt).toLocaleString()}` })); return r; }, tr("Skill 文件完整性验证通过；外部依赖未验证。", "Skill integrity verified; dependencies not tested."))}><ShieldCheck size={14} />{tr("验证", "Verify")}</button>}
+                      {skill.source === "user" && state.library?.installed?.skillPackages?.some((item) => item.name === skill.name && item.canRollback) && <button className="extension-icon-action" type="button" disabled={!!busyId} title={tr("回退到上一版", "Roll back to previous version")} onClick={() => void runLibraryAction(`skill:${skill.name}`, () => window.desktop.core.rollbackLibrarySkill({ name: skill.name }), tr("Skill 已回退，后续任务生效", "Skill rolled back for future tasks"))}><RotateCcw size={14} /></button>}
+                      {skill.source === "user" ? <button className="extension-icon-action danger" type="button" disabled={!!busyId} title={tr("卸载", "Uninstall")} onClick={() => void runLibraryAction(`skill:${skill.name}`, () => window.desktop.core.removeLibrarySkill({ name: skill.name }), tr("Skill 已卸载", "Skill removed"))}><Trash2 size={14} /></button> : <span className="extensions-state">{skill.source}</span>}
+                      </span>
+                      {verification[`skill:${skill.name}`] && <small className="extension-installed-verification" role="status">{verification[`skill:${skill.name}`]}</small>}
                     </div>
                   );
                 }) : <div className="extensions-empty"><PackageOpen size={20} />{tr("还没有安装 Skill", "No Skills installed yet")}</div>}
@@ -384,11 +403,23 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
               <div className="extensions-item-list">
                 {configuredMcp.length ? configuredMcp.map((server) => (
                   <div className="extensions-item" key={server.id}>
-                    <span><Box size={14} /></span><div><strong>{server.name || server.id}</strong><small>{server.id} · {server.transport}</small></div>
-                    <button className="extension-icon-action danger" type="button" title={tr("移除", "Remove")} onClick={() => void runLibraryAction(`mcp:${server.id}`, () => window.desktop.core.removeLibraryMcp({ id: server.id }), tr("MCP Server 已移除", "MCP server removed"))}><Trash2 size={14} /></button>
+                    <span><Box size={14} /></span><div><strong>{server.name || server.id}</strong><small>{server.id} · {server.transport} · {server.enabled ? tr("已配置，尚未验证调用", "Configured, calls not verified") : tr("已停用", "Disabled")}</small>{!!server.missingEnvironment?.length && <small className="extensions-error">{tr("缺少环境变量", "Missing environment")}: {server.missingEnvironment.join(", ")}</small>}</div>
+                    <span className="extensions-row-actions">
+                    <button className="extension-icon-action extension-text-action" type="button" disabled={!!busyId || !!server.missingEnvironment?.length} title={tr("启动服务并发现工具，可能下载依赖；不调用业务工具", "Start the service and discover tools; may download dependencies. No action tools are called.")} onClick={() => void runLibraryAction(`probe:${server.id}`, async () => {
+                      setVerification((v) => ({ ...v, [`mcp:${server.id}`]: "" }));
+                      try {
+                        const r = await window.desktop.core.probeLibraryMcp({ id: server.id });
+                        setVerification((v) => ({ ...v, [`mcp:${server.id}`]: tr("发现 {count} 个工具 · 探测连接已关闭 · 业务调用未验证", "{count} tools discovered · Probe closed · Action calls untested", { count: r.toolCount }) + ` · ${new Date(r.checkedAt || Date.now()).toLocaleString()}` })); return r;
+                      } catch (error) { setVerification((v) => ({ ...v, [`mcp:${server.id}`]: tr("探测失败：", "Probe failed: ") + error.message })); throw error; }
+                    }, (result) => tr("发现 {count} 个工具，探测连接已关闭；不代表实际业务调用已验证。", "Discovered {count} tools; probe connection closed. Action calls have not been verified.", { count: result.toolCount }))}>{busyId === `probe:${server.id}` ? <LoaderCircle className="spin" size={14} /> : <Search size={14} />}{tr("探测", "Probe")}</button>
+                    <Switch checked={server.enabled} disabled={!!busyId} label={tr("后续任务启用 {name}", "Enable {name} for future tasks", { name: server.name || server.id })} onChange={(enabled) => void runLibraryAction(`mcp:${server.id}`, () => window.desktop.core.toggleLibraryMcp({ id: server.id, enabled }), tr("设置已保存，后续任务生效；进行中任务不受影响。", "Saved for future tasks; running tasks are unchanged."))} />
+                    <button className="extension-icon-action danger" type="button" disabled={!!busyId} title={tr("移除", "Remove")} onClick={() => void runLibraryAction(`mcp:${server.id}`, () => window.desktop.core.removeLibraryMcp({ id: server.id }), tr("MCP Server 已移除", "MCP server removed"))}><Trash2 size={14} /></button>
+                    </span>
+                    {verification[`mcp:${server.id}`] && <small className="extension-installed-verification" role="status">{verification[`mcp:${server.id}`]}</small>}
                   </div>
                 )) : <div className="extensions-empty"><PackageOpen size={20} />{tr("还没有配置 MCP Server", "No MCP servers configured yet")}</div>}
               </div>
+              {!!state.mcp?.errors?.length && <p className="extensions-error">{state.mcp.errors.join("; ")}</p>}
             </div>
           )}
 
@@ -423,12 +454,14 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
                 {mcpDraft.transport === "stdio" ? <><label><span>{tr("命令", "Command")}</span><input required value={mcpDraft.command} onChange={(event) => setMcpDraft((current) => ({ ...current, command: event.target.value }))} placeholder="npx" /></label><label><span>{tr("参数（每行一个）", "Arguments (one per line)")}</span><textarea rows={4} value={mcpDraft.argsText} onChange={(event) => setMcpDraft((current) => ({ ...current, argsText: event.target.value }))} /></label></> : <label><span>URL</span><input required type="url" value={mcpDraft.url} onChange={(event) => setMcpDraft((current) => ({ ...current, url: event.target.value }))} placeholder="https://example.com/mcp" /></label>}
                 <label><span>{mcpDraft.transport === "stdio" ? tr("环境变量 JSON", "Environment JSON") : tr("请求头 JSON", "Headers JSON")}</span><textarea rows={4} value={mcpDraft.secretsText} onChange={(event) => setMcpDraft((current) => ({ ...current, secretsText: event.target.value }))} placeholder={'{ "Authorization": "Bearer ${MCP_TOKEN}" }'} /><small>{tr("推荐使用 ${ENV_NAME} 引用，不要把密钥提交到项目。", "Prefer ${ENV_NAME} references; never commit secrets to a project.")}</small></label>
                 <label className="extensions-inline-switch"><Switch checked={mcpDraft.autoApproveReadOnly} label="Auto approve read-only" onChange={(checked) => setMcpDraft((current) => ({ ...current, autoApproveReadOnly: checked }))} /><span>{tr("自动批准服务声明为只读的工具", "Auto-approve tools declared read-only by the server")}</span></label>
+                <label className="extensions-inline-switch"><Switch checked={mcpDraft.enabled} label="Enable for future tasks" onChange={(checked) => setMcpDraft((current) => ({ ...current, enabled: checked }))} /><span>{tr("后续任务启用（建议先保存并探测）", "Enable for future tasks (save and probe first)")}</span></label>
                 <div className="extensions-form-actions"><button type="button" onClick={() => setShowMcpForm(false)}>{tr("取消", "Cancel")}</button><button className="primary" type="submit" disabled={busyId.startsWith("mcp:")}>{busyId.startsWith("mcp:") ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{tr("保存配置", "Save configuration")}</button></div>
               </form>
             </div>
           )}
 
           {state.error && <p className="extensions-error">{state.error}</p>}
+          {state.skillDiagnostics?.map((item) => <p key={item.path} className="extensions-error">{item.path}: {item.error}</p>)}
         </>
       )}
     </section>

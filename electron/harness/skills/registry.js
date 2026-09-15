@@ -1,7 +1,9 @@
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { parseDocument } from "yaml";
+import { fileURLToPath } from "node:url";
 
-const SKILL_NAME = /^[a-z][a-z0-9_-]{1,63}$/;
+export const SKILL_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const MAX_SKILL_FILE_BYTES = 128_000;
 const SOURCE_PRIORITY = {
   builtin: 1,
@@ -9,66 +11,33 @@ const SOURCE_PRIORITY = {
   project: 3,
 };
 
-function stripQuotes(value) {
-  const text = String(value || "").trim();
-  if (
-    (text.startsWith('"') && text.endsWith('"')) ||
-    (text.startsWith("'") && text.endsWith("'"))
-  ) {
-    return text.slice(1, -1);
-  }
-  return text;
-}
-
-function parseScalar(value) {
-  const text = stripQuotes(value);
-  if (/^(true|false)$/i.test(text)) return text.toLowerCase() === "true";
-  if (text.startsWith("[") && text.endsWith("]")) {
-    return text
-      .slice(1, -1)
-      .split(",")
-      .map((item) => stripQuotes(item))
-      .filter(Boolean);
-  }
-  return text;
-}
-
 function parseFrontmatter(source) {
   const text = String(source || "").replace(/^\uFEFF/, "");
-  if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) {
+  if (Buffer.byteLength(text, "utf8") > MAX_SKILL_FILE_BYTES) throw new Error("Skill document exceeds 128 KB.");
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) {
+    if (/^---\r?\n/.test(text)) throw new Error("Unclosed Skill YAML frontmatter.");
     return { metadata: {}, body: text };
   }
-  const lines = text.split(/\r?\n/);
-  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (closing < 0) return { metadata: {}, body: text };
-
-  const metadata = {};
-  let activeListKey = "";
-  for (const raw of lines.slice(1, closing)) {
-    const line = raw.trimEnd();
-    const listMatch = line.match(/^\s*-\s+(.+)$/);
-    if (listMatch && activeListKey) {
-      metadata[activeListKey] ||= [];
-      if (Array.isArray(metadata[activeListKey])) {
-        metadata[activeListKey].push(stripQuotes(listMatch[1]));
-      }
-      continue;
-    }
-    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
-    if (!field) continue;
-    const [, key, value] = field;
-    if (!value.trim()) {
-      metadata[key] = [];
-      activeListKey = key;
-    } else {
-      metadata[key] = parseScalar(value);
-      activeListKey = "";
+  if (match[1].length > 32_000) throw new Error("Skill frontmatter exceeds 32 KB.");
+  const doc = parseDocument(match[1], { version: "1.2", schema: "core", uniqueKeys: true, stringKeys: true, prettyErrors: false });
+  if (doc.errors.length || doc.warnings.length) throw new Error("Invalid Skill YAML: " + (doc.errors[0] || doc.warnings[0]).message);
+  const metadata = doc.toJS({ maxAliasCount: 20 }) || {};
+  if (typeof metadata !== "object" || Array.isArray(metadata)) throw new Error("Skill frontmatter must be an object.");
+  const seen = new Set();
+  let nodes = 0;
+  function check(value, depth = 0) {
+    if (++nodes > 2048 || depth > 16) throw new Error("Skill metadata nesting/size limit exceeded.");
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) throw new Error("Skill metadata aliases/cycles are not supported.");
+    seen.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (["__proto__", "prototype", "constructor"].includes(key)) throw new Error("Unsafe Skill metadata key.");
+      check(child, depth + 1);
     }
   }
-  return {
-    metadata,
-    body: lines.slice(closing + 1).join("\n").trim(),
-  };
+  check(metadata);
+  return { metadata, body: text.slice(match[0].length).trim() };
 }
 
 function normalizedArray(value, limit = 24) {
@@ -83,6 +52,10 @@ function normalizedArray(value, limit = 24) {
 
 export function parseSkillDocument(source, options = {}) {
   const { metadata, body } = parseFrontmatter(source);
+  for (const key of ["name", "title", "description", "license", "compatibility"]) {
+    if (metadata[key] !== undefined && typeof metadata[key] !== "string") throw new Error(`Skill ${key} must be text.`);
+  }
+  if (metadata.metadata !== undefined && (!metadata.metadata || typeof metadata.metadata !== "object" || Array.isArray(metadata.metadata))) throw new Error("Skill metadata must be an object.");
   const fallbackName = String(options.fallbackName || "")
     .trim()
     .toLowerCase()
@@ -100,8 +73,18 @@ export function parseSkillDocument(source, options = {}) {
   return Object.freeze({
     name,
     title: String(metadata.title || name).trim().slice(0, 120),
-    description: String(metadata.description || "").trim().slice(0, 600),
-    version: String(metadata.version || "1").trim().slice(0, 40),
+    description: String(metadata.description || "").trim().slice(0, 1024),
+    version: String(metadata.version || metadata.metadata?.version || "1").trim().slice(0, 80),
+    license: String(metadata.license || "").slice(0, 200),
+    compatibility: String(metadata.compatibility || "").slice(0, 500),
+    allowedTools: metadata["allowed-tools"] ?? null,
+    compatibilityWarnings: [
+      ...(metadata["allowed-tools"] ? ["allowed-tools is guidance only; AporiaX task permissions remain authoritative."] : []),
+      ...(["hooks", "context", "agent", "model"].filter((key) => metadata[key] !== undefined).map((key) => `${key}: stored as metadata, not executed by this host.`)),
+    ],
+    metadata: Object.freeze(metadata.metadata || {}),
+    frontmatter: Object.freeze(metadata),
+    packageRoot: options.path && !String(options.path).includes("://") ? dirname(resolve(options.path)) : "",
     auto: metadata.auto !== false,
     triggers: normalizedArray(metadata.triggers, 32),
     tools: normalizedArray(metadata.tools, 32),
@@ -127,17 +110,26 @@ async function loadSkillFile(skillPath, { source, fallbackName }) {
     return null;
   }
   if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_SKILL_FILE_BYTES) {
-    return null;
+    throw new Error("Skill must be a regular, non-linked file under 128 KB.");
   }
   const text = await readFile(skillPath, "utf8");
-  return parseSkillDocument(text, {
+  const parsed = parseSkillDocument(text, {
     source,
     path: skillPath,
     fallbackName,
   });
+  // Optional isolated runtimes live outside the versioned Skill package.
+  // Discovery only checks a file; it never runs Python or installs dependencies.
+  if (source === "user" && parsed.metadata.runtime === "python") {
+    const executable = join(dirname(dirname(dirname(skillPath))), "skill-runtimes", parsed.name,
+      ...(process.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"]));
+    const available = await lstat(executable).then((stats) => stats.isFile() || stats.isSymbolicLink()).catch(() => false);
+    if (available) return Object.freeze({ ...parsed, runtime: { kind: "python", executable, status: "installed-not-tested" } });
+  }
+  return parsed;
 }
 
-async function loadSkillRoot(rootDirectory, source, allowedRoot = "") {
+async function loadSkillRoot(rootDirectory, source, allowedRoot = "", diagnostics = []) {
   if (!rootDirectory) return [];
   let root;
   try {
@@ -155,7 +147,7 @@ async function loadSkillRoot(rootDirectory, source, allowedRoot = "") {
   const rootSkill = await loadSkillFile(join(root, "SKILL.md"), {
     source,
     fallbackName: basename(root),
-  }).catch(() => null);
+  }).catch((error) => { diagnostics.push({ path: join(root, "SKILL.md"), error: error.message }); return null; });
   if (rootSkill) skills.push(rootSkill);
 
   let entries;
@@ -164,12 +156,13 @@ async function loadSkillRoot(rootDirectory, source, allowedRoot = "") {
   } catch {
     return skills;
   }
-  for (const entry of entries.slice(0, 256)) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+  const directories = entries.filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !entry.name.startsWith("."));
+  if (directories.length > 256) diagnostics.push({ path: root, error: "Only the first 256 Skill directories were loaded." });
+  for (const entry of directories.slice(0, 256)) {
     const skill = await loadSkillFile(join(root, entry.name, "SKILL.md"), {
       source,
       fallbackName: entry.name,
-    }).catch(() => null);
+    }).catch((error) => { diagnostics.push({ path: join(root, entry.name, "SKILL.md"), error: error.message }); return null; });
     if (skill) skills.push(skill);
   }
   return skills;
@@ -181,6 +174,12 @@ function summary(skill) {
     title: skill.title,
     description: skill.description,
     version: skill.version,
+    license: skill.license || "",
+    compatibility: skill.compatibility || "",
+    compatibilityWarnings: skill.compatibilityWarnings || [],
+    runtime: skill.runtime || null,
+    metadata: skill.metadata || {},
+    packageRoot: skill.packageRoot || "",
     auto: skill.auto,
     triggers: [...skill.triggers],
     tools: [...skill.tools],
@@ -200,8 +199,8 @@ function explicitSkillNames(prompt) {
   const text = String(prompt || "");
   const names = [];
   const patterns = [
-    /(?:^|\s)\/skill(?::|\s+)([a-z][a-z0-9_-]{1,63})(?=\s|$)/gi,
-    /(?:^|\s)@skill(?::|\s+)([a-z][a-z0-9_-]{1,63})(?=\s|$)/gi,
+    /(?:^|\s)\/skill(?::|\s+)([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/gi,
+    /(?:^|\s)@skill(?::|\s+)([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/gi,
   ];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
@@ -252,24 +251,28 @@ export class HarnessSkillRegistry {
     return summary(this.#skills.get(normalized.name));
   }
 
-  async catalog({ workspacePath = "", userSkillsDirectory = "", builtinDirectory = "" } = {}) {
+  async catalog({ workspacePath = "", userSkillsDirectory = "", builtinDirectory = fileURLToPath(new URL("../../library/curated/", import.meta.url)) } = {}) {
     const catalog = new Map(this.#builtins);
+    const diagnostics = [];
     const roots = [
       [builtinDirectory, "builtin", builtinDirectory],
       [userSkillsDirectory, "user", userSkillsDirectory],
       [workspacePath ? join(workspacePath, ".aporiax", "skills") : "", "project", workspacePath],
     ];
     for (const [root, source, allowedRoot] of roots) {
-      const loaded = await loadSkillRoot(root, source, allowedRoot);
+      const loaded = await loadSkillRoot(root, source, allowedRoot, diagnostics);
       for (const skill of loaded) mergeSkill(catalog, skill);
     }
-    return [...catalog.values()];
+    const result = [...catalog.values()];
+    Object.defineProperty(result, "diagnostics", { value: diagnostics });
+    return result;
   }
 
   async discover(options = {}) {
     const catalog = await this.catalog(options);
     this.#skills = new Map(catalog.map((skill) => [skill.name, skill]));
     const result = this.list();
+    Object.defineProperty(result, "diagnostics", { value: catalog.diagnostics || [] });
     this.#eventBus?.emit({
       type: "skills.discovered",
       count: result.length,

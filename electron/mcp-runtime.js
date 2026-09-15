@@ -7,7 +7,8 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const MAX_DYNAMIC_TOOLS = 160;
+const MAX_DYNAMIC_TOOLS = 32; // Active schemas, not the tool catalog.
+const MAX_CATALOG_TOOLS_PER_SERVER = 2000;
 const MAX_RESOURCE_ITEMS = 200;
 const MAX_PROMPT_ITEMS = 200;
 const MAX_RESULT_TEXT = 80_000;
@@ -18,12 +19,14 @@ const CORE_RESOURCE_READ = "mcp_read_resource";
 const CORE_PROMPT_LIST = "mcp_list_prompts";
 const CORE_PROMPT_GET = "mcp_get_prompt";
 const CORE_RESULT_READ = "mcp_read_result";
+const CORE_TOOL_SEARCH = "mcp_search_tools";
 const CORE_NAMES = new Set([
   CORE_RESOURCE_LIST,
   CORE_RESOURCE_READ,
   CORE_PROMPT_LIST,
   CORE_PROMPT_GET,
   CORE_RESULT_READ,
+  CORE_TOOL_SEARCH,
 ]);
 
 function timeout(promise, timeoutMs, label) {
@@ -54,7 +57,7 @@ export function mcpToolName(serverId, remoteToolName) {
   const server = toolSafePart(serverId, "server");
   const tool = toolSafePart(remoteToolName, "tool");
   const preferred = `mcp__${server}__${tool}`;
-  if (preferred.length <= TOOL_NAME_LIMIT) return preferred;
+  if (preferred.length <= TOOL_NAME_LIMIT && server === serverId && tool === remoteToolName) return preferred;
   const digest = createHash("sha256")
     .update(`${serverId}\0${remoteToolName}`)
     .digest("hex")
@@ -189,6 +192,9 @@ async function collectPages(fetchPage, key, limit) {
     const payload = await fetchPage(cursor);
     if (!Array.isArray(payload?.[key])) throw new Error(`Invalid MCP ${key} discovery response.`);
     const next = payload[key];
+    if (items.length + next.length > limit || (items.length + next.length === limit && payload.nextCursor)) {
+      throw new Error(`MCP ${key} discovery exceeds the explicit catalog limit (${limit}); narrow the server configuration.`);
+    }
     items.push(...next.slice(0, Math.max(0, limit - items.length)));
     cursor = payload?.nextCursor || undefined;
     if (cursor && cursors.has(cursor)) throw new Error(`MCP ${key} discovery returned a repeated cursor.`);
@@ -293,6 +299,8 @@ export class AporiaXMcpRuntime {
   #discoveryPromise = null;
   #errors = new Map();
   #closed = false;
+  #selectedTools = [];
+  #permissionMode = "read-only";
   #resultStore = createMcpResultStore();
 
   constructor({
@@ -316,6 +324,7 @@ export class AporiaXMcpRuntime {
   }
 
   serverSummaries() {
+    const active = new Set(this.#activeTools(this.#permissionMode).map((record) => record.public.name));
     const ready = [...this.#connections.values()].map((connection) => ({
       id: connection.server.id,
       name: connection.server.name,
@@ -323,6 +332,8 @@ export class AporiaXMcpRuntime {
       connected: true,
       discoveryStatus: "ready",
       toolCount: connection.tools.length,
+      activeToolCount: [...this.#tools.values()].filter((record) => record.connection === connection && active.has(record.public.name)).length,
+      deferredToolCount: [...this.#tools.values()].filter((record) => record.connection === connection && !active.has(record.public.name)).length,
       resourceCount: connection.resources.length + connection.resourceTemplates.length,
       promptCount: connection.prompts.length,
       serverVersion: connection.serverVersion || null,
@@ -337,7 +348,9 @@ export class AporiaXMcpRuntime {
 
   toolCatalog(permissionMode = "read-only") {
     const mode = normalizePermissionMode(permissionMode);
+    const active = new Set(this.#activeTools(mode).map((record) => record.public.name));
     return [...this.#tools.values()]
+      .sort((a, b) => a.public.name.localeCompare(b.public.name))
       .filter((record) => mode !== "builder-write")
       .filter((record) => mode !== "read-only" || record.public.readOnly)
       .map((record) => ({
@@ -346,15 +359,14 @@ export class AporiaXMcpRuntime {
           record.public.readOnly && record.public.autoApproveReadOnly ? "allow" : "ask",
         risk: record.public.readOnly ? "read" : "control",
         mcp: true,
+        deferred: !active.has(record.public.name),
       }));
   }
 
   toolDefinitions(permissionMode = "read-only") {
     const mode = normalizePermissionMode(permissionMode);
     if (mode === "builder-write") return [];
-    const dynamic = [...this.#tools.values()]
-      .filter((record) => mode !== "read-only" || record.public.readOnly)
-      .slice(0, MAX_DYNAMIC_TOOLS)
+    const dynamic = this.#activeTools(mode)
       .map((record) => ({
         type: "function",
         function: {
@@ -373,8 +385,14 @@ export class AporiaXMcpRuntime {
     return [
       ...dynamic,
       ...(connections.length ? [{ type: "function", function: {
+        name: CORE_TOOL_SEARCH,
+        description: "Search the full MCP tool catalog, including deferred tools. Matching tools are activated for the next model request without executing them. Use server_id and/or query; page with offset. Only a bounded set of schemas is loaded at once. Tool permissions still apply.",
+        parameters: { type: "object", properties: { query: { type: "string" }, server_id: { type: "string" },
+          offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 8 } }, additionalProperties: false },
+      } }] : []),
+      ...(connections.length || this.#resultStore.persistent ? [{ type: "function", function: {
         name: CORE_RESULT_READ,
-        description: "Read the full saved JSON of a large MCP result in UTF-8 byte pages. Use resultRef.id and nextOffset. References expire when this task runtime closes; this never repeats the original tool action.",
+        description: "Read the full saved JSON of a large MCP result in UTF-8 byte pages. Use resultRef.id and nextOffset. resultRef.lifetime declares whether it survives task recovery; this never repeats the original tool action.",
         parameters: { type: "object", properties: {
           result_id: { type: "string" }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 4, maximum: 32000 },
         }, required: ["result_id"], additionalProperties: false },
@@ -389,18 +407,52 @@ export class AporiaXMcpRuntime {
     ];
   }
 
+  #activeTools(mode) {
+    if (mode === "builder-write") return [];
+    const available = [...this.#tools.values()].filter((record) => mode !== "read-only" || record.public.readOnly)
+      .sort((a, b) => a.public.name.localeCompare(b.public.name));
+    const selected = this.#selectedTools.map((name) => available.find((record) => record.public.name === name)).filter(Boolean);
+    // Deterministic round-robin: network completion order cannot starve a server.
+    const servers = [...new Set(available.map((record) => record.public.serverId))].sort();
+    const groups = servers.map((id) => available.filter((record) => record.public.serverId === id && !selected.includes(record)));
+    for (let round = 0; selected.length < MAX_DYNAMIC_TOOLS; round++) {
+      const next = groups.map((records) => records[round]).filter(Boolean);
+      if (!next.length) break;
+      selected.push(...next.slice(0, MAX_DYNAMIC_TOOLS - selected.length));
+    }
+    return selected.slice(0, MAX_DYNAMIC_TOOLS);
+  }
+
+  #searchTools(args) {
+    const query = args.query ?? "";
+    const offset = args.offset ?? 0;
+    const limit = args.limit ?? 8;
+    if (typeof query !== "string" || query.length > 500 || (args.server_id !== undefined && typeof args.server_id !== "string") ||
+      !Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 8) throw new Error("Invalid MCP tool search parameters.");
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const catalog = this.toolCatalog(this.#permissionMode).filter((record) => (!args.server_id || record.serverId === args.server_id) &&
+      terms.every((term) => [record.name, record.remoteName, record.description, record.title, record.serverName].join(" ").toLowerCase().includes(term)));
+    const found = catalog.slice(offset, offset + limit);
+    this.#selectedTools = [...new Set([...found.map((record) => record.name), ...this.#selectedTools])].slice(0, MAX_DYNAMIC_TOOLS);
+    this.#emit({ type: "mcp.tools.activated", tools: found.map((record) => record.name), totalMatches: catalog.length });
+    return { tools: found.map((record) => ({ ...record, deferred: false })), totalMatches: catalog.length,
+      nextOffset: offset + limit < catalog.length ? offset + limit : null, note: "Schemas are available on the next model request. No tool has been executed." };
+  }
+
   hasTool(name) {
     return this.#tools.has(String(name || "")) || CORE_NAMES.has(String(name || ""));
   }
 
   async discover({ permissionMode = "read-only" } = {}) {
     if (this.#closed) throw new Error("MCP runtime is closed.");
+    this.#permissionMode = normalizePermissionMode(permissionMode);
+    for (const server of this.#servers.slice(32)) this.#errors.set(server.id, "MCP server limit (32) exceeded; this server was not connected.");
     if (!this.#discoveryPromise) {
       this.#discoveryPromise = Promise.allSettled(
         this.#servers.slice(0, 32).filter((server) => !this.#connections.has(server.id))
           .map(async (server) => {
             try { await this.#connectServer(server); this.#errors.delete(server.id); }
-            catch (error) { this.#errors.set(server.id, String(error?.message || error)); }
+catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
           }),
       );
     }
@@ -415,9 +467,13 @@ export class AporiaXMcpRuntime {
   }
 
   async #connectServer(server) {
+    if (server.missingEnvironment?.length) throw new Error("MCP_ENV_MISSING: " + server.missingEnvironment.join(", "));
     this.#emit({ type: "mcp.server.connecting", serverId: server.id, transport: server.transport });
     const client = this.#clientFactory(server);
     const transport = this.#transportFactory(server);
+    // Servers may write verbose startup logs. Drain the pipe so backpressure
+    // cannot deadlock discovery; do not forward potentially secret-bearing logs.
+    transport.stderr?.resume?.();
     try {
       await timeout(client.connect(transport), server.timeoutMs, `MCP ${server.id} connect`);
       const capabilities = client.getServerCapabilities?.() || {};
@@ -425,7 +481,7 @@ export class AporiaXMcpRuntime {
       const tools = capabilities.tools ? await collectPages(
         (cursor) => timeout(client.listTools(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listTools`),
         "tools",
-        MAX_DYNAMIC_TOOLS,
+        MAX_CATALOG_TOOLS_PER_SERVER,
       ) : [];
       const resources = capabilities.resources
         ? await collectPages(
@@ -449,6 +505,11 @@ export class AporiaXMcpRuntime {
           )
         : [];
       if (this.#closed) throw new Error("MCP runtime closed during discovery.");
+      const names = new Set();
+      for (const tool of tools) {
+        if (typeof tool?.name !== "string" || !tool.name.trim() || names.has(tool.name)) throw new Error("Invalid or duplicate MCP tool name in catalog.");
+        names.add(tool.name);
+      }
       const connection = {
         server,
         client,
@@ -461,8 +522,20 @@ export class AporiaXMcpRuntime {
         prompts,
       };
       this.#connections.set(server.id, connection);
+      client.onclose = () => {
+        if (this.#closed || this.#connections.get(server.id) !== connection) return;
+        this.#connections.delete(server.id);
+        for (const [name, record] of this.#tools) {
+          if (record.connection === connection) this.#tools.delete(name);
+        }
+        for (const capability of this.#capabilities?.list({ source: "mcp", scopeId: this.#scopeId }) || []) {
+          if (capability.serverId === server.id) this.#capabilities.unregister(capability.id);
+        }
+        this.#errors.set(server.id, "MCP_DISCONNECTED: the service connection closed; reconnect before calling tools.");
+        this.#emit({ type: "mcp.server.failed", serverId: server.id, error: "MCP_DISCONNECTED" });
+      };
       for (const tool of tools) {
-        if (!tool?.name || this.#tools.size >= MAX_DYNAMIC_TOOLS) continue;
+        if (!tool?.name) continue;
         let localName = mcpToolName(server.id, tool.name);
         if (this.#tools.has(localName)) {
           localName = mcpToolName(server.id, `${tool.name}_${this.#tools.size}`);
@@ -498,9 +571,9 @@ export class AporiaXMcpRuntime {
       this.#emit({
         type: "mcp.server.failed",
         serverId: server.id,
-        error: String(error?.message || error),
+        error: safeMcpError(error, server),
       });
-      throw error;
+      throw new Error(safeMcpError(error, server));
     }
   }
 
@@ -594,6 +667,8 @@ export class AporiaXMcpRuntime {
   async call(name, args = {}, { requestApproval } = {}) {
     const localName = String(name || "");
     if (this.#closed) throw new Error("MCP runtime is closed.");
+    if (this.#permissionMode === "builder-write") throw new Error("MCP tools are disabled for isolated Builders.");
+    if (localName === CORE_TOOL_SEARCH) return this.#searchTools(args);
     if (localName === CORE_RESULT_READ) return this.#resultStore.read(args);
     if (localName === CORE_RESOURCE_LIST) {
       const connection = this.#connection(args.server);
@@ -645,6 +720,7 @@ export class AporiaXMcpRuntime {
 
     const record = this.#tools.get(localName);
     if (!record) throw new Error(`Unknown MCP tool: ${localName}`);
+    if (this.#permissionMode === "read-only" && !record.public.readOnly) throw new Error("MCP tool is not available in read-only mode.");
     await this.#approve(record, requestApproval);
     this.#emit({
       type: "mcp.tool.started",
@@ -678,9 +754,9 @@ export class AporiaXMcpRuntime {
         tool: record.public.remoteName,
         localTool: localName,
         success: false,
-        error: String(error?.message || error),
+        error: safeMcpError(error, record.connection.server),
       });
-      throw error;
+      throw new Error(safeMcpError(error, record.connection.server));
     }
   }
 
@@ -730,4 +806,12 @@ export class AporiaXMcpRuntime {
 
 export function createMcpRuntime(options) {
   return new AporiaXMcpRuntime(options);
+}
+
+function safeMcpError(error, server) {
+  let message = String(error?.message || error);
+  for (const value of [...(server?.redactValues || [])].sort((a, b) => b.length - a.length)) {
+    if (value) message = message.replaceAll(value, "[redacted]").replaceAll(encodeURIComponent(value), "[redacted]");
+  }
+  return message;
 }

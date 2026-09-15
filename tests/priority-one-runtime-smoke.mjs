@@ -93,7 +93,7 @@ try {
 
   const runtime = createHarnessTaskRuntime({ dataDirectory: root });
   const observed = [];
-  await assert.rejects(() => runtime.start({
+  const storageFailure = await runtime.start({
     runId: "disk-failure", onEvent: (e) => observed.push(e),
     execute: async () => {
       const db = new DatabaseSync(join(root, "aporiax-runs.sqlite3"));
@@ -101,7 +101,10 @@ try {
       db.close();
       return executeDurableTool("write_file", {}, async () => { executed++; });
     },
-  }), /RUN_PERSISTENCE_FAILED/);
+  });
+  assert.equal(storageFailure.status, "blocked");
+  assert.match(storageFailure.content, /RUN_PERSISTENCE_FAILED/);
+  assert.equal(storageFailure.persistence.failed, true);
   assert.equal(executed, 0);
   assert(observed.some((e) => e.type === "run.persistence_failed"));
   const db = new DatabaseSync(join(root, "aporiax-runs.sqlite3"));

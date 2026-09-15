@@ -30,9 +30,10 @@ function bindIpc() {
   ipcBound = true;
   ipcMain.on("approval-toast:decide", (event, approved) => {
     if (!active || event.sender !== active.window?.webContents) return;
+    if (typeof approved !== "boolean") return;
     const decide = active.onDecide;
     closeApprovalToast();
-    decide?.(Boolean(approved));
+    decide?.(approved);
   });
 }
 

@@ -1,6 +1,8 @@
 import { getToolPermission } from "../agent-core.js";
 import { executeDurableTool } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
+import { requireToolResult } from "./task-conversation.js";
+import { projectScriptFingerprint } from "./project-script-trust.js";
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -66,18 +68,30 @@ export async function dispatchNativeTool({
     if (typeof requestApproval !== "function") {
       throw new Error(`Tool ${toolName} requires approval.`);
     }
-    const approval = await requestApproval(
-      buildToolApprovalRequest({
+    const projectTrust = decision.commandPolicy?.category === "project-script" &&
+      ["smart-auto", "sandbox-auto"].includes(approvalMode) && !decision.backend.osIsolation && permissionAction !== "ask"
+      ? await projectScriptFingerprint(executeContext.workspaceRoot, input).catch(() => null) : null;
+    const approval = await requestApproval({
+      ...buildToolApprovalRequest({
         toolName,
         descriptor,
         input,
         sandboxStatus,
         permissionDecision: decision,
       }),
-    );
+      ...(decision.commandPolicy?.category === "project-script" ? {
+        kind: "project-script-trust", canRememberForRun: Boolean(projectTrust),
+        projectFingerprint: projectTrust?.fingerprint || null,
+        title: "运行项目脚本（宿主权限）",
+        reason: "脚本名不代表安全。仅信任你了解的项目；选择本任务允许后，脚本、锁文件或相关配置变化会重新询问。这不是系统隔离。",
+      } : {}),
+    });
     assertNotAborted(signal);
     if (!approval?.approved) {
       throw new Error(`The user rejected tool: ${toolName}`);
+    }
+    if (projectTrust && (await projectScriptFingerprint(executeContext.workspaceRoot, input))?.fingerprint !== projectTrust.fingerprint) {
+      throw new Error("PROJECT_SCRIPT_CHANGED: 项目脚本在审批期间发生变化，请重新确认后执行。");
     }
   }
 
@@ -87,7 +101,7 @@ export async function dispatchNativeTool({
     });
     if (directoryResult) {
       assertNotAborted(signal);
-      return directoryResult;
+      return { modelResult: directoryResult };
     }
   }
 
@@ -101,7 +115,7 @@ export async function dispatchNativeTool({
     permissionDecision: decision,
   }), requestApproval, { scope: executeContext.durableScope });
   assertNotAborted(signal);
-  return result;
+  return requireToolResult(result, toolName);
 }
 
 export function projectNativeToolCatalog({

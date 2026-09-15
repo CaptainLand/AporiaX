@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/MiniMax-AI/skills",
+  "commit": "ce4855d12931f58514c21ba22b76b8e36a4b1668",
+  "license": "MIT",
+  "adaptation": "AporiaX SKILL.md is a host-specific adapter. Listed upstream files are unmodified; no upstream setup scripts/hooks are auto-executed.",
+  "files": [
+    {
+      "local": "LICENSE.txt",
+      "upstream": "LICENSE",
+      "sha256": "eed4ccce37c2d24822da3bd9d5bee7bc12d494741de56ada513d0b97f537fcd0"
+    },
+    {
+      "local": "references/design_principles.md",
+      "upstream": "skills/minimax-docx/references/design_principles.md",
+      "sha256": "e9fe196ad16fecce988671cf8a8fc9ec3403e792530ee4c665370ddbc266ed20"
+    },
+    {
+      "local": "references/typography_guide.md",
+      "upstream": "skills/minimax-docx/references/typography_guide.md",
+      "sha256": "835f3549972f24b94b89eb08a86df932e5f957f322337fcd75e24cb3b06c0738"
+    },
+    {
+      "local": "references/cjk_typography.md",
+      "upstream": "skills/minimax-docx/references/cjk_typography.md",
+      "sha256": "ddc0b9e0984d43101da24b67df3d0603236b67fe46c8d0ecbc3c6bea7983afcd"
+    }
+  ]
+}

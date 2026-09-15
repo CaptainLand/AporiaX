@@ -52,13 +52,13 @@ const result = await dispatchNativeTool({
   executeAuthorized: async ({ input, permissionDecision }) => {
     executions += 1;
     assert.equal(input.command, "npm test");
-    assert.equal(permissionDecision.executionMode, "safe-auto-approval");
-    assert.equal(permissionDecision.commandPolicy.category, "verification");
+    assert.equal(permissionDecision.executionMode, "safe-manual-approval");
+    assert.equal(permissionDecision.commandPolicy.category, "project-script");
     return { modelResult: { exitCode: 0 } };
   },
 });
 assert.equal(result.modelResult.exitCode, 0);
-assert.equal(approvals, 0);
+assert.equal(approvals, 1);
 assert.equal(executions, 1);
 
 await dispatchNativeTool({
@@ -70,13 +70,13 @@ await dispatchNativeTool({
   requestApproval: async (request) => {
     approvals += 1;
     assert.equal(request.command, "npm test");
-    assert.equal(request.riskCategory, "verification");
+    assert.equal(request.riskCategory, "project-script");
     return { approved: true };
   },
   parseArguments,
   executeAuthorized: async () => ({ modelResult: { exitCode: 0 } }),
 });
-assert.equal(approvals, 1);
+assert.equal(approvals, 2);
 
 await assert.rejects(
   () =>

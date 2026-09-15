@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/obra/superpowers",
+  "commit": "c8921b5156562b61af253150a4d1d01a71705be8",
+  "license": "MIT",
+  "adaptation": "AporiaX SKILL.md is a host-specific adapter. Listed upstream files are unmodified; no upstream setup scripts/hooks are auto-executed.",
+  "files": [
+    {
+      "local": "LICENSE.txt",
+      "upstream": "LICENSE",
+      "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400"
+    },
+    {
+      "local": "references/upstream-skill.md",
+      "upstream": "skills/systematic-debugging/SKILL.md",
+      "sha256": "808fc5717aa88ad65efff312b11c186294d3e6ee301afb584e2f86599b137787"
+    },
+    {
+      "local": "references/root-cause-tracing.md",
+      "upstream": "skills/systematic-debugging/root-cause-tracing.md",
+      "sha256": "6b0622269e098ca1399e123e553fd385f0b6412d88ef0e9c4f5a8ea9cf1cec7b"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createRemoteCommandInbox, remoteOwnerKey } from "./remote-command-inbox.js";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
   DEFAULT_APORIAX_ACCOUNT_WEB_URL,
@@ -74,6 +75,10 @@ export function createDesktopAccountRuntime(options = {}) {
   const sessionPath = join(userDataPath, "aporiax-account-session.json");
   const installationPath = join(userDataPath, "aporiax-installation.json");
   const remoteFileSettingsPath = join(userDataPath, "aporiax-remote-file-access.json");
+  let inbox = null;
+  const commandInbox = () => inbox ||= createRemoteCommandInbox(join(userDataPath, "aporiax-remote-commands.sqlite3"));
+  let commandPoll = null;
+  const fileExecutions = new Set();
 
   let accessToken = "";
   let currentSnapshot = emptySnapshot();
@@ -288,18 +293,51 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   async function pollRemoteCommands() {
-    const snapshot = await bootstrap();
-    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) return [];
-    const commands = await authenticatedRequest("/remote/desktop/commands", { timeout: 12_000 });
-    return Array.isArray(commands) ? commands : [];
+    if (commandPoll) return commandPoll;
+    commandPoll = pollCommandsOnce().finally(() => { commandPoll = null; });
+    return commandPoll;
   }
 
-  async function acknowledgeRemoteCommand(commandId, status, result = "") {
+  function commandOwner(snapshot = currentSnapshot) {
+    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) throw new Error("REMOTE_SYNC_DISABLED");
+    return remoteOwnerKey(apiBaseUrl, snapshot.profile?.id, snapshot.device?.id);
+  }
+
+  async function flushCommandReceipts(owner) {
+    for (const receipt of commandInbox().receipts(owner)) {
+      if (commandOwner() !== owner) return;
+      try {
+        await authenticatedRequest(`/remote/desktop/commands/${encodeURIComponent(receipt.id)}`, {
+          method: "PATCH", body: { status: receipt.status, result: receipt.result },
+        });
+        commandInbox().acknowledge(owner, receipt.id);
+      } catch { break; } // The durable outbox will retry; never re-execute the command.
+    }
+  }
+
+  async function pollCommandsOnce() {
+    const snapshot = await bootstrap();
+    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) return [];
+    const owner = commandOwner(snapshot);
+    await flushCommandReceipts(owner);
+    const commands = await authenticatedRequest("/remote/desktop/commands", { timeout: 12_000 });
+    if (commandOwner() !== owner) return [];
+    commandInbox().ingest(owner, Array.isArray(commands) ? commands : []);
+    return commandInbox().pending(owner);
+  }
+
+  async function claimRemoteCommand(commandId, consumerId) {
+    await bootstrap();
+    return commandInbox().claim(commandOwner(), commandId, consumerId);
+  }
+
+  async function acknowledgeRemoteCommand(commandId, status, result = "", claim) {
     if (!commandId) throw new Error("REMOTE_COMMAND_ID_REQUIRED");
-    return authenticatedRequest(`/remote/desktop/commands/${encodeURIComponent(commandId)}`, {
-      method: "PATCH",
-      body: { status, result },
-    });
+    const owner = commandOwner();
+    commandInbox().complete(owner, commandId, claim, status, result);
+    fileExecutions.delete(`${owner}:${commandId}`);
+    await flushCommandReceipts(owner);
+    return { saved: true };
   }
 
   async function uploadRemoteCommandFile(commandId, file) {
@@ -325,7 +363,12 @@ export function createDesktopAccountRuntime(options = {}) {
     if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) {
       throw new Error("REMOTE_SYNC_DISABLED");
     }
-    return executeFileBrokerCommand(command, {
+    const owner = commandOwner(snapshot);
+    const saved = commandInbox().executing(owner, command.id, command.claim);
+    const executionKey = `${owner}:${command.id}`;
+    if (fileExecutions.has(executionKey)) throw new Error("REMOTE_COMMAND_ALREADY_EXECUTING");
+    fileExecutions.add(executionKey);
+    return await executeFileBrokerCommand(saved, {
       configPath: remoteFileSettingsPath,
       confirm: async ({ action, path: targetPath }) => {
         const verb = action === "preview" ? "预览" : "下载";
@@ -341,7 +384,11 @@ export function createDesktopAccountRuntime(options = {}) {
         });
         return result.response === 0;
       },
-      upload: (file) => uploadRemoteCommandFile(command.id, file),
+      upload: (file) => {
+        if (commandOwner() !== owner) throw new Error("REMOTE_IDENTITY_CHANGED");
+        commandInbox().executing(owner, saved.id, command.claim);
+        return uploadRemoteCommandFile(saved.id, file);
+      },
     });
   }
 
@@ -538,11 +585,13 @@ export function createDesktopAccountRuntime(options = {}) {
     setRemoteFileAccess,
     syncRemoteTasks,
     pollRemoteCommands,
+    claimRemoteCommand,
+    abandonRemoteCommands: (consumerId) => inbox?.abandon(consumerId),
     acknowledgeRemoteCommand,
     executeRemoteFileCommand,
     fetchModelGateway,
     refresh,
     signOut,
-    close: closeActiveServer,
+    close: () => { closeActiveServer(); inbox?.close(); inbox = null; },
   };
 }

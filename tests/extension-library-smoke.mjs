@@ -15,26 +15,27 @@ import {
 const userDataDirectory = await mkdtemp(join(tmpdir(), "aporiax-library-"));
 try {
   const initial = await extensionLibrarySnapshot({ userDataDirectory });
-  const frontendReview = initial.catalog.entries.find(
-    (entry) => entry.id === "skill.frontend-review",
+  const wordEditor = initial.catalog.entries.find(
+    (entry) => entry.id === "skill.hermes-docx",
   );
-  assert(frontendReview);
-  assert.equal(frontendReview.titleZh, "前端审阅");
-  assert.match(frontendReview.descriptionEn, /accessibility/);
+  assert(wordEditor);
+  assert.equal(wordEditor.titleZh, "Word 编辑与模板填充");
+  assert.match(wordEditor.descriptionEn, /Python/);
   assert(initial.catalog.entries.some((entry) => entry.type === "mcp-template"));
-  assert(initial.catalog.entries.some((entry) => entry.id === "skill.bug-investigation"));
-  assert(initial.catalog.entries.some((entry) => entry.id === "skill.repository-onboarding"));
+  assert(!initial.catalog.entries.some((entry) => entry.id === "skill.bug-investigation"));
+  assert(!initial.catalog.entries.some((entry) => ["mcp.remote-http", "mcp.local-stdio"].includes(entry.id)));
+  assert(initial.catalog.entries.some((entry) => entry.id === "skill.systematic-debugging"));
   const playwrightTemplate = initial.catalog.entries.find((entry) => entry.id === "mcp.playwright");
-  assert.deepEqual(playwrightTemplate.template.args, ["-y", "@playwright/mcp@latest"]);
+  assert.deepEqual(playwrightTemplate.template.args, ["-y", "@playwright/mcp@0.0.81"]);
 
   const installed = await installCatalogSkill({
     userDataDirectory,
-    catalogId: "skill.frontend-review",
+    catalogId: "skill.hermes-docx",
   });
   assert.equal(installed.installed, true);
-  assert.match(await readFile(installed.path, "utf8"), /name: frontend-review/);
+  assert.match(await readFile(installed.path, "utf8"), /name: hermes-docx/);
   const afterSkill = await extensionLibrarySnapshot({ userDataDirectory });
-  assert(afterSkill.installed.skillNames.includes("frontend-review"));
+  assert(afterSkill.installed.skillNames.includes("hermes-docx"));
 
   const customSkill = join(userDataDirectory, "custom-source");
   await mkdir(customSkill, { recursive: true });
@@ -64,10 +65,11 @@ try {
   });
   const afterMcp = await extensionLibrarySnapshot({ userDataDirectory });
   assert(afterMcp.installed.mcpServers.some((server) => server.id === "demo_http"));
-  assert(!JSON.stringify(afterMcp).includes("MCP_TOKEN"), "public snapshot must not expose header values");
+  assert(!JSON.stringify(afterMcp.installed).includes("Bearer"), "installed snapshot must not expose private header values (catalog examples are public)");
+  assert(afterMcp.installed.mcpServers.find((server) => server.id === "demo_http").missingEnvironment.includes("MCP_TOKEN"));
 
   await removeMcpServer({ userDataDirectory, id: "demo_http" });
-  await removeUserSkill({ userDataDirectory, name: "frontend-review" });
+  await removeUserSkill({ userDataDirectory, name: "hermes-docx" });
   await removeMcpServer({ userDataDirectory, id: "docs" });
   await removeUserSkill({ userDataDirectory, name: "repo-guide" });
   const empty = await extensionLibrarySnapshot({ userDataDirectory });

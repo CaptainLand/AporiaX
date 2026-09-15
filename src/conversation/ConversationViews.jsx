@@ -34,6 +34,7 @@ import {
   summarizeRoutePrompt,
 } from "../p0-model";
 import { useI18n } from "../i18n";
+import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles } from "../state/task-outcome-view.js";
 import {
   FoldableUserPrompt,
   RunDurationChip,
@@ -834,7 +835,27 @@ function TurnAnchorReview({
   );
 }
 
-function AssistantMessage({ message, onRetry, onOpenAnchor }) {
+function FailedRunContent({ message }) {
+  const { tr } = useI18n();
+  const files = savedOutcomeFiles(message);
+  const protocolError = /MODEL_MESSAGE_INVALID|TOOL_RESULT_INVALID|Failed to deserialize.*messages\[|missing field [`']content/i.test(message.content || "");
+  return <div className="failed-run-content">
+    <p>{protocolError
+      ? tr("模型请求格式异常，本轮未完成。", "The model request was malformed; this attempt did not finish.")
+      : tr("本轮执行未完成。", "This attempt did not finish.")}</p>
+    {files.length > 0 && <div className="saved-run-files">
+      <strong>{tr("已保存的文件", "Saved files")}</strong>
+      <ul>{files.map((path) => <li key={path}><MessageLink href={encodeURI(path.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F")}>{path}</MessageLink></li>)}</ul>
+      <p>{tr("文件改动已保留，可先打开查看；这不代表任务已完成或验证已通过。", "Saved changes are available to open. This does not mean the task is complete or verification passed.")}</p>
+    </div>}
+    {message.content && <details className="run-error-details">
+      <summary>{tr("查看错误详情", "Error details")}</summary>
+      <pre>{message.content}</pre>
+    </details>}
+  </div>;
+}
+
+function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
   const { tr } = useI18n();
   const [retrying, setRetrying] = useState(false);
   const failed = message.error || message.status === "failed";
@@ -940,7 +961,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
           </div>
         ) : message.content ? (
           failed ? (
-            message.content
+            <FailedRunContent message={message} />
           ) : (
             <MarkdownMessage content={message.content} />
           )
@@ -952,9 +973,10 @@ function AssistantMessage({ message, onRetry, onOpenAnchor }) {
         <button
           className="retry-message-button"
           type="button"
-          disabled={retrying}
+          disabled={retrying || taskRunning}
+          title={taskRunning ? tr("当前任务运行中，请先停止或等待完成", "Wait for the current run to finish or stop it first") : undefined}
           onClick={async () => {
-            if (retrying) return;
+            if (retrying || taskRunning) return;
             setRetrying(true);
             try {
               await onRetry(message);
@@ -1260,20 +1282,9 @@ export function Conversation({
   const anchorMessage = task.messages.find(
     (message) => message.id === anchorRequest?.messageId,
   );
-  const activeRunMessage = [...task.messages]
-    .reverse()
-    .find(
-      (message) =>
-        message.role === "assistant" && message.status === "running",
-    );
-  const witnessMessage =
-    activeRunMessage ||
-    [...task.messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === "assistant" && Boolean(message.witness),
-      );
+  const latestAssistant = latestVisibleAssistant(task.messages);
+  const witnessMessage = latestAssistant?.status === "running" || latestAssistant?.witness
+    ? latestAssistant : null;
   const liveProgress = getLiveRunProgress(witnessMessage);
 
   const revertChanges = async (paths) => {
@@ -1364,12 +1375,13 @@ export function Conversation({
           message.changes,
         );
         const restored = Boolean(message.anchorRestoredAt);
-        return (
+        const attempt = (
           <React.Fragment key={message.id}>
             <LinkWorkspace.Provider value={task.workspacePath || ""}>
             <AssistantMessage
               message={message}
               onRetry={onRetry}
+              taskRunning={isRunning && latestAssistant?.status === "running"}
               onOpenAnchor={(anchorTarget) =>
                 setAnchorRequest({ messageId: anchorTarget.id })
               }
@@ -1392,13 +1404,19 @@ export function Conversation({
             {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}
           </React.Fragment>
         );
+        return isHistoricalFailure(message, latestAssistant) ? (
+          <details className="historical-run" key={message.id}>
+            <summary><History size={14} /><span>{tr("历史尝试未完成 · 已继续后续轮次", "Earlier attempt unfinished · conversation continued")}</span><ChevronDown size={14} /></summary>
+            {attempt}
+          </details>
+        ) : attempt;
       })}
       <ApprovalCard
         approval={approval}
         responding={approvalResponding}
         onRespond={onRespondApproval}
       />
-      {(isRunning || witnessMessage?.witness) && (
+      {((isRunning && latestAssistant?.status === "running") || witnessMessage?.witness) && (
         <WitnessPanel
           witness={witnessMessage?.witness}
           liveProgress={liveProgress}

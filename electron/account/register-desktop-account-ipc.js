@@ -24,8 +24,22 @@ ipcMain.handle("account:sync-tasks", (_event, payload) =>
 ipcMain.handle("account:remote-commands", () =>
   getDesktopAccountRuntime().pollRemoteCommands(),
 );
-ipcMain.handle("account:ack-remote-command", (_event, commandId, status, result) =>
-  getDesktopAccountRuntime().acknowledgeRemoteCommand(commandId, status, result),
+const observedConsumers = new WeakSet();
+ipcMain.handle("account:claim-remote-command", (event, commandId) => {
+  const consumerId = String(event.sender.id);
+  if (!observedConsumers.has(event.sender)) {
+    observedConsumers.add(event.sender);
+    const abandon = () => runtime?.abandonRemoteCommands(consumerId);
+    event.sender.on("destroyed", abandon);
+    event.sender.on("render-process-gone", abandon);
+    event.sender.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) abandon();
+    });
+  }
+  return getDesktopAccountRuntime().claimRemoteCommand(commandId, consumerId);
+});
+ipcMain.handle("account:ack-remote-command", (_event, commandId, status, result, claim) =>
+  getDesktopAccountRuntime().acknowledgeRemoteCommand(commandId, status, result, claim),
 );
 ipcMain.handle("account:execute-remote-file-command", (_event, command) =>
   getDesktopAccountRuntime().executeRemoteFileCommand(command),

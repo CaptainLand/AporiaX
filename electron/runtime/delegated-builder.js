@@ -7,7 +7,13 @@ import { saveRuntimeContext, executeDurableTool } from "./durable-run.js";
 export async function runIsolatedBuilder(options, execute) {
   const { agentId, input, session = {}, workspaceRoot, signal } = options;
   for (const path of input.writeScopes) await assertSubagentRealScope("write_file", { path }, ["."], workspaceRoot);
-  const manager = createBuilderWorkspaceManager({ eventBus: { emit: options.emit } });
+  const manager = createBuilderWorkspaceManager({ eventBus: { emit: options.emit },
+    onMergePrepared: async (recovery) => {
+      session.mergeRecovery = recovery;
+      // Persist the recovery location before the first host file mutation.
+      await persist("integrating", null);
+    },
+  });
   const workspace = await manager.open({ workspaceRoot, agentId, writeScopes: input.writeScopes });
   if (session.activeWorktree) (session.recoveryWorktrees ||= []).push(session.activeWorktree);
   session.activeWorktree = workspace.workspaceRoot;
@@ -60,6 +66,7 @@ export async function runIsolatedBuilder(options, execute) {
         () => workspace.merge(), options.requestApproval);
       if (merged.merged) {
         session.provisionalChanges = [];
+        session.mergeRecovery = null;
         result = { ...result, changes: merged.changes, integrated: true };
         await options.onBuilderMerge?.(merged);
       } else {
@@ -76,7 +83,13 @@ export async function runIsolatedBuilder(options, execute) {
       agentId, role: "builder", status: result.status, summary: result.summary, integrated: result.integrated });
     return result;
   } catch (error) {
-    options.emit({ type: "subagent.failed", agentId, role: "builder", error: error.message });
+    if (error.mergeRecovery) {
+      session.mergeRecovery = error.mergeRecovery;
+      try { await persist("merge-failed", { status: "failed", summary: error.message, mergeRecovery: error.mergeRecovery }); }
+      catch (persistError) { error.message += ` 恢复状态未能写入任务库：${persistError.message}`; }
+    }
+    options.emit({ type: "subagent.failed", agentId, role: "builder", error: error.message,
+      ...(error.mergeRecovery ? { mergeRecovery: error.mergeRecovery } : {}) });
     throw error;
   } finally {
     if (mayClose) await workspace.close();

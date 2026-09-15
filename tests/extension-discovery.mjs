@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { createExtensionDiscovery, safePackagePath, githubSource, mcpChoices, verifyInstalledSkill } from "../electron/extension-discovery.js";
+import { rollbackUserSkill, saveMcpServer } from "../electron/extension-library.js";
+const sha = (text) => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest("hex");
+const commit = "a".repeat(40);
+const skill = "---\nname: test-online\ndescription: An online test skill\nlicense: MIT\nauto: false\n---\n# Review files\n";
+const content = new Map([["skills/test-online/SKILL.md", skill], ["skills/test-online/references/info.txt", "First version"], ["LICENSE", "MIT License test fixture"]]);
+let mode = "ok", calls = 0, revision = 0;
+function tree() { return { tree: [...content].map(([path, text]) => ({ path, type: "blob", mode: mode === "symlink" && path.endsWith("info.txt") ? "120000" : "100644", size: Buffer.byteLength(text), sha: sha(text) })) }; }
+const response = (body) => new Response(typeof body === "string" ? body : JSON.stringify(body));
+const mcpServer = { name: "io.github.test/docs", version: "1.0.0", repository: { url: "https://github.com/test/docs" }, packages: [{ registryType: "npm", identifier: "test-docs", version: "1.2.3", transport: { type: "stdio" }, environmentVariables: [{ name: "DOCS_KEY", isRequired: true, isSecret: true }] }] };
+async function fetchImpl(url) {
+  calls++;
+  if (mode === "redirect") return new Response(null, { status: 302, headers: { location: "http://127.0.0.1/private" } });
+  if (mode === "oversize") return new Response("x", { headers: { "content-length": "99999999" } });
+  if (mode === "unavailable") return new Response("no", { status: 503 });
+  if (url.includes("skills.sh")) return response({ skills: [{ name: "test-online", skillId: "test-online", source: "example/skills" }] });
+  if (url.includes("registry.modelcontextprotocol.io")) return response(url.includes("/versions/") ? { server: mcpServer } : { servers: [{ server: mcpServer }], metadata: { nextCursor: "next" } });
+  if (url.includes("/git/trees/")) return response(tree());
+  if (url.includes("/commits/")) return response({ sha: revision ? "b".repeat(40) : commit });
+  if (url.includes("api.github.com/repos/")) return response({ default_branch: "main", license: { spdx_id: "MIT" } });
+  if (url.includes("raw.githubusercontent.com")) {
+    const path = decodeURIComponent(new URL(url).pathname).split("/").slice(4).join("/");
+    assert(content.has(path), path);
+    return response(mode === "tamper" && path.endsWith("info.txt") ? "tampered" : content.get(path));
+  }
+  throw new Error("Unexpected URL: " + url);
+}
+const userDataDirectory = await mkdtemp(join(tmpdir(), "aporiax-discovery-test-"));
+try {
+  for (const path of ["../secret", "C:/file", "x\\y", "x//y", "x/CON.txt", "x. /a", "/root", "x/.."]) assert.throws(() => safePackagePath(path), /Unsafe/);
+  assert.equal(safePackagePath("references/中文文件.md"), "references/中文文件.md");
+  assert.throws(() => githubSource("https://github.com.evil/x/y"));
+  assert.throws(() => githubSource("https://a:b@github.com/x/y"));
+  assert.deepEqual(githubSource("https://github.com/x/y"), { repo: "x/y", ref: null });
+  let time = Date.now();
+  const service = createExtensionDiscovery({ fetchImpl, now: () => time });
+  const found = await service.search({ kind: "skill", query: "docx" });
+  const before = calls;
+  assert.equal((await service.search({ kind: "skill", query: "docx" })).cached, true);
+  assert.equal(calls, before, "cached search must not query remote again");
+  assert.equal((await service.search({ kind: "skill", query: "https://github.com/example/skills" })).source, "GitHub");
+  const detail = await service.details(found.entries[0].selector);
+  assert.equal(detail.license, "MIT"); assert.match(detail.licenseText, /MIT License/);
+  assert.equal(detail.fileCount, 2); assert.equal(detail.version, commit);
+  const installed = await service.install({ userDataDirectory, ticket: detail.ticket });
+  assert.equal(installed.verification.status, "structure-and-integrity-passed");
+  assert.equal(installed.verification.scriptsExecuted, false);
+  assert.equal(installed.verification.dependenciesVerified, false);
+  assert.equal(await readFile(join(installed.path, "references/info.txt"), "utf8"), "First version");
+  revision++; content.set("skills/test-online/references/info.txt", "Second version");
+  const updatedDetail = await service.details(found.entries[0].selector);
+  const updated = await service.install({ userDataDirectory, ticket: updatedDetail.ticket });
+  assert(updated.previousVersionPath, "same repo + folder can update across temp directories");
+  await rollbackUserSkill({ userDataDirectory, name: "test-online" });
+  assert.equal(await readFile(join(installed.path, "references/info.txt"), "utf8"), "First version");
+  const other = await service.details({ ...found.entries[0].selector, repo: "other/repo" });
+  await assert.rejects(service.install({ userDataDirectory, ticket: other.ticket }), /different source/);
+  await writeFile(join(installed.path, "extra.js"), "unreviewed");
+  await assert.rejects(verifyInstalledSkill({ userDataDirectory, name: "test-online" }), /列表已变更/);
+  await rm(join(installed.path, "extra.js"));
+  await writeFile(join(installed.path, "references/info.txt"), "changed");
+  await assert.rejects(verifyInstalledSkill({ userDataDirectory, name: "test-online" }), /已变更/);
+  mode = "tamper";
+  await assert.rejects(service.install({ userDataDirectory, ticket: updatedDetail.ticket }), /校验失败/);
+  assert.equal(await readFile(join(installed.path, "references/info.txt"), "utf8"), "changed", "download failure preserves installed files");
+  mode = "symlink";
+  await assert.rejects(service.details(found.entries[0].selector), /符号链接/);
+  mode = "ok";
+  content.set("skills/test-online/../escape", "bad");
+  await assert.rejects(service.details(found.entries[0].selector), /Unsafe/);
+  content.delete("skills/test-online/../escape");
+  content.set("skills/test-online/skill.md", "colliding");
+  await assert.rejects(service.details(found.entries[0].selector), /Case-colliding/);
+  content.delete("skills/test-online/skill.md");
+  content.set("skills/another/SKILL.md", skill.replace("test-online", "another"));
+  const chooser = await service.details({ kind: "skill", repo: "example/skills" });
+  assert(chooser.chooseDirectory); assert.equal(chooser.choices.length, 2);
+  assert.equal((await service.details(chooser.choices[0].selector)).name, "test-online");
+  const mcp = await service.search({ kind: "mcp", query: "docs" });
+  const mcpDetail = await service.details(mcp.entries[0].selector);
+  assert.match(mcpDetail.license, /未知/);
+  assert.deepEqual(mcpDetail.choices[0].template.args, ["-y", "test-docs@1.2.3"]);
+  assert.equal(mcpDetail.choices[0].template.env.DOCS_KEY, "${DOCS_KEY}");
+  assert.equal(mcpChoices({ ...mcpServer, packages: [{ ...mcpServer.packages[0], version: "latest" }] })[0].template, null);
+  assert.equal(mcpChoices({ name: "x", remotes: [{ type: "sse", url: "https://example.com" }] })[0].template, null);
+  assert.equal(mcpChoices({ name: "x", packages: [{ ...mcpServer.packages[0], runtimeArguments: [{ value: "--registry=evil" }] }] })[0].template, null);
+  const server = { ...mcpDetail.choices[0].template, enabled: false };
+  await saveMcpServer({ userDataDirectory, server, createOnly: true });
+  await assert.rejects(saveMcpServer({ userDataDirectory, server, createOnly: true }), /already exists/);
+  time += 3600_001;
+  await assert.rejects(service.install({ userDataDirectory, ticket: detail.ticket }), /过期/);
+  for (const failure of ["redirect", "oversize", "unavailable"]) {
+    mode = failure;
+    await assert.rejects(createExtensionDiscovery({ fetchImpl }).search({ kind: "skill", query: "test" }), /Blocked|size limit|HTTP 503/);
+  }
+  await assert.rejects(service.install({ userDataDirectory, ticket: "forged" }), /过期/);
+  console.log("Online discovery: search/cache, pinned-source details, whole-package install, hash/tamper/path/symlink/size/redirect guards, update/rollback/collision, verification, MCP templates, unavailable states: PASS");
+} finally { await rm(userDataDirectory, { recursive: true, force: true }); }

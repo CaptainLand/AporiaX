@@ -1,8 +1,6 @@
 import { isAnchorRestoreNotice } from "../anchor-restore-notice.js";
 
-const MAX_HISTORY_MESSAGES = 30;
 const MAX_FILE_READ_CHARS = 120_000;
-const MAX_TEXT_CONTENT_CHARS = 100_000;
 const MAX_DOCUMENT_CONTEXT_CHARS = 240_000;
 const MAX_IMAGE_DATA_URL_CHARS = 12_000_000;
 
@@ -94,7 +92,7 @@ export function normalizeDocumentAttachment(
     ? `，${attachment.pageCount} 页`
     : "";
   const notices = [
-    attachment.truncated ? "内容已按本地安全上限截断" : "",
+    attachment.truncated || attachment.content.length > maxFileReadChars ? "内容已按本地安全上限截断" : "",
     attachment.requiresOcr ? "未提取到正文，可能需要 OCR" : "",
   ].filter(Boolean);
   const noticeText = notices.length ? `\n说明：${notices.join("；")}` : "";
@@ -109,7 +107,6 @@ export function sanitizeConversation(
   messages,
   {
     supportsImages = false,
-    maxHistoryMessages = MAX_HISTORY_MESSAGES,
     maxFileReadChars = MAX_FILE_READ_CHARS,
   } = {},
 ) {
@@ -132,9 +129,19 @@ export function sanitizeConversation(
         !["failed", "interrupted", "running"].includes(message?.status) &&
         (message.content.trim() || message.attachments?.length),
     )
-    .slice(-Math.max(1, maxHistoryMessages))
     .map((message) => {
-      const text = message.content.slice(0, MAX_TEXT_CONTENT_CHARS);
+      // Normalization is lossless for conversation text. Only the model-aware
+      // context controller may compact it, or explicitly reject an oversized
+      // protected request. Never drop the tail of a human instruction here.
+      const guidance = String(message.aporiaSkillContext || "");
+      const text = guidance && message.content.endsWith("\n\n" + guidance)
+        ? message.content.slice(0, -(guidance.length + 2)) : message.content;
+      const provenance = {
+        ...(guidance ? { aporiaSkillContext: guidance } : {}),
+        ...(["human", "harness", "retrieval"].includes(message.aporiaSource) ? { aporiaSource: message.aporiaSource } : {}),
+        ...(message.aporiaPinned === true ? { aporiaPinned: true } : {}),
+        ...(message.aporiaSupersededBy ? { aporiaSupersededBy: String(message.aporiaSupersededBy) } : {}),
+      };
       if (isAnchorRestoreNotice(message)) {
         return {
           role: "user",
@@ -145,16 +152,18 @@ export function sanitizeConversation(
         };
       }
       if (message.role !== "user" || !message.attachments?.length) {
-        return { role: message.role, content: text };
+        return { role: message.role, content: text, ...provenance };
       }
-      const documentText = message.attachments
+      const documents = message.attachments
         .slice(0, 6)
         .map((attachment) =>
           normalizeDocumentAttachment(attachment, { maxFileReadChars }),
         )
         .filter(Boolean)
-        .join("\n\n")
-        .slice(0, MAX_DOCUMENT_CONTEXT_CHARS);
+        .join("\n\n");
+      const documentText = documents.slice(0, MAX_DOCUMENT_CONTEXT_CHARS) +
+        (documents.length > MAX_DOCUMENT_CONTEXT_CHARS || message.attachments.length > 6
+          ? "\n[附件上下文超出上限，部分内容未注入；请按文件路径读取原文。]" : "");
       const combinedText = [text, documentText].filter(Boolean).join("\n\n");
       const imageAttachments = message.attachments.filter(
         (attachment) =>
@@ -162,13 +171,14 @@ export function sanitizeConversation(
           typeof attachment?.dataUrl === "string",
       );
       if (!imageAttachments.length) {
-        return { role: message.role, content: combinedText };
+        return { role: message.role, content: combinedText, ...provenance };
       }
       if (!supportsImages) {
         const attachmentNotice =
           "[系统提示：当前模型不支持读取本消息中的图片附件，图片已从模型请求中省略。]";
         return {
           role: message.role,
+          ...provenance,
           content: combinedText
             ? `${combinedText}\n\n${attachmentNotice}`
             : attachmentNotice,
@@ -179,10 +189,11 @@ export function sanitizeConversation(
         .map(normalizeImageAttachment)
         .filter(Boolean);
       if (!imageParts.length) {
-        return { role: message.role, content: combinedText };
+        return { role: message.role, content: combinedText, ...provenance };
       }
       return {
         role: message.role,
+        ...provenance,
         content: [
           {
             type: "text",
@@ -191,7 +202,9 @@ export function sanitizeConversation(
           ...imageParts,
         ],
       };
-    });
+    }).flatMap(({ aporiaSkillContext, ...message }) => aporiaSkillContext
+      ? [message, { role: "user", content: aporiaSkillContext, aporiaSource: "retrieval" }]
+      : [message]);
 }
 
 export function sanitizeFinalAnswer(content) {

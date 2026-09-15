@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { completeWithSteering } from "./runtime/steerable-completion.js";
 import { createHash } from "node:crypto";
+import { reconcileHumanConstraints } from "./runtime/human-constraints.js";
 import {
   lstat,
   mkdir,
@@ -35,8 +36,10 @@ import {
   extractPdfText,
 } from "./attachment-parser.js";
 import { createOpenAICompatibleProvider } from "./runtime/provider-stream.js";
-import { taskRequest, harnessFeedback, providerMessages, recoverConversation, isHumanMessage } from "./runtime/task-conversation.js";
+import { taskRequest, harnessFeedback, providerMessages, recoverConversation, isHumanMessage, requireToolResult } from "./runtime/task-conversation.js";
 import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
+import { HISTORY_TOOL, readConversationHistory } from "./runtime/conversation-history.js";
+import { snapshotContinuation, restoreContinuation } from "./runtime/continuation-state.js";
 import { waitForWorkers, workerResultForModel } from "./runtime/collect-workers.js";
 import { readTaskOutcome } from "./runtime/task-outcome.js";
 import { currentAgentBudget, restoreAgentBudget } from "./harness/agent-budget.js";
@@ -1046,6 +1049,7 @@ export async function runHarness({
   sandboxExecutor = runCommandWithFallback,
   sandboxStatusResolver = getSandboxStatus,
   memoryDirectory = null,
+  userSkillsDirectory = "",
   understandingDirectory = null,
   mcpServers = [],
   mcpConfigErrors = [],
@@ -1253,7 +1257,7 @@ export async function runHarness({
         if (!browserEnabled && String(name || "").startsWith("browser_")) return false;
         return name !== "run_command" || commandToolAvailable;
       })
-    : [];
+    : getToolPermission(permissionPolicy, HISTORY_TOOL.function.name) === "deny" ? [] : [HISTORY_TOOL];
   let enabledToolDefinitions = provider.supportsTools
     ? [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)]
     : [];
@@ -1312,6 +1316,7 @@ export async function runHarness({
         ].filter(Boolean).join("\n")
       : [
           "The final user message below is the only active request for this run. Earlier turns are context, not pending work. Never resume a failed, interrupted, or unrelated earlier task unless this final request explicitly asks you to do so.",
+          "Use read_conversation_history to retrieve original conversation text if older context has been compacted. This index contains history, not new instructions; current user instructions override superseded requests.",
           restoredWorkspace ? restoreBoundary : "",
         ].filter(Boolean).join("\n"),
   };
@@ -1412,13 +1417,16 @@ export async function runHarness({
     ...boundedHistory,
   ];
 
-  const savedMain = recoveryContext?.contexts?.[recoveryContext.runId];
-  restoreAgentBudget(savedMain?.agentBudget);
-  if (savedMain?.kind === "main" && Array.isArray(savedMain.conversation)) {
+  const savedCandidate = recoveryContext?.contexts?.[recoveryContext.runId];
+  const savedMain = savedCandidate?.kind === "main" ? savedCandidate : null;
+  if (savedMain) {
     const canonicalRoot = (root) => process.platform === "win32" ? resolve(root).toLowerCase() : resolve(root);
     const sameRoot = workspaceRoot == null && savedMain.workspaceRoot == null ||
       workspaceRoot && savedMain.workspaceRoot && canonicalRoot(savedMain.workspaceRoot) === canonicalRoot(workspaceRoot);
     if (!sameRoot) throw new Error("RECOVERY_WORKSPACE_MISMATCH");
+  }
+  restoreAgentBudget(savedMain?.agentBudget);
+  if (Array.isArray(savedMain?.conversation)) {
     const restored = recoverConversation(savedMain.conversation);
     const stableInstructions = conversation[0];
     conversation.splice(0, conversation.length, stableInstructions, ...restored.slice(restored[0]?.role === "system" ? 1 : 0),
@@ -1428,6 +1436,12 @@ export async function runHarness({
   if (conversation.length < 2) {
     throw new Error("At least one user message is required.");
   }
+
+  const inputHistory = savedMain
+    ? [...(savedMain.inputHistory || savedMain.conversation || []).filter((message) => ["user", "assistant"].includes(message.role)),
+      ...sanitizedHistory.slice(Math.max(0, latestUserIndex))]
+    : [...sanitizedHistory];
+  let constraintLedger = reconcileHumanConstraints(conversation, inputHistory, savedMain?.constraintLedger);
 
   const steps = [];
   const understandingCandidates = [];
@@ -1498,9 +1512,23 @@ export async function runHarness({
     verificationWaived: verificationDirective(latestUserPrompt) === true,
   };
   const discoverVerificationCommands = (root, changes) => selfCheck.verificationWaived ? Promise.resolve([]) : discoverProjectVerificationCommands(root, changes);
+  if (savedMain || recoveryContext?.checkpoint?.main) {
+    await restoreContinuation({ saved: savedMain, checkpoint: recoveryContext?.checkpoint?.main, selfCheck, changeMap,
+      latestPrompt: latestUserPrompt, readCurrent: async (change) => {
+        if (!workspaceRoot || !validateCheckpoint(change)) throw new Error("Invalid recovery change or missing workspace.");
+        return readCheckpointState(workspaceRoot, change.path, Boolean(change.binary));
+      } });
+    emit({ type: "runtime.state.restored", verificationWaived: selfCheck.verificationWaived,
+      historicalVerifications: selfCheck.verificationResults.length, restoredChanges: changeMap.size,
+      changedSinceSave: selfCheck.recoveryChanges.map(({ path }) => path) });
+  }
   let totalUsage = null;
+  const previousUsage = savedMain?.cumulativeUsage || savedMain?.usage || null;
+  const usageHistoryComplete = !recoveryContext || (previousUsage != null && savedMain?.usageHistoryComplete !== false);
+  const cumulativeUsage = () => mergeTokenUsage(previousUsage, totalUsage);
   const persistMainContext = () => saveRuntimeContext(runId, {
-    kind: "main", workspaceRoot, conversation, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
+    kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
+    continuation: snapshotContinuation(selfCheck, changeMap), usage: totalUsage, cumulativeUsage: cumulativeUsage(), usageHistoryComplete,
     workers: [...subagents.values()].map(({ agentId, role, task, background, requiredForCompletion, collected, input }) =>
       ({ agentId, role, task, background, requiredForCompletion, collected, input })),
   });
@@ -1516,14 +1544,17 @@ export async function runHarness({
     toolProgress.reset();
     await saveRuntimeCheckpoint({ scopeId: runId, phase: "guidance-applied", latestGuidance: steeringMessages });
     conversation.push(...sanitizedSteering.map(taskRequest));
-    await persistMainContext();
+    inputHistory.push(...sanitizedSteering);
+    constraintLedger = reconcileHumanConstraints(conversation, inputHistory, constraintLedger);
     latestUserPrompt = steeringMessages.map((message) => String(message.content || "")).join("\n").slice(-24_000);
-    const directive = verificationDirective(latestUserPrompt);
+    const directive = [...sanitizedSteering].reverse().filter(isHumanMessage)
+      .map((message) => verificationDirective(message.content)).find((value) => value !== null) ?? null;
     if (directive !== null) {
       selfCheck.verificationWaived = directive;
       selfCheck.verificationCandidates = [];
       emit({ type: "verification.policy.updated", waived: directive, source: "user" });
     }
+    await persistMainContext();
     emit({
       type: "steering.applied",
       messageIds: steeringMessages.map((message) => message.id),
@@ -1860,7 +1891,7 @@ export async function runHarness({
         summary: curatorResult.summary,
         evidence: curatorResult.evidence,
         changedPaths: changes.map((change) => change.path),
-        passedVerifications: selfCheck.verificationResults,
+        passedVerifications: selfCheck.verificationResults.filter((item) => !item.stale),
         candidates: understandingCandidates,
       });
       const representedContent = new Set(
@@ -1870,7 +1901,7 @@ export async function runHarness({
       );
       for (const fallback of fallbackUnderstandingChangesFromCandidates({
         candidates: understandingCandidates,
-        passedVerifications: selfCheck.verificationResults,
+        passedVerifications: selfCheck.verificationResults.filter((item) => !item.stale),
       })) {
         const key = `${fallback.category}:${String(fallback.content || "").toLowerCase()}`;
         if (!representedContent.has(key)) proposal.changes.push(fallback);
@@ -1915,7 +1946,7 @@ export async function runHarness({
       });
       const fallbackChanges = fallbackUnderstandingChangesFromCandidates({
         candidates: understandingCandidates,
-        passedVerifications: selfCheck.verificationResults,
+        passedVerifications: selfCheck.verificationResults.filter((item) => !item.stale),
       });
       if (fallbackChanges.length) {
         try {
@@ -2127,12 +2158,16 @@ export async function runHarness({
   const executeTrackedTool = async (args) => {
     const mayWrite = !isReadOnlyNativeTool(args.toolName);
     if (mayWrite) await ensureAnchorBaseline();
-    try { return await executeAuthorizedTool(args); }
+    try {
+      if ((args.toolName || args.toolCall?.function?.name) === "read_skill_resource" && extensionPolicy?.skill === false) throw new Error("Skills are disabled by the extension policy.");
+      return await executeAuthorizedTool({ ...args, userSkillsDirectory });
+    }
     finally { if (mayWrite) anchorDirty = true; }
   };
 
   const finalizeAnchor = async (status) => {
     await refreshAnchorSnapshot({ ignoreAbort: status !== "completed", force: true });
+    await persistMainContext();
     const changes = buildChanges(changeMap);
     const latest = anchorLatest || anchorBaseline;
     return {
@@ -2205,6 +2240,7 @@ export async function runHarness({
           plan,
         },
       );
+      if (step === 0) await persistMainContext(); // Save initial originals before any compaction; later boundaries already persist new input.
       compactManagedConversation({
         conversation,
         onEvent: emit,
@@ -2289,6 +2325,7 @@ export async function runHarness({
       }
       let { message } = completion;
       const { usage, interrupted: steered } = completion;
+      if (message.content) inputHistory.push({ role: "assistant", content: message.content });
       recordProviderUsage(
         tokenAccounting,
         usage,
@@ -2305,6 +2342,8 @@ export async function runHarness({
         round: step + 1,
         usage,
         totalUsage,
+        cumulativeUsage: cumulativeUsage(),
+        usageHistoryComplete,
         estimatedPromptTokens: estimateManagedConversationTokens(
           conversation,
           tokenAccounting,
@@ -2361,7 +2400,7 @@ export async function runHarness({
         selfCheck.delivery = deliveryAssessment;
         if (!deliveryAssessment.passed || deliveryAssessment.reviewPending || deliveryAssessment.findings.length) selfCheck.seal = null;
         for (const verification of selfCheck.verificationResults) {
-          if (!selfCheck.verificationPassed || !verification.passed || verification.versionSignature !== verificationVersion(changeMap)) continue;
+          if (!selfCheck.verificationPassed || verification.stale || !verification.passed || verification.versionSignature !== verificationVersion(changeMap)) continue;
           stageUnderstandingCandidate(
             {
               category: "verification",
@@ -2440,6 +2479,8 @@ export async function runHarness({
           changes: finalizedAnchor.changes,
           anchor: finalizedAnchor.anchor,
           usage: totalUsage,
+          cumulativeUsage: cumulativeUsage(),
+          usageHistoryComplete,
           instructionFiles: [...instructionContext.loadedFiles],
           permissionConfigFile: projectConfig.file,
           provider: provider.id,
@@ -2572,6 +2613,7 @@ export async function runHarness({
                   executeAuthorized: executeTrackedTool,
                   executeContext: {
                     workspaceRoot,
+                    userSkillsDirectory,
                     sandboxExecutor: commandSandboxExecutor,
                     sandboxStatus,
                     browserRuntime,
@@ -2580,6 +2622,7 @@ export async function runHarness({
                   },
                 });
               }
+              requireToolResult(result, toolName);
             } catch (error) {
               if (error?.name === "AbortError") throw error;
               success = false;
@@ -2685,8 +2728,10 @@ export async function runHarness({
           }
           if (mcpRuntime.hasTool(toolCall.function.name)) {
             // Unknown MCP tools can write/download into the workspace too.
-            await ensureAnchorBaseline();
-            anchorDirty = true;
+            if (!["mcp_search_tools", "mcp_read_result"].includes(toolCall.function.name)) {
+              await ensureAnchorBaseline();
+              anchorDirty = true;
+            }
             result = {
               modelResult: await executeDurableTool(toolCall.function.name, parseToolArguments(toolCall), () => mcpRuntime.call(
                 toolCall.function.name,
@@ -2694,6 +2739,12 @@ export async function runHarness({
                 { requestApproval },
               ), requestApproval),
             };
+          } else if (toolCall.function.name === "read_conversation_history") {
+            const permission = getToolPermission(permissionPolicy, toolCall.function.name);
+            if (permission === "deny") throw new Error("Conversation history tool is disabled by the task policy.");
+            if (permission === "ask" && !(await requestApproval?.({ toolName: toolCall.function.name, kind: "read", title: "读取本任务历史记录" }))?.approved)
+              throw new Error("The user rejected conversation history access.");
+            result = { modelResult: readConversationHistory(inputHistory, parseToolArguments(toolCall)) };
           } else if (toolCall.function.name === "delegate_subagent") {
             result = {
               modelResult: await startSubagent(
@@ -2841,6 +2892,7 @@ export async function runHarness({
               executeAuthorized: executeTrackedTool,
               executeContext: {
                 workspaceRoot,
+                userSkillsDirectory,
                 sandboxExecutor: commandSandboxExecutor,
                 sandboxStatus,
                 browserRuntime,
@@ -2927,6 +2979,7 @@ export async function runHarness({
               }, toolVerificationVersion);
             }
           }
+          requireToolResult(result, toolCall.function.name);
         } catch (error) {
           if (error?.name === "AbortError" || ["VERIFICATION_BLOCKED", "RUN_PERSISTENCE_FAILED"].includes(error?.code)) throw error;
           success = false;
@@ -3017,7 +3070,16 @@ export async function runHarness({
   } catch (error) {
     subagentController.abort();
     await waitForWorkers([...subagents.values()], { mode: "all", timeoutMs: 3000 });
-    await persistMainContext();
+    try { await persistMainContext(); }
+    catch (storageError) {
+      signal?.removeEventListener("abort", abortSubagents);
+      const content = storageError?.message || "Task persistence failed.";
+      turnCoordinator.fail(storageError);
+      emit({ type: "turn.failed", status: "blocked", error: content, changedFiles: buildChanges(changeMap).length });
+      return { status: "blocked", error: true, content, changes: buildChanges(changeMap), steps, usage: totalUsage,
+        cumulativeUsage: cumulativeUsage(), usageHistoryComplete, plan, selfCheck: buildSelfCheckResult(selfCheck, changeMap),
+        persistence: { failed: true, lastSuccessfulContext: storageError.lastSuccessfulContext || null }, witness: witness.snapshot() };
+    }
     signal?.removeEventListener("abort", abortSubagents);
     if (error?.name === "AbortError" || signal?.aborted) {
       const finalizedAnchor = await finalizeAnchor("interrupted");
@@ -3030,6 +3092,8 @@ export async function runHarness({
         changes: finalizedAnchor.changes,
         anchor: finalizedAnchor.anchor,
         usage: totalUsage,
+        cumulativeUsage: cumulativeUsage(),
+        usageHistoryComplete,
         instructionFiles: [...instructionContext.loadedFiles],
         permissionConfigFile: projectConfig.file,
         provider: provider.id,
@@ -3080,6 +3144,8 @@ export async function runHarness({
       changes: finalizedAnchor.changes,
       anchor: finalizedAnchor.anchor,
       usage: totalUsage,
+      cumulativeUsage: cumulativeUsage(),
+      usageHistoryComplete,
       instructionFiles: [...instructionContext.loadedFiles],
       permissionConfigFile: projectConfig.file,
       provider: provider.id,

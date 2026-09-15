@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/NousResearch/hermes-agent",
+  "commit": "fad88cf1308e53229b7793d21ce6aad9c1d0134f",
+  "license": "MIT",
+  "adaptation": "AporiaX SKILL.md is a host-specific adapter. docx_common.py contains the documented local correctness fixes; other listed upstream files are unmodified. No setup scripts/hooks auto-run.",
+  "files": [
+    {
+      "local": "LICENSE.txt",
+      "upstream": "LICENSE",
+      "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+    },
+    {
+      "local": "references/upstream-skill.md",
+      "upstream": "skills/productivity/docx/SKILL.md",
+      "sha256": "9678b14d5e7841d588b969f6a4696cd46bcc46c3e4ac1479edc7656a051aa5ff"
+    },
+    {
+      "local": "scripts/docx_create.py",
+      "upstream": "skills/productivity/docx/scripts/docx_create.py",
+      "sha256": "8391869c97ab804374dddadff4fbebc060120c0b973d06133f84487cc2c442d5"
+    },
+    {
+      "local": "scripts/docx_read.py",
+      "upstream": "skills/productivity/docx/scripts/docx_read.py",
+      "sha256": "4760617eea1b17d648f7a46f6718c22ec4a76a359e8f0ee9f6ffe921df9129de"
+    },
+    {
+      "local": "scripts/docx_edit.py",
+      "upstream": "skills/productivity/docx/scripts/docx_edit.py",
+      "sha256": "00feef0a58a318406077020a017dd0b2673daaef93e0bda81fa9437b237180ff"
+    },
+    {
+      "local": "scripts/docx_template.py",
+      "upstream": "skills/productivity/docx/scripts/docx_template.py",
+      "sha256": "aed1b1db212b72995bd47a28e6c9928a4d02d7596615f1dadf12cd43a4f34219"
+    },
+    {
+      "local": "scripts/docx_revisions.py",
+      "upstream": "skills/productivity/docx/scripts/docx_revisions.py",
+      "sha256": "0b835b76b86a1a7bf607c7724a09a71af788cacec48058ae99b04dba6950b938"
+    },
+    {
+      "local": "scripts/docx_comments.py",
+      "upstream": "skills/productivity/docx/scripts/docx_comments.py",
+      "sha256": "6687c2f8b8e4cdd2ea9d70da668417e8c26f30dead2b1a4b7bda07e34fbf67cf"
+    },
+    {
+      "local": "scripts/docx_validate.py",
+      "upstream": "skills/productivity/docx/scripts/docx_validate.py",
+      "sha256": "64d4197ac4aa555384efaefa1cc392a863e2d05489acc04776c33ab1a591d024"
+    },
+    {
+      "local": "references/revisions-and-comments.md",
+      "upstream": "skills/productivity/docx/references/revisions-and-comments.md",
+      "sha256": "cd861f6e9ea77767b1a5e2ec3f48dd620b0664811d8f204c59c61571b408e9ba"
+    },
+    {
+      "local": "scripts/docx_common.py",
+      "upstream": "skills/productivity/docx/scripts/docx_common.py",
+      "sha256": "1b207ea30cddd88b573a733f7c8cd7b222fadfa94f5746549a82a5c9e7ed7aa4",
+      "upstreamSha256": "5f915ce8138d19344f80b218b3e81aac8332dc6b560774a6f2a9757f4fc2eaea",
+      "modifications": "AporiaX: finite replacement based on original matches (including replacements containing the search text), preserve run formatting, deduplicate shared paragraphs."
+    }
+  ]
+}

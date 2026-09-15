@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.9.0",
+  "version": "0.9.5",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -32,6 +32,9 @@
     "test:links-steering": "node tests/links-steering-smoke.mjs && node --experimental-sqlite tests/steering-runtime-integration.mjs && node tests/links-steering-browser.mjs && electron tests/desktop-links-electron.cjs",
     "test:run-store-sqlite": "node --experimental-sqlite tests/run-store-sqlite-smoke.mjs",
     "test:task-runtime-rpc": "node --experimental-sqlite tests/task-runtime-rpc-smoke.mjs",
+    "test:critical-reliability": "node tests/approval-response-regression.mjs && node tests/builder-merge-regression.mjs && node tests/builder-merge-crash.mjs",
+    "test:context-reliability": "node tests/context-continuation-regression.mjs && node tests/mcp-deferred-catalog.mjs && node tests/understanding-lock-recovery.mjs",
+    "test:reliability-batch3": "node tests/reliability-storage.mjs && node tests/remote-command-inbox.mjs && node tests/project-script-trust.mjs && node tests/human-constraints.mjs && node tests/release-source.mjs",
     "test:agent-runtime-broker": "node tests/agent-runtime-broker-smoke.mjs",
     "test:p0": "node tests/p0-model-smoke.mjs",
     "test:cache": "node tests/deepseek-cache-smoke.mjs",
@@ -76,7 +79,8 @@
     "test:capabilities": "node tests/capability-registry-smoke.mjs",
     "test:mcp-capabilities": "node tests/mcp-capabilities-smoke.mjs",
     "test:extensions": "node tests/extensions-center-smoke.mjs",
-    "test:extension-library": "node tests/extension-library-smoke.mjs",
+    "test:extension-library": "node tests/extension-library-smoke.mjs && node tests/extension-ecosystem-regression.mjs && node tests/extension-discovery.mjs",
+    "test:extension-library-browser": "node tests/extension-library-browser.mjs && node tests/extension-discovery-browser.mjs",
     "test:sandbox-watchdog": "node tests/sandbox-watchdog-smoke.mjs",
     "test:witness-watchdog": "node tests/witness-watchdog-smoke.mjs",
     "test:understanding-automation": "node tests/understanding-automation-smoke.mjs",
@@ -91,6 +95,7 @@
     "test:welcome-performance": "node tests/welcome-particle-performance-smoke.mjs && node tests/gpu-guard-smoke.mjs",
     "test:welcome-gem": "node tests/welcome-gem-browser.mjs",
     "test:run-retry": "node tests/run-retry-core-smoke.mjs",
+    "test:run-reliability": "node tests/tool-message-contract.mjs && node tests/runtime-tool-receipts.mjs && node tests/run-retry-core-smoke.mjs && node tests/task-outcome-view.mjs && node tests/task-outcomes-browser.mjs",
     "test:github-workflow": "node tests/github-workflow-smoke.mjs",
     "test:lsp-installer": "node tests/lsp-installer-smoke.mjs",
     "test:workbench-state": "node tests/workbench-state-smoke.mjs && node tests/workbench-present-smoke.mjs && node tests/composer-workbench-browser.mjs"
@@ -120,6 +125,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "typescript-language-server": "^5.3.0",
+    "yaml": "2.9.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {

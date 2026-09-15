@@ -1,3 +1,5 @@
+import { readSkillResource } from "../skill-resources.js";
+import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, relative } from "node:path";
@@ -164,6 +166,7 @@ export function createNativeToolExecutor({
     toolName = toolCall.function.name,
     input,
     workspaceRoot,
+    userSkillsDirectory = "",
     signal,
     sandboxExecutor,
     sandboxStatus = null,
@@ -173,6 +176,10 @@ export function createNativeToolExecutor({
     workbenchPresent = null,
   }) {
     throwIfAborted(signal);
+
+    if (toolName === "read_skill_resource") {
+      return { modelResult: await readSkillResource({ workspaceRoot, userSkillsDirectory }, input) };
+    }
 
     if (isBrowserToolName(toolName)) {
       return {
@@ -218,7 +225,22 @@ export function createNativeToolExecutor({
       } catch (error) {
         if (error?.code !== "ENOENT") throw error;
       }
-      const generated = await createOfficeArtifact(toolName, input);
+      const wordImages = new Map();
+      if (toolName === "create_word_document") {
+        let totalImageBytes = 0;
+        for (const block of input.blocks || []) {
+          if (block?.type !== "image" || wordImages.has(block.path)) continue;
+          if (wordImages.size >= 20) throw new Error("Word documents support at most 20 distinct images.");
+          const imagePath = await verifyExistingTarget(workspaceRoot, block.path);
+          const stats = await lstat(imagePath);
+          if (!stats.isFile() || stats.size > MAX_OFFICE_FILE_BYTES) throw new Error("Invalid or oversized Word image.");
+          const data = await readFile(imagePath);
+          totalImageBytes += data.length;
+          if (totalImageBytes > MAX_OFFICE_FILE_BYTES) throw new Error("Word images exceed the 8 MB total limit.");
+          wordImages.set(block.path, wordImageInfo(data));
+        }
+      }
+      const generated = await createOfficeArtifact(toolName, { ...input, _wordImages: wordImages });
       throwIfAborted(signal);
       await writeFile(filePath, generated.buffer);
       return {

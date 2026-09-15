@@ -13,6 +13,8 @@ const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 const DEFAULT_PERMISSION_POLICIES = {
   "read-only": {
     "*": "deny",
+    read_conversation_history: "allow",
+    read_skill_resource: "allow",
     delegate_subagent: "allow",
     collect_subagents: "allow",
     finish_task: "allow",
@@ -22,6 +24,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     update_plan: "allow",
     list_directory: "allow",
     read_file: "allow",
+    read_skill_resource: "allow",
     read_external_file: "allow",
     search_text: "allow",
     lsp: "allow",
@@ -45,6 +48,8 @@ const DEFAULT_PERMISSION_POLICIES = {
   },
   "workspace-write": {
     "*": "deny",
+    read_conversation_history: "allow",
+    read_skill_resource: "allow",
     delegate_subagent: "allow",
     collect_subagents: "allow",
     finish_task: "allow",

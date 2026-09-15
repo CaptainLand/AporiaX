@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/anthropics/skills",
+  "commit": "b9e19e6f44773509fbdd7001d77ff41a49a486c1",
+  "license": "Apache-2.0",
+  "adaptation": "AporiaX SKILL.md is a host-specific adapter. Listed upstream files are unmodified; no upstream setup scripts/hooks are auto-executed.",
+  "files": [
+    {
+      "local": "LICENSE.txt",
+      "upstream": "skills/theme-factory/LICENSE.txt",
+      "sha256": "14099b9c79d031b9d4b32c736a4e20f2b941f52dd79500532d62d26dd716110c"
+    },
+    {
+      "local": "themes/modern-minimalist.md",
+      "upstream": "skills/theme-factory/themes/modern-minimalist.md",
+      "sha256": "b8bc572b75948d4df69c401af703b9262ed6820a3ceb270da30a529e92763614"
+    },
+    {
+      "local": "themes/ocean-depths.md",
+      "upstream": "skills/theme-factory/themes/ocean-depths.md",
+      "sha256": "a7ad8eec85341dbfcb2665da827a4b6a4baee08ab3335ac02421f18e6b46b2e2"
+    },
+    {
+      "local": "themes/arctic-frost.md",
+      "upstream": "skills/theme-factory/themes/arctic-frost.md",
+      "sha256": "868a75a8fb5b2a61d0f0ab87c437fe632d3cbab6371c418f06aa2816ac109ae0"
+    }
+  ]
+}

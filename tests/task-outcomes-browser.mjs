@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { mkdir } from "node:fs/promises";
+import { classifyLink } from "../electron/link-target.js";
 const server = await createServer({ server: { host: "127.0.0.1", port: 0, open: false, watch: null } });
 let browser;
 try {
@@ -10,10 +12,44 @@ try {
   const errors = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/task-outcomes.html");
   for (const title of ["部分完成", "等待补充信息", "任务受阻", "已交付 · 未验证", "运行失败", "任务已停止"]) {
-    await page.locator(".assistant-message-heading strong").filter({ hasText: title }).waitFor();
+    await page.locator("#static-outcomes .assistant-message-heading strong").filter({ hasText: title }).waitFor();
   }
-  assert.equal(await page.locator(".assistant-message").count(), 6);
+  assert.equal(await page.locator("#static-outcomes .assistant-message").count(), 6);
   assert.equal(await page.getByRole("link", { name: "成果", exact: true }).getAttribute("href"), "https://example.invalid/result");
+  const flow = page.locator("#retry-flow");
+  const file = flow.getByRole("link", { name: "资料 #1.docx", exact: true });
+  await file.click();
+  const opened = await page.evaluate(() => window.openedOutcomeFile);
+  assert.equal(classifyLink(opened.href).target, "资料 #1.docx");
+  assert.equal(opened.workspacePath, "D:/fixture");
+  assert.equal(await flow.getByRole("link", { name: "deleted.txt" }).count(), 0);
+  assert.equal(await flow.locator(".run-error-details pre").isVisible(), false);
+  await flow.getByText("查看错误详情", { exact: true }).click();
+  assert.match(await flow.locator(".run-error-details pre").innerText(), /messages\[55\]/);
+  await flow.getByText("查看错误详情", { exact: true }).click();
+  await mkdir(".tmp", { recursive: true });
+  await flow.screenshot({ path: ".tmp/v095-failure.png" });
+  await flow.getByRole("button", { name: "继续任务", exact: true }).click();
+  assert.equal(await flow.locator(".historical-run").count(), 1);
+  assert.equal(await flow.locator(".historical-run").getAttribute("open"), null);
+  assert.equal(await flow.locator(".assistant-message.error").isVisible(), false);
+  assert(!((await flow.locator(".witness-panel").innerText()).includes("OLD_FAILURE_WITNESS")));
+  await flow.locator(".historical-run > summary").click();
+  assert.equal(await flow.getByRole("button", { name: "重试本轮", exact: true }).isDisabled(), true);
+  await flow.locator(".historical-run > summary").click();
+  await flow.getByRole("button", { name: "完成后续", exact: true }).click();
+  assert.match(await flow.locator(".witness-panel").innerText(), /100%/);
+  assert(!((await flow.locator(".witness-panel").innerText()).includes("OLD_FAILURE_WITNESS")));
+  await flow.getByRole("button", { name: "模拟失败", exact: true }).click();
+  await flow.getByRole("button", { name: "残留运行标记", exact: true }).click();
+  assert.equal(await flow.getByRole("button", { name: "重试本轮", exact: true }).isEnabled(), true, "stale running flags must not block reconciliation of the latest failed attempt");
+  await flow.getByRole("button", { name: "重试本轮", exact: true }).click();
+  assert.equal(await flow.locator(".assistant-message.error").count(), 0);
+  await flow.getByRole("button", { name: "模拟启动失败", exact: true }).click();
+  assert.equal(await flow.locator(".assistant-message.error").count(), 1);
+  assert.equal(await flow.locator(".witness-panel").count(), 0, "never resurrect the hidden failure's Witness");
+  await flow.getByRole("button", { name: "切换新任务", exact: true }).click();
+  assert.equal(await flow.locator(".assistant-message.error, .witness-panel, .historical-run").count(), 0);
   assert.deepEqual(errors, []);
-  console.log("Task outcomes browser: six real conversation states, unverified delivery, artifact link, no runtime exceptions: PASS");
+  console.log("Task outcomes browser: six states, saved file links, failure/follow-up/retry/new task, no stale Witness: PASS");
 } finally { await browser?.close(); await server.close(); }

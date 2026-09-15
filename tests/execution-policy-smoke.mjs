@@ -49,7 +49,7 @@ assert.equal(
 );
 assert.equal(
   classifyCommandPermission("npm test", { executionMode: "direct" }).action,
-  "allow",
+  "ask",
 );
 
 assert.equal(

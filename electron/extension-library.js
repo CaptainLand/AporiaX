@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
   lstat,
@@ -12,7 +12,8 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSkillDocument } from "./harness/skills/registry.js";
+import { parseSkillDocument, SKILL_NAME } from "./harness/skills/registry.js";
+import { withExtensionWriteLock } from "./extension-store-lock.js";
 import {
   loadMcpConfiguration,
   normalizeMcpServer,
@@ -21,7 +22,6 @@ import {
 
 const LIBRARY_ROOT = join(dirname(fileURLToPath(import.meta.url)), "library");
 const CATALOG_PATH = join(LIBRARY_ROOT, "catalog.json");
-const SKILL_NAME = /^[a-z][a-z0-9_-]{1,63}$/;
 const MAX_CATALOG_BYTES = 512_000;
 const MAX_MCP_CONFIG_BYTES = 512_000;
 const MAX_IMPORTED_SKILL_BYTES = 20_000_000;
@@ -51,26 +51,12 @@ async function readJson(path, maximumBytes) {
 async function writeJsonAtomic(path, value) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${randomUUID()}.tmp`;
-  const backup = `${path}.backup`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rm(backup, { force: true }).catch(() => undefined);
-  let movedOriginal = false;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flush: true });
   try {
-    await rename(path, backup);
-    movedOriginal = true;
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      await rm(temporary, { force: true }).catch(() => undefined);
-      throw error;
-    }
-  }
-  try {
+    // Same-directory rename replaces the old file without a missing-config window.
     await rename(temporary, path);
-    if (movedOriginal) await rm(backup, { force: true });
-  } catch (error) {
-    if (movedOriginal) await rename(backup, path).catch(() => undefined);
+  } finally {
     await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
   }
 }
 
@@ -89,6 +75,9 @@ function publicCatalogEntry(entry) {
     author: String(entry.author || "AporiaX"),
     tags: Array.isArray(entry.tags) ? entry.tags.map(String).slice(0, 12) : [],
     trust: String(entry.trust || "bundled"),
+    license: String(entry.license || ""),
+    sourceUrl: String(entry.sourceUrl || ""),
+    requirements: Array.isArray(entry.requirements) ? entry.requirements.map(String) : [],
     ...(entry.type === "mcp-template"
       ? {
           template: {
@@ -97,6 +86,8 @@ function publicCatalogEntry(entry) {
             transport: entry.template?.transport || "streamable-http",
             command: entry.template?.command || "",
             url: entry.template?.url || "",
+            headers: entry.template?.headers || {},
+            env: entry.template?.env || {},
             args: Array.isArray(entry.template?.args)
               ? entry.template.args.map(String).slice(0, 24)
               : [],
@@ -144,6 +135,7 @@ export async function extensionLibrarySnapshot({
     installed: {
       skillsDirectory: join(userDataDirectory, "skills"),
       skillNames: await installedUserSkillNames(userDataDirectory),
+      skillPackages: await installedSkillPackages(userDataDirectory),
       mcpServers: mcp.allServers.map(publicMcpServerSummary),
     },
     mcpConfigPath: mcp.userConfigPath,
@@ -173,101 +165,144 @@ async function installedUserSkillNames(userDataDirectory) {
   return names.sort((left, right) => left.localeCompare(right));
 }
 
-async function inspectSkillDirectory(root) {
+export async function inspectSkillDirectory(root) {
   let files = 0;
   let bytes = 0;
-  async function visit(directory) {
+  let entriesSeen = 0;
+  const hashes = {};
+  async function visit(directory, depth = 0) {
+    if (depth > 16) throw new Error("Skill package directory depth exceeds 16.");
     for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (++entriesSeen > 1000) throw new Error("Skill package exceeds 1000 directory entries.");
       const path = join(directory, entry.name);
-      if (entry.isSymbolicLink()) throw new Error("Skill packages may not contain symbolic links.");
-      if (entry.isDirectory()) await visit(path);
-      else if (entry.isFile()) {
-        const stats = await lstat(path);
+      const stats = await lstat(path);
+      if (stats.isSymbolicLink()) throw new Error("Skill packages may not contain symbolic links.");
+      if (stats.isDirectory()) await visit(path, depth + 1);
+      else if (stats.isFile()) {
         files += 1;
         bytes += stats.size;
         if (files > MAX_IMPORTED_SKILL_FILES || bytes > MAX_IMPORTED_SKILL_BYTES) {
           throw new Error("Skill package exceeds the 500 file / 20 MB import limit.");
         }
-      }
+        hashes[relative(root, path).replaceAll("\\", "/")] = createHash("sha256").update(await readFile(path)).digest("hex");
+      } else throw new Error("Skill packages may only contain regular files and directories.");
     }
   }
   await visit(root);
-  return { files, bytes };
+  return { files, bytes, hashes };
 }
 
-export async function importUserSkill({ userDataDirectory, sourceDirectory } = {}) {
-  const source = await realpath(String(sourceDirectory || ""));
-  const stats = await lstat(source);
-  if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw new Error("Select a real Skill directory containing SKILL.md.");
-  }
+async function exists(path) {
+  try { return await lstat(path); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+
+async function installedSkillPackages(userDataDirectory) {
+  return Promise.all((await installedUserSkillNames(userDataDirectory)).map(async (name) => ({
+    name,
+    canRollback: (await readdir(join(userDataDirectory, "skills", ".history", name)).catch(() => [])).length > 0,
+  })));
+}
+
+export async function importUserSkill({ userDataDirectory, sourceDirectory, onlineSource = null } = {}) {
+  return withExtensionWriteLock(userDataDirectory, () => installSkillPackage({ userDataDirectory, sourceDirectory, onlineSource }));
+}
+
+async function installSkillPackage({ userDataDirectory, sourceDirectory, rollback = false, onlineSource = null }) {
+  const lexical = resolve(String(sourceDirectory || ""));
+  const lexicalStats = await lstat(lexical);
+  if (!lexicalStats.isDirectory() || lexicalStats.isSymbolicLink()) throw new Error("Select a real Skill directory, not a symbolic link.");
+  const source = await realpath(lexical);
   const skillFile = join(source, "SKILL.md");
   const skillStats = await lstat(skillFile);
-  if (!skillStats.isFile() || skillStats.isSymbolicLink() || skillStats.size > MAX_CATALOG_BYTES) {
-    throw new Error("The selected directory has no safe SKILL.md.");
-  }
-  const parsed = parseSkillDocument(await readFile(skillFile, "utf8"), {
-    source: "user",
-    fallbackName: source.split(/[\\/]/).at(-1),
-    path: skillFile,
-  });
+  if (!skillStats.isFile() || skillStats.isSymbolicLink() || skillStats.size > MAX_CATALOG_BYTES) throw new Error("Missing or unsafe SKILL.md.");
+  const text = await readFile(skillFile, "utf8");
+  const parsed = parseSkillDocument(text, { source: "user", fallbackName: source.split(/[\\/]/).at(-1), path: skillFile });
   const packageStats = await inspectSkillDirectory(source);
-  const skillsRoot = join(userDataDirectory, "skills");
-  const target = join(skillsRoot, parsed.name);
-  if (!isInside(skillsRoot, target) || resolve(target) === resolve(skillsRoot)) {
-    throw new Error("Unsafe Skill import path.");
+  const root = join(userDataDirectory, "skills");
+  await mkdir(root, { recursive: true });
+  if ((await lstat(root)).isSymbolicLink()) throw new Error("Skill store cannot be a symbolic link.");
+  const target = join(root, parsed.name);
+  if (!isInside(root, target) || target === root) throw new Error("Unsafe Skill import path.");
+  if (!rollback && await exists(target)) {
+    if ((await lstat(target)).isSymbolicLink()) throw new Error("Installed Skill cannot be a symbolic link.");
+    const provenance = await readJson(join(target, ".aporiax-package.json"), MAX_CATALOG_BYTES);
+    const sameSource = onlineSource
+      ? provenance?.onlineSource?.identity === onlineSource.identity
+      : !provenance?.onlineSource && (!provenance?.source || relative(provenance.source, source) === "");
+    if (!sameSource) {
+      throw new Error("A Skill with this name exists from a different source. Rename the new Skill or explicitly uninstall the existing one first.");
+    }
   }
-  await mkdir(skillsRoot, { recursive: true });
-  const temporary = join(skillsRoot, `.import-${parsed.name}-${randomUUID()}`);
+  const temporary = join(root, ".import-" + parsed.name + "-" + randomUUID());
+  const history = join(root, ".history", parsed.name);
+  const previous = join(history, Date.now() + "-" + randomUUID());
+  let moved = false;
+  let installed = false;
   try {
     await cp(source, temporary, { recursive: true, errorOnExist: true });
-    await rm(target, { recursive: true, force: true });
+    // Re-inspect the copy. Do not execute setup/check scripts while importing.
+    const copied = await inspectSkillDirectory(temporary);
+    if (JSON.stringify(copied.hashes) !== JSON.stringify(packageStats.hashes)) throw new Error("Skill package changed during import; retry with a stable source.");
+    if (await readFile(join(temporary, "SKILL.md"), "utf8") !== text) throw new Error("SKILL.md changed during import; retry with a stable source package.");
+    const previousProvenance = rollback ? await readJson(join(temporary, ".aporiax-package.json"), MAX_CATALOG_BYTES) : null;
+    const upstream = await readJson(join(temporary, ".aporiax-source.json"), MAX_CATALOG_BYTES);
+    await writeFile(join(temporary, ".aporiax-package.json"), JSON.stringify({
+      name: parsed.name, version: parsed.version, license: parsed.license,
+      source: previousProvenance?.source || source, upstream, files: copied.hashes, importedAt: new Date().toISOString(),
+      onlineSource: previousProvenance?.onlineSource || onlineSource,
+      instructionSha256: createHash("sha256").update(text).digest("hex"),
+    }, null, 2), "utf8");
+    if (await exists(target)) {
+      if ((await lstat(target)).isSymbolicLink()) throw new Error("Installed Skill cannot be a symbolic link.");
+      await mkdir(history, { recursive: true });
+      if (relative(await realpath(history), resolve(history)) !== "") throw new Error("Unsafe Skill history directory.");
+      await rename(target, previous);
+      moved = true;
+    }
     await rename(temporary, target);
+    installed = true;
+    return { imported: true, skill: { name: parsed.name, title: parsed.title, description: parsed.description, source: "user", license: parsed.license, version: parsed.version },
+      path: target, previousVersionPath: moved ? previous : null, files: packageStats.files, bytes: packageStats.bytes };
   } catch (error) {
-    await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+    if (moved && !installed) {
+      try { await rename(previous, target); }
+      catch (restoreError) { throw new Error("Skill update failed; previous package preserved at " + previous + ". Restore error: " + restoreError.message); }
+    }
     throw error;
+  } finally {
+    if (!installed) await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
   }
-  return {
-    imported: true,
-    skill: {
-      name: parsed.name,
-      title: parsed.title,
-      description: parsed.description,
-      source: "user",
-    },
-    path: target,
-    ...packageStats,
-  };
+}
+
+export async function rollbackUserSkill({ userDataDirectory, name } = {}) {
+  if (!SKILL_NAME.test(String(name || ""))) throw new Error("Invalid Skill name.");
+  return withExtensionWriteLock(userDataDirectory, async () => {
+    const root = join(userDataDirectory, "skills", ".history", name);
+    const entries = (await readdir(root, { withFileTypes: true }).catch((error) => {
+      if (error.code === "ENOENT") return []; throw error;
+    })).filter((entry) => entry.isDirectory() && !entry.isSymbolicLink()).map((entry) => entry.name).sort().reverse();
+    if (!entries.length) throw new Error("No previous Skill package is available.");
+    if (relative(await realpath(root), resolve(root)) !== "") throw new Error("Unsafe Skill history directory.");
+    const result = await installSkillPackage({ userDataDirectory, sourceDirectory: join(root, entries[0]), rollback: true });
+    return { ...result, rolledBack: true };
+  });
 }
 
 export async function installCatalogSkill({ userDataDirectory, catalogId } = {}) {
   const catalog = await loadExtensionCatalog();
-  const entry = catalog.entries.find(
-    (item) => item.id === String(catalogId || "") && item.type === "skill",
-  );
+  const entry = catalog.entries.find((item) => item.id === String(catalogId || "") && item.type === "skill");
   if (!entry) throw new Error("Unknown Skill catalog entry.");
-  const source = await readFile(entry.skillFile, "utf8");
-  const parsed = parseSkillDocument(source, {
-    source: "user",
-    fallbackName: entry.name,
-    path: entry.skillFile,
-  });
-  if (parsed.name !== entry.name) {
-    throw new Error("Skill package name does not match its catalog manifest.");
-  }
-  const skillsRoot = join(userDataDirectory, "skills");
-  const targetDirectory = join(skillsRoot, parsed.name);
-  const target = join(targetDirectory, "SKILL.md");
-  if (!isInside(skillsRoot, target)) throw new Error("Unsafe Skill install path.");
-  await mkdir(targetDirectory, { recursive: true });
-  const temporary = join(targetDirectory, `SKILL.${randomUUID()}.tmp`);
-  await writeFile(temporary, source, "utf8");
-  await rm(target, { force: true });
-  await rename(temporary, target);
-  return { installed: true, skill: publicCatalogEntry(entry), path: target };
+  const parsed = parseSkillDocument(await readFile(entry.skillFile, "utf8"), { fallbackName: entry.name });
+  if (parsed.name !== entry.name) throw new Error("Skill package name does not match its catalog manifest.");
+  const result = await importUserSkill({ userDataDirectory, sourceDirectory: dirname(entry.skillFile) });
+  return { ...result, installed: true, skill: publicCatalogEntry(entry), path: join(result.path, "SKILL.md") };
 }
 
 export async function removeUserSkill({ userDataDirectory, name } = {}) {
+  return withExtensionWriteLock(userDataDirectory, () => removeUserSkillUnlocked({ userDataDirectory, name }));
+}
+
+async function removeUserSkillUnlocked({ userDataDirectory, name }) {
   const skillName = String(name || "").trim().toLowerCase();
   if (!SKILL_NAME.test(skillName)) throw new Error("Invalid Skill name.");
   const skillsRoot = join(userDataDirectory, "skills");
@@ -275,6 +310,7 @@ export async function removeUserSkill({ userDataDirectory, name } = {}) {
   if (!isInside(skillsRoot, target) || resolve(target) === resolve(skillsRoot)) {
     throw new Error("Unsafe Skill removal path.");
   }
+  if (await exists(skillsRoot) && relative(await realpath(skillsRoot), resolve(skillsRoot)) !== "") throw new Error("Unsafe Skill store directory.");
   await rm(target, { recursive: true, force: true });
   return { removed: true, name: skillName };
 }
@@ -286,12 +322,16 @@ async function readRawMcpConfig(userDataDirectory) {
     path,
     value: {
       ...raw,
-      servers: Array.isArray(raw.servers) ? raw.servers.slice(0, 64) : [],
+      servers: Array.isArray(raw.servers) ? raw.servers : [],
     },
   };
 }
 
-export async function saveMcpServer({ userDataDirectory, server } = {}) {
+export async function saveMcpServer({ userDataDirectory, server, createOnly = false } = {}) {
+  return withExtensionWriteLock(userDataDirectory, () => saveMcpServerUnlocked({ userDataDirectory, server, importing: createOnly }));
+}
+
+async function saveMcpServerUnlocked({ userDataDirectory, server, importing = false }) {
   const normalized = normalizeMcpServer(server || {});
   const { path, value } = await readRawMcpConfig(userDataDirectory);
   const rawServer = {
@@ -319,14 +359,18 @@ export async function saveMcpServer({ userDataDirectory, server } = {}) {
   const index = value.servers.findIndex(
     (item) => String(item?.id || "").trim().toLowerCase() === normalized.id,
   );
+  if (index >= 0 && importing) throw new Error(`MCP server id already exists: ${normalized.id}; existing configuration was preserved.`);
   if (index >= 0) value.servers[index] = rawServer;
-  else value.servers.push(rawServer);
+  else {
+    if (value.servers.length >= 64) throw new Error("MCP config already contains 64 entries; remove an entry first.");
+    value.servers.push(rawServer);
+  }
   await writeJsonAtomic(path, value);
   return { saved: true, server: publicMcpServerSummary(normalized), path };
 }
 
 function importedMcpServers(raw) {
-  if (Array.isArray(raw?.servers)) return raw.servers;
+  if (Array.isArray(raw?.servers)) return raw.servers.map((server) => ({ ...server, enabled: false }));
   if (raw?.mcpServers && typeof raw.mcpServers === "object" && !Array.isArray(raw.mcpServers)) {
     return Object.entries(raw.mcpServers).map(([name, server]) => ({
       ...(server || {}),
@@ -336,17 +380,19 @@ function importedMcpServers(raw) {
         .replace(/[^a-z0-9_-]+/g, "-")
         .replace(/^[^a-z]+/, "mcp-"),
       name: String(server?.name || name),
-      transport: server?.transport || (["http", "sse", "streamable-http"].includes(server?.type) || server?.url ? "streamable-http" : "stdio"),
+      transport: server?.transport || (server?.type === "sse" ? "sse" : (["http", "streamable-http"].includes(server?.type) || server?.url ? "streamable-http" : "stdio")),
+      enabled: false,
     }));
   }
-  if (raw?.command || raw?.url) return [raw];
+  if (raw?.command || raw?.url) return [{ ...raw, transport: raw.transport || (raw.type === "sse" ? "sse" : raw.url ? "streamable-http" : "stdio"), enabled: false }];
   return [];
 }
 
 export async function importMcpConfiguration({ userDataDirectory, sourcePath } = {}) {
   const source = await realpath(String(sourcePath || ""));
   const raw = await readJson(source, MAX_MCP_CONFIG_BYTES);
-  const servers = importedMcpServers(raw).slice(0, 64);
+  const servers = importedMcpServers(raw);
+  if (servers.length > 64) throw new Error("Import exceeds 64 MCP entries; split the configuration explicitly.");
   if (!servers.length) {
     throw new Error("No MCP servers were found in this JSON file.");
   }
@@ -354,7 +400,7 @@ export async function importMcpConfiguration({ userDataDirectory, sourcePath } =
   const errors = [];
   for (const server of servers) {
     try {
-      const result = await saveMcpServer({ userDataDirectory, server });
+      const result = await withExtensionWriteLock(userDataDirectory, () => saveMcpServerUnlocked({ userDataDirectory, server, importing: true }));
       imported.push(result.server);
     } catch (error) {
       errors.push(String(error?.message || error));
@@ -367,6 +413,38 @@ export async function importMcpConfiguration({ userDataDirectory, sourcePath } =
 }
 
 export async function removeMcpServer({ userDataDirectory, id } = {}) {
+  return withExtensionWriteLock(userDataDirectory, () => removeMcpServerUnlocked({ userDataDirectory, id }));
+}
+
+export async function setMcpServerEnabled({ userDataDirectory, id, enabled } = {}) {
+  if (typeof enabled !== "boolean") throw new Error("MCP enabled must be a boolean.");
+  return withExtensionWriteLock(userDataDirectory, async () => {
+    const { path, value } = await readRawMcpConfig(userDataDirectory);
+    const server = value.servers.find((item) => item?.id === id);
+    if (!server) throw new Error("Unknown MCP server.");
+    server.enabled = enabled;
+    await writeJsonAtomic(path, value);
+    return { id, enabled };
+  });
+}
+
+export async function probeMcpServer({ userDataDirectory, id } = {}) {
+  const configuration = await loadMcpConfiguration({ userDataDirectory });
+  const server = configuration.allServers.find((item) => item.id === id);
+  if (!server) throw new Error("Unknown or invalid MCP server.");
+  if (server.missingEnvironment?.length) throw new Error("MCP_ENV_MISSING: " + server.missingEnvironment.join(", "));
+  const { createMcpRuntime } = await import("./mcp-runtime.js");
+  const runtime = createMcpRuntime({ servers: [{ ...server, enabled: true }] });
+  try {
+    const discovered = await runtime.discover({ permissionMode: "read-only" });
+    if (discovered.errors.length) throw new Error(discovered.errors.map((item) => item.error).join("; "));
+    return { id, discoveryStatus: "passed", toolCount: discovered.servers[0]?.toolCount || 0,
+      checkedAt: new Date().toISOString(), connected: false,
+      note: "Tool discovery passed; probe connection is closed. No remote action tool was called." };
+  } finally { await runtime.close(); }
+}
+
+async function removeMcpServerUnlocked({ userDataDirectory, id }) {
   const serverId = String(id || "").trim().toLowerCase();
   if (!serverId) throw new Error("MCP server id is required.");
   const { path, value } = await readRawMcpConfig(userDataDirectory);

@@ -108,4 +108,25 @@ assert.equal(failedResult.started, false);
 assert.equal(failedResult.reason, "retry-error");
 assert.match(failedResult.error.message, /renderer start failed/);
 
+for (const listActiveRuns of [async () => { throw new Error("IPC unavailable"); }, async () => null, async () => ({})]) {
+  for (const interruptActive of [false, true]) {
+    const runs = new Map([["newer-run", { taskId: "task" }]]);
+    let stops = 0;
+    const result = await prepareTaskRetry({ taskId: "task", rendererRuns: runs, listActiveRuns, interruptActive, interruptRun: async () => { stops++; } });
+    assert.equal(result.reason, "main-status-unavailable");
+    assert.equal(result.ready, false);
+    assert.equal(stops, 0, "unknown main state must never interrupt any run");
+    assert(runs.has("newer-run"));
+  }
+}
+{
+  const runs = new Map([["newer-run", { taskId: "task" }]]);
+  let stops = 0;
+  const result = await prepareTaskRetry({ taskId: "task", rendererRuns: runs, interruptActive: false, interruptRun: async () => { stops++; } });
+  assert.equal(result.reason, "task-still-active");
+  assert.equal(stops, 0, "legacy fallback must honor interruptActive=false");
+  const explicit = await prepareTaskRetry({ taskId: "task", rendererRuns: runs, interruptActive: true, interruptRun: async (id) => { stops++; runs.delete(id); } });
+  assert.equal(explicit.ready, true);
+  assert.equal(stops, 1);
+}
 console.log("run retry core smoke: PASS");

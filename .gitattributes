@@ -1,0 +1,3 @@
+# Vendored Skill manifests contain SHA-256 hashes: preserve exact bytes on checkout.
+electron/library/curated/** -text
+electron/library/skills/hermes-docx/** -text

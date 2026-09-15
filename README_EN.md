@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.0" src="https://img.shields.io/badge/source-v0.9.0-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.5" src="https://img.shields.io/badge/source-v0.9.5-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.9.0`**. The project remains in Preview.
-> 0.9.0 improves the same-screen workbench with side chat, formatted documents, Git, and a responsive interactive terminal.
+> The current AporiaX source and Windows release version is **`v0.9.5`**. The project remains in Preview.
+> 0.9.5 fixes tool messages, retries and failure presentation, and includes MCP / Skill discovery and reliability improvements.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -76,6 +76,15 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
+
+## What's new in 0.9.5: reliable tool messages and task recovery
+
+- Fix missing tool-message content after external directory reads; validate requests locally and recover missing checkpoint receipts as unknown outcomes.
+- Protect active tasks when retry status is unavailable; keep Witness on the latest attempt and collapse historical failures.
+- Offer links to saved files when a run fails, with expandable diagnostics and no false claim of completion or successful verification.
+- Discover MCP servers and Skills online, inspect sources, licenses and dependencies, then install/connect and check readiness. Includes attributed Word, document-theme and debugging resources.
+
+[Read the complete 0.9.5 notes](docs/RELEASE_NOTES_v0.9.5.md)
 
 ## What's new in 0.9.0: a more useful workbench
 
@@ -233,13 +242,13 @@ Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet
 
 ## Download
 
-`main` is now the **v0.9.0 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.9.5 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.9.0 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.0/AporiaX-Setup-0.9.0-x64.exe) | Recommended Windows x64 installer |
-| [0.9.0 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.0/AporiaX-Portable-0.9.0-x64.exe) | No-install Windows x64 package |
+| [0.9.5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.5/AporiaX-Setup-0.9.5-x64.exe) | Recommended Windows x64 installer |
+| [0.9.5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.5/AporiaX-Portable-0.9.5-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 

@@ -1,8 +1,8 @@
 // Local provenance is intentionally removed before messages cross a provider API.
 // A tool/reviewer cannot acquire user authority by using the API's user role.
 export function taskRequest(message) {
-  return message?.role === "user"
-    ? { ...message, aporiaSource: "human", aporiaPinned: true }
+  return isHumanMessage(message)
+    ? { ...message, aporiaSource: "human", aporiaPinned: !message.aporiaSupersededBy }
     : message;
 }
 
@@ -15,10 +15,47 @@ export function isHumanMessage(message) {
 }
 
 export function providerMessages(messages) {
-  return (messages || []).map((message) => {
-    const { aporiaSource, aporiaPinned, ...wire } = message;
+  return (messages || []).map((message, index) => {
+    if (!message || typeof message !== "object") throw invalidMessage(index, "missing message");
+    const { aporiaSource, aporiaPinned, aporiaSupersededBy, ...wire } = message;
+    // Tool-only assistant messages may omit text. Tool receipts may not: an
+    // undefined property disappears entirely when the request is serialized.
+    if (wire.role === "assistant" && wire.content === undefined && wire.tool_calls?.length) wire.content = null;
+    const textOrParts = typeof wire.content === "string" || Array.isArray(wire.content);
+    if (wire.role === "tool" ? typeof wire.content !== "string"
+      : !textOrParts && !(wire.role === "assistant" && wire.content === null && wire.tool_calls?.length)) {
+      throw invalidMessage(index, `invalid or missing content for ${wire.role || "unknown role"}`);
+    }
+    if (aporiaSupersededBy && typeof wire.content === "string") wire.content =
+      `[Historical user requirements superseded by a later explicit user reset; retained for reference, not active instructions.]\n${wire.content}`;
     return wire;
   });
+}
+
+function invalidMessage(index, reason) {
+  const error = new Error(`MODEL_MESSAGE_INVALID: messages[${index}]: ${reason}. Request stopped locally before contacting the model.`);
+  error.code = "MODEL_MESSAGE_INVALID";
+  error.retryable = false;
+  return error;
+}
+
+export function requireToolResult(result, toolName) {
+  if (!result || result.modelResult === undefined) {
+    const error = new Error(`TOOL_RESULT_INVALID: ${toolName} returned no modelResult. Execution outcome is unknown; inspect actual effects before retrying, do not blindly replay the operation.`);
+    error.code = "TOOL_RESULT_INVALID";
+    throw error;
+  }
+  return result;
+}
+
+function recoveredReceipt(message) {
+  if (message?.role !== "tool" || typeof message.content === "string") return message;
+  // Old checkpoints can contain a receipt whose result was never saved. Do
+  // not fabricate success or rerun the saved operation to obtain its result.
+  return { ...message, content: JSON.stringify(message.content ?? {
+    recovered: true, outcome: "unknown", error: "RECOVERED_TOOL_RESULT_MISSING",
+    note: "The saved tool receipt has no result. Inspect current state; do not blindly replay this operation or assume it succeeded.",
+  }) };
 }
 
 export function recoverConversation(messages) {
@@ -26,12 +63,12 @@ export function recoverConversation(messages) {
   // explicit unknown-outcome receipt and let the model inspect actual effects.
   const result = [];
   for (let index = 0; index < (messages || []).length; index++) {
-    const message = messages[index];
+    const message = recoveredReceipt(messages[index]);
     result.push(message);
     if (!message.tool_calls?.length) continue;
     const received = new Set();
     while (messages[index + 1]?.role === "tool") {
-      const receipt = messages[++index]; result.push(receipt); received.add(receipt.tool_call_id);
+      const receipt = recoveredReceipt(messages[++index]); result.push(receipt); received.add(receipt.tool_call_id);
     }
     for (const call of message.tool_calls) {
       if (!received.has(call.id)) result.push({ role: "tool", tool_call_id: call.id,

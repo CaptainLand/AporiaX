@@ -15,7 +15,7 @@ export function normalizeVerificationSelection(values = []) {
 export function overlayReviewFindings(segments = [], version) {
   const latestByPath = new Map();
   for (const segment of segments || []) {
-    if (segment.verificationVersion !== version) continue;
+    if (segment.stale || segment.verificationVersion !== version) continue;
     const reviewed =
       Boolean(segment.reviewAgentId) ||
       (Array.isArray(segment.reviewAgentIds) && segment.reviewAgentIds.length > 0);
@@ -51,7 +51,7 @@ export function overlayReviewFindings(segments = [], version) {
 export function assessDelivery(state, changes, version) {
   const latest = new Map();
   for (const item of state.verificationResults || []) {
-    if (item.versionSignature === version) latest.set(JSON.stringify([item.command, item.cwd || "."]), item);
+    if (!item.stale && item.versionSignature === version) latest.set(JSON.stringify([item.command, item.cwd || "."]), item);
   }
   const results = [...latest.values()];
   const failed = results.filter((item) => !item.passed || item.error || item.timedOut);

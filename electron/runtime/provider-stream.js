@@ -1,4 +1,5 @@
 import { providerChatEndpoint } from "../provider-config.js";
+import { providerMessages } from "./task-conversation.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -196,6 +197,8 @@ export async function callModelProviderOnce({
   onEvent,
 }) {
   throwIfAborted(signal);
+  // All callers, including subagents and side chat, share this last boundary.
+  if (Array.isArray(body.messages)) body = { ...body, messages: providerMessages(body.messages) };
   const controller = new AbortController();
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });

@@ -318,6 +318,7 @@ export function buildSelfCheckResult(selfCheck, changeMap) {
     mode: selfCheck.mode || "legacy",
     segments: (selfCheck.segments || []).map((segment) => ({
       id: segment.id,
+      stale: Boolean(segment.stale),
       reason: segment.reason,
       planStepId: segment.planStepId || null,
       paths: segment.paths,
@@ -333,6 +334,7 @@ export function buildSelfCheckResult(selfCheck, changeMap) {
       remainingRisks: segment.remainingRisks || [],
     })),
     seal: selfCheck.seal || null,
+    recoveryChanges: (selfCheck.recoveryChanges || []).map(({ path, recoveryError }) => ({ path, error: recoveryError })),
     delivery: selfCheck.delivery || null,
     verification: {
       ...(selfCheck.verificationWaived ? { waived: true } : {}),

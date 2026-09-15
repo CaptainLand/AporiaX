@@ -36,6 +36,18 @@ jobs:
       - name: Task runtime RPC smoke
         run: npm run test:task-runtime-rpc
 
+      - name: Approval and Builder failure regression
+        run: npm run test:critical-reliability
+
+      - name: Context, MCP catalog and Understanding crash recovery
+        run: npm run test:context-reliability
+
+      - name: Curated extensions, Skill resources and Word formatting
+        run: npm run test:extension-library
+
+      - name: Durable storage, remote commands, script trust and release invariants
+        run: npm run test:reliability-batch3
+
       - name: Agent runtime broker smoke
         run: npm run test:agent-runtime-broker
 

@@ -20,7 +20,7 @@ export function refreshVerification(state, changes) {
   const version = verificationVersion(changes);
   const latest = new Map();
   for (const item of state.verificationResults || []) {
-    if (item.versionSignature === version) latest.set(commandKey(item), item);
+    if (!item.stale && item.versionSignature === version) latest.set(commandKey(item), item);
   }
   // Candidates are suggestions, not a mandate to run every expensive script.
   const required = state.verificationRequired || [];
@@ -77,7 +77,7 @@ export function recordReadEvidence(state, changes, tool, result) {
 
 export function selfCheckProgressKey(state, changes) {
   const reads = [...new Set((state.readEvidence || []).map((item) => JSON.stringify([item.path, item.sha256, item.readRange])))].sort();
-  const commands = [...new Set((state.verificationResults || []).filter((item) => item.versionSignature === verificationVersion(changes))
+  const commands = [...new Set((state.verificationResults || []).filter((item) => !item.stale && item.versionSignature === verificationVersion(changes))
     .map((item) => JSON.stringify([item.command, item.cwd, item.passed, item.exitCode, item.error])))].sort();
   return contentHash(JSON.stringify([verificationVersion(changes), reads, commands, [...state.reviewedVersions.keys()].sort()]));
 }

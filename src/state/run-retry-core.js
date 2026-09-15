@@ -44,8 +44,9 @@ export async function prepareTaskRetry({
     try {
       mainSnapshot = await listActiveRuns();
     } catch {
-      mainSnapshot = null;
+      return { ready: false, reason: "main-status-unavailable", removedRunIds: [] };
     }
+    if (!Array.isArray(mainSnapshot)) return { ready: false, reason: "main-status-unavailable", removedRunIds: [] };
   }
 
   if (mainSnapshot !== null) {
@@ -78,7 +79,9 @@ export async function prepareTaskRetry({
     while (Date.now() < deadline) {
       await sleep(pollMs);
       try {
-        matchingMainRuns = activeTaskRuns(await listActiveRuns(), taskId);
+        const snapshot = await listActiveRuns();
+        if (!Array.isArray(snapshot)) throw new Error("Invalid active run snapshot");
+        matchingMainRuns = activeTaskRuns(snapshot, taskId);
       } catch {
         return {
           ready: false,
@@ -106,6 +109,9 @@ export async function prepareTaskRetry({
   const localEntries = taskRunEntries(rendererRuns, taskId);
   if (!localEntries.length) {
     return { ready: true, reason: "renderer-idle", removedRunIds: [] };
+  }
+  if (!interruptActive) {
+    return { ready: false, reason: "task-still-active", removedRunIds: [] };
   }
   if (typeof interruptRun !== "function") {
     return { ready: false, reason: "interrupt-unavailable", removedRunIds: [] };

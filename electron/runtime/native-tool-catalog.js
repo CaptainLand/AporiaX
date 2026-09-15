@@ -1,4 +1,6 @@
 import { ToolRegistry } from "../agent-core.js";
+import { SKILL_RESOURCE_TOOL } from "../skill-resources.js";
+import { HISTORY_TOOL } from "./conversation-history.js";
 import { OFFICE_TOOL_DEFINITIONS } from "../office-tools.js";
 import { BROWSER_TOOL_DEFINITIONS, BROWSER_TOOL_RISKS } from "../browser-runtime.js";
 import { MAX_SUBAGENT_ROUNDS } from "./subagent-model.js";
@@ -6,6 +8,7 @@ import { MAX_SUBAGENT_ROUNDS } from "./subagent-model.js";
 export const MAX_SEARCH_RESULTS = 200;
 
 export const TOOL_DEFINITIONS = [
+  SKILL_RESOURCE_TOOL,
   {
     type: "function",
     function: {
@@ -875,6 +878,8 @@ export const TOOL_DEFINITIONS = [
 ];
 
 export const TOOL_RISKS = {
+  read_conversation_history: "read",
+  read_skill_resource: "read",
   finish_task: "control",
   followup_subagent: "control",
   cancel_subagent: "control",
@@ -922,7 +927,7 @@ export const TOOL_RISKS = {
 };
 
 export const TOOL_REGISTRY = new ToolRegistry(
-  TOOL_DEFINITIONS.map((definition) => ({
+  [...TOOL_DEFINITIONS, HISTORY_TOOL].map((definition) => ({
     definition,
     risk: TOOL_RISKS[definition.function.name],
   })),

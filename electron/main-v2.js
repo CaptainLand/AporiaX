@@ -49,7 +49,16 @@ import {
   removeMcpServer,
   removeUserSkill,
   saveMcpServer,
+  rollbackUserSkill,
+  setMcpServerEnabled,
+  probeMcpServer,
 } from "./extension-library.js";
+import { createExtensionDiscovery, verifyInstalledSkill } from "./extension-discovery.js";
+const extensionDiscovery = createExtensionDiscovery();
+ipcMain.handle("core:library:search-online", (_event, request = {}) => extensionDiscovery.search(request));
+ipcMain.handle("core:library:online-details", (_event, request = {}) => extensionDiscovery.details(request));
+ipcMain.handle("core:library:install-online-skill", (_event, request = {}) => extensionDiscovery.install({ userDataDirectory: app.getPath("userData"), ticket: request.ticket }));
+ipcMain.handle("core:library:verify-skill", (_event, request = {}) => verifyInstalledSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
 
 const desktopBackground = installDesktopBackground();
 installAppUpdate({
@@ -261,10 +270,11 @@ kernel.events.on("approval.required", (event) => {
     approval,
     theme: desktopMain.getDesktopWindowTheme?.() || "light",
     onDecide: (approved) => {
-      desktopMain.harnessTaskRuntime.respondApproval(event.runId, approval.id, {
+      const accepted = desktopMain.harnessTaskRuntime.respondApproval(event.runId, approval.id, {
         approved,
         scope: "once",
       });
+      if (!accepted) return;
       const window = desktopMain.getDesktopMainWindow?.();
       if (window && !window.isDestroyed()) {
         window.webContents.send("harness:event", {
@@ -358,6 +368,7 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
   }
   return {
     skills,
+    diagnostics: skills.diagnostics || [],
     enabled: extensionSourceEnabled(policy, "skill"),
     policy,
     userSkillsDirectory,
@@ -407,6 +418,9 @@ ipcMain.handle("core:library:import-skill", async () => {
     sourceDirectory: selection.filePaths[0],
   });
 });
+ipcMain.handle("core:library:rollback-skill", async (_event, request = {}) => rollbackUserSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
+ipcMain.handle("core:library:toggle-mcp", async (_event, request = {}) => setMcpServerEnabled({ userDataDirectory: app.getPath("userData"), id: request.id, enabled: request.enabled }));
+ipcMain.handle("core:library:probe-mcp", async (_event, request = {}) => probeMcpServer({ userDataDirectory: app.getPath("userData"), id: request.id }));
 ipcMain.handle("core:library:remove-skill", async (_event, request = {}) =>
   removeUserSkill({
     userDataDirectory: app.getPath("userData"),
@@ -417,6 +431,7 @@ ipcMain.handle("core:library:save-mcp", async (_event, request = {}) =>
   saveMcpServer({
     userDataDirectory: app.getPath("userData"),
     server: request?.server,
+    createOnly: request?.createOnly === true,
   }),
 );
 ipcMain.handle("core:library:import-mcp", async () => {

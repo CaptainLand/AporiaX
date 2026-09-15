@@ -1638,6 +1638,38 @@ body.panel-is-resizing * {
   background: #fffafa;
 }
 
+.historical-run {
+  margin: 0 0 20px;
+  border: 1px solid #929ba32b;
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+.historical-run > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+  color: #7d858d;
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.historical-run > summary::-webkit-details-marker { display: none; }
+.historical-run > summary span { flex: 1; }
+.historical-run[open] > summary > svg:last-child { transform: rotate(180deg); }
+.historical-run > .assistant-message { margin: 0 10px 12px; }
+.failed-run-content { white-space: normal; }
+.failed-run-content p { margin: 0 0 10px; }
+.saved-run-files ul { margin: 7px 0; padding-left: 20px; }
+.saved-run-files li { overflow-wrap: anywhere; }
+.saved-run-files a { color: #438eaf; text-underline-offset: 3px; }
+.saved-run-files > p { font-size: 12px; opacity: .8; }
+.run-error-details { margin-top: 10px; font-size: 12px; }
+.run-error-details > summary { cursor: pointer; opacity: .8; }
+.run-error-details pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font: inherit; }
+
 .assistant-message-heading {
   display: flex;
   align-items: center;
