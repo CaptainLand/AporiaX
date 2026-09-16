@@ -10,6 +10,7 @@ const task = { id: "fixture", messages: statuses.map((status) => ({ id: status, 
   content: status === "completed" ? "已交付 [成果](https://example.invalid/result)" : "状态测试", steps: [], changes: [],
   ...(status === "completed" ? { selfCheck: { delivery: { status: "unverified" } } } : {}) })) };
 const failure = { id: "old-failure", role: "assistant", status: "failed", error: true, prompt: "Create a document",
+  sandbox: { recoveries: [{ directory: "D:/recovery/snapshot-1" }] },
   content: "Failed to deserialize the JSON body into the target type: messages[55]: missing field `content`",
   changes: [{ path: "资料 #1.docx", created: true, binary: true }, { path: "deleted.txt", deleted: true }],
   witness: { status: "failed", current: { eventType: "turn.failed", detail: "OLD_FAILURE_WITNESS" }, records: [] } };

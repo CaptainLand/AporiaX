@@ -6,6 +6,7 @@ import { WorkbenchBrowserSession } from "./browser-session.js";
 import { installWorkbenchProvider } from "./runtime-provider.js";
 import { createPersistentProcessManager } from "../runtime/process-runtime.js";
 import { getVerifiedWorkspaceRoot, toWorkspaceRelativePath } from "../runtime/workspace-runtime.js";
+import { checkWorkspaceFileLink } from "../file-link-check.js";
 import { readWorkbenchFile, searchWorkbenchFiles } from "./files.js";
 import { acceptLayoutGeneration } from "./layout-token.js";
 import { createWorkbenchGitService } from "./git-service.js";
@@ -25,6 +26,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   const resources = new Map();
   const activeRuns = new Set();
   const git = createWorkbenchGitService({
+    recoveryDirectory: join(app.getPath("userData"), "git-conflict-recovery"),
     assertWorkspaceIdle(root) {
       const target = resolve(root).toLowerCase();
       if ([...activeRuns].some((context) => {
@@ -279,6 +281,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     if (input.action === "file") return readWorkbenchFile(context.workspacePath, input.path, {
       authorizeExternal: input.approveExternal === true ? confirmExternalRead : undefined,
     });
+    if (input.action === "file-check") return checkWorkspaceFileLink(context.workspacePath, input.path);
     if (input.action === "search") return searchWorkbenchFiles(context.workspacePath, input.query);
     if (input.action === "git") return git.request({ ...input, workspacePath: context.workspacePath });
     if (input.action === "github-login") {

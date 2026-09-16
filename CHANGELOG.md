@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.7 — 2026-09-16
+
+Local OCR, Git conflict editing, a read-only PR page, and selectable Builder concurrency. GitHub last published 0.9.5, so this package also includes 0.9.6.
+
+- Recognize Chinese/English images and scanned PDFs locally after a one-time language-data download.
+- Edit ordinary UTF-8 merge conflicts in the Git sidebar; inspect GitHub PRs and checks without creating or merging them.
+- Builder count 0 / 1 / 2 / 3 / 4 / 6 (default 2); overflow queues. Non-UTF-8 Builder checkpoints restore as bytes.
+- 0.9.6: workspace delivery links, isolated Safe `node_modules` copies, and kept sandbox recovery snapshots.
+
+[Release notes](docs/RELEASE_NOTES_v0.9.7.md) · [0.9.6 notes](docs/RELEASE_NOTES_v0.9.6.md)
+
 ## 0.9.0 — 2026-09-14
 
 A more useful same-screen workbench: side chat, formatted documents, Git setup and responsive terminals.

@@ -1,0 +1,16 @@
+.ocr-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; font-size: 14px; line-height: 1.6; }
+.ocr-panel label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ocr-panel input,.ocr-panel select,.ocr-panel button,.ocr-actions button { font: inherit; color: var(--sc-text); background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 8px; padding: 7px 10px; max-width: 100%; }
+.ocr-panel button:not(:disabled) { cursor: pointer; }
+.ocr-panel button:disabled { opacity: .5; }
+.ocr-source-name { overflow-wrap: anywhere; }
+.ocr-controls,.ocr-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ocr-controls label { flex: 1; }
+.ocr-controls input { width: 90px; }
+.ocr-result { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+.ocr-result img { width: 100%; height: auto; max-height: 380px; object-fit: contain; background: white; border: 1px solid var(--sc-line); }
+.ocr-result pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; font: inherit; user-select: text; }
+.ocr-result>div { min-width: 0; }
+@media(max-width: 600px) { .ocr-result { grid-template-columns: minmax(0,1fr); } }
+.side-chat-dialog:has(.ocr-panel) { width: min(900px, calc(100vw - 40px)); max-height: calc(100dvh - 64px); }
+.composer-attachments figure .composer-ocr-button { right: 28px; width: auto; padding: 2px 4px; font-size: 10px; }

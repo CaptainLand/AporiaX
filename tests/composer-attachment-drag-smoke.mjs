@@ -15,12 +15,12 @@ import {
 } from "../electron/harness/builder-count.js";
 import { isCollapsedDropEdge } from "../src/workbench/drop-edge.js";
 
-assert.deepEqual(BUILDER_COUNT_CHOICES, [0, 2, 3, 4]);
-assert.equal(MAX_BUILDERS, 4);
+assert.deepEqual(BUILDER_COUNT_CHOICES, [0, 1, 2, 3, 4, 6]);
+assert.equal(MAX_BUILDERS, 6);
 assert.equal(normalizeBuilderCount(undefined, DEFAULT_BUILDER_LIMIT), 2);
 assert.equal(normalizeBuilderCount(0), 0);
-assert.equal(normalizeBuilderCount(1), 2);
-assert.equal(normalizeBuilderCount(9), 4);
+assert.equal(normalizeBuilderCount(1), 1);
+assert.equal(normalizeBuilderCount(9), 6);
 
 assert.equal(isComposerAttachmentDrag({ types: ["Files"] }), false);
 assert.equal(isComposerAttachmentDrag({ types: [COMPOSER_ATTACHMENT_DRAG] }), true);

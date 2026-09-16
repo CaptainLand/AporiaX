@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.5" src="https://img.shields.io/badge/source-v0.9.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.7" src="https://img.shields.io/badge/source-v0.9.7-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察、可验证、可回退的行动路径。它可以直接操作授权工作区、编辑代码、生成真实 Office 文件，并把每一步修改、验证依据和最终产物留在界面中，而不是只给出一段聊天回复。
 
 > [!IMPORTANT]
-> AporiaX 当前源码与 Windows 发行版本为 **`v0.9.5`**，仍处于 Preview 阶段。
-> 0.9.5 修复工具消息、任务重试和失败状态展示，并同步 MCP / Skill 在线发现与可靠性改进。
+> AporiaX 当前源码与 Windows 发行版本为 **`v0.9.7`**，仍处于 Preview 阶段。
+> 0.9.7 加入本地 OCR、Git 冲突编辑与 PR 只读页，并提高 Builder 并发；同时带上 0.9.6 的链接与 Safe 沙箱恢复修复。
 > Aporia Account、Aporia Cloud、BYOK 与本地模型路径继续保持相互独立。
 
 - **Route**：展示每一次任务实际发生的步骤，而不是隐藏在聊天文字之后。
@@ -67,6 +67,15 @@ AporiaX 是一个 local-first 桌面 Agent，把模糊需求转化为可观察�
     <td align="center"><strong>扩展</strong><br><sub>安装可审查的方法，而不是新权限</sub></td>
   </tr>
 </table>
+
+## 0.9.7 更新：本地 OCR、Git 冲突与 Builder
+
+- **本地 OCR**：从输入栏、图片/PDF 附件或侧栏预览识别中英文图片与扫描 PDF；首次下载约 4.7 MB 资源后在本地运行，不上传文档。
+- **Git 冲突与 PR**：侧栏对比并编辑普通 merge 冲突，确认后再暂存；只读查看当前分支的 GitHub PR 与检查状态。
+- **Builder**：并发可选 0 / 1 / 2 / 3 / 4 / 6，默认 2；超出的工作排队。修复非 UTF-8 检查点恢复。
+- **0.9.6**：修复交付链接截断，Safe 使用独立依赖副本，异常后保留可打开的恢复目录。
+
+[查看完整 0.9.7 更新记录](docs/RELEASE_NOTES_v0.9.7.md)
 
 ## 0.9.5 更新：可靠的工具消息与任务恢复
 
@@ -219,7 +228,7 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 | Cloud Vision | 显式图片附件经 Qwen3.5 Flash 一次性理解，再把文本观察交给 DeepSeek 主 Agent |
 | 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
 | 自适应多 Agent | Adaptive Agent Budget 按任务复杂度分配额外 Agent；简单任务保持 Main-only，复杂任务受限扩展 |
-| Builder 编排 | 大型可写任务最多使用 2 个 Builder；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
+| Builder 编排 | 并发可选 0 / 1 / 2 / 3 / 4 / 6，默认 2；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
 | Agent 协作 | Shared Contract、Plan Approval、结构化 handoff 与有界 mailbox；Main 保持最终集成权 |
 | 可观察执行 | Witness 在 Dialogue 实时记录主/子 Agent、当前动作、耗时、失败与自检阶段；Route 保留完整路径 |
 | 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、对话级 Anchor、跨轮恢复与原子冲突检查 |
@@ -229,17 +238,17 @@ Aporia Cloud 的图片理解通过隐藏的 Qwen3.5 Flash Vision 路径完成，
 | 多模型 API | Aporia Cloud、多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
 | 桌面后台 | 关闭窗口时可收至系统托盘继续任务；托盘恢复/退出、Windows 完成通知、任务运行时间显示 |
 
-扫描版 PDF 当前会被识别为“需要 OCR”，但尚未内置 OCR 引擎。Aporia Cloud 图片附件可走 Cloud Vision；BYOK / 本地模型的图片能力取决于用户自己的视觉模型与配置。
+扫描版 PDF 与图片可通过内置本地 OCR 识别（中英文，首次下载语言模型）。Aporia Cloud 图片附件仍可走 Cloud Vision；BYOK / 本地模型的图片能力取决于用户自己的视觉模型与配置。
 
 ## 下载
 
-`main` 当前是 **v0.9.5 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
+`main` 当前是 **v0.9.7 源码状态**，Windows x64 安装版与便携版均从 GitHub Releases 提供。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 所有历史版本与发行说明 |
-| [0.9.5 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.5/AporiaX-Setup-0.9.5-x64.exe) | 推荐的 Windows x64 安装包 |
-| [0.9.5 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.5/AporiaX-Portable-0.9.5-x64.exe) | 无需安装的 Windows x64 便携包 |
+| [0.9.7 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.7/AporiaX-Setup-0.9.7-x64.exe) | 推荐的 Windows x64 安装包 |
+| [0.9.7 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.7/AporiaX-Portable-0.9.7-x64.exe) | 无需安装的 Windows x64 便携包 |
 
 首次启动后：
 

@@ -28,6 +28,16 @@ try {
   assert.equal(calls[1].language, "zh-CN");
   assert.equal(calls[2].href, "https://example.com");
   assert.equal(calls[4].href, "http://localhost:8080/todo.html");
+  const filename = "SeaLandX-B站用户资料简介-美化版.docx";
+  await page.getByRole("link", { name: filename, exact: true }).click();
+  await page.getByRole("link", { name: "报告 🚀", exact: true }).click();
+  await page.getByRole("link", { name: "中文网页", exact: true }).click();
+  await page.getByRole("link", { name: "引用文件", exact: true }).click();
+  const unicodeCalls = (await page.evaluate(() => window.linkCalls)).slice(5);
+  assert.equal(decodeURI(unicodeCalls[0].href), filename);
+  assert.match(decodeURI(unicodeCalls[1].href), /🚀/);
+  assert.equal(decodeURI(unicodeCalls[2].href), "https://example.com/资料（新版）");
+  assert.equal(decodeURI(unicodeCalls[3].href), "文件夹/my report (1).docx");
   await page.evaluate(() => window.fixtureInsert());
   await page.getByText("改为便携版", { exact: true }).waitFor();
   // A delta still buffered when guidance is applied must stay in the old segment.
@@ -44,6 +54,16 @@ try {
   assert.equal(messages[3].content, "这是新要求的回复");
   assert.equal(messages[2].steeringStatus, "applied");
   assert.equal(await page.getByRole("link", { name: "便携版", exact: true }).count(), 1);
+  assert.deepEqual(errors, []);
+  await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/links-steering.html?workbench");
+  await page.getByRole("link", { name: filename, exact: true }).click();
+  await page.waitForFunction((name) => window.fixtureWorkbench.layout.tabs.some((tab) => tab.path === name), filename);
+  await page.getByRole("link", { name: "缺失", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "文件不存在或已移动" }).waitFor();
+  assert.equal(await page.evaluate(() => window.fixtureWorkbench.layout.tabs.some((tab) => tab.path.includes("missing"))), false);
+  assert.equal(await page.evaluate(() => window.fixtureWorkbench.openHref("report.txt", { workspacePath: "D:/different-task" })), false);
+  await page.getByRole("link", { name: "便携版", exact: true }).click();
+  assert.equal((await page.evaluate(() => window.linkCalls)).at(-1).action, "open", "installers use native confirm/open, not a binary text pane");
   assert.deepEqual(errors, []);
   console.log("Browser links, errors, buffered steering chronology: PASS");
 } finally {

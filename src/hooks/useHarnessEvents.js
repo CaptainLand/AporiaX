@@ -109,6 +109,12 @@ export function useHarnessEvents({
     const unsubscribe = window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+      if (event.type === "agent_budget.queue" || event.type === "agent_budget.planned") {
+        setTasks((current) => current.map((task) => task.id === run.taskId ? { ...task, builderActivity: {
+          runId: event.runId, running: event.runningBuilders || 0, queued: event.queuedBuilders || 0,
+        } } : task));
+        return;
+      }
       const reduceTaskEvent = (targetEvent = event) => {
         if (!PURE_TASK_EVENT_TYPES.has(targetEvent.type)) return;
         setTasks((current) =>
@@ -222,6 +228,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "turn.started") {
+        setTasks((current) => current.map((task) => task.id === run.taskId ? { ...task, builderActivity: { runId: event.runId, running: 0, queued: 0 } } : task));
         setRunPaused(run.taskId, false);
         if (event.sandbox) setSandboxStatus(event.sandbox);
         run.sandbox = event.sandbox || null;

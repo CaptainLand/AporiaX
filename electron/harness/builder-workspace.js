@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { isUtf8 } from "node:buffer";
+import { createReadStream } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -21,9 +23,22 @@ import {
 import { sharedScopeLeases } from "./shared-scope-leases.js";
 import { mergeBuilderFiles } from "./builder-merge.js";
 
-const SNAPSHOT_MAX_FILES = 800;
-const SNAPSHOT_MAX_BYTES = 24_000_000;
-const SNAPSHOT_MAX_FILE_BYTES = 2_000_000;
+export function builderSnapshotLimits(input = {}) {
+  const limit = (key, env, fallback, min, max) => {
+    const raw = input[key] ?? process.env[env];
+    if (raw == null || raw === "") return fallback;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`Invalid ${env}: expected ${min}–${max}.`);
+    return value;
+  };
+  const limits = {
+    maxFiles: limit("maxFiles", "APORIAX_BUILDER_MAX_FILES", 3000, 1, 10000),
+    maxBytes: limit("maxBytes", "APORIAX_BUILDER_MAX_BYTES", 32_000_000, 1, 64_000_000),
+    maxFileBytes: limit("maxFileBytes", "APORIAX_BUILDER_MAX_FILE_BYTES", 8_000_000, 1, 16_000_000),
+  };
+  if (limits.maxFileBytes > limits.maxBytes) throw new Error("Invalid Builder limits: maxFileBytes must not exceed maxBytes.");
+  return limits;
+}
 const DIR_IGNORES = new Set([
   ".git",
   "node_modules",
@@ -78,16 +93,21 @@ function bufferLooksBinary(buffer) {
   return sample.includes(0);
 }
 
-async function readFileState(root, path) {
+async function readFileState(root, path, limits, hashOnly = false) {
   const absolute = resolve(root, ...String(path).split("/"));
   try {
     const stats = await lstat(absolute);
     if (!stats.isFile() || stats.isSymbolicLink()) {
       return { missing: true, hash: null, content: null };
     }
-    if (stats.size > SNAPSHOT_MAX_FILE_BYTES) {
+    if (hashOnly) {
+      const digest = createHash("sha256");
+      for await (const chunk of createReadStream(absolute)) digest.update(chunk);
+      return { missing: false, hash: digest.digest("hex"), content: null };
+    }
+    if (stats.size > limits.maxFileBytes) {
       throw new Error(
-        `Builder scoped file exceeds ${SNAPSHOT_MAX_FILE_BYTES} bytes: ${path}`,
+        `Builder scoped file exceeds ${limits.maxFileBytes} bytes: ${path}. Narrow writeScopes or adjust APORIAX_BUILDER_MAX_FILE_BYTES.`,
       );
     }
     const content = await readFile(absolute);
@@ -111,30 +131,36 @@ function sameState(left, right) {
   );
 }
 
-async function captureScope(root, scopes) {
+async function captureScope(root, scopes, limits, metadataOnly = false, signal) {
   const files = new Map();
   let totalBytes = 0;
 
   const captureFile = async (absolutePath) => {
-    if (files.size >= SNAPSHOT_MAX_FILES) {
+    signal?.throwIfAborted();
+    if (files.has(normalizedRelative(root, absolutePath))) return;
+    if (files.size >= limits.maxFiles) {
       throw new Error(
-        `Builder scope snapshot exceeds ${SNAPSHOT_MAX_FILES} files.`,
+        `Builder scope snapshot exceeds ${limits.maxFiles} files. Narrow writeScopes or adjust APORIAX_BUILDER_MAX_FILES.`,
       );
     }
     const stats = await lstat(absolutePath);
     if (!stats.isFile() || stats.isSymbolicLink()) return;
-    if (stats.size > SNAPSHOT_MAX_FILE_BYTES) {
+    if (stats.size > limits.maxFileBytes) {
       throw new Error(
-        `Builder scoped file exceeds ${SNAPSHOT_MAX_FILE_BYTES} bytes: ${normalizedRelative(root, absolutePath)}`,
+        `Builder scoped file exceeds ${limits.maxFileBytes} bytes: ${normalizedRelative(root, absolutePath)}`,
       );
     }
     totalBytes += stats.size;
-    if (totalBytes > SNAPSHOT_MAX_BYTES) {
+    if (totalBytes > limits.maxBytes) {
       throw new Error(
-        `Builder scope snapshot exceeds ${SNAPSHOT_MAX_BYTES} total bytes.`,
+        `Builder scope snapshot exceeds ${limits.maxBytes} total bytes. Narrow writeScopes or adjust APORIAX_BUILDER_MAX_BYTES.`,
       );
     }
-    const content = await readFile(absolutePath);
+    const content = metadataOnly ? Buffer.alloc(0) : await readFile(absolutePath);
+    if (!metadataOnly) {
+      const latest = await lstat(absolutePath);
+      if (content.length !== stats.size || latest.size !== stats.size || latest.mtimeMs !== stats.mtimeMs) throw new Error(`Builder file changed during snapshot; retry after edits settle: ${normalizedRelative(root, absolutePath)}`);
+    }
     files.set(normalizedRelative(root, absolutePath), {
       missing: false,
       hash: hashBuffer(content),
@@ -143,6 +169,7 @@ async function captureScope(root, scopes) {
   };
 
   const walk = async (absolutePath) => {
+    signal?.throwIfAborted();
     let stats;
     try {
       stats = await lstat(absolutePath);
@@ -183,7 +210,6 @@ function splitNull(buffer) {
   return buffer
     .toString("utf8")
     .split("\0")
-    .map((value) => value.trim())
     .filter(Boolean);
 }
 
@@ -207,7 +233,7 @@ async function snapshotDirtyState(root) {
   const state = new Map();
   for (const path of await gitDirtyPaths(root)) {
     if (path === ".git" || path.startsWith(".git/")) continue;
-    state.set(path, await readFileState(root, path));
+    state.set(path, await readFileState(root, path, null, true));
   }
   return state;
 }
@@ -324,13 +350,18 @@ function createCheckpoint(path, beforeState, afterState) {
   const afterContent = after.missing
     ? ""
     : after.content.toString("utf8");
+  const encoded = (!before.missing && !isUtf8(before.content)) || (!after.missing && !isUtf8(after.content));
   return {
     path,
-    beforeContent,
-    afterContent,
+    beforeContent: encoded && !before.missing ? before.content.toString("base64") : beforeContent,
+    afterContent: encoded && !after.missing ? after.content.toString("base64") : afterContent,
+    ...(!before.missing && !isUtf8(before.content) ? { beforeBase64: before.content.toString("base64") } : {}),
+    ...(!after.missing && !isUtf8(after.content) ? { afterBase64: after.content.toString("base64") } : {}),
+    beforeHash: before.missing ? null : hashBuffer(before.content),
+    afterHash: after.missing ? null : hashBuffer(after.content),
     beforeMissing: Boolean(before.missing),
     afterMissing: Boolean(after.missing),
-    binary: false,
+    binary: encoded,
     artifact: null,
     created: Boolean(before.missing && !after.missing),
     deleted: Boolean(!before.missing && after.missing),
@@ -344,18 +375,21 @@ export class BuilderWorkspaceManager {
   #leases;
   #eventBus;
   #onMergePrepared;
+  #limits;
 
-  constructor({ eventBus = null, leases = null, onMergePrepared = null } = {}) {
+  constructor({ eventBus = null, leases = null, onMergePrepared = null, snapshotLimits } = {}) {
     this.#eventBus = eventBus;
     this.#leases = leases || sharedScopeLeases;
     this.#onMergePrepared = onMergePrepared;
+    this.#limits = builderSnapshotLimits(snapshotLimits);
   }
 
   leases() {
     return this.#leases.list();
   }
 
-  async open({ workspaceRoot, agentId, writeScopes }) {
+  async open({ workspaceRoot, agentId, writeScopes, signal }) {
+    signal?.throwIfAborted();
     const owner = String(agentId || "").trim();
     if (!owner) throw new Error("Builder agentId is required.");
     const scopes = normalizeBuilderScopes(writeScopes);
@@ -365,6 +399,7 @@ export class BuilderWorkspaceManager {
     let worktreeRoot = null;
     try {
       await ensureGitWorkspace(workspaceRoot);
+      await captureScope(workspaceRoot, scopes, this.#limits, true, signal);
       baseDirectory = await mkdtemp(join(tmpdir(), "aporiax-builder-"));
       worktreeRoot = join(baseDirectory, "workspace");
       await runGit(
@@ -372,7 +407,8 @@ export class BuilderWorkspaceManager {
         workspaceRoot,
       );
       await overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes);
-      const baseline = await captureScope(workspaceRoot, scopes);
+      signal?.throwIfAborted();
+      const baseline = await captureScope(workspaceRoot, scopes, this.#limits);
       const worktreeDirtyBaseline = await snapshotDirtyState(worktreeRoot);
       this.#eventBus?.emit({
         type: "builder.workspace.created",
@@ -435,7 +471,7 @@ export class BuilderWorkspaceManager {
           );
         }
 
-        const after = await captureScope(worktreeRoot, scopes);
+        const after = await captureScope(worktreeRoot, scopes, this.#limits);
         const paths = changedPaths(baseline, after);
         const checkpoints = paths.map((path) =>
           createCheckpoint(path, baseline.get(path), after.get(path)),
@@ -444,7 +480,7 @@ export class BuilderWorkspaceManager {
         const conflicts = [];
         const currentStates = new Map();
         for (const path of paths) {
-          const current = await readFileState(workspaceRoot, path);
+          const current = await readFileState(workspaceRoot, path, this.#limits);
           currentStates.set(path, current);
           const expected =
             baseline.get(path) || {
@@ -511,7 +547,7 @@ export class BuilderWorkspaceManager {
 
       const snapshot = async () => {
         if (closed) throw new Error("Builder workspace is already closed.");
-        const after = await captureScope(worktreeRoot, scopes);
+        const after = await captureScope(worktreeRoot, scopes, this.#limits);
         return changedPaths(baseline, after).map((path) => createCheckpoint(path, baseline.get(path), after.get(path)));
       };
 

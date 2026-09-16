@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { validateDeliveryLinks } from "./runtime/delivery-links.js";
+import { appendSandboxRecoveryNotice } from "./runtime/sandbox-recovery-notice.js";
 import { completeWithSteering } from "./runtime/steerable-completion.js";
 import { createHash } from "node:crypto";
 import { reconcileHumanConstraints } from "./runtime/human-constraints.js";
@@ -42,7 +44,7 @@ import { HISTORY_TOOL, readConversationHistory } from "./runtime/conversation-hi
 import { snapshotContinuation, restoreContinuation } from "./runtime/continuation-state.js";
 import { waitForWorkers, workerResultForModel } from "./runtime/collect-workers.js";
 import { readTaskOutcome } from "./runtime/task-outcome.js";
-import { currentAgentBudget, restoreAgentBudget } from "./harness/agent-budget.js";
+import { currentAgentBudget, restoreAgentBudget, bindAgentBudgetEvents } from "./harness/agent-budget.js";
 import { resolveToolExecutionPermission, buildToolApprovalRequest } from "./runtime/tool-permissions.js";
 import {
   dispatchNativeTool,
@@ -1048,6 +1050,7 @@ export async function runHarness({
   requestApproval = async () => ({ approved: false }),
   sandboxExecutor = runCommandWithFallback,
   sandboxStatusResolver = getSandboxStatus,
+  sandboxDataDirectory = null,
   memoryDirectory = null,
   userSkillsDirectory = "",
   understandingDirectory = null,
@@ -1074,6 +1077,7 @@ export async function runHarness({
     forwardEvent(event);
     witness?.observe(event);
   };
+  bindAgentBudgetEvents(emit);
   const turnCoordinator = createTurnCoordinator({ runId, emit });
   const isEnglish = language === "en";
   const responseLanguage =
@@ -1191,10 +1195,18 @@ export async function runHarness({
     ? createLspManager({ workspaceRoot, emit, signal })
     : null;
   witness = createWitnessMonitor({ emit: forwardEvent });
+  const sandboxRecoveries = [];
   const commandSandboxExecutor = async (request = {}) => {
     const command = String(request.command || "").trim();
     const result = await sandboxExecutor({
       ...request,
+      localSandboxBaseDirectory: sandboxDataDirectory || request.localSandboxBaseDirectory,
+      runId,
+      taskId,
+      onRecovery: (recovery) => {
+        sandboxRecoveries.push(recovery);
+        emit({ type: "sandbox.recovery", recovery });
+      },
       onWatchdog: (notice) => {
         request.onWatchdog?.(notice);
         emit({
@@ -1772,7 +1784,14 @@ export async function runHarness({
       onBuilderMerge: async ({ checkpoints }) => {
         for (const change of checkpoints) {
           const previous = changeMap.get(change.path);
-          changeMap.set(change.path, previous ? { ...change, beforeContent: previous.beforeContent, beforeMissing: previous.beforeMissing } : change);
+          if (previous) {
+            const binary = Boolean(previous.binary || change.binary);
+            changeMap.set(change.path, { ...change, binary,
+              beforeContent: binary && !previous.binary ? Buffer.from(previous.beforeContent, "utf8").toString("base64") : previous.beforeContent,
+              afterContent: binary && !change.binary ? Buffer.from(change.afterContent, "utf8").toString("base64") : change.afterContent,
+              beforeBase64: undefined, afterBase64: undefined, beforeHash: undefined, afterHash: undefined,
+              beforeMissing: previous.beforeMissing });
+          } else changeMap.set(change.path, change);
           emit({ type: "file.changed", path: change.path, source: "builder-merge" });
         }
         anchorDirty = true;
@@ -2421,7 +2440,8 @@ export async function runHarness({
               ? "The task completed, but the model returned no text."
               : "任务已完成，但模型没有返回文本结果。";
         const notice = deliveryNotice(deliveryAssessment, changes.length > 0, language);
-        const finalContent = notice ? `${baseFinalContent}\n\n${notice}` : baseFinalContent;
+        const checkedContent = await validateDeliveryLinks(baseFinalContent, workspaceRoot, language);
+        const finalContent = appendSandboxRecoveryNotice(notice ? `${checkedContent}\n\n${notice}` : checkedContent, sandboxRecoveries, language);
         const curationInput = {
           finalAnswer: finalContent,
           changes: finalizedAnchor.changes,
@@ -2486,7 +2506,7 @@ export async function runHarness({
           provider: provider.id,
           providerName: provider.name,
           model: modelId,
-          sandbox: sandboxStatus,
+          sandbox: sandboxRecoveries.length ? { ...sandboxStatus, recoveries: sandboxRecoveries } : sandboxStatus,
           tools: toolCatalog,
           selfCheck: buildSelfCheckResult(selfCheck, changeMap),
           understanding,
@@ -3076,7 +3096,7 @@ export async function runHarness({
       const content = storageError?.message || "Task persistence failed.";
       turnCoordinator.fail(storageError);
       emit({ type: "turn.failed", status: "blocked", error: content, changedFiles: buildChanges(changeMap).length });
-      return { status: "blocked", error: true, content, changes: buildChanges(changeMap), steps, usage: totalUsage,
+      return { status: "blocked", error: true, content: appendSandboxRecoveryNotice(content, sandboxRecoveries, language), changes: buildChanges(changeMap), steps, usage: totalUsage,
         cumulativeUsage: cumulativeUsage(), usageHistoryComplete, plan, selfCheck: buildSelfCheckResult(selfCheck, changeMap),
         persistence: { failed: true, lastSuccessfulContext: storageError.lastSuccessfulContext || null }, witness: witness.snapshot() };
     }
@@ -3099,7 +3119,7 @@ export async function runHarness({
         provider: provider.id,
         providerName: provider.name,
         model: modelId,
-        sandbox: sandboxStatus,
+        sandbox: sandboxRecoveries.length ? { ...sandboxStatus, recoveries: sandboxRecoveries } : sandboxStatus,
         tools: toolCatalog,
         selfCheck: buildSelfCheckResult(selfCheck, changeMap),
         plan,
@@ -3128,6 +3148,7 @@ export async function runHarness({
         toolSteps: steps.length,
       });
       interruptedResult.witness = witness.snapshot();
+      interruptedResult.content = appendSandboxRecoveryNotice(interruptedResult.content, sandboxRecoveries, language);
       return interruptedResult;
     }
     const contextBlocked = error?.code === "CONTEXT_BUDGET_EXCEEDED";
@@ -3151,7 +3172,7 @@ export async function runHarness({
       provider: provider.id,
       providerName: provider.name,
       model: modelId,
-      sandbox: sandboxStatus,
+      sandbox: sandboxRecoveries.length ? { ...sandboxStatus, recoveries: sandboxRecoveries } : sandboxStatus,
       tools: toolCatalog,
       selfCheck: buildSelfCheckResult(selfCheck, changeMap),
       plan,
@@ -3178,6 +3199,7 @@ export async function runHarness({
       toolSteps: steps.length,
     });
     failedResult.witness = witness.snapshot();
+    failedResult.content = appendSandboxRecoveryNotice(failedResult.content, sandboxRecoveries, language);
     return failedResult;
   } finally {
     await lspManager?.closeAll().catch(() => undefined);
@@ -3353,6 +3375,7 @@ function normalizeCheckpointState(change, side) {
   return {
     missing,
     binary: Boolean(change.binary),
+    maxBytes: change.source === "builder-merge" ? 16_000_000 : checkpointBinaryLimit(change.path),
     content: missing
       ? ""
       : String(
@@ -3372,12 +3395,13 @@ function validateCheckpoint(change) {
     return false;
   }
   if (!change.binary) {
+    const maximumText = change.source === "builder-merge" ? 16_000_000 : MAX_FILE_WRITE_CHARS * 6;
     return (
-      change.beforeContent.length <= MAX_FILE_WRITE_CHARS * 6 &&
-      change.afterContent.length <= MAX_FILE_WRITE_CHARS * 6
+      change.beforeContent.length <= maximumText &&
+      change.afterContent.length <= maximumText
     );
   }
-  const maximum = Math.ceil(checkpointBinaryLimit(change.path) * 1.4);
+  const maximum = Math.ceil((change.source === "builder-merge" ? 16_000_000 : checkpointBinaryLimit(change.path)) * 1.4);
   return (
     change.beforeContent.length <= maximum &&
     change.afterContent.length <= maximum
@@ -3462,7 +3486,7 @@ async function writeCheckpointState(
   }
   if (state.binary) {
     const buffer = Buffer.from(state.content, "base64");
-    if (buffer.length > checkpointBinaryLimit(requestedPath)) {
+    if (buffer.length > (state.maxBytes || checkpointBinaryLimit(requestedPath))) {
       throw new Error("Binary checkpoint exceeds the restore limit.");
     }
     await writeFile(filePath, buffer);

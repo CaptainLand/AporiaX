@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { remarkAutolinkBoundary } from "../conversation/remark-autolink-boundary.js";
 import remarkGfm from "remark-gfm";
 import hljs from "highlight.js/lib/common";
 import { ArrowUp, ArrowUpRight, Check, ChevronDown, Copy, Info, MessagesSquare, Square, Trash2 } from "lucide-react";
@@ -34,7 +35,7 @@ function SideChatMarkdown({ content, sources, onOpenLink }) {
     a: ({ href, children }) => <a href={href} onClick={(event) => latest.current.onOpenLink(event, href, latest.current.sources)}>{children}</a>,
     img: ({ alt }) => <span>{alt}</span>,
   }), []);
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => url.startsWith("#record-") ? url : messageLinkUrl(url)} components={components}>{content}</ReactMarkdown>;
+  return <ReactMarkdown remarkPlugins={[remarkGfm, remarkAutolinkBoundary]} urlTransform={(url) => url.startsWith("#record-") ? url : messageLinkUrl(url)} components={components}>{content}</ReactMarkdown>;
 }
 
 export function SideChatPane({ task, workbench, providers = [], isRunning = false, isPaused = false, onSendToMain }) {

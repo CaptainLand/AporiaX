@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkAutolinkBoundary } from "../conversation/remark-autolink-boundary.js";
 import hljs from "highlight.js/lib/common";
 import { classifyLink } from "../../electron/link-target.js";
 import { useI18n } from "../i18n";
@@ -9,7 +10,10 @@ import "./document-preview.css";
 export function documentLink(path, href) {
   const link = classifyLink(href);
   if (!link || link.kind !== "file") return link;
-  const [target, fragment] = link.target.split("#", 2);
+  // Split a URI fragment *before* decoding: %23 is part of the filename.
+  const hash = String(href).indexOf("#");
+  const fragment = hash >= 0 && !link.line ? String(href).slice(hash + 1) : undefined;
+  const target = fragment === undefined ? link.target : classifyLink(String(href).slice(0, hash))?.target || link.target;
   if (/^(?:[a-z]:\/|\/)/i.test(target)) return { ...link, target, fragment };
   const parts = String(path).replaceAll("\\", "/").split("/").slice(0, -1);
   for (const part of target.split("/")) {
@@ -79,11 +83,15 @@ export function MarkdownPreview({ content, path, workbench, onError }) {
           const heading = [...root.current.querySelectorAll("[id]")].find((node) => node.id === id);
           if (heading) heading.scrollIntoView({ block: "start" });
           else throw new Error("未找到此标题。");
-        } else if (link?.kind === "file") wb.openFile(link.target, link.line || 1);
+        } else if (link?.kind === "file") {
+          // openHref also checks existence and handles non-previewable downloads.
+          const targetHref = encodeURI(link.target).replace(/#/g, "%23").replace(/\?/g, "%3F") + (link.line ? `:${link.line}` : "");
+          if (!await wb.openHref(targetHref)) throw new Error("无法打开此文件。");
+        }
         else if (!link || !await wb.openHref(link.href)) throw new Error("无法打开此链接。");
       } catch (error) { report?.(error.message); }
     }}>{children}</a>,
     img: ({ src, alt }) => <MarkdownImage key={latest.current.path + ":" + src} src={src} alt={alt} path={latest.current.path} workbench={latest.current.workbench} />,
   }), []);
-  return <article ref={root} className="workbench-markdown" aria-label="Markdown 阅读视图"><ReactMarkdown remarkPlugins={[remarkGfm, headingIds]} urlTransform={(url) => classifyLink(url) ? url : ""} components={components}>{content}</ReactMarkdown></article>;
+  return <article ref={root} className="workbench-markdown" aria-label="Markdown 阅读视图"><ReactMarkdown remarkPlugins={[remarkGfm, remarkAutolinkBoundary, headingIds]} urlTransform={(url) => classifyLink(url) ? url : ""} components={components}>{content}</ReactMarkdown></article>;
 }

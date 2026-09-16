@@ -70,3 +70,6 @@
 :root[data-theme="dark"] .git-choice-row button,:root[data-theme="dark"] .git-settings-tabs button,:root[data-theme="dark"] .git-publish-form,:root[data-theme="dark"] .git-remote-list button { border-color:#38313f; }
 :root[data-theme="dark"] .git-settings-tabs button[aria-pressed="true"],:root[data-theme="dark"] .git-choice-row button[aria-pressed="true"] { border-color:#8bc6e3;color:#8bc6e3; }
 :root[data-theme="dark"] .git-hint,:root[data-theme="dark"] .git-account p { color:#aaa3b7; }
+.git-conflict-editor .git-conflict-source { max-height: 180px; overflow: auto; white-space: pre; padding: 12px; border: 1px solid var(--sc-line); border-radius: 8px; font: 12px/1.6 "Cascadia Code", Consolas, monospace; }
+.git-conflict-editor textarea { width: 100%; min-height: 200px; resize: vertical; padding: 10px; border: 1px solid var(--sc-line); border-radius: 8px; background: var(--sc-surface); color: var(--sc-text); font: 13px/1.6 "Cascadia Code", Consolas, monospace; }
+.git-conflict-editor code { overflow-wrap: anywhere; }

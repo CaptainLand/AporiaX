@@ -1,16 +1,8 @@
 import { classifyLink } from "../link-target.js";
+import { localMarkdownLinks } from "../markdown-links.js";
 import { onlyStandaloneDeliverables } from "../runtime/delivery-policy.js";
-
-const PREVIEWABLE =
-  /\.(?:js|jsx|ts|tsx|mjs|cjs|json|css|scss|less|html?|md|txt|xml|ya?ml|toml|svg|png|jpe?g|webp|gif|docx|py|rs|go|java|c|cc|cpp|h|hpp|cs|vue|svelte|php|rb|sh|ps1|sql)$/i;
-
-export function isPreviewableWorkbenchPath(path) {
-  const name = String(path || "")
-    .replaceAll("\\", "/")
-    .split("/")
-    .pop();
-  return Boolean(name) && PREVIEWABLE.test(name);
-}
+import { isPreviewableWorkbenchPath } from "./preview-path.js";
+export { isPreviewableWorkbenchPath } from "./preview-path.js";
 
 function addLinkedFile(files, seen, href) {
   const raw = String(href || "")
@@ -28,10 +20,7 @@ function addLinkedFile(files, seen, href) {
 export function extractLinkedFiles(content) {
   const files = [];
   const seen = new Set();
-  const text = String(content || "");
-  const markdown = /\[[^\]]*\]\(\s*<?([^)\s>]+)>?\s*\)/g;
-  let match;
-  while ((match = markdown.exec(text))) addLinkedFile(files, seen, match[1]);
+  for (const link of localMarkdownLinks(content)) addLinkedFile(files, seen, link.href);
   return files;
 }
 

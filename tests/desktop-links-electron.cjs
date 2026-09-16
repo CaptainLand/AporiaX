@@ -58,7 +58,17 @@ app.whenReady().then(async () => {
     await handleDesktopLink(event, { href: "https://example.com", language: "en", action: "menu" });
     assert.equal(copied.at(-1), "https://example.com/");
     await assert.rejects(handleDesktopLink(event, { href: "javascript:alert(1)" }), /Unsupported|不支持/);
-    await assert.rejects(handleDesktopLink(event, { href: path.join(root, "missing.txt") }), /ENOENT/);
+    await assert.rejects(handleDesktopLink(event, { href: path.join(root, "missing.txt") }), /不存在|does not exist/);
+    assert.equal((await handleDesktopLink(event, { ...request, action: "check" })).status, "exists");
+    assert.equal((await handleDesktopLink(event, { ...request, href: "missing.txt", action: "check" })).status, "missing");
+    const unicodeName = "SeaLandX-B站用户资料简介-美化版.docx";
+    await fs.writeFile(path.join(root, unicodeName), "link test");
+    await handleDesktopLink(event, { ...request, href: unicodeName, action: "open" });
+    assert.equal(opened.at(-1), path.join(root, unicodeName));
+    const percentName = "报告 #1 %20 100% 🚀.txt";
+    await fs.writeFile(path.join(root, percentName), "encoded only once");
+    await handleDesktopLink(event, { ...request, href: encodeURIComponent(percentName), action: "open" });
+    assert.equal(opened.at(-1), path.join(root, percentName));
     await assert.rejects(handleDesktopLink(event, { href: "C:/test.txt:hidden" }), /Invalid|无效/);
     console.log("Electron native link handlers (OS effects mocked, save copied on disk): PASS");
   } catch (error) {

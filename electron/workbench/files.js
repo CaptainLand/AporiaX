@@ -30,8 +30,9 @@ export async function readWorkbenchFile(workspacePath, requestedPath, { authoriz
   if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error("预览仅支持不超过 16 MB 的普通文件。");
   const extension = extname(path).slice(1).toLowerCase();
   const mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" }[extension];
-  if (!mime && extension !== "docx" && !external) return { kind: "text" };
+  if (!mime && extension !== "docx" && extension !== "pdf" && !external) return { kind: "text" };
   const buffer = await readFile(path);
+  if (extension === "pdf") return { kind: "pdf", data: buffer.toString("base64"), size: stat.size, path: requestedPath, readOnly: true };
   if (!mime && extension !== "docx") {
     const binary = buffer.includes(0);
     return { kind: binary ? "binary" : "text", binary, readOnly: true,

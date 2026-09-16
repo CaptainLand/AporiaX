@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { classifyLink, toWorkspaceRelativePath } from "../../electron/link-target.js";
+import { isPreviewableWorkbenchPath } from "../../electron/workbench/preview-path.js";
 import { disposeTerminalSession, reconcileTerminalSessions, requestTerminalFocus } from "./terminal-session.js";
 import {
   closeTab,
@@ -269,7 +270,10 @@ export function useWorkbench(task) {
           width: DEFAULT_WIDTH,
         }),
       ),
-    async openHref(href) {
+    async openHref(href, source = {}) {
+      // A delayed click from another task must not resolve against this task.
+      if (source.workspacePath && source.workspacePath !== task.workspacePath) return false;
+      const openingScope = key;
       if (/^(data:image\/|aporiax-blob:\/\/)/i.test(href || "")) { openImage(href); return true; }
       const link = classifyLink(href);
       if (link?.kind === "web") {
@@ -281,6 +285,17 @@ export function useWorkbench(task) {
         return true;
       }
       if (link?.kind === "file") {
+        const openNative = async () => {
+          if (!window.desktop?.links) return false;
+          const result = await window.desktop.links.activate({ href, action: "open", workspacePath: task.workspacePath });
+          if (!result?.ok) throw new Error(result?.error || "无法打开文件。");
+          return true;
+        };
+        if (!isPreviewableWorkbenchPath(link.target)) return openNative();
+        const check = await request({ action: "file-check", path: link.target });
+        if (keyRef.current !== openingScope) return true;
+        if (check?.status === "missing") throw new Error(`文件不存在或已移动：${link.target}。请核对文件名和所属工作区。`);
+        if (check?.directory) return openNative();
         openFile(link.target, link.line);
         return true;
       }

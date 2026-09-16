@@ -3,6 +3,7 @@ import { copyFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { classifyLink } from "./link-target.js";
+import { checkWorkspaceFileLink } from "./file-link-check.js";
 
 const DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".json", ".css", ".java", ".c", ".cpp", ".rs", ".go", ".log", ".csv", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf", ".docx", ".xlsx", ".pptx", ".mp3", ".mp4"]);
 
@@ -12,13 +13,20 @@ export async function handleDesktopLink(event, request = {}) {
   const tr = (zh, en) => english ? en : zh;
   const link = classifyLink(request.href);
   if (!link || link.kind === "anchor") throw new Error(tr("不支持的链接", "Unsupported link"));
+  if (request.action === "check") {
+    return { ok: true, ...(link.kind === "file" ? await checkWorkspaceFileLink(request.workspacePath, link.target) : { status: "unavailable" }) };
+  }
   let target = null;
   let directory = false;
   if (link.kind === "file") {
     if (!isAbsolute(link.target) && !isAbsolute(String(request.workspacePath || ""))) throw new Error(tr("相对路径缺少工作区", "A workspace is required for relative paths"));
     // Reject Windows device paths, ADS and network shares (including encoded forms).
     if (/[<>|?*]/.test(link.target) || /:/.test(link.target.replace(/^[a-z]:/i, ""))) throw new Error(tr("无效文件路径", "Invalid file path"));
-    target = await realpath(resolve(request.workspacePath || ".", link.target));
+    try { target = await realpath(resolve(request.workspacePath || ".", link.target)); }
+    catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new Error(tr(`文件不存在或已移动：${link.target}。请核对文件名和所属工作区。`, `File does not exist or was moved: ${link.target}. Check the filename and workspace.`));
+      throw error;
+    }
     if (/^[\\/]{2}/.test(target)) throw new Error(tr("暂不支持网络共享路径", "Network shares are not supported"));
     const info = await stat(target);
     directory = info.isDirectory();

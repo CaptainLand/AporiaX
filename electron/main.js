@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   Notification,
   app,
+  clipboard,
   dialog,
   ipcMain,
   nativeImage,
@@ -32,6 +33,7 @@ import {
   saveWorkspaceTextFile,
 } from "./agent-runtime.js";
 import { parseAttachment } from "./attachment-parser.js";
+import { registerOcrIpc } from "./ocr/ipc.js";
 import { attachBlobProtocol } from "./blob-protocol.js";
 import { createTaskHistoryStore } from "./task-history-store.js";
 import {
@@ -45,6 +47,7 @@ import {
 import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
 import {
   getSandboxStatus,
+  localSandboxRootPath,
   prepareSandbox,
 } from "./sandbox-runtime.js";
 import { createHarnessTaskRuntime } from "./harness/task-runtime.js";
@@ -641,6 +644,7 @@ async function startHarnessTask(
         messages,
         provider,
         memoryDirectory: join(app.getPath("userData"), "project-memory"),
+        sandboxDataDirectory: app.getPath("userData"),
         userSkillsDirectory: join(app.getPath("userData"), "skills"),
         understandingDirectory: getProjectUnderstandingDirectory(),
         recoveryContext,
@@ -788,6 +792,8 @@ ipcMain.handle("understanding:settings", async (event, request) => {
   return store.setSettings(request?.settings);
 });
 
+registerOcrIpc({ ipcMain, app, dialog, clipboard, assertTrustedSender, getBlob: (hash) => getTaskHistoryStore().readBlob(hash) });
+
 ipcMain.handle("attachments:parse", async (event, request) => {
   assertTrustedSender(event);
   const parsed = await parseAttachment(request);
@@ -854,6 +860,15 @@ ipcMain.handle("sandbox:prepare", async (event) => {
   return prepareSandbox({
     dataDirectory: app.getPath("userData"),
   });
+});
+
+ipcMain.handle("sandbox:open-recovery", async (event) => {
+  assertTrustedSender(event);
+  const directory = localSandboxRootPath(app.getPath("userData"));
+  await mkdir(directory, { recursive: true });
+  const error = await shell.openPath(directory);
+  if (error) throw new Error(error);
+  return true;
 });
 
 ipcMain.handle("harness:has-api-key", async (event) => {

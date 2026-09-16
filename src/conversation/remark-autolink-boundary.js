@@ -6,12 +6,18 @@ function linkText(node) {
     .join("");
 }
 
-function walk(node) {
+function walk(node, source) {
   if (!Array.isArray(node?.children)) return;
   for (let i = 0; i < node.children.length; i++) {
     const child = node.children[i];
-    walk(child);
+    walk(child, source);
     if (child?.type !== "link") continue;
+    const start = child.position?.start?.offset;
+    const end = child.position?.end?.offset;
+    if (!Number.isInteger(start) || !Number.isInteger(end)) continue;
+    // Preserve [label](href), reference links and <explicit URLs> verbatim.
+    const original = source.slice(start, end);
+    if (!/^(?:https?:\/\/|www\.)/i.test(original)) continue;
     const split = splitAutolinkBoundary(child.url, linkText(child));
     if (!split) continue;
     child.url = split.href;
@@ -23,5 +29,5 @@ function walk(node) {
 }
 
 export function remarkAutolinkBoundary() {
-  return (tree) => walk(tree);
+  return (tree, file) => walk(tree, String(file || ""));
 }

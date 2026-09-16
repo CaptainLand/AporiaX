@@ -10,6 +10,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/approval-settings.html");
+  await page.getByRole("button", { name: "沙箱恢复目录", exact: true }).click();
+  assert.equal(await page.evaluate(() => window.recoveryOpenCount), 1);
   const group = page.locator('[aria-label="审批模式"]');
   await group.getByRole("button", { name: "全自动", exact: true }).waitFor();
   assert.equal(await group.getByRole("button", { name: "全自动", exact: true }).getAttribute("class"), "active");

@@ -1,20 +1,35 @@
 import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
-import { createBuilderWorkspaceManager } from "../harness/builder-workspace.js";
+import { createHash } from "node:crypto";
+import { isUtf8 } from "node:buffer";
+import { createBuilderWorkspaceManager, builderSnapshotLimits } from "../harness/builder-workspace.js";
 import { assertSubagentRealScope } from "./subagent-model.js";
 import { saveRuntimeContext, executeDurableTool } from "./durable-run.js";
 
+function checkpointBytes(patch, side) {
+  if (patch[`${side}Missing`]) return null;
+  const encoded = patch[`${side}Base64`] ?? (patch.binary ? patch[`${side}Content`] : null);
+  const bytes = encoded == null ? Buffer.from(patch[`${side}Content`] || "", "utf8") : Buffer.from(encoded, "base64");
+  if (encoded != null && bytes.toString("base64") !== encoded) throw new Error("Invalid Builder recovery bytes.");
+  const expected = patch[`${side}Hash`];
+  if (expected && createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("Builder recovery checksum mismatch; inspect retained snapshot.");
+  return bytes;
+}
+const sameBytes = (left, right) => left === null || right === null ? left === right : left.equals(right);
+
 export async function runIsolatedBuilder(options, execute) {
   const { agentId, input, session = {}, workspaceRoot, signal } = options;
+  session.snapshotLimits ||= builderSnapshotLimits();
   for (const path of input.writeScopes) await assertSubagentRealScope("write_file", { path }, ["."], workspaceRoot);
   const manager = createBuilderWorkspaceManager({ eventBus: { emit: options.emit },
+    snapshotLimits: session.snapshotLimits,
     onMergePrepared: async (recovery) => {
       session.mergeRecovery = recovery;
       // Persist the recovery location before the first host file mutation.
       await persist("integrating", null);
     },
   });
-  const workspace = await manager.open({ workspaceRoot, agentId, writeScopes: input.writeScopes });
+  const workspace = await manager.open({ workspaceRoot, agentId, writeScopes: input.writeScopes, signal });
   if (session.activeWorktree) (session.recoveryWorktrees ||= []).push(session.activeWorktree);
   session.activeWorktree = workspace.workspaceRoot;
   let mayClose = false;
@@ -30,11 +45,12 @@ export async function runIsolatedBuilder(options, execute) {
       await assertSubagentRealScope("write_file", { path: patch.path }, input.writeScopes, workspace.workspaceRoot);
       const path = resolve(workspace.workspaceRoot, patch.path);
       let current = null;
-      try { current = await readFile(path, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-      const expected = patch.beforeMissing ? null : patch.beforeContent;
-      const desired = patch.afterMissing ? null : patch.afterContent;
-      if (current === desired) continue; // integration may have finished before the crash
-      if (current !== expected) {
+      try { current = await readFile(path); } catch (error) { if (error.code !== "ENOENT") throw error; }
+      const expected = checkpointBytes(patch, "before");
+      const desired = checkpointBytes(patch, "after");
+      if (current && !patch.beforeHash && !isUtf8(current)) throw new Error("Legacy Builder snapshot cannot safely restore non-UTF-8 content. Inspect retained original worktree.");
+      if (sameBytes(current, desired)) continue; // integration may have finished before the crash
+      if (!sameBytes(current, expected)) {
         const result = { agentId, role: "builder", status: "blocked", summary: `Builder recovery conflict: ${patch.path}. Saved provisional edits were retained; parent file was not overwritten.`, evidence: [], provisionalChanges: session.provisionalChanges.map(({ path }) => ({ path })) };
         session.activeWorktree = null;
         await persist("blocked", result); mayClose = true; return result;

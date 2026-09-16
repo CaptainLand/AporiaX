@@ -214,7 +214,6 @@ export function sanitizeFinalAnswer(content) {
       /!\[[^\]]*\]\((?:data:image\/svg\+xml|[^)\s]+\.svg)[^)]*\)/gi,
       "",
     )
-    .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, "")
     .replace(/[ \t]+\n/g, "\n")
     .trim();
 }

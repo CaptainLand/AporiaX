@@ -1,7 +1,7 @@
 // Shared, browser-safe classification. Unknown schemes must never reach shell.openExternal.
 
 // GFM autolinks stop on ASCII space/punctuation, not fullwidth CJK punctuation.
-const AUTOLINK_STOP = /[\p{P}\p{S}\p{Z}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const AUTOLINK_STOP = /[\p{P}\p{Z}]/u;
 
 export function autolinkBoundaryIndex(value) {
   const text = String(value || "");
@@ -15,6 +15,9 @@ export function autolinkBoundaryIndex(value) {
 
 export function splitAutolinkBoundary(href, text) {
   const url = String(href || "");
+  // Only the Markdown parser may call this for *bare* web autolinks.
+  // A local filename, explicit link or Unicode URL must not be guessed apart.
+  if (!/^https?:\/\//i.test(url)) return null;
   const label = text == null ? url : String(text);
   const urlIndex = autolinkBoundaryIndex(url);
   if (urlIndex >= 0) {
@@ -37,7 +40,7 @@ export function splitAutolinkBoundary(href, text) {
   return null;
 }
 
-export function normalizeLocalPath(value) {
+export function normalizeLocalPath(value, { decode = false } = {}) {
   let target = String(value || "").trim();
   if (!target) return "";
   if (target.startsWith("<") && target.endsWith(">")) target = target.slice(1, -1).trim();
@@ -52,11 +55,12 @@ export function normalizeLocalPath(value) {
     } catch {
       return "";
     }
-  } else {
+  } else if (decode) {
     try {
       target = decodeURIComponent(target);
     } catch {
-      return "";
+      // A literal percent is a valid filename character, not necessarily an escape.
+      if (/%[0-9a-f]{2}/i.test(target)) return "";
     }
   }
   target = target.replaceAll("\\", "/");
@@ -88,9 +92,7 @@ export function classifyLink(value) {
   const href = String(value || "").trim();
   if (!href || /[\u0000-\u001f\u007f]/.test(href)) return null;
   if (/^https?:\/\//i.test(href)) {
-    const cut = autolinkBoundaryIndex(href);
-    const webHref = cut < 0 ? href : href.slice(0, cut);
-    try { return { kind: "web", href: new URL(webHref).href }; } catch { return null; }
+    try { return { kind: "web", href: new URL(href).href }; } catch { return null; }
   }
   if (href.startsWith("#")) return { kind: "anchor", href };
   if (!/^file:/i.test(href) && /^[a-z][a-z\d+.-]*:/i.test(href) && !/^[a-z]:[\\/]/i.test(href)) return null;
@@ -98,7 +100,7 @@ export function classifyLink(value) {
   let line = null;
   const suffix = target.match(/(?::(\d+)(?::\d+)?|#L(\d+))$/i);
   if (suffix) { line = Number(suffix[1] || suffix[2]); target = target.slice(0, suffix.index); }
-  target = normalizeLocalPath(target);
+  target = normalizeLocalPath(target, { decode: true });
   if (!target || /[\u0000-\u001f\u007f]/.test(target) || /^[\\/]{2}/.test(target)) return null;
   return { kind: "file", target, line: line > 0 && Number.isSafeInteger(line) ? line : null, href };
 }

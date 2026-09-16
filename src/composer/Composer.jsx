@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { OcrDialog, ocrSource } from "../workbench/OcrDialog.jsx";
 import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { getModel, getModelGroups } from "../models/model-catalog.js";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
@@ -142,9 +143,9 @@ function BuilderCountMenu({ value, onChange, onClose }) {
 
   return (
     <div className="builder-count-menu" ref={menuRef} role="menu">
-      <div className="model-menu-heading">{tr("Builder 数量", "Builder count")}</div>
+      <div className="model-menu-heading">{tr("Builder 并发上限", "Concurrent Builders")}</div>
       <p className="builder-count-note">
-        {tr("只限制自主 Builder，探索 / 审查 / 验证不受影响。", "Limits autonomous Builders only. Explore, review, and verify are unchanged.")}
+        {tr("默认 2，按需调用；完成后释放名额，后续可继续分批。0 为关闭，较高并发会增加内存和模型费用。", "Default 2, on demand. Slots are reused across waves. 0 disables Builders; higher concurrency uses more memory and tokens.")}
       </p>
       {BUILDER_COUNT_CHOICES.map((count) => (
         <button
@@ -276,6 +277,8 @@ export function Composer({
   const { tr } = useI18n();
   const [message, setMessage] = useState("");
   const [attachments, setAttachments] = useState([]);
+  const [ocr, setOcr] = useState(null);
+  useEffect(() => { setOcr(null); }, [task.id]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [builderMenuOpen, setBuilderMenuOpen] = useState(false);
@@ -488,6 +491,7 @@ export function Composer({
                         : ` · ${formatAttachmentSize(attachment.size)}`}
                     </small>
                   </span>
+                  {attachment.format === "PDF" && window.desktop?.ocr && <button type="button" aria-label={tr("识别 PDF 文字", "Recognize PDF text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
                   <button
                     type="button"
                     aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
@@ -514,6 +518,7 @@ export function Composer({
                 >
                   <img src={attachmentImageSrc(attachment)} alt={attachment.name} draggable={false} />
                   <figcaption>{attachment.name}</figcaption>
+                  {window.desktop?.ocr && <button type="button" className="composer-ocr-button" aria-label={tr("识别图片文字", "Recognize image text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
                   <button
                     type="button"
                     aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
@@ -548,6 +553,7 @@ export function Composer({
         />
         <div className="composer-toolbar">
           <div className="composer-toolbar-left">
+            {window.desktop?.ocr && <button type="button" className="composer-add" title={tr("本地识别图片 / PDF 文字", "Local image / PDF OCR")} aria-label={tr("本地文字识别", "Local OCR")} onClick={() => setOcr({ source: null })}><span style={{ fontSize: 10 }}>OCR</span></button>}
             <input
               ref={imageInputRef}
               type="file"
@@ -659,6 +665,7 @@ export function Composer({
               >
                 <Users size={15} />
                 <span>{builderLimit === 0 ? tr("无", "None") : builderLimit}</span>
+                {isRunning && task.builderActivity && <small title={tr("运行中 / 排队", "Running / queued")}>{task.builderActivity.running}/{task.builderActivity.queued}</small>}
                 <ChevronDown size={14} />
               </button>
             </div>
@@ -748,6 +755,11 @@ export function Composer({
             ? tr("Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码", "Enter to send · Shift Enter for a new line · Add images, PDFs, documents, and code")
             : tr("Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件", "Enter to send · Shift Enter for a new line · Add PDFs, documents, and code")}
       </p>
+      {ocr && <OcrDialog key={task.id} source={ocr.source} onClose={() => setOcr(null)} onAttach={(attachment) => {
+        if (attachments.length >= 6) { onNotice(tr("附件已满，请先移除一个附件。", "Remove an attachment first; limit is six.")); return false; }
+        setAttachments((current) => current.length >= 6 ? current : [...current, attachment]);
+        return true;
+      }} />}
     </div>
   );
 }

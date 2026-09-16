@@ -145,7 +145,7 @@ export function planAgentBudget(options = {}) {
   const requestedBudget = { ...(options?.agentBudget || {}) };
   if (builderCount != null) {
     const extra = Math.max(0, builderCount - PROFILE_LIMITS[profile].roles.builder);
-    requestedBudget.roles = { ...requestedBudget.roles, builder: builderCount };
+    requestedBudget.roles = { ...requestedBudget.roles, builder: requestedBudget.roles?.builder ?? builderCount };
     if (requestedBudget.maxTotalSubagents == null) {
       requestedBudget.maxTotalSubagents = PROFILE_LIMITS[profile].maxTotalSubagents + extra;
     }
@@ -162,11 +162,14 @@ export function planAgentBudget(options = {}) {
     reason: requestedProfile ? "explicit-override" : classified.reason,
     score: classified.score,
     limits,
+    // A UI Builder limit controls simultaneous work, not lifetime starts.
+    builderConcurrency: builderCount,
+    renewableBuilders: builderCount != null && options.agentBudget?.maxTotalSubagents == null && options.agentBudget?.roles?.builder == null,
     hardLimits: Object.freeze({
       ...Object.fromEntries(["maxTotalSubagents", "maxActiveSubagents"].filter((key) =>
-        requestedBudget[key] != null && Number.isFinite(Number(requestedBudget[key])) && Number(requestedBudget[key]) >= 0
-      ).map((key) => [key, Math.floor(Number(requestedBudget[key]))])),
-      roles: Object.freeze({ ...(requestedBudget.roles || {}) }),
+        options.agentBudget?.[key] != null && Number.isFinite(Number(options.agentBudget[key])) && Number(options.agentBudget[key]) >= 0
+      ).map((key) => [key, Math.floor(Number(options.agentBudget[key]))])),
+      roles: Object.freeze({ ...(options.agentBudget?.roles || {}), ...(builderCount === 0 ? { builder: 0 } : {}) }),
     }),
     requestPreview: classified.text.replace(/\s+/g, " ").slice(0, 240),
     mayDelegate: Boolean(options.workspacePath),
@@ -187,6 +190,8 @@ function publicPlan(context) {
       startedIds: [...context.state.startedIds],
       changedFiles: context.state.changedFiles.size,
       planSteps: context.state.planSteps,
+      runningBuilders: [...context.state.activeRoles.values()].filter((role) => role === "builder").length,
+      queuedBuilders: context.admissionQueue.filter((entry) => entry.role === "builder").length,
     },
   };
 }
@@ -194,15 +199,28 @@ function publicPlan(context) {
 function notify(context, event) {
   try {
     context?.onEvent?.(event);
+    context?.forwardTelemetry?.(event);
   } catch {
     // Budget telemetry must never break a run.
   }
+}
+
+// UI telemetry must pass through the run's sequenced emitter, not bypass it.
+export function bindAgentBudgetEvents(emit) {
+  const context = budgetStorage.getStore();
+  if (context && !context.forwardTelemetry) context.forwardTelemetry = emit;
 }
 
 function elevate(context, nextProfile, reason) {
   if (!PROFILE_LIMITS[nextProfile] || profileAtLeast(context.profile, nextProfile)) return false;
   context.profile = nextProfile;
   context.limits = mergeLimits(PROFILE_LIMITS[nextProfile], context.plan.hardLimits || {});
+  if (context.plan.builderConcurrency != null) {
+    context.limits = mergeLimits(context.limits, {
+      maxActiveSubagents: context.plan.hardLimits?.maxActiveSubagents ?? Math.max(context.limits.maxActiveSubagents, context.plan.builderConcurrency),
+      roles: { builder: context.plan.hardLimits?.roles?.builder ?? context.plan.builderConcurrency },
+    });
+  }
   notify(context, {
     type: "agent_budget.escalated",
     profile: nextProfile,
@@ -259,6 +277,9 @@ export function enforceAgentBudgetEvent(event) {
     const roleCount = context.state.byRole[role] || 0;
     const continuing = context.state.startedIds.has(agentId);
     const roleLimit = context.limits.roles[role] ?? context.limits.roles.other ?? 0;
+    const renewable = role === "builder" && context.plan.renewableBuilders;
+    const chargedTotal = context.state.totalStarted - (context.plan.renewableBuilders ? context.state.byRole.builder || 0 : 0);
+    const activeBuilders = [...context.state.activeRoles.values()].filter((value) => value === "builder").length;
     const detail = {
       agentId,
       role: event.role || role,
@@ -271,9 +292,11 @@ export function enforceAgentBudgetEvent(event) {
       roleLimit,
     };
     if (
-      (!continuing && context.state.totalStarted >= context.limits.maxTotalSubagents) ||
+      (!continuing && !renewable && chargedTotal >= context.limits.maxTotalSubagents) ||
       context.state.activeIds.size >= context.limits.maxActiveSubagents ||
-      (!continuing && roleCount >= roleLimit)
+      (role === "builder" && context.plan.builderConcurrency != null && activeBuilders >= context.plan.builderConcurrency) ||
+      (!continuing && !renewable && roleCount >= roleLimit) ||
+      (role === "builder" && roleLimit === 0)
     ) {
       notify(context, { type: "agent_budget.denied", ...detail });
       throw budgetError(
@@ -287,6 +310,7 @@ export function enforceAgentBudgetEvent(event) {
       context.state.startedIds.add(agentId);
     }
     context.state.activeIds.add(agentId);
+    context.state.activeRoles.set(agentId, role);
     notify(context, {
       type: "agent_budget.consumed",
       agentId,
@@ -299,6 +323,7 @@ export function enforceAgentBudgetEvent(event) {
 
   if (["subagent.completed", "subagent.failed", "subagent.cancelled"].includes(event.type) && event.agentId) {
     context.state.activeIds.delete(String(event.agentId));
+    context.state.activeRoles.delete(String(event.agentId));
   }
 }
 
@@ -323,22 +348,30 @@ export async function withAgentBudgetAdmission({ role, signal, systemOwned = fal
   if (!context || systemOwned) return execute();
   requestAgentBudgetRole(role);
   const limit = context.limits.maxActiveSubagents;
-  if (!limit) throw budgetError("Task budget prohibits active subagents.", { role });
+  if (!limit || role === "builder" && context.plan.builderConcurrency === 0) throw budgetError("Task budget prohibits active subagents.", { role });
+  const available = (kind) => context.admissionActive < context.limits.maxActiveSubagents && (kind !== "builder" || context.plan.builderConcurrency == null || context.admissionBuilders < context.plan.builderConcurrency);
+  const telemetry = () => notify(context, { type: "agent_budget.queue", runningBuilders: context.admissionBuilders, queuedBuilders: context.admissionQueue.filter((entry) => entry.role === "builder").length, builderConcurrency: context.plan.builderConcurrency });
   await new Promise((resolveWait, rejectWait) => {
-    const entry = { grant: () => { signal?.removeEventListener("abort", abort); context.admissionActive++; resolveWait(); } };
+    const entry = { role, grant: () => { signal?.removeEventListener("abort", abort); context.admissionActive++; if (role === "builder") context.admissionBuilders++; telemetry(); resolveWait(); } };
     const abort = () => {
       context.admissionQueue = context.admissionQueue.filter((item) => item !== entry);
+      telemetry();
       rejectWait(Object.assign(new Error("Queued worker cancelled."), { name: "AbortError" }));
     };
     if (signal?.aborted) return abort();
     signal?.addEventListener("abort", abort, { once: true });
-    if (context.admissionActive < context.limits.maxActiveSubagents) entry.grant();
-    else context.admissionQueue.push(entry);
+    if (available(role)) entry.grant();
+    else { context.admissionQueue.push(entry); telemetry(); }
   });
-  try { return await execute(); }
+  try { signal?.throwIfAborted(); return await execute(); }
   finally {
     context.admissionActive--;
-    while (context.admissionQueue.length && context.admissionActive < context.limits.maxActiveSubagents) context.admissionQueue.shift().grant();
+    if (role === "builder") context.admissionBuilders--;
+    for (let index = 0; index < context.admissionQueue.length;) {
+      if (available(context.admissionQueue[index].role)) context.admissionQueue.splice(index, 1)[0].grant();
+      else index++;
+    }
+    telemetry();
   }
 }
 
@@ -372,10 +405,12 @@ export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
     limits: normalized.limits,
     onEvent,
     admissionActive: 0,
+    admissionBuilders: 0,
     admissionQueue: [],
     state: {
       totalStarted: 0,
       activeIds: new Set(),
+      activeRoles: new Map(),
       startedIds: new Set(),
       byRole: {},
       changedFiles: new Set(),

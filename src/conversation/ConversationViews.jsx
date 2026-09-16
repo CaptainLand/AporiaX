@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
-import { classifyLink, messageLinkUrl, splitAutolinkBoundary } from "../../electron/link-target.js";
+import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
 import { useWorkbenchContext } from "../workbench/use-workbench.js";
 import remarkGfm from "remark-gfm";
 import { remarkAutolinkBoundary } from "./remark-autolink-boundary.js";
@@ -79,21 +79,12 @@ function MarkdownCodeBlock({ children }) {
 
 const LinkWorkspace = createContext("");
 
-function childText(children) {
-  return React.Children.toArray(children).map((child) => {
-    if (typeof child === "string" || typeof child === "number") return String(child);
-    if (React.isValidElement(child) && child.props?.children != null) return childText(child.props.children);
-    return "";
-  }).join("");
-}
-
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
   const workbench = useWorkbenchContext();
   const { language, tr } = useI18n();
   const [error, setError] = useState("");
-  const split = splitAutolinkBoundary(href, childText(children));
-  const resolvedHref = split?.href || href;
+  const resolvedHref = href;
   const link = classifyLink(resolvedHref);
   const activate = async (event, action) => {
     if (!link || link.kind === "anchor") return;
@@ -103,7 +94,7 @@ function MessageLink({ href, children, title }) {
     const target = resolvedHref;
     if (action === "open" && workbench?.openHref) {
       try {
-        if (await workbench.openHref(target)) return;
+        if (await workbench.openHref(target, { workspacePath })) return;
       } catch (failure) {
         setError(failure.message);
         return;
@@ -124,8 +115,7 @@ function MessageLink({ href, children, title }) {
       onClick={(event) => void activate(event, "open")}
       onContextMenu={(event) => void activate(event, "menu")}
       onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void activate(event, "menu"); }}
-    >{split?.suffix ? split.label : children}</a>
-    {split?.suffix || null}
+    >{children}</a>
     {error && <span role="alert"> — {error}</span>}
   </>;
 }
@@ -136,8 +126,7 @@ function MarkdownMessage({ content }) {
     .replace(
       /!\[[^\]]*\]\((?:data:image\/svg\+xml|[^)\s]+\.svg)[^)]*\)/gi,
       "",
-    )
-    .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, "");
+    );
 
   return (
     <div className="markdown-message">
@@ -838,6 +827,7 @@ function TurnAnchorReview({
 function FailedRunContent({ message }) {
   const { tr } = useI18n();
   const files = savedOutcomeFiles(message);
+  const recoveries = (message.sandbox?.recoveries || []).filter((item) => typeof item?.directory === "string").slice(-4);
   const protocolError = /MODEL_MESSAGE_INVALID|TOOL_RESULT_INVALID|Failed to deserialize.*messages\[|missing field [`']content/i.test(message.content || "");
   return <div className="failed-run-content">
     <p>{protocolError
@@ -847,6 +837,11 @@ function FailedRunContent({ message }) {
       <strong>{tr("已保存的文件", "Saved files")}</strong>
       <ul>{files.map((path) => <li key={path}><MessageLink href={encodeURI(path.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F")}>{path}</MessageLink></li>)}</ul>
       <p>{tr("文件改动已保留，可先打开查看；这不代表任务已完成或验证已通过。", "Saved changes are available to open. This does not mean the task is complete or verification passed.")}</p>
+    </div>}
+    {recoveries.length > 0 && <div className="saved-run-files">
+      <strong>{tr("沙箱产物已保留", "Sandbox output retained")}</strong>
+      <ul>{recoveries.map((item, index) => <li key={item.directory}><MessageLink href={encodeURI(item.directory.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F")}>{tr("查看保留产物", "Open recovery folder")} {index + 1}</MessageLink></li>)}</ul>
+      <p>{tr("尚未保证写回原工作区；请先查看恢复目录中的产物和回写记录。", "Not necessarily applied to the original workspace. Inspect retained output and the sync journal first.")}</p>
     </div>}
     {message.content && <details className="run-error-details">
       <summary>{tr("查看错误详情", "Error details")}</summary>

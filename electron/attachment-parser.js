@@ -151,6 +151,7 @@ export async function extractPdfText(
     const pageCount = document.numPages;
     const parsedPages = Math.min(pageCount, maxPages);
     const pages = [];
+    const ocrPages = [];
     let characterCount = 0;
 
     for (let pageNumber = 1; pageNumber <= parsedPages; pageNumber += 1) {
@@ -163,6 +164,7 @@ export async function extractPdfText(
         .replace(/[ \t]+/g, " ")
         .trim();
       const section = `[第 ${pageNumber} 页]\n${pageText || "（没有可提取的文字）"}`;
+      if (!pageText) ocrPages.push(pageNumber);
       pages.push(section);
       characterCount += section.length + 2;
       if (characterCount >= maxChars) break;
@@ -175,7 +177,8 @@ export async function extractPdfText(
       ...limited,
       pageCount,
       parsedPages: pages.length,
-      requiresOcr: !hasText,
+      requiresOcr: !hasText || ocrPages.length > 0,
+      ocrPages,
       truncated:
         limited.truncated ||
         pageCount > parsedPages ||

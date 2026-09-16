@@ -21,7 +21,7 @@ assert.equal(classifyLink("file:///D:/my%20project/a.js:12").line, 12);
 assert.equal(classifyLink("src/main.jsx#L42").line, 42);
 assert.equal(classifyLink("https://example.com:443/a").kind, "web");
 const swallowed = "http://localhost:8080/todo.html（仅本机可访问；8080";
-assert.equal(classifyLink(swallowed).href, "http://localhost:8080/todo.html");
+assert.equal(classifyLink(swallowed).href, new URL(swallowed).href, "classification never rewrites explicit URLs");
 assert.deepEqual(splitAutolinkBoundary(swallowed, swallowed), {
   href: "http://localhost:8080/todo.html",
   label: "http://localhost:8080/todo.html",
@@ -38,7 +38,8 @@ const { default: remarkParse } = await import("remark-parse");
 const { default: remarkGfm } = await import("remark-gfm");
 const { remarkAutolinkBoundary } = await import("../src/conversation/remark-autolink-boundary.js");
 const markdown = unified().use(remarkParse).use(remarkGfm).use(remarkAutolinkBoundary);
-const tree = markdown.runSync(markdown.parse(`见 ${swallowed} 结束`));
+const source = `见 ${swallowed} 结束`;
+const tree = markdown.runSync(markdown.parse(source), { value: source });
 const paragraph = tree.children.find((node) => node.type === "paragraph");
 const link = paragraph.children.find((node) => node.type === "link");
 const after = paragraph.children.find((node) => node.type === "text" && String(node.value).includes("仅本机"));

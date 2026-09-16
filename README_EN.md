@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.5" src="https://img.shields.io/badge/source-v0.9.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.7" src="https://img.shields.io/badge/source-v0.9.7-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.9.5`**. The project remains in Preview.
-> 0.9.5 fixes tool messages, retries and failure presentation, and includes MCP / Skill discovery and reliability improvements.
+> The current AporiaX source and Windows release version is **`v0.9.7`**. The project remains in Preview.
+> 0.9.7 adds local OCR, Git conflict editing and a read-only PR page, plus higher Builder concurrency. It also includes the 0.9.6 link and Safe-sandbox recovery fixes.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -76,6 +76,15 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
+
+## What's new in 0.9.7: local OCR, Git conflicts, and Builders
+
+- **Local OCR** for images and scanned PDFs from the composer, attachments, or sidebar preview. After a one-time ~4.7 MB language download, recognition stays on the device.
+- **Git conflicts and PRs**: edit ordinary merge conflicts in the sidebar, then stage on confirmation. Inspect GitHub PRs and checks for the current branch (read-only).
+- **Builders**: concurrency 0 / 1 / 2 / 3 / 4 / 6, default 2; extra work queues. Non-UTF-8 checkpoint restore keeps original bytes.
+- **0.9.6**: delivery-link truncation, isolated Safe dependency copies, and a recoverable sandbox directory after failures.
+
+[Read the complete 0.9.7 notes](docs/RELEASE_NOTES_v0.9.7.md)
 
 ## What's new in 0.9.5: reliable tool messages and task recovery
 
@@ -228,7 +237,7 @@ Images are materialized once before the main Agent loop. Raw image attachments a
 | Cloud Vision | Explicit image attachments are analyzed once by Qwen3.5 Flash and passed to the DeepSeek Agent as compact text observations |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
 | Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents only when task complexity needs them |
-| Builder orchestration | Eligible large writable tasks can use up to two Builders with Task Graph scheduling, Scope Leases, isolated Git worktrees, and conflict-safe merge |
+| Builder orchestration | Builder concurrency 0 / 1 / 2 / 3 / 4 / 6, default 2, with Task Graph scheduling, Scope Leases, isolated Git worktrees, and conflict-safe merge |
 | Agent collaboration | Shared Contracts, deterministic Plan Approval, structured handoffs, and a bounded mailbox; Main remains final integration authority |
 | Observable execution | Witness reports main/subagent activity, duration, failures, and self-check stages while Route preserves the full trace |
 | Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and atomic conflict checks |
@@ -238,17 +247,17 @@ Images are materialized once before the main Agent loop. Raw image attachments a
 | Multiple model APIs | Aporia Cloud plus multiple OpenAI-compatible providers/keys, `/models` discovery, and task-level model selection |
 | Desktop background lifecycle | Tasks may continue in the Windows system tray with restore/exit, completion notifications, and live runtime display |
 
-Scanned PDFs are detected as requiring OCR, but an OCR engine is not bundled yet. Aporia Cloud image attachments can use Cloud Vision; BYOK/local image support depends on the user's own model and runtime configuration.
+Scanned PDFs and images can be recognized with built-in local OCR (Chinese and English; language data downloads on first use). Aporia Cloud image attachments can still use Cloud Vision; BYOK/local image support depends on the user's own model and runtime configuration.
 
 ## Download
 
-`main` is now the **v0.9.5 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.9.7 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.9.5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.5/AporiaX-Setup-0.9.5-x64.exe) | Recommended Windows x64 installer |
-| [0.9.5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.5/AporiaX-Portable-0.9.5-x64.exe) | No-install Windows x64 package |
+| [0.9.7 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.7/AporiaX-Setup-0.9.7-x64.exe) | Recommended Windows x64 installer |
+| [0.9.7 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.7/AporiaX-Portable-0.9.7-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 

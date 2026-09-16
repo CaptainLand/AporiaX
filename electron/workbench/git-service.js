@@ -1,20 +1,21 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getVerifiedWorkspaceRoot, verifyExistingTarget } from "../runtime/workspace-runtime.js";
 import { runGitHubCli } from "../runtime/github-runtime.js";
 import { getGitHubAuthStatus, networkRemote, remoteName } from "./git-setup.js";
+import { createGitConflictTools, readPullRequests } from "./git-conflicts.js";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const samePath = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 const cleanError = (text) => String(text || "Git 操作失败").replace(/(https?:\/\/)[^\s/@]+(?::[^\s/@]+)?@/g, "$1[redacted]@").replace(/\b(?:gh[pousr]_[a-zA-Z0-9_]+|github_pat_[a-zA-Z0-9_]+)\b/g, "[redacted]").slice(0, 3000);
 
-export function runWorkbenchGit(cwd, args, { timeout = 30000, maxBuffer = 2 * 1024 * 1024 } = {}) {
+export function runWorkbenchGit(cwd, args, { timeout = 30000, maxBuffer = 2 * 1024 * 1024, encoding = "utf8" } = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/i.test(key)));
   Object.assign(env, { GIT_TERMINAL_PROMPT: "0", GIT_LITERAL_PATHSPECS: "1", GIT_OPTIONAL_LOCKS: "0", GCM_INTERACTIVE: "Never", LC_ALL: "C" });
   return new Promise((done, reject) => {
-    execFile("git", ["-c", "color.ui=false", "-c", "core.quotepath=false", ...args], { cwd, env, shell: false, windowsHide: true, timeout, maxBuffer, encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile("git", ["-c", "color.ui=false", "-c", "core.quotepath=false", ...args], { cwd, env, shell: false, windowsHide: true, timeout, maxBuffer, encoding }, (error, stdout, stderr) => {
       if (error?.code === "ENOENT") return reject(new Error("未找到 Git，请安装 Git 并重新启动 AporiaX。"));
       if (error?.killed || error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return reject(new Error("Git 操作超时或输出过大，请缩小范围后重试。操作可能已部分完成，请刷新检查。"));
       done({ code: error ? error.code : 0, stdout, stderr });
@@ -36,13 +37,21 @@ export function parseGitStatus(output) {
 }
 
 export function createWorkbenchGitService({ confirmPush = async () => false, confirmOperation = async () => false,
-  assertWorkspaceIdle = () => {}, runGit = runWorkbenchGit, runGitHub = runGitHubCli } = {}) {
+  assertWorkspaceIdle = () => {}, runGit = runWorkbenchGit, runGitHub = runGitHubCli, recoveryDirectory } = {}) {
   const locks = new Map();
   const checked = async (root, args, options) => {
     const result = await runGit(root, args, options);
     if (result.code !== 0) throw new Error(cleanError(result.stderr || result.stdout));
     return result.stdout;
   };
+  const conflicts = createGitConflictTools({ checked, recoveryDirectory });
+  async function workflow(root) {
+    for (const [name, marker] of [["rebase", "rebase-merge"], ["rebase", "rebase-apply"], ["cherry-pick", "CHERRY_PICK_HEAD"], ["revert", "REVERT_HEAD"], ["merge", "MERGE_HEAD"]]) {
+      const path = String(await checked(root, ["rev-parse", "--git-path", marker])).trim();
+      try { await lstat(resolve(root, path)); return name; } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    return null;
+  }
   async function snapshot(root) {
     const top = await runGit(root, ["rev-parse", "--show-toplevel"]);
     if (top.code !== 0) {
@@ -64,11 +73,12 @@ export function createWorkbenchGitService({ confirmPush = async () => false, con
     ]);
     const head = headResult.code === 0 ? headResult.stdout.trim() : "";
     const branch = branchResult.code === 0 ? branchResult.stdout.trim() : "";
+    const operation = await workflow(root);
     const all = parseGitStatus(status), header = status.split("\0")[0];
-    return { repository: true, root, branch, head, detached: !branch, upstream: upstreamResult.code === 0 ? upstreamResult.stdout.trim() : "",
+    return { repository: true, root, branch, head, workflow: operation, detached: !branch, upstream: upstreamResult.code === 0 ? upstreamResult.stdout.trim() : "",
       ahead: Number(header.match(/ahead (\d+)/)?.[1] || 0), behind: Number(header.match(/behind (\d+)/)?.[1] || 0),
       remotes: remotes.trim().split("\n").filter(Boolean), files: all.slice(0, 1000), totalFiles: all.length, truncated: all.length > 1000,
-      revision: digest(head + "\0" + branch + "\0" + status + "\0" + stagedRaw + "\0" + routing.stdout) };
+      revision: digest(head + "\0" + branch + "\0" + status + "\0" + stagedRaw + "\0" + routing.stdout + "\0" + operation) };
   }
   function requireRepo(state) {
     if (!state.repository || state.readOnly) throw new Error(state.message);
@@ -119,6 +129,12 @@ export function createWorkbenchGitService({ confirmPush = async () => false, con
       return { state: await snapshot(root) };
     }
     requireRepo(current);
+    if (["stage", "unstage", "commit"].includes(input.operation)) assertWorkspaceIdle(root);
+    if (["conflict-save", "conflict-resolve"].includes(input.operation)) {
+      if (current.workflow && current.workflow !== "merge") throw new Error(`当前正在 ${current.workflow}，请在终端继续；侧栏仅支持普通合并冲突。`);
+      const result = await conflicts.apply(root, selectedFile(current, input.path), input, assertWorkspaceIdle);
+      return { ...result, state: await snapshot(root) };
+    }
     if (input.operation === "stage" || input.operation === "unstage") {
       const file = selectedFile(current, input.path);
       if (file.conflict) throw new Error("请先在编辑器或终端解决冲突，侧栏不会自动处理冲突。");
@@ -128,6 +144,7 @@ export function createWorkbenchGitService({ confirmPush = async () => false, con
       else if (current.head) await checked(root, ["restore", "--staged", "--source=HEAD", "--", ...paths]);
       else await checked(root, ["rm", "--cached", "-f", "--", ...paths]);
     } else if (input.operation === "commit") {
+      if (current.workflow && current.workflow !== "merge") throw new Error(`当前正在 ${current.workflow}，请在终端继续该操作，不能作为普通提交结束。`);
       const message = String(input.message || "").trim();
       if (!message || message.length > 4000 || message.includes("\0")) throw new Error("请输入 1–4000 字的提交说明。");
       if (current.detached) throw new Error("当前为 detached HEAD，请先在终端切换到分支。");
@@ -192,6 +209,16 @@ export function createWorkbenchGitService({ confirmPush = async () => false, con
       const root = await getVerifiedWorkspaceRoot(input.workspacePath);
       if (input.operation === "status") return snapshot(root);
       if (input.operation === "github-status") return getGitHubAuthStatus({ cwd: root, run: runGitHub });
+      if (["conflict-read", "pull-requests"].includes(input.operation)) {
+        const state = await snapshot(root); requireRepo(state);
+        if (input.operation === "conflict-read") {
+          if (state.workflow && state.workflow !== "merge") throw new Error(`当前正在 ${state.workflow}，请在终端解决并继续；侧栏不会代替该操作。`);
+          return conflicts.read(root, selectedFile(state, input.path));
+        }
+        const remote = input.remote || (state.remotes.includes("origin") ? "origin" : state.remotes[0]);
+        if (!state.remotes.includes(remote)) throw new Error("请先关联 GitHub 远程仓库。");
+        return readPullRequests({ root, remote, branch: state.branch, checked, runGitHub });
+      }
       if (input.operation === "settings") {
         const state = await snapshot(root); requireRepo(state);
         const [refs, name, email] = await Promise.all([

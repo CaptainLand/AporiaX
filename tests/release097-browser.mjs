@@ -1,0 +1,72 @@
+import assert from "node:assert/strict";
+import { mkdtemp, writeFile, readFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { createServer } from "vite";
+import { chromium } from "playwright-core";
+import { createWorkbenchGitService, runWorkbenchGit } from "../electron/workbench/git-service.js";
+import { createOcrService } from "../electron/ocr/service.js";
+const root = await mkdtemp(join(tmpdir(), "aporiax-097-browser-"));
+const git = async (...args) => { const value = await runWorkbenchGit(root, args); assert.equal(value.code, 0, value.stderr); };
+await git("init", "-b", "main"); await git("config", "user.name", "Fixture"); await git("config", "user.email", "fixture@example.invalid"); await git("config", "commit.gpgsign", "false"); await git("config", "core.hooksPath", join(root, "no-hooks"));
+await writeFile(join(root, "conflict.txt"), "base\n"); await git("add", "conflict.txt"); await git("commit", "-m", "base");
+await git("switch", "-c", "feature"); await writeFile(join(root, "conflict.txt"), "theirs\n"); await git("commit", "-am", "theirs");
+await git("switch", "main"); await writeFile(join(root, "conflict.txt"), "ours\n"); await git("commit", "-am", "ours");
+await runWorkbenchGit(root, ["merge", "feature"]); await git("remote", "add", "origin", "https://github.com/fixture/repository.git");
+const service = createWorkbenchGitService({ recoveryDirectory: join(root, ".git", "recovery"), runGitHub: async () => ({ exitCode: 0, stdout: JSON.stringify([{ number: 42, title: "Example PR", state: "OPEN", url: "https://github.com/fixture/repository/pull/42", statusCheckRollup: [{ name: "tests", conclusion: "SUCCESS" }] }]) }) });
+const ocr = createOcrService({ directory: resolve(".tmp/ocr-097-models") });
+const server = await createServer({ server: { host: "127.0.0.1", port: 0, watch: null }, plugins: [{ name: "097-fixture", configureServer(dev) {
+  dev.middlewares.use("/__097/meta", async (_request, response) => { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ pdf: (await readFile(resolve(".tmp/ocr-097-fixture.pdf"))).toString("base64") })); });
+  dev.middlewares.use("/__097/request", async (request, response) => {
+    try {
+      let body = ""; for await (const chunk of request) body += chunk; const input = JSON.parse(body);
+      let result;
+      if (input.action === "git") result = await service.request({ ...input, workspacePath: root });
+      else if (input.operation === "status") result = await ocr.status();
+      else if (input.operation === "prepare") result = await ocr.prepare();
+      else if (input.operation === "start") result = await ocr.start({ ...input, name: input.source.name, data: input.source.base64 ? Buffer.from(input.source.base64, "base64") : Buffer.from(input.source.data) }, "ui");
+      else if (input.operation === "cancel") result = ocr.cancel(input.id, "ui");
+      else if (input.operation === "get") result = ocr.get(input.id, "ui");
+      else result = { copied: true };
+      response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(result));
+    } catch (error) { response.writeHead(400, { "Content-Type": "application/json" }); response.end(JSON.stringify({ error: error.message })); }
+  });
+} }] });
+let browser;
+try {
+  await mkdir(".tmp/release097-ui", { recursive: true }); await server.listen();
+  browser = await chromium.launch({ executablePath: process.env.TEST_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
+  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } }), errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/release097.html`);
+  await page.getByRole("button", { name: /^!.*conflict.txt/ }).first().click();
+  await page.getByRole("button", { name: "合入分支", exact: true }).click();
+  await page.getByRole("button", { name: "采用此版本作为合并草稿" }).click();
+  assert.equal(await page.getByRole("textbox", { name: "合并结果" }).inputValue(), "theirs\n");
+  await page.getByRole("textbox", { name: "合并结果" }).fill("merged by UI\n");
+  await page.screenshot({ path: ".tmp/release097-ui/git-conflict-light.png" });
+  await page.getByRole("button", { name: "保存合并结果", exact: true }).click();
+  await page.getByText("原件备份：", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "标记已解决并暂存" }).click();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.equal(await readFile(join(root, "conflict.txt"), "utf8"), "merged by UI\n");
+  await page.getByRole("button", { name: "PR", exact: true }).click(); await page.getByText("#42 Example PR").waitFor();
+  await page.getByRole("button", { name: "打开 PR", exact: true }).click(); assert.equal(await page.evaluate(() => window.openedPr), "https://github.com/fixture/repository/pull/42");
+  await page.getByRole("button", { name: "测试 OCR" }).click();
+  await page.getByRole("spinbutton", { name: "结束页" }).fill("2");
+  await page.getByRole("button", { name: "开始识别", exact: true }).click();
+  await page.getByText("已完成 · 2/2", { exact: false }).waitFor({ timeout: 90000 });
+  await page.getByRole("combobox", { name: "结果页" }).selectOption("1");
+  await page.getByText(/Hello World/, { exact: false }).waitFor();
+  await page.screenshot({ path: ".tmp/release097-ui/ocr-light.png" });
+  await page.evaluate(() => document.documentElement.dataset.theme = "dark");
+  await page.screenshot({ path: ".tmp/release097-ui/ocr-dark.png" });
+  await page.setViewportSize({ width: 420, height: 850 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.screenshot({ path: ".tmp/release097-ui/ocr-narrow.png" });
+  await page.getByRole("button", { name: "加入对话附件" }).click();
+  assert.match(await page.evaluate(() => window.ocrAttachment.content), /第 2 页/);
+  assert.equal(await page.evaluate(() => window.ocrAttachment.kind), "document");
+  assert.deepEqual(errors, []);
+  console.log("PASS 0.9.7 real browser: Git conflict save/resolve, PR view, real PDF OCR, source preview, attach text, dark and 420px layouts, no page errors");
+} finally { ocr.dispose(); await browser?.close(); await server.close(); }

@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld("desktop", {
     parse: (request) => ipcRenderer.invoke("attachments:parse", request),
     store: (request) => ipcRenderer.invoke("attachments:store", request),
   },
+  ocr: { request: (input) => ipcRenderer.invoke("ocr:request", input) },
   providers: {
     list: () => ipcRenderer.invoke("providers:list"),
     discover: (request) =>
@@ -102,6 +103,7 @@ contextBridge.exposeInMainWorld("desktop", {
   sandbox: {
     status: () => ipcRenderer.invoke("sandbox:status"),
     prepare: () => ipcRenderer.invoke("sandbox:prepare"),
+    openRecovery: () => ipcRenderer.invoke("sandbox:open-recovery"),
   },
   core: {
     status: () => ipcRenderer.invoke("core:status"),

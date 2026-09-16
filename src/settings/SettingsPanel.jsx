@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { taskApprovalMode } from "../state/approval-mode.js";
 import { taskExecutionMode } from "../state/execution-mode.js";
 import {
@@ -26,6 +26,7 @@ export function SettingsPanel({
   style,
 }) {
   const { tr } = useI18n();
+  const [recoveryError, setRecoveryError] = useState("");
   const provider =
     providers.find((candidate) => candidate.id === task.providerId) ||
     providers[0];
@@ -168,6 +169,15 @@ export function SettingsPanel({
             <span>{executionMode === "direct" ? tr("无隔离", "No isolation") : tr("冲突检查同步", "Conflict-checked sync")}</span>
           </div>
         )}
+        <button type="button" className="secondary-button" onClick={async () => {
+          setRecoveryError("");
+          try {
+            if (!window.desktop?.sandbox?.openRecovery) throw new Error(tr("请使用更新后的桌面端。", "Use the updated desktop app."));
+            await window.desktop.sandbox.openRecovery();
+          } catch (error) { setRecoveryError(error.message); }
+        }}><FolderOpen size={15} />{tr("沙箱恢复目录", "Sandbox recovery folders")}</button>
+        {recoveryError && <p role="alert">{recoveryError}</p>}
+        <p className="approval-mode-description">{tr("安全模式的冲突、中断与失败产物会保留在此；重启后仍可查看。依赖使用独立副本，不回写原 node_modules。仅清理已不需要且没有运行中的记录。", "Safe-mode conflicted, interrupted or failed output remains here after restart. Dependencies use private copies, never written back to node_modules. Only clean inactive records you no longer need.")}</p>
         <div className="sandbox-auto-approval">
           <strong>{tr("审批模式", "Approval mode")}</strong>
           <SegmentedControl

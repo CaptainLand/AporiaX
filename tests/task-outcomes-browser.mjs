@@ -22,6 +22,8 @@ try {
   const opened = await page.evaluate(() => window.openedOutcomeFile);
   assert.equal(classifyLink(opened.href).target, "资料 #1.docx");
   assert.equal(opened.workspacePath, "D:/fixture");
+  await flow.getByRole("link", { name: "查看保留产物 1", exact: true }).click();
+  assert.equal(classifyLink((await page.evaluate(() => window.openedOutcomeFile)).href).target, "D:/recovery/snapshot-1");
   assert.equal(await flow.getByRole("link", { name: "deleted.txt" }).count(), 0);
   assert.equal(await flow.locator(".run-error-details pre").isVisible(), false);
   await flow.getByText("查看错误详情", { exact: true }).click();

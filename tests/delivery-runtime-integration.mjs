@@ -26,7 +26,7 @@ try {
         { ...call("review", "request_self_check", { reason: "Verify the new implementation", verification: [{ command: "npm run test", cwd: ".", reason: "The test covers core.js" }] }), index: 1 },
       ] });
       assert.ok(mainRounds < 5, "unexpected self-check loop");
-      return sse({ content: `[文件](${join(root, "core.js").replaceAll("\\", "/")})` });
+      return sse({ content: `[文件](${join(root, "core.js").replaceAll("\\", "/")})\n\n[不存在](missing.docx)` });
     };
     try {
       const result = await runHarness({ runId: `delivery-${waived}`, taskId: "test", workspacePath: root, provider, modelId: "test", permission: "workspace-write", approvalMode: "full-auto", thinking: false, signal: controller.signal,
@@ -36,6 +36,9 @@ try {
         requestApproval: async () => { approvals++; return { approved: false }; },
       });
       assert.equal(result.status, "completed", result.content);
+      assert.match(result.content, /不存在（文件不存在）/);
+      assert.doesNotMatch(result.content, /\[不存在\]\(missing.docx\)/);
+      assert.equal(mainRounds, 2, "link validation never starts another model round");
       assert.equal(commands, waived ? 0 : 1);
       assert.equal(approvals, 0, "full auto must reach the executor without asking the user");
       assert.equal(await readFile(join(root, "core.js"), "utf8"), "export const ready = true;\n");

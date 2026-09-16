@@ -1990,7 +1990,8 @@ try {
   assert.equal(plainGitResult.status, "completed");
   assert.equal(plainGitResult.steps[0]?.success, true);
   assert.equal(plainGitResult.steps[0]?.skipped, true);
-  assert.doesNotMatch(plainGitResult.content, /✅|<svg/i);
+  assert.doesNotMatch(plainGitResult.content, /<svg/i);
+  assert.match(plainGitResult.content, /✅/, "Unicode content is preserved; stripping it can corrupt file links");
 
   const gitInit = spawnSync("git", ["init"], {
     cwd: testRoot,

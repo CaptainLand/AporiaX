@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fsPromises from "node:fs/promises";
 import { createRequire } from "node:module";
 // Workspaces may contain other Electron releases. Treat their ASAR archives
 // as ordinary files, not Electron's virtual directories, during copy/sync.
-const { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } =
+const { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, statfs, writeFile } =
   process.versions.electron ? createRequire(import.meta.url)("original-fs").promises : fsPromises;
 import { tmpdir } from "node:os";
 import {
@@ -16,6 +16,7 @@ import {
 } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { currentExecutionMode } from "./harness/agent-budget.js";
+import { applySandboxChanges, atomicJson, checkAbort, copyPrivateDependencies, hashSandboxFile, SNAPSHOT_MAX_BYTES, SNAPSHOT_MAX_FILES } from "./sandbox-files.js";
 
 export const SANDBOX_IMAGE = "aporiax-sandbox:0.1";
 export const SANDBOX_TIMEOUT_MS = 120_000;
@@ -616,16 +617,13 @@ function shouldIgnoreLocalSandboxPath(relativePath) {
     .some((part) => LOCAL_SANDBOX_IGNORED_NAMES.has(part));
 }
 
-async function hashFile(filePath) {
-  const content = await readFile(filePath);
-  return createHash("sha256").update(content).digest("hex");
-}
-
-async function scanLocalSandboxFiles(rootPath) {
+async function scanLocalSandboxFiles(rootPath, signal) {
   const files = new Map();
+  files.bytes = 0;
   const pending = [{ absolutePath: rootPath, relativePath: "" }];
   while (pending.length) {
     const current = pending.pop();
+    checkAbort(signal);
     const entries = await readdir(current.absolutePath, {
       withFileTypes: true,
     });
@@ -652,7 +650,9 @@ async function scanLocalSandboxFiles(rootPath) {
           `Local sandbox found an unsupported file type: ${entryRelativePath}`,
         );
       }
-      files.set(entryRelativePath, await hashFile(entryAbsolutePath));
+      files.bytes += (await lstat(entryAbsolutePath)).size;
+      if (files.bytes > SNAPSHOT_MAX_BYTES) throw new Error("Local sandbox project exceeds the 2 GB snapshot budget.");
+      files.set(entryRelativePath, await hashSandboxFile(entryAbsolutePath, signal));
       if (files.size > LOCAL_SANDBOX_MAX_FILES) {
         throw new Error(
           `Local sandbox supports at most ${LOCAL_SANDBOX_MAX_FILES} project files.`,
@@ -666,98 +666,46 @@ async function scanLocalSandboxFiles(rootPath) {
 async function copyWorkspaceToLocalSandbox(
   workspaceRoot,
   sandboxWorkspace,
-  { shareDependencies = true } = {},
+  { budget, signal } = {},
 ) {
+  const dependencies = [];
   await cp(workspaceRoot, sandboxWorkspace, {
     recursive: true,
     force: true,
     errorOnExist: false,
     filter: async (sourcePath) => {
+      checkAbort(signal);
       const sourceRelativePath = relative(workspaceRoot, sourcePath);
+      if (sourceRelativePath.split(/[\\/]/).at(-1) === "node_modules") dependencies.push(sourceRelativePath);
       if (shouldIgnoreLocalSandboxPath(sourceRelativePath)) return false;
       if (!sourceRelativePath) return true;
-      return !(await lstat(sourcePath)).isSymbolicLink();
+      const info = await lstat(sourcePath);
+      if (info.isSymbolicLink()) return false;
+      if (info.isFile()) {
+        budget.files++; budget.bytes += info.size;
+        if (budget.files > budget.maxFiles || budget.bytes > budget.maxBytes) throw new Error("Safe workspace copy exceeds the file/byte budget.");
+      }
+      return true;
     },
   });
 
-  if (!shareDependencies) return;
-  const sourceDependencies = join(workspaceRoot, "node_modules");
-  try {
-    if ((await lstat(sourceDependencies)).isDirectory()) {
-      await symlink(
-        sourceDependencies,
-        join(sandboxWorkspace, "node_modules"),
-        process.platform === "win32" ? "junction" : "dir",
-      );
-    }
-  } catch {
-    // A project without installed dependencies can still run commands.
-  }
-}
-
-function commandMayMutateDependencies(command) {
-  return /\b(?:npm|pnpm|yarn|bun)\s+(?:i|install|ci|add|remove|uninstall|update|upgrade)\b/i.test(
-    command,
-  );
+  for (const path of dependencies) await copyPrivateDependencies(join(workspaceRoot, path), join(sandboxWorkspace, path), workspaceRoot, budget, signal);
 }
 
 async function synchronizeLocalSandbox({
   workspaceRoot,
   sandboxWorkspace,
+  sandboxDirectory,
   baselineFiles,
+  manifest,
+  signal,
+  beforeApply,
 }) {
-  const sandboxFiles = await scanLocalSandboxFiles(sandboxWorkspace);
-  const currentFiles = await scanLocalSandboxFiles(workspaceRoot);
-  const changedPaths = new Set();
-  for (const [path, hash] of sandboxFiles) {
-    if (baselineFiles.get(path) !== hash) changedPaths.add(path);
-  }
-  for (const path of baselineFiles.keys()) {
-    if (!sandboxFiles.has(path)) changedPaths.add(path);
-  }
-
-  const conflicts = [];
-  for (const path of changedPaths) {
-    if (currentFiles.get(path) !== baselineFiles.get(path)) {
-      conflicts.push(path);
-    }
-  }
-  if (conflicts.length) {
-    throw new Error(
-      `Local sandbox did not apply changes because the original workspace changed during execution: ${conflicts
-        .slice(0, 5)
-        .join(", ")}`,
-    );
-  }
-
-  let written = 0;
-  let deleted = 0;
-  for (const path of changedPaths) {
-    const targetPath = resolve(workspaceRoot, path);
-    if (!isPathInside(workspaceRoot, targetPath)) {
-      throw new Error(`Local sandbox rejected an unsafe path: ${path}`);
-    }
-    if (!sandboxFiles.has(path)) {
-      await rm(targetPath, { force: true });
-      deleted += 1;
-      continue;
-    }
-    const sourcePath = resolve(sandboxWorkspace, path);
-    if (!isPathInside(sandboxWorkspace, sourcePath)) {
-      throw new Error(`Local sandbox rejected an unsafe source path: ${path}`);
-    }
-    await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, await readFile(sourcePath));
-    written += 1;
-  }
-  return {
-    written,
-    deleted,
-    changed: changedPaths.size,
-  };
+  const sandboxFiles = await scanLocalSandboxFiles(sandboxWorkspace, signal);
+  return applySandboxChanges({ workspaceRoot, sandboxWorkspace, sandboxDirectory, baselineFiles, sandboxFiles, manifest, signal, beforeApply });
 }
 
-function localSandboxRootPath(baseDirectory) {
+export function localSandboxRootPath(baseDirectory) {
   return resolve(
     baseDirectory || tmpdir(),
     LOCAL_SANDBOX_DIRECTORY,
@@ -767,6 +715,8 @@ function localSandboxRootPath(baseDirectory) {
 async function createLocalSandboxDirectory(baseDirectory) {
   const localSandboxRoot = localSandboxRootPath(baseDirectory);
   await mkdir(localSandboxRoot, { recursive: true });
+  const retained = (await readdir(localSandboxRoot, { withFileTypes: true })).filter((item) => item.isDirectory() && !item.name.startsWith("."));
+  if (retained.length >= 20) throw new Error(`Safe sandbox has 20 retained/active snapshots. Review and clean recovery folders before continuing: ${localSandboxRoot}`);
   return mkdtemp(join(localSandboxRoot, `${process.pid}-`));
 }
 
@@ -809,11 +759,21 @@ export async function runLocalSandboxedCommand({
   watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
   localSandboxBaseDirectory,
+  runId = "",
+  taskId = "",
+  onRecovery,
+  beforeApply,
 }) {
+  workspaceRoot = await realpath(workspaceRoot);
+  cwd = await realpath(cwd);
   const sandboxDirectory = await createLocalSandboxDirectory(
     localSandboxBaseDirectory,
   );
   const sandboxWorkspace = join(sandboxDirectory, "workspace");
+  if (isPathInside(workspaceRoot, sandboxDirectory)) {
+    await removeLocalSandboxDirectory(sandboxDirectory, localSandboxBaseDirectory);
+    throw new Error("Sandbox recovery storage must be outside the workspace being copied.");
+  }
   const relativeCwd = relative(workspaceRoot, cwd) || ".";
   if (
     relativeCwd === ".." ||
@@ -827,19 +787,44 @@ export async function runLocalSandboxedCommand({
     throw new Error("Command working directory must stay inside the workspace.");
   }
 
+  let started = false;
+  let retained = false;
+  const manifest = { version: 1, state: "preparing", runId: String(runId), taskId: String(taskId), workspaceRoot, createdAt: new Date().toISOString(), command: String(command).slice(0, 2000), dependencies: "private-copy-not-synchronized" };
+  const manifestPath = join(sandboxDirectory, "recovery.json");
+  const preserve = async (reason, result) => {
+    if (retained) return manifest.recovery;
+    retained = true; // Never erase output if writing the final manifest fails (e.g. disk full).
+    const recovery = { directory: sandboxDirectory, workspace: sandboxWorkspace, manifest: manifestPath, reason, runId, taskId };
+    manifest.state = "recovery-required"; manifest.reason = reason; manifest.recovery = recovery;
+    if (result) manifest.result = { exitCode: result.exitCode, timedOut: result.timedOut, stdout: result.stdout, stderr: result.stderr };
+    await atomicJson(manifestPath, manifest).catch(() => {});
+    try { onRecovery?.(recovery); } catch { /* notification cannot discard output */ }
+    return recovery;
+  };
   try {
-    const baselineFiles = await scanLocalSandboxFiles(workspaceRoot);
-    const shareDependencies = !commandMayMutateDependencies(command);
+    await atomicJson(manifestPath, manifest);
+    const baselineFiles = await scanLocalSandboxFiles(workspaceRoot, signal);
+    const space = await statfs(sandboxDirectory);
+    const maxBytes = Math.min(SNAPSHOT_MAX_BYTES, Math.floor((space.bavail * space.bsize - 512 * 1024 ** 2) / 3));
+    if (baselineFiles.bytes > maxBytes || maxBytes <= 0) throw new Error("Insufficient disk space for a recoverable Safe snapshot; free disk space or narrow the workspace.");
+    const budget = { files: 0, bytes: 0, maxBytes, maxFiles: SNAPSHOT_MAX_FILES };
     await copyWorkspaceToLocalSandbox(
       workspaceRoot,
       sandboxWorkspace,
-      { shareDependencies },
+      { budget, signal },
     );
+    const copied = await scanLocalSandboxFiles(sandboxWorkspace, signal);
+    if (copied.size !== baselineFiles.size || [...copied].some(([path, hash]) => baselineFiles.get(path) !== hash)) throw new Error("Workspace changed while creating the sandbox snapshot; no command was started.");
     const localCwd = resolve(sandboxWorkspace, relativeCwd);
     if (!isPathInside(sandboxWorkspace, localCwd)) {
       throw new Error("Local sandbox rejected the command working directory.");
     }
     const shell = hostShell(command);
+    manifest.state = "executing";
+    manifest.baseline = Object.fromEntries(baselineFiles);
+    await atomicJson(manifestPath, manifest);
+    checkAbort(signal);
+    started = true;
     const result = await runProcess({
       ...shell,
       cwd: localCwd,
@@ -851,13 +836,18 @@ export async function runLocalSandboxedCommand({
       watchdogSlowMs,
     });
     const sync =
-      result.timedOut || signal?.aborted
-        ? { written: 0, deleted: 0, changed: 0, discarded: true }
+      result.timedOut || signal?.aborted || result.exitCode !== 0
+        ? { written: 0, deleted: 0, changed: 0, applied: false, recovery: await preserve(result.timedOut ? "timeout" : signal?.aborted ? "interrupted" : "command-failed", result) }
         : await synchronizeLocalSandbox({
             workspaceRoot,
             sandboxWorkspace,
+            sandboxDirectory,
             baselineFiles,
+            manifest,
+            signal,
+            beforeApply,
           });
+    if (!retained) { manifest.state = "completed"; await atomicJson(manifestPath, manifest); }
     return {
       ...result,
       sandbox: {
@@ -868,9 +858,8 @@ export async function runLocalSandboxedCommand({
         network: "host",
         rootFilesystem: "host",
         workspace: "temporary-copy-with-conflict-checked-sync",
-        sharedDependencies: shareDependencies
-          ? "root-node-modules"
-          : "disabled-for-package-mutation",
+        sharedDependencies: "none",
+        dependencies: "private-copy-not-synchronized",
         sensitiveEnvironment: "removed",
         timeoutMs,
         sync,
@@ -879,11 +868,17 @@ export async function runLocalSandboxedCommand({
           "Docker strong isolation is unavailable or not enabled.",
       },
     };
+  } catch (error) {
+    if (started) {
+      error.recovery = await preserve(error.name === "AbortError" ? "interrupted" : "sync-failed");
+      error.message += `\n产物已保留（未保证同步到原工作区）：${sandboxDirectory}`;
+    }
+    throw error;
   } finally {
-    await removeLocalSandboxDirectory(
+    if (!retained) await removeLocalSandboxDirectory(
       sandboxDirectory,
       localSandboxBaseDirectory,
-    );
+    ).catch(() => {});
   }
 }
 
