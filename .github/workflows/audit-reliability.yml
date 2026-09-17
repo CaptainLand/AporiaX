@@ -1,0 +1,55 @@
+name: Audit reliability
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-reliability-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Export exact source for reproducible review
+        run: git archive --format=tar.gz --output=audit-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-source-${{ github.run_id }}
+          path: audit-source.tar.gz
+          retention-days: 3
+          if-no-files-found: error
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - run: npm ci
+      - name: Existing critical reliability regression
+        run: npm run test:critical-reliability
+      - name: Existing durable storage regression
+        run: npm run test:reliability-batch3
+      - name: Audit regression tests when present
+        shell: bash
+        run: |
+          if [ -f tests/audit-reliability.mjs ]; then
+            node --experimental-sqlite tests/audit-reliability.mjs
+          fi
