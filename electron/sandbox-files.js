@@ -38,6 +38,7 @@ export async function atomicJson(path, value) {
 // into independent files; fail closed on outside links, cycles and copy limits.
 export async function copyPrivateDependencies(source, destination, workspaceRoot, budget, signal, ancestors = new Set(), mapping = null) {
   checkAbort(signal);
+  if (!mapping) workspaceRoot = await realpath(workspaceRoot);
   budget.entries = (budget.entries || 0) + 1;
   if (budget.entries > (budget.maxFiles ?? SNAPSHOT_MAX_FILES) || ancestors.size > 128) throw new Error("Dependency tree exceeds the entry/depth budget.");
   const path = await realpath(source);

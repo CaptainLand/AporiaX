@@ -16,6 +16,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: [22.12.0, 22.16.0]
+        include:
+          - os: ubuntu-latest
+            node: '22'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -52,6 +55,7 @@ jobs:
       - name: Actual OCR, UI and ASAR-unpacked OCR
         run: npm run test:0.9.7
       - name: Workbench and terminal regression
+        timeout-minutes: 5
         run: |
           npm run test:side-chat
           npm run test:workbench-documents-git

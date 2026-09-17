@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { createBuilderWorkspaceManager } from "../electron/harness/builder-workspace.js";
 
 if (process.argv[2] === "--fixture-child") {
-  const root = process.argv[3];
+  const root = await fs.realpath(process.argv[3]);
   let worktreeRoot;
   const workspace = await createBuilderWorkspaceManager({ onMergePrepared: async recovery => {
     // Fixture-only rendezvous. Production uses the task store before mutation.
@@ -26,7 +26,7 @@ if (process.argv[2] === "--fixture-child") {
   throw new Error("Fixture should have exited between replacement and journal completion.");
 } else {
   const run = promisify(execFile);
-  const root = await fs.mkdtemp(join(tmpdir(), "aporiax-builder-crash-"));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "aporiax-builder-crash-")));
   let recovery;
   try {
     const git = (...args) => run("git", args, { cwd: root, windowsHide: true });

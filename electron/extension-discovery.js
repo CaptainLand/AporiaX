@@ -269,7 +269,7 @@ export function createExtensionDiscovery({ fetchImpl = globalThis.fetch, now = D
 
 export async function verifyInstalledSkill({ userDataDirectory, name } = {}) {
   if (!SKILL_NAME.test(String(name || ""))) throw new Error("Invalid Skill name.");
-  return withExtensionWriteLock(userDataDirectory, async () => {
+  return withExtensionWriteLock(userDataDirectory, async (userDataDirectory) => {
     const root = resolve(userDataDirectory, "skills", name);
     if (relative(root, await realpath(root)) !== "") throw new Error("Unsafe Skill store path.");
     const current = await inspectSkillDirectory(root);

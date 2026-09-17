@@ -204,7 +204,7 @@ async function installedSkillPackages(userDataDirectory) {
 }
 
 export async function importUserSkill({ userDataDirectory, sourceDirectory, onlineSource = null } = {}) {
-  return withExtensionWriteLock(userDataDirectory, () => installSkillPackage({ userDataDirectory, sourceDirectory, onlineSource }));
+  return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => installSkillPackage({ userDataDirectory, sourceDirectory, onlineSource }));
 }
 
 async function installSkillPackage({ userDataDirectory, sourceDirectory, rollback = false, onlineSource = null }) {
@@ -276,7 +276,7 @@ async function installSkillPackage({ userDataDirectory, sourceDirectory, rollbac
 
 export async function rollbackUserSkill({ userDataDirectory, name } = {}) {
   if (!SKILL_NAME.test(String(name || ""))) throw new Error("Invalid Skill name.");
-  return withExtensionWriteLock(userDataDirectory, async () => {
+  return withExtensionWriteLock(userDataDirectory, async (userDataDirectory) => {
     const root = join(userDataDirectory, "skills", ".history", name);
     const entries = (await readdir(root, { withFileTypes: true }).catch((error) => {
       if (error.code === "ENOENT") return []; throw error;
@@ -299,7 +299,7 @@ export async function installCatalogSkill({ userDataDirectory, catalogId } = {})
 }
 
 export async function removeUserSkill({ userDataDirectory, name } = {}) {
-  return withExtensionWriteLock(userDataDirectory, () => removeUserSkillUnlocked({ userDataDirectory, name }));
+  return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => removeUserSkillUnlocked({ userDataDirectory, name }));
 }
 
 async function removeUserSkillUnlocked({ userDataDirectory, name }) {
@@ -328,7 +328,7 @@ async function readRawMcpConfig(userDataDirectory) {
 }
 
 export async function saveMcpServer({ userDataDirectory, server, createOnly = false } = {}) {
-  return withExtensionWriteLock(userDataDirectory, () => saveMcpServerUnlocked({ userDataDirectory, server, importing: createOnly }));
+  return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => saveMcpServerUnlocked({ userDataDirectory, server, importing: createOnly }));
 }
 
 async function saveMcpServerUnlocked({ userDataDirectory, server, importing = false }) {
@@ -400,7 +400,7 @@ export async function importMcpConfiguration({ userDataDirectory, sourcePath } =
   const errors = [];
   for (const server of servers) {
     try {
-      const result = await withExtensionWriteLock(userDataDirectory, () => saveMcpServerUnlocked({ userDataDirectory, server, importing: true }));
+      const result = await withExtensionWriteLock(userDataDirectory, (userDataDirectory) => saveMcpServerUnlocked({ userDataDirectory, server, importing: true }));
       imported.push(result.server);
     } catch (error) {
       errors.push(String(error?.message || error));
@@ -413,12 +413,12 @@ export async function importMcpConfiguration({ userDataDirectory, sourcePath } =
 }
 
 export async function removeMcpServer({ userDataDirectory, id } = {}) {
-  return withExtensionWriteLock(userDataDirectory, () => removeMcpServerUnlocked({ userDataDirectory, id }));
+  return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => removeMcpServerUnlocked({ userDataDirectory, id }));
 }
 
 export async function setMcpServerEnabled({ userDataDirectory, id, enabled } = {}) {
   if (typeof enabled !== "boolean") throw new Error("MCP enabled must be a boolean.");
-  return withExtensionWriteLock(userDataDirectory, async () => {
+  return withExtensionWriteLock(userDataDirectory, async (userDataDirectory) => {
     const { path, value } = await readRawMcpConfig(userDataDirectory);
     const server = value.servers.find((item) => item?.id === id);
     if (!server) throw new Error("Unknown MCP server.");
