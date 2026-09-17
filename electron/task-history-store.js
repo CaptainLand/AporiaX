@@ -254,11 +254,14 @@ export function createTaskHistoryStore(
     migration = { version: 1, status: "pending", sourceHash, source: legacyPath,
       pending: candidates.map((task) => String(task?.id || "")) };
     await atomicWrite(migrationPath, JSON.stringify(migration));
-    const missing = [];
+    const records = [];
     for (const task of candidates) {
-      if (!TASK_ID_PATTERN.test(String(task?.id || "")) || !await readTaskFile(task.id)) missing.push(task);
+      const existing = TASK_ID_PATTERN.test(String(task?.id || "")) ? await readTaskFile(task.id) : null;
+      // A crash may have committed a task file but not its index entry. Adopt
+      // that file using its current bytes rather than restoring an older copy.
+      records.push(existing || task);
     }
-    const result = await saveTasksInternal(missing, { migration: true });
+    const result = await saveTasksInternal(records, { migration: true });
     migration.pending = result.failed.map((task) => task.id === "(missing)" ? "" : task.id);
     migration.status = migration.pending.length ? "partial" : "completed";
     await atomicWrite(migrationPath, JSON.stringify(migration));

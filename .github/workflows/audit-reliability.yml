@@ -54,6 +54,8 @@ jobs:
       - run: npm ci
       - name: Actual OCR, UI and ASAR-unpacked OCR
         run: npm run test:0.9.7
+      - name: Build production preview before file-origin tests
+        run: npm run build
       - name: Workbench and terminal regression
         id: workbench
         timeout-minutes: 10

@@ -65,6 +65,9 @@ jobs:
       - name: Build verified Windows packages
         run: npm run dist:win
 
+      - name: Verify production-origin document and terminal workflow
+        run: node scripts/run-desktop-checks.mjs
+
       - name: Verify packaged source, binaries and update hashes
         run: node scripts/verify-windows-release.mjs release
 
