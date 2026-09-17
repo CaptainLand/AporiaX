@@ -21,34 +21,49 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Verify and apply proposed source patch, if present
-        shell: bash
+      - name: Verify and stage exact proposed source
+        if: hashFiles('.audit-patch') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f .audit-patch ]; then
-            node --input-type=module <<'JS'
-          import { readFileSync, writeFileSync } from 'node:fs';
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+          import { dirname } from 'node:path';
+          import { execFileSync } from 'node:child_process';
           import { gunzipSync } from 'node:zlib';
           import { createHash } from 'node:crypto';
-          const [header, ...encoded] = readFileSync('.audit-patch','utf8').trim().split('\n');
-          const expected = header.match(/^APORIAX_GZIP_PATCH_V1 ([a-f0-9]{64})$/)?.[1];
-          if (!expected) throw new Error('Invalid patch envelope');
-          const patch = gunzipSync(Buffer.from(encoded.join(''),'base64'),{maxOutputLength:1000000});
-          if (createHash('sha256').update(patch).digest('hex') !== expected) throw new Error('Patch checksum mismatch');
-          writeFileSync('/tmp/aporiax-proposed.patch',patch);
+          const envelope=JSON.parse(readFileSync('.audit-patch','utf8'));
+          if(envelope.version!==1 || !Array.isArray(envelope.parts) || envelope.parts.length>16) throw Error('Invalid patch manifest');
+          const chunks=[];
+          for(const sha of envelope.parts){
+            if(!/^[a-f0-9]{40}$/.test(sha)) throw Error('Invalid blob id');
+            const response=await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/git/blobs/${sha}`,{headers:{Authorization:`Bearer ${process.env.GH_TOKEN}`,Accept:'application/vnd.github+json'}});
+            if(!response.ok)throw Error(`Patch blob unavailable: ${response.status}`);
+            const blob=await response.json();chunks.push(Buffer.from(blob.content,'base64'));
+          }
+          const decoded=gunzipSync(Buffer.concat(chunks),{maxOutputLength:1000000});
+          if(createHash('sha256').update(decoded).digest('hex')!==envelope.sha256)throw Error('Patch checksum mismatch');
+          const patch=JSON.parse(decoded), hash=bytes=>createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+          if(patch.version!==1 || !Array.isArray(patch.files) || patch.files.length>150)throw Error('Invalid source edits');
+          for(const file of patch.files){
+            const path=file.path;
+            if(path.includes('..') || path.includes('\\') || (!/^(electron|src|tests|scripts|docs|\.github)\//.test(path) && !['package.json','package-lock.json','SECURITY.md','.node-version'].includes(path)))throw Error('Unexpected path');
+            let before=Buffer.alloc(0);
+            try{before=readFileSync(path);if(file.before===null)throw Error('Expected a new path');}catch(error){if(error.code!=='ENOENT' || file.before!==null)throw error;}
+            if(file.before!==null && hash(before)!==file.before)throw Error('Source changed: '+path);
+            const pieces=[];let position=0;
+            for(const [start,end,text] of file.edits){
+              if(!Number.isInteger(start)||!Number.isInteger(end)||start<position||end<start||end>before.length||typeof text!=='string')throw Error('Invalid edit');
+              pieces.push(before.subarray(position,start),Buffer.from(text));position=end;
+            }
+            pieces.push(before.subarray(position));const after=Buffer.concat(pieces);
+            if(hash(after)!==file.after)throw Error('Result checksum mismatch: '+path);
+            mkdirSync(dirname(path),{recursive:true});writeFileSync(path,after);
+            execFileSync('git',['add','--',path]);
+          }
+          console.log(`Verified and staged ${patch.files.length} source files`);
           JS
-            git apply --check /tmp/aporiax-proposed.patch
-            git apply --index /tmp/aporiax-proposed.patch
-          fi
       - run: npm ci
-      - name: Export dependencies for offline reproduction
-        if: hashFiles('.audit-patch') == ''
-        run: tar --exclude=node_modules/electron/dist -czf audit-dependencies.tar.gz node_modules
-      - uses: actions/upload-artifact@v4
-        if: hashFiles('.audit-patch') == ''
-        with:
-          name: audit-dependencies-${{ github.run_id }}
-          path: audit-dependencies.tar.gz
-          retention-days: 1
       - name: Validate proposed audit fixes
         if: hashFiles('.audit-patch') != ''
         run: |
