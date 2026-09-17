@@ -958,12 +958,6 @@ function EmptyState({ onNewTask }) {
   return (
     <main className="empty-state">
       <h1>{tr("从一个疑问开始。", "Begin with an aporia.")}</h1>
-      <p>
-        {tr(
-          "写代码、制作文档、演示文稿与表格。告诉 AporiaX，你想抵达哪里。",
-          "Write code, create documents, presentations, and spreadsheets. Tell AporiaX where you want to arrive.",
-        )}
-      </p>
       <button className="primary-button large" onClick={onNewTask}>
         <Plus size={17} />
         {tr("新建任务", "New task")}
