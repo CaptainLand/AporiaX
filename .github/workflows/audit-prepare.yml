@@ -21,18 +21,30 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Apply proposed source patch, if present
+      - name: Verify and apply proposed source patch, if present
         shell: bash
         run: |
           if [ -f .audit-patch ]; then
-            git apply --check .audit-patch
-            git apply --index .audit-patch
+            node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { gunzipSync } from 'node:zlib';
+          import { createHash } from 'node:crypto';
+          const [header, ...encoded] = readFileSync('.audit-patch','utf8').trim().split('\n');
+          const expected = header.match(/^APORIAX_GZIP_PATCH_V1 ([a-f0-9]{64})$/)?.[1];
+          if (!expected) throw new Error('Invalid patch envelope');
+          const patch = gunzipSync(Buffer.from(encoded.join(''),'base64'),{maxOutputLength:1000000});
+          if (createHash('sha256').update(patch).digest('hex') !== expected) throw new Error('Patch checksum mismatch');
+          writeFileSync('/tmp/aporiax-proposed.patch',patch);
+          JS
+            git apply --check /tmp/aporiax-proposed.patch
+            git apply --index /tmp/aporiax-proposed.patch
           fi
       - run: npm ci
       - name: Export dependencies for offline reproduction
-        run: |
-          tar --exclude=node_modules/electron/dist -czf audit-dependencies.tar.gz node_modules
+        if: hashFiles('.audit-patch') == ''
+        run: tar --exclude=node_modules/electron/dist -czf audit-dependencies.tar.gz node_modules
       - uses: actions/upload-artifact@v4
+        if: hashFiles('.audit-patch') == ''
         with:
           name: audit-dependencies-${{ github.run_id }}
           path: audit-dependencies.tar.gz
@@ -44,6 +56,10 @@ jobs:
           npm run test:critical-reliability
           npm run test:context-reliability
           npm run test:reliability-batch3
+          npm run test:runtime
+          npm run test:harness-v2
+          npm run test:sandbox-recovery
+          npm run test:mcp
           npm run build
       - name: Store proposed source blobs without updating any branch
         if: always() && hashFiles('.audit-patch') != ''
@@ -54,6 +70,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { readFileSync, writeFileSync } from 'node:fs';
           const paths = execFileSync('git', ['diff','--cached','--name-only','--diff-filter=ACM','-z'], {encoding:'utf8'}).split('\0').filter(Boolean);
+          if (!paths.length) throw new Error('No verified proposed changes');
           const files = [];
           for (const path of paths) {
             if (!/^(electron|src|tests|scripts|docs|\.github)\//.test(path) && !['package.json','package-lock.json','SECURITY.md','.node-version'].includes(path)) throw new Error('Unexpected proposed path: ' + path);
