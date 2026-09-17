@@ -1,0 +1,76 @@
+# Temporary preparation workflow for PR #62. Removed from the final tree.
+name: Prepare audit artifacts
+on:
+  push:
+    branches: [fix/0.9.7-architecture-reliability-audit]
+    paths: [.github/workflows/audit-prepare.yml, .audit-patch]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    if: github.repository == 'CaptainLand/AporiaX' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply proposed source patch, if present
+        shell: bash
+        run: |
+          if [ -f .audit-patch ]; then
+            git apply --check .audit-patch
+            git apply --index .audit-patch
+          fi
+      - run: npm ci
+      - name: Export dependencies for offline reproduction
+        run: |
+          tar --exclude=node_modules/electron/dist -czf audit-dependencies.tar.gz node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-dependencies-${{ github.run_id }}
+          path: audit-dependencies.tar.gz
+          retention-days: 1
+      - name: Validate proposed audit fixes
+        if: hashFiles('.audit-patch') != ''
+        run: |
+          node --experimental-sqlite tests/audit-reliability.mjs
+          npm run test:critical-reliability
+          npm run test:context-reliability
+          npm run test:reliability-batch3
+          npm run build
+      - name: Store proposed source blobs without updating any branch
+        if: always() && hashFiles('.audit-patch') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const paths = execFileSync('git', ['diff','--cached','--name-only','--diff-filter=ACM','-z'], {encoding:'utf8'}).split('\0').filter(Boolean);
+          const files = [];
+          for (const path of paths) {
+            if (!/^(electron|src|tests|scripts|docs|\.github)\//.test(path) && !['package.json','package-lock.json','SECURITY.md','.node-version'].includes(path)) throw new Error('Unexpected proposed path: ' + path);
+            const content = readFileSync(path);
+            const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {method:'POST',headers:{Authorization:`Bearer ${process.env.GH_TOKEN}`,Accept:'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify({content:content.toString('base64'),encoding:'base64'})});
+            if (!response.ok) throw new Error(`Blob creation failed for ${path}: ${response.status}`);
+            const blob = await response.json();
+            const expected = execFileSync('git',['hash-object',path],{encoding:'utf8'}).trim();
+            if (blob.sha !== expected) throw new Error('Blob checksum mismatch: ' + path);
+            files.push({path,sha:blob.sha,mode:'100644',type:'blob'});
+          }
+          writeFileSync('audit-tree-elements.json',JSON.stringify({head:process.env.GITHUB_SHA,files},null,2));
+          console.log(JSON.stringify({head:process.env.GITHUB_SHA,files}));
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('audit-tree-elements.json') != ''
+        with:
+          name: audit-tree-${{ github.run_id }}
+          path: audit-tree-elements.json
+          retention-days: 3
