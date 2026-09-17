@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const taskExecutionModes = new Map();
+let taskRevision;
+let durableTaskIds = new Set();
+let taskSaveTail = Promise.resolve();
+let historyReadOnly = true;
+
 const normalizeExecutionMode = (value) =>
   ["direct", "safe", "isolated"].includes(value) ? value : "safe";
 const rememberTaskExecutionModes = (tasks) => {
@@ -54,11 +59,30 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("account:execute-remote-file-command", command),
   },
   tasks: {
-    load: () =>
-      ipcRenderer.invoke("tasks:load").then((tasks) => rememberTaskExecutionModes(tasks)),
+    load: async () => {
+      await taskSaveTail.catch(() => {});
+      const snapshot = await ipcRenderer.invoke("tasks:snapshot");
+      taskRevision = snapshot.revision;
+      historyReadOnly = snapshot.readOnly === true;
+      durableTaskIds = new Set((snapshot.tasks || []).map((task) => task.id));
+      return rememberTaskExecutionModes(snapshot.tasks);
+    },
+    diagnostics: () => ipcRenderer.invoke("tasks:diagnostics"),
     save: (tasks) => {
       rememberTaskExecutionModes(tasks);
-      return ipcRenderer.invoke("tasks:save", tasks);
+      const snapshot = structuredClone(tasks);
+      const operation = taskSaveTail.catch(() => {}).then(async () => {
+        if (historyReadOnly || taskRevision === undefined) throw new Error("TASK_STORE_RECOVERY_REQUIRED: load history successfully before saving.");
+        const ids = new Set(snapshot.map((task) => task.id));
+        const result = await ipcRenderer.invoke("tasks:save", { tasks: snapshot, expectedRevision: taskRevision,
+          deletedTaskIds: [...durableTaskIds].filter((id) => !ids.has(id)) });
+        if (Number.isSafeInteger(result.revision)) taskRevision = result.revision;
+        if (result.ok) durableTaskIds = ids;
+        else for (const id of result.saved || []) durableTaskIds.add(id);
+        return result;
+      });
+      taskSaveTail = operation;
+      return operation;
     },
   },
   workspace: {

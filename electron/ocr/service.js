@@ -1,4 +1,5 @@
-import { Worker } from "node:worker_threads";
+import { createOcrProcess } from "./process-client.js";
+import { inspectImageDimensions } from "./preflight.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ export const OCR_MODELS = Object.freeze({
 });
 const digest = (data) => createHash("sha256").update(data).digest("hex");
 const MAX_INPUT = 16 * 1024 * 1024;
-export function createOcrService({ directory, fetchImpl = fetch, workerFactory = (path, options) => new Worker(path, options) }) {
+export function createOcrService({ directory, fetchImpl = fetch, workerFactory = createOcrProcess }) {
   const jobs = new Map(), cache = new Map();
   let preparing = null;
   async function modelReady(lang) {
@@ -56,6 +57,9 @@ export function createOcrService({ directory, fetchImpl = fetch, workerFactory =
     const jpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
     const webp = bytes.subarray(0,4).toString() === "RIFF" && bytes.subarray(8,12).toString() === "WEBP";
     if (!pdf && !png && !jpeg && !webp) throw new Error("仅支持 PNG、JPEG、WebP 和 PDF，不支持 SVG 或其他可执行格式。");
+    if (!pdf) inspectImageDimensions(bytes);
+    if (input.forceOcr !== undefined && typeof input.forceOcr !== "boolean") throw new Error("forceOcr must be a boolean.");
+    const forceOcr = input.forceOcr === true;
     const from = Number(input.from ?? 1), to = Number(input.to ?? from);
     if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to > 240 || to - from >= 20 || !pdf && (from !== 1 || to !== 1)) throw new Error("页码范围无效：每次最多 20 页，页码为 1–240；图片只有第 1 页。");
     const language = ["eng", "chi_sim", "chi_sim+eng"].includes(input.language) ? input.language : "chi_sim+eng";
@@ -66,13 +70,13 @@ export function createOcrService({ directory, fetchImpl = fetch, workerFactory =
     if ([...jobs.values()].some((job) => job.state === "running")) throw new Error("已有 OCR 正在运行。");
     for (const [id, job] of jobs) if (job.state !== "running" && jobs.size >= 6) jobs.delete(id);
     const name = String(input.name || (pdf ? "document.pdf" : "image.png")).replace(/[\r\n\t]/g, " ").slice(0, 160);
-    const cacheKey = digest(bytes) + `:v2:${from}:${to}:${language}:${rotation}`;
+    const cacheKey = digest(bytes) + `:v3:${from}:${to}:${language}:${rotation}:${forceOcr}`;
     const cached = cache.get(cacheKey);
     const job = { id: randomUUID(), owner, name, state: cached ? "completed" : "running", pages: cached ? structuredClone(cached) : [], completed: cached?.length || 0, total: to - from + 1, progress: 0, cached: Boolean(cached), cacheKey };
     jobs.set(job.id, job);
     if (cached) return publicJob(job);
     const workerPath = fileURLToPath(new URL("./worker.mjs", import.meta.url)).replace(/app\.asar([/\\])/, "app.asar.unpacked$1");
-    try { job.worker = workerFactory(workerPath, { workerData: { data: bytes, pdf, from, to, language, rotation, directory }, resourceLimits: { maxOldGenerationSizeMb: 256 } }); }
+    try { job.worker = workerFactory(workerPath, { workerData: { data: bytes, pdf, from, to, language, rotation, directory, forceOcr }, resourceLimits: { maxOldGenerationSizeMb: 256 } }); }
     catch (error) { job.state = "failed"; job.error = error.message; return publicJob(job); }
     job.timer = setTimeout(() => stop(job, "failed", "识别超过 5 分钟，已停止；请缩小页码范围。"), 300000);
     job.worker.on("message", (message) => {

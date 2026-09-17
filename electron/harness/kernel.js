@@ -1,3 +1,4 @@
+import { MAX_BUILDERS } from "./builder-count.js";
 import { createHarnessEventBus } from "./event-bus.js";
 import { createAgentDefinitionRegistry } from "./agent-definitions.js";
 import { HarnessSessionStore } from "./session.js";
@@ -21,7 +22,7 @@ applyRuntimeToolDefinitionOverrides();
 
 export function createHarnessKernel({
   onEvent = null,
-  schedulerConcurrency = 4,
+  schedulerConcurrency = MAX_BUILDERS,
   toolDescriptors = [],
   taskRuntime = null,
 } = {}) {

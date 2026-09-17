@@ -1,3 +1,4 @@
+import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
 import "./gpu-guard.js";
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
@@ -55,14 +56,14 @@ import {
 } from "./extension-library.js";
 import { createExtensionDiscovery, verifyInstalledSkill } from "./extension-discovery.js";
 const extensionDiscovery = createExtensionDiscovery();
-ipcMain.handle("core:library:search-online", (_event, request = {}) => extensionDiscovery.search(request));
-ipcMain.handle("core:library:online-details", (_event, request = {}) => extensionDiscovery.details(request));
-ipcMain.handle("core:library:install-online-skill", (_event, request = {}) => extensionDiscovery.install({ userDataDirectory: app.getPath("userData"), ticket: request.ticket }));
-ipcMain.handle("core:library:verify-skill", (_event, request = {}) => verifyInstalledSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
+handleTrustedIpc(ipcMain, "core:library:search-online", (_event, request = {}) => extensionDiscovery.search(request));
+handleTrustedIpc(ipcMain, "core:library:online-details", (_event, request = {}) => extensionDiscovery.details(request));
+handleTrustedIpc(ipcMain, "core:library:install-online-skill", (_event, request = {}) => extensionDiscovery.install({ userDataDirectory: app.getPath("userData"), ticket: request.ticket }));
+handleTrustedIpc(ipcMain, "core:library:verify-skill", (_event, request = {}) => verifyInstalledSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
 
 const desktopBackground = installDesktopBackground();
 installAppUpdate({
-  getActiveRunCount: () => desktopBackground.snapshot().activeRuns,
+  getActiveRunCount: () => kernel?.taskRuntime?.listActiveRuns().length || 0,
 });
 const activeRunMetadata = new Map();
 let kernel = null;
@@ -193,9 +194,10 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
   }
   if (channel === "harness:steer") {
     return nativeHandle(channel, async (event, request = {}) => {
+      assertTrustedIpcSender(event);
       const runId = String(request?.runId || "").trim();
       const metadata = activeRunMetadata.get(runId);
-      const workspacePath = metadata?.workspacePath || "";
+      const workspacePath = metadata?.workspacePath || kernel?.taskRuntime?.getActiveRun(runId)?.workspacePath || "";
       if (!workspacePath || !request?.message) {
         return listener(event, request);
       }
@@ -233,6 +235,7 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
   }
   if (channel !== "harness:run") return nativeHandle(channel, listener);
   return nativeHandle(channel, async (event, request) => {
+    assertTrustedIpcSender(event);
     const budget = planAgentBudget(request || {});
     const runId = String(request?.runId || "").trim();
     const workspacePath = String(request?.workspacePath || "").trim();
@@ -264,6 +267,8 @@ kernel = createHarnessKernel({
   taskRuntime: desktopMain.harnessTaskRuntime,
 });
 setDefaultHarnessEventBus(kernel.events);
+desktopBackground.setRunSource(() => desktopMain.harnessTaskRuntime.listActiveRuns());
+desktopMain.harnessTaskRuntime.subscribeActiveRuns(() => desktopBackground.refresh());
 kernel.events.on("approval.required", (event) => {
   const approval = event.approval || {};
   showApprovalToast({
@@ -297,13 +302,13 @@ desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
 });
 const coreServer = createHarnessCoreServer({ kernel });
 
-ipcMain.handle("core:status", () => ({
+handleTrustedIpc(ipcMain, "core:status", () => ({
   running: Boolean(coreServer.url),
   url: coreServer.url,
   capabilities: kernel.capabilities(),
   capabilitySummary: kernel.capabilitiesRegistry.summary(),
 }));
-ipcMain.handle("core:capabilities", async (_event, request = {}) => {
+handleTrustedIpc(ipcMain, "core:capabilities", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
   const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const capabilities = kernel.capabilitiesRegistry.list({
@@ -320,13 +325,13 @@ ipcMain.handle("core:capabilities", async (_event, request = {}) => {
     policy,
   };
 });
-ipcMain.handle("core:agents", () => ({ agents: kernel.agents.list() }));
-ipcMain.handle("core:plugins", () => ({ plugins: kernel.plugins.list() }));
-ipcMain.handle("core:extension-policy", async (_event, request = {}) => {
+handleTrustedIpc(ipcMain, "core:agents", () => ({ agents: kernel.agents.list() }));
+handleTrustedIpc(ipcMain, "core:plugins", () => ({ plugins: kernel.plugins.list() }));
+handleTrustedIpc(ipcMain, "core:extension-policy", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
   return loadExtensionPolicy(extensionPolicyOptions(workspacePath));
 });
-ipcMain.handle("core:set-extension-policy", async (_event, request = {}) => {
+handleTrustedIpc(ipcMain, "core:set-extension-policy", async (_event, request = {}) => {
   await setExtensionSourceEnabled({
     userDataDirectory: app.getPath("userData"),
     source: request?.source,
@@ -335,7 +340,7 @@ ipcMain.handle("core:set-extension-policy", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
   return loadExtensionPolicy(extensionPolicyOptions(workspacePath));
 });
-ipcMain.handle("core:skills", async (_event, request = {}) => {
+handleTrustedIpc(ipcMain, "core:skills", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
   const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const userSkillsDirectory = join(app.getPath("userData"), "skills");
@@ -376,7 +381,7 @@ ipcMain.handle("core:skills", async (_event, request = {}) => {
     manualInvocation: "@skill:name or /skill:name",
   };
 });
-ipcMain.handle("core:mcp", async (_event, request = {}) => {
+handleTrustedIpc(ipcMain, "core:mcp", async (_event, request = {}) => {
   const workspacePath = String(request?.workspacePath || "").trim();
   const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const configuration = await loadMcpConfiguration(
@@ -395,19 +400,19 @@ ipcMain.handle("core:mcp", async (_event, request = {}) => {
     projectSelection: configuration.projectSelection,
   };
 });
-ipcMain.handle("core:library", async (_event, request = {}) =>
+handleTrustedIpc(ipcMain, "core:library", async (_event, request = {}) =>
   extensionLibrarySnapshot({
     userDataDirectory: app.getPath("userData"),
     workspacePath: String(request?.workspacePath || "").trim(),
   }),
 );
-ipcMain.handle("core:library:install-skill", async (_event, request = {}) =>
+handleTrustedIpc(ipcMain, "core:library:install-skill", async (_event, request = {}) =>
   installCatalogSkill({
     userDataDirectory: app.getPath("userData"),
     catalogId: request?.catalogId,
   }),
 );
-ipcMain.handle("core:library:import-skill", async () => {
+handleTrustedIpc(ipcMain, "core:library:import-skill", async () => {
   const selection = await dialog.showOpenDialog({
     title: "Import AporiaX Skill folder",
     properties: ["openDirectory"],
@@ -418,23 +423,23 @@ ipcMain.handle("core:library:import-skill", async () => {
     sourceDirectory: selection.filePaths[0],
   });
 });
-ipcMain.handle("core:library:rollback-skill", async (_event, request = {}) => rollbackUserSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
-ipcMain.handle("core:library:toggle-mcp", async (_event, request = {}) => setMcpServerEnabled({ userDataDirectory: app.getPath("userData"), id: request.id, enabled: request.enabled }));
-ipcMain.handle("core:library:probe-mcp", async (_event, request = {}) => probeMcpServer({ userDataDirectory: app.getPath("userData"), id: request.id }));
-ipcMain.handle("core:library:remove-skill", async (_event, request = {}) =>
+handleTrustedIpc(ipcMain, "core:library:rollback-skill", async (_event, request = {}) => rollbackUserSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
+handleTrustedIpc(ipcMain, "core:library:toggle-mcp", async (_event, request = {}) => setMcpServerEnabled({ userDataDirectory: app.getPath("userData"), id: request.id, enabled: request.enabled }));
+handleTrustedIpc(ipcMain, "core:library:probe-mcp", async (_event, request = {}) => probeMcpServer({ userDataDirectory: app.getPath("userData"), id: request.id }));
+handleTrustedIpc(ipcMain, "core:library:remove-skill", async (_event, request = {}) =>
   removeUserSkill({
     userDataDirectory: app.getPath("userData"),
     name: request?.name,
   }),
 );
-ipcMain.handle("core:library:save-mcp", async (_event, request = {}) =>
+handleTrustedIpc(ipcMain, "core:library:save-mcp", async (_event, request = {}) =>
   saveMcpServer({
     userDataDirectory: app.getPath("userData"),
     server: request?.server,
     createOnly: request?.createOnly === true,
   }),
 );
-ipcMain.handle("core:library:import-mcp", async () => {
+handleTrustedIpc(ipcMain, "core:library:import-mcp", async () => {
   const selection = await dialog.showOpenDialog({
     title: "Import MCP configuration",
     properties: ["openFile"],
@@ -446,21 +451,21 @@ ipcMain.handle("core:library:import-mcp", async () => {
     sourcePath: selection.filePaths[0],
   });
 });
-ipcMain.handle("core:library:remove-mcp", async (_event, request = {}) =>
+handleTrustedIpc(ipcMain, "core:library:remove-mcp", async (_event, request = {}) =>
   removeMcpServer({
     userDataDirectory: app.getPath("userData"),
     id: request?.id,
   }),
 );
-ipcMain.handle("core:sessions", () => ({ sessions: kernel.sessions.list() }));
-ipcMain.handle("core:events", (_event, request = {}) => ({
+handleTrustedIpc(ipcMain, "core:sessions", () => ({ sessions: kernel.sessions.list() }));
+handleTrustedIpc(ipcMain, "core:events", (_event, request = {}) => ({
   events: kernel.events.history(request),
 }));
-ipcMain.handle("core:tasks", () => desktopMain.harnessTaskRuntime.snapshot());
-ipcMain.handle("core:agent-budget", (_event, request = {}) => ({
+handleTrustedIpc(ipcMain, "core:tasks", () => desktopMain.harnessTaskRuntime.snapshot());
+handleTrustedIpc(ipcMain, "core:agent-budget", (_event, request = {}) => ({
   budget: planAgentBudget(request),
 }));
-ipcMain.handle("desktop:background-status", () => desktopBackground.snapshot());
+handleTrustedIpc(ipcMain, "desktop:background-status", () => desktopBackground.snapshot());
 
 app.whenReady().then(() => coreServer.listen()).catch(() => undefined);
 app.on("before-quit", () => {

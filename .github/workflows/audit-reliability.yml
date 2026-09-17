@@ -1,37 +1,21 @@
 name: Audit reliability
-
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: audit-reliability-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
-  source-snapshot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Export exact source for reproducible review
-        run: git archive --format=tar.gz --output=audit-source.tar.gz HEAD
-      - uses: actions/upload-artifact@v4
-        with:
-          name: audit-source-${{ github.run_id }}
-          path: audit-source.tar.gz
-          retention-days: 3
-          if-no-files-found: error
   regression:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        node: [22.12.0, 22.16.0]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -40,16 +24,40 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - name: Existing critical reliability regression
-        run: npm run test:critical-reliability
-      - name: Existing durable storage regression
-        run: npm run test:reliability-batch3
-      - name: Audit regression tests when present
-        shell: bash
+      - name: Required audit and existing regression suite
+        run: npm run test:audit-suite
+      - name: Production renderer build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audit-results-${{ matrix.os }}-${{ matrix.node }}
+          path: .tmp/audit-results
+          retention-days: 7
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+      - run: npm ci
+      - name: Actual OCR, UI and ASAR-unpacked OCR
+        run: npm run test:0.9.7
+      - name: Workbench and terminal regression
         run: |
-          if [ -f tests/audit-reliability.mjs ]; then
-            node --experimental-sqlite tests/audit-reliability.mjs
-          fi
+          npm run test:side-chat
+          npm run test:workbench-documents-git
+          npm run test:workbench-git-setup
+          npm run test:terminal-v2
+      - name: Build Windows packages without publishing
+        run: npm run dist:win
+      - name: Verify packaged source and hashes
+        run: node scripts/verify-windows-release.mjs release

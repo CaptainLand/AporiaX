@@ -1,3 +1,5 @@
+import { configureTrustedIpc, isTrustedAppUrl } from "./security/trusted-ipc.js";
+import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
 import {
   BrowserWindow,
   Notification,
@@ -23,7 +25,7 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import {
   listWorkspaceTree,
   readWorkspacePreview,
@@ -59,6 +61,8 @@ const projectRoot = join(currentDirectory, "..");
 const isDevelopment = process.argv.includes("--dev");
 
 let mainWindow = null;
+const applicationUrl = isDevelopment ? "http://127.0.0.1:5173/" : pathToFileURL(join(projectRoot, "dist", "index.html")).href;
+configureTrustedIpc({ getWindow: () => mainWindow, expectedUrl: applicationUrl, development: isDevelopment });
 const workbench = registerWorkbench(() => mainWindow);
 let completionFlashTimer = null;
 let currentWindowTheme = "light";
@@ -106,11 +110,7 @@ const harnessTaskRuntime = createHarnessTaskRuntime({
   },
 });
 
-function assertTrustedSender(event) {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
-    throw new Error("Rejected IPC request from an unknown renderer.");
-  }
-}
+function assertTrustedSender(event) { assertTrustedIpcSender(event); }
 
 const sideChat = createSideChatService({
   dataDirectory: () => app.getPath("userData"),
@@ -122,7 +122,7 @@ const sideChat = createSideChatService({
     }
   },
 });
-ipcMain.handle("side-chat:request", (event, input) => {
+handleTrustedIpc(ipcMain, "side-chat:request", (event, input) => {
   assertTrustedSender(event);
   return sideChat.request(input);
 });
@@ -395,7 +395,9 @@ async function loadTasks() {
 }
 
 async function saveTasks(tasks) {
-  return getTaskHistoryStore().saveTasks(tasks);
+  return Array.isArray(tasks)
+    ? getTaskHistoryStore().saveTasks(tasks)
+    : getTaskHistoryStore().saveTasks(tasks?.tasks, { expectedRevision: tasks?.expectedRevision, deletedTaskIds: tasks?.deletedTaskIds });
 }
 
 async function hydrateHarnessMessages(messages) {
@@ -553,13 +555,7 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    const allowedDevelopmentUrl =
-      isDevelopment && url.startsWith("http://127.0.0.1:5173");
-    const allowedProductionUrl =
-      !isDevelopment && url.startsWith("file://");
-    if (!allowedDevelopmentUrl && !allowedProductionUrl) {
-      event.preventDefault();
-    }
+    if (!isTrustedAppUrl(url, applicationUrl, isDevelopment)) event.preventDefault();
   });
 
   mainWindow.on("maximize", sendWindowState);
@@ -658,13 +654,13 @@ async function startHarnessTask(
   });
 }
 
-ipcMain.handle("desktop:minimize", (event) => {
+handleTrustedIpc(ipcMain, "desktop:minimize", (event) => {
   assertTrustedSender(event);
   mainWindow?.minimize();
   return true;
 });
 
-ipcMain.handle("desktop:toggle-maximize", (event) => {
+handleTrustedIpc(ipcMain, "desktop:toggle-maximize", (event) => {
   assertTrustedSender(event);
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();
@@ -674,28 +670,28 @@ ipcMain.handle("desktop:toggle-maximize", (event) => {
   return Boolean(mainWindow?.isMaximized());
 });
 
-ipcMain.handle("desktop:close", (event) => {
+handleTrustedIpc(ipcMain, "desktop:close", (event) => {
   assertTrustedSender(event);
   mainWindow?.close();
   return true;
 });
 
-ipcMain.handle("desktop:is-maximized", (event) => {
+handleTrustedIpc(ipcMain, "desktop:is-maximized", (event) => {
   assertTrustedSender(event);
   return Boolean(mainWindow?.isMaximized());
 });
 
-ipcMain.handle("desktop:set-theme", (event, theme) => {
+handleTrustedIpc(ipcMain, "desktop:set-theme", (event, theme) => {
   assertTrustedSender(event);
   return applyWindowTheme(theme);
 });
 
-ipcMain.handle("desktop:task-completed", (event, payload) => {
+handleTrustedIpc(ipcMain, "desktop:task-completed", (event, payload) => {
   assertTrustedSender(event);
   return notifyTaskCompleted(payload);
 });
 
-ipcMain.handle("desktop:select-directory", async (event) => {
+handleTrustedIpc(ipcMain, "desktop:select-directory", async (event) => {
   assertTrustedSender(event);
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择 Agent 工作区",
@@ -707,13 +703,13 @@ ipcMain.handle("desktop:select-directory", async (event) => {
   return result.filePaths[0];
 });
 
-ipcMain.handle("desktop:link", async (event, request) => {
+handleTrustedIpc(ipcMain, "desktop:link", async (event, request) => {
   assertTrustedSender(event);
   try { return await handleDesktopLink(event, request); }
   catch (error) { return { ok: false, error: error.message }; }
 });
 
-ipcMain.handle("desktop:open-workspace", async (event, workspacePath) => {
+handleTrustedIpc(ipcMain, "desktop:open-workspace", async (event, workspacePath) => {
   assertTrustedSender(event);
   if (
     typeof workspacePath !== "string" ||
@@ -732,17 +728,26 @@ ipcMain.handle("desktop:open-workspace", async (event, workspacePath) => {
   return true;
 });
 
-ipcMain.handle("tasks:load", async (event) => {
+handleTrustedIpc(ipcMain, "tasks:load", async (event) => {
   assertTrustedSender(event);
   return loadTasks();
 });
 
-ipcMain.handle("tasks:save", async (event, tasks) => {
+handleTrustedIpc(ipcMain, "tasks:snapshot", async (event) => {
+  assertTrustedSender(event);
+  return getTaskHistoryStore().loadSnapshot();
+});
+handleTrustedIpc(ipcMain, "tasks:diagnostics", (event) => {
+  assertTrustedSender(event);
+  return getTaskHistoryStore().diagnostics();
+});
+
+handleTrustedIpc(ipcMain, "tasks:save", async (event, tasks) => {
   assertTrustedSender(event);
   return saveTasks(tasks);
 });
 
-ipcMain.handle(
+handleTrustedIpc(ipcMain, 
   "workspace:list-tree",
   async (event, workspacePath, requestedDirectory = ".") => {
     assertTrustedSender(event);
@@ -750,7 +755,7 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle(
+handleTrustedIpc(ipcMain, 
   "workspace:read-preview",
   async (event, workspacePath, requestedPath) => {
     assertTrustedSender(event);
@@ -758,27 +763,27 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("workspace:save-text", async (event, request) => {
+handleTrustedIpc(ipcMain, "workspace:save-text", async (event, request) => {
   assertTrustedSender(event);
   return saveWorkspaceTextFile(request);
 });
 
-ipcMain.handle("workspace:revert", async (event, request) => {
+handleTrustedIpc(ipcMain, "workspace:revert", async (event, request) => {
   assertTrustedSender(event);
   return revertWorkspaceChanges(request);
 });
 
-ipcMain.handle("workspace:restore-anchor", async (event, request) => {
+handleTrustedIpc(ipcMain, "workspace:restore-anchor", async (event, request) => {
   assertTrustedSender(event);
   return restoreWorkspaceAnchor(request);
 });
 
-ipcMain.handle("understanding:get", async (event, workspacePath) => {
+handleTrustedIpc(ipcMain, "understanding:get", async (event, workspacePath) => {
   assertTrustedSender(event);
   return (await openProjectUnderstanding(workspacePath)).snapshot();
 });
 
-ipcMain.handle("understanding:revert", async (event, request) => {
+handleTrustedIpc(ipcMain, "understanding:revert", async (event, request) => {
   assertTrustedSender(event);
   const store = await openProjectUnderstanding(request?.workspacePath);
   return store.revertTo(request?.revisionId, {
@@ -786,7 +791,7 @@ ipcMain.handle("understanding:revert", async (event, request) => {
   });
 });
 
-ipcMain.handle("understanding:settings", async (event, request) => {
+handleTrustedIpc(ipcMain, "understanding:settings", async (event, request) => {
   assertTrustedSender(event);
   const store = await openProjectUnderstanding(request?.workspacePath);
   return store.setSettings(request?.settings);
@@ -794,7 +799,7 @@ ipcMain.handle("understanding:settings", async (event, request) => {
 
 registerOcrIpc({ ipcMain, app, dialog, clipboard, assertTrustedSender, getBlob: (hash) => getTaskHistoryStore().readBlob(hash) });
 
-ipcMain.handle("attachments:parse", async (event, request) => {
+handleTrustedIpc(ipcMain, "attachments:parse", async (event, request) => {
   assertTrustedSender(event);
   const parsed = await parseAttachment(request);
   try {
@@ -807,14 +812,14 @@ ipcMain.handle("attachments:parse", async (event, request) => {
   }
 });
 
-ipcMain.handle("attachments:store", async (event, request) => {
+handleTrustedIpc(ipcMain, "attachments:store", async (event, request) => {
   assertTrustedSender(event);
   return getTaskHistoryStore().putBlob(request?.data, {
     type: request?.type,
   });
 });
 
-ipcMain.handle("providers:list", async (event) => {
+handleTrustedIpc(ipcMain, "providers:list", async (event) => {
   assertTrustedSender(event);
   return [
     publicAporiaCloudProvider(),
@@ -822,7 +827,7 @@ ipcMain.handle("providers:list", async (event) => {
   ];
 });
 
-ipcMain.handle("providers:discover", async (event, request) => {
+handleTrustedIpc(ipcMain, "providers:discover", async (event, request) => {
   assertTrustedSender(event);
   if (request?.id === APORIA_CLOUD_PROVIDER_ID) {
     throw new Error("Aporia Cloud 模型目录由 Aporia Account 管理，无需手动发现。");
@@ -840,29 +845,29 @@ ipcMain.handle("providers:discover", async (event, request) => {
   });
 });
 
-ipcMain.handle("providers:save", async (event, request) => {
+handleTrustedIpc(ipcMain, "providers:save", async (event, request) => {
   assertTrustedSender(event);
   return saveProvider(request);
 });
 
-ipcMain.handle("providers:remove", async (event, providerId) => {
+handleTrustedIpc(ipcMain, "providers:remove", async (event, providerId) => {
   assertTrustedSender(event);
   return removeProvider(providerId);
 });
 
-ipcMain.handle("sandbox:status", async (event) => {
+handleTrustedIpc(ipcMain, "sandbox:status", async (event) => {
   assertTrustedSender(event);
   return getSandboxStatus();
 });
 
-ipcMain.handle("sandbox:prepare", async (event) => {
+handleTrustedIpc(ipcMain, "sandbox:prepare", async (event) => {
   assertTrustedSender(event);
   return prepareSandbox({
     dataDirectory: app.getPath("userData"),
   });
 });
 
-ipcMain.handle("sandbox:open-recovery", async (event) => {
+handleTrustedIpc(ipcMain, "sandbox:open-recovery", async (event) => {
   assertTrustedSender(event);
   const directory = localSandboxRootPath(app.getPath("userData"));
   await mkdir(directory, { recursive: true });
@@ -871,27 +876,27 @@ ipcMain.handle("sandbox:open-recovery", async (event) => {
   return true;
 });
 
-ipcMain.handle("harness:has-api-key", async (event) => {
+handleTrustedIpc(ipcMain, "harness:has-api-key", async (event) => {
   assertTrustedSender(event);
   if ((await loadProviderRecords()).length > 0) return true;
   const account = await getDesktopAccountRuntime().getSnapshot().catch(() => null);
   return account?.status === "authenticated";
 });
 
-ipcMain.handle("harness:save-api-key", async (event, apiKey) => {
+handleTrustedIpc(ipcMain, "harness:save-api-key", async (event, apiKey) => {
   assertTrustedSender(event);
   await saveApiKey(apiKey);
   return true;
 });
 
-ipcMain.handle("harness:clear-api-key", async (event) => {
+handleTrustedIpc(ipcMain, "harness:clear-api-key", async (event) => {
   assertTrustedSender(event);
   await rm(getCredentialPath(), { force: true });
   await removeProvider("deepseek");
   return true;
 });
 
-ipcMain.handle("harness:run", async (event, request) => {
+handleTrustedIpc(ipcMain, "harness:run", async (event, request) => {
   assertTrustedSender(event);
   const runId = typeof request?.runId === "string" ? request.runId : "";
   return startHarnessTask(request, {
@@ -900,28 +905,28 @@ ipcMain.handle("harness:run", async (event, request) => {
   });
 });
 
-ipcMain.handle("harness:interrupt", (event, runId) => {
+handleTrustedIpc(ipcMain, "harness:interrupt", (event, runId) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.interrupt(runId, {
     clientId: String(event.sender.id),
   });
 });
 
-ipcMain.handle("harness:pause", async (event, runId) => {
+handleTrustedIpc(ipcMain, "harness:pause", async (event, runId) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.pause(runId, {
     clientId: String(event.sender.id),
   });
 });
 
-ipcMain.handle("harness:resume", async (event, runId) => {
+handleTrustedIpc(ipcMain, "harness:resume", async (event, runId) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.resume(runId, {
     clientId: String(event.sender.id),
   });
 });
 
-ipcMain.handle("harness:steer", async (event, { runId, message }) => {
+handleTrustedIpc(ipcMain, "harness:steer", async (event, { runId, message }) => {
   assertTrustedSender(event);
   const [hydrated] = await hydrateHarnessMessages([message || {}]);
   return harnessTaskRuntime.steer(runId, { ...message, ...hydrated }, {
@@ -929,7 +934,7 @@ ipcMain.handle("harness:steer", async (event, { runId, message }) => {
   });
 });
 
-ipcMain.handle(
+handleTrustedIpc(ipcMain, 
   "harness:approval-response",
   (event, { runId, approvalId, approved, scope = "once" }) => {
     assertTrustedSender(event);
@@ -943,17 +948,17 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("harness:active-runs", (event) => {
+handleTrustedIpc(ipcMain, "harness:active-runs", (event) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.listActiveRuns();
 });
 
-ipcMain.handle("harness:recoverable-runs", async (event) => {
+handleTrustedIpc(ipcMain, "harness:recoverable-runs", async (event) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.listRecoverableRuns();
 });
 
-ipcMain.handle(
+handleTrustedIpc(ipcMain, 
   "harness:acknowledge-recovery",
   async (event, runId) => {
     assertTrustedSender(event);

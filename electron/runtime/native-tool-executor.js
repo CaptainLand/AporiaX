@@ -1,3 +1,5 @@
+import { readTextPage } from "./text-reader.js";
+import { mutateWorkspaceFiles } from "./workspace-mutations.js";
 import { readSkillResource } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
@@ -242,7 +244,7 @@ export function createNativeToolExecutor({
       }
       const generated = await createOfficeArtifact(toolName, { ...input, _wordImages: wordImages });
       throwIfAborted(signal);
-      await writeFile(filePath, generated.buffer);
+      await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: input.path, before: created ? null : previousBuffer, after: generated.buffer }] });
       return {
         modelResult: {
           path: generated.path,
@@ -333,15 +335,8 @@ export function createNativeToolExecutor({
           },
         };
       }
-      const content = await readFile(filePath, "utf8");
-      return {
-        modelResult: {
-          path: input.path,
-          ...paginateContent(content, input, maxFileReadChars),
-          sha256: sha256(content),
-          external: toolName === "read_external_file",
-        },
-      };
+      const page = await readTextPage(filePath, input, maxFileReadChars, signal);
+      return { modelResult: { path: input.path, ...page, external: toolName === "read_external_file" } };
     }
 
     if (toolName === "search_text") {
@@ -383,7 +378,7 @@ export function createNativeToolExecutor({
       }
       const lineChanges = calculateLineChanges(previousContent, input.content);
       throwIfAborted(signal);
-      await writeFile(filePath, input.content, "utf8");
+      await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: input.path, before: created ? null : Buffer.from(previousContent), after: Buffer.from(input.content) }] });
       return {
         modelResult: {
           path: input.path,
@@ -461,21 +456,11 @@ export function createNativeToolExecutor({
           });
         }
         if (!input.dry_run) {
-          const written = [];
-          try {
-            for (const item of prepared) {
-              throwIfAborted(signal);
-              if (item.deleted) await rm(item.filePath);
-              else await writeFile(item.filePath, item.nextContent, "utf8");
-              written.push(item);
-            }
-          } catch (error) {
-            for (const item of written.reverse()) {
-              if (item.created) await rm(item.filePath, { force: true }).catch(() => undefined);
-              else await writeFile(item.filePath, item.previousContent, "utf8").catch(() => undefined);
-            }
-            throw error;
-          }
+          await mutateWorkspaceFiles({ workspaceRoot, signal, edits: prepared.map((item) => ({
+            path: item.path,
+            before: item.created ? null : Buffer.from(item.previousContent),
+            after: item.deleted ? null : Buffer.from(item.nextContent),
+          })) });
         }
         return {
           modelResult: {
@@ -527,7 +512,7 @@ export function createNativeToolExecutor({
       const lineChanges = calculateLineChanges(previousContent, nextContent);
       if (!input.dry_run) {
         throwIfAborted(signal);
-        await writeFile(filePath, nextContent, "utf8");
+        await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: input.path, before: Buffer.from(previousContent), after: Buffer.from(nextContent) }] });
       }
       return {
         modelResult: {

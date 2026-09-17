@@ -1,3 +1,4 @@
+import { handleTrustedIpc, assertTrustedIpcSender } from "../security/trusted-ipc.js";
 import { writeFile } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { createOcrService } from "./service.js";
@@ -5,7 +6,7 @@ import { createOcrService } from "./service.js";
 export function registerOcrIpc({ ipcMain, app, dialog, clipboard, assertTrustedSender, getBlob }) {
   let service;
   const owners = new Set();
-  ipcMain.handle("ocr:request", async (event, input = {}) => {
+  handleTrustedIpc(ipcMain, "ocr:request", async (event, input = {}) => {
     assertTrustedSender(event);
     service ||= createOcrService({ directory: join(app.getPath("userData"), "ocr", "models-v1") });
     const owner = event.sender.id;

@@ -1,3 +1,4 @@
+import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
 import { BrowserWindow, app, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { readFile, writeFile } from "node:fs/promises";
@@ -230,13 +231,13 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     return status;
   };
 
-  ipcMain.handle("update:status", () => status);
-  ipcMain.handle("update:check", (_event, request = {}) =>
+  handleTrustedIpc(ipcMain, "update:status", () => status);
+  handleTrustedIpc(ipcMain, "update:check", (_event, request = {}) =>
     check({ force: Boolean(request?.force) }),
   );
-  ipcMain.handle("update:download", () => download());
-  ipcMain.handle("update:install", () => install());
-  ipcMain.handle("update:open-release", () => openRelease());
+  handleTrustedIpc(ipcMain, "update:download", () => download());
+  handleTrustedIpc(ipcMain, "update:install", () => install());
+  handleTrustedIpc(ipcMain, "update:open-release", () => openRelease());
 
   return {
     snapshot: () => status,

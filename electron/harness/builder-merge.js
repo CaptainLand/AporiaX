@@ -77,7 +77,7 @@ async function replaceState(root, path, desired, expected) {
   }
 }
 
-export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, recoveryRoot, onPrepared, emit }) {
+export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, recoveryRoot, onPrepared, emit, signal }) {
   const root = await fs.realpath(workspaceRoot);
   const recoveryDirectory = await fs.mkdtemp(join(recoveryRoot, "merge-recovery-"));
   const manifestPath = join(recoveryDirectory, "manifest.json");
@@ -108,6 +108,7 @@ export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, r
     await save();
     await onPrepared?.(summary());
     for (const entry of manifest.entries) {
+      signal?.throwIfAborted();
       // A crash at/after replacement leaves an inspectable intent, even if the
       // following journal write never happens.
       entry.state = "attempted";

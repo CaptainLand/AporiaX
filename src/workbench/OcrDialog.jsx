@@ -18,6 +18,7 @@ export function OcrDialog({ source: initialSource, onClose, onAttach }) {
   const { tr } = useI18n();
   const [source, setSource] = useState(initialSource), [resource, setResource] = useState(null), [job, setJob] = useState(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [from, setFrom] = useState(1), [to, setTo] = useState(1), [pageIndex, setPageIndex] = useState(0), [language, setLanguage] = useState("chi_sim+eng");
+  const [forceOcr, setForceOcr] = useState(false);
   const [rotation, setRotation] = useState(0), [notice, setNotice] = useState("");
   const active = useRef(true), jobRef = useRef(null), pending = useRef(false);
   const request = (operation, extra = {}) => window.desktop.ocr.request({ operation, ...extra });
@@ -41,7 +42,7 @@ export function OcrDialog({ source: initialSource, onClose, onAttach }) {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError(""); setNotice("");
     try {
-      const result = await request(operation, { id: job?.id, source, from: Number(from), to: Number(to), language, rotation });
+      const result = await request(operation, { id: job?.id, source, from: Number(from), to: Number(to), language, rotation, forceOcr });
       if (operation === "start") {
         jobRef.current = result.id;
         if (!active.current) { await request("cancel", { id: result.id }); return; }
@@ -64,6 +65,7 @@ export function OcrDialog({ source: initialSource, onClose, onAttach }) {
       {resource && !resource.ready && <div className="ocr-resource"><p>{tr("首次需要下载约 4.7 MB 中英文资源；仅下载引擎数据，不上传文件。", "Download about 4.7 MB of English/Chinese language resources once. No file uploads.")}</p><button disabled={running} onClick={() => void act("prepare")}>{busy ? tr("正在下载…", "Downloading…") : tr("下载本地识别资源", "Download OCR resources")}</button></div>}
       <div className="ocr-controls"><label>{tr("起始页", "From")}<input type="number" min={1} max={240} value={from} disabled={running} onChange={(event) => setFrom(event.target.value)} /></label><label>{tr("结束页", "To")}<input type="number" min={1} max={240} value={to} disabled={running} onChange={(event) => setTo(event.target.value)} /></label><label>{tr("语言", "Language")}<select value={language} disabled={running} onChange={(event) => setLanguage(event.target.value)}><option value="chi_sim+eng">中文 + English</option><option value="eng">English</option><option value="chi_sim">简体中文</option></select></label></div>
       <small>{tr("每次最多 20 页，图片填 1–1。PDF 优先读取已有文字层。", "Up to 20 pages; use 1–1 for images. PDF text layers are reused.")}</small>
+      <label><input type="checkbox" checked={forceOcr} disabled={running} onChange={(event) => setForceOcr(event.target.checked)} />{tr("强制识别图像文字（保留原文字层）", "Force OCR (retain the original text layer)")}</label>
       <label>{tr("顺时针旋转扫描内容", "Rotate scan clockwise")}<select value={rotation} disabled={running} onChange={(event) => setRotation(Number(event.target.value))}>{[0, 90, 180, 270].map((angle) => <option key={angle} value={angle}>{angle}°</option>)}</select></label>
       <div className="ocr-actions"><button disabled={running || !source || !resource?.ready} onClick={() => void act("start")}>{tr("开始识别", "Recognize")}</button>{job?.state === "running" && <button disabled={busy} onClick={() => void act("cancel")}>{tr("取消识别", "Cancel")}</button>}</div>
       {(error || job?.error) && <p role="alert" className="workbench-error">{error || job.error}</p>}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readdir, lstat } from "node:fs/promises";
+import { mkdtemp, writeFile, readdir, lstat, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createBuilderWorkspaceManager } from "../electron/harness/builder-workspace.js";
@@ -42,10 +42,12 @@ try {
   }
   peakRss = Math.max(peakRss, process.memoryUsage().rss);
   const result = { builders: opened.length, scopedBytesEach: 4_000_000, worktreeBytes, checkpointJsonBytes, nodeRssInitial: initialRss, nodeRssPeak: peakRss, elapsedMs: Math.round(performance.now() - started), scope: "Node parent RSS only; excludes Git child processes, model context and provider latency" };
+  await mkdir(resolve(".tmp"), { recursive: true });
   await writeFile(resolve(".tmp/release097-builder-capacity.json"), JSON.stringify(result, null, 2));
   console.log("PASS 0.9.7 capacity", JSON.stringify(result));
 } finally {
   clearInterval(timer);
   await Promise.all(opened.map((worker) => worker.close()));
+  await rm(root, { recursive: true, force: true });
 }
 assert.equal(manager.leases().length, 0);
