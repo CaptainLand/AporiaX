@@ -50,7 +50,7 @@ if (process.argv[2] === "--fixture-child") {
     if (recovery?.worktreeRoot) {
       // Exact test-created worktree, checked before recursive cleanup.
       const base = dirname(recovery.worktreeRoot);
-      const inside = relative(resolve(tmpdir()), resolve(base));
+      const inside = relative(await fs.realpath(tmpdir()), await fs.realpath(base));
       assert(inside && !inside.startsWith("..") && !isAbsolute(inside));
       assert(inside.startsWith("aporiax-builder-"));
       await run("git", ["worktree", "remove", "--force", recovery.worktreeRoot], { cwd: root, windowsHide: true });

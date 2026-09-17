@@ -147,7 +147,7 @@ console.log(`Builder merge regression: ${scenarios.length}/${scenarios.length} P
     fs.rename = originals.rename;
     if (session.activeWorktree) {
       const base = dirname(session.activeWorktree);
-      const inside = relative(resolve(tmpdir()), resolve(base));
+      const inside = relative(await fs.realpath(tmpdir()), await fs.realpath(base));
       assert(inside && inside.startsWith("aporiax-builder-") && !inside.startsWith("..") && !isAbsolute(inside));
       await git("worktree", "remove", "--force", session.activeWorktree);
       await fs.rm(base, { recursive: true, force: true });

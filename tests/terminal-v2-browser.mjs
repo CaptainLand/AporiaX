@@ -117,8 +117,9 @@ try {
   assert.equal(await page.evaluate(() => Boolean(window.terminal("terminal_3"))), true);
   await page.evaluate(async () => { window.failStop = false; await window.wb.close("terminal_3"); });
   assert.equal(await page.evaluate(() => Boolean(window.terminal("terminal_3"))), false);
-  await page.evaluate(() => { window.readFailures = 1; window.terminal("terminal_4").retry(); });
+  await page.evaluate(() => { window.wb.select("terminal_4"); window.readFailureTarget = "terminal_4"; window.readFailures = 100; window.terminal("terminal_4").retry(); });
   await page.getByRole("alert").filter({ hasText: "Temporary fixture transport error" }).waitFor();
+  await page.evaluate(() => { window.readFailures = 0; window.terminal("terminal_4").retry(); });
   await page.waitForFunction(() => window.terminal("terminal_4").snapshot.readFailure === "");
   await page.evaluate(() => { window.wb.open("route"); window.appendOutput("terminal_4", "\r\nBACKGROUND_OUTPUT"); });
   await page.waitForFunction(() => {

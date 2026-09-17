@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import JSZip from "jszip";
@@ -9,7 +9,7 @@ import { readWorkbenchFile } from "../electron/workbench/files.js";
 import { verifyExistingTarget } from "../electron/runtime/workspace-runtime.js";
 import { createWorkbenchGitService, runWorkbenchGit } from "../electron/workbench/git-service.js";
 
-const root = await mkdtemp(join(tmpdir(), "aporiax-workbench-ui-"));
+const root = await realpath(await mkdtemp(join(tmpdir(), "aporiax-workbench-ui-")));
 await mkdir(join(root, "docs")); await mkdir(join(root, "empty-hooks")); await mkdir(".tmp/workbench-documents-git", { recursive: true });
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 const fence = String.fromCharCode(96).repeat(3);

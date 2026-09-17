@@ -55,13 +55,23 @@ jobs:
       - name: Actual OCR, UI and ASAR-unpacked OCR
         run: npm run test:0.9.7
       - name: Workbench and terminal regression
-        timeout-minutes: 5
-        run: |
-          npm run test:side-chat
-          npm run test:workbench-documents-git
-          npm run test:workbench-git-setup
-          npm run test:terminal-v2
+        id: workbench
+        timeout-minutes: 10
+        run: node scripts/run-desktop-checks.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-regression-evidence
+          path: |
+            .tmp/audit-results
+            .tmp/terminal-v2/*.png
+            .tmp/workbench-documents-git/*.png
+            .tmp/workbench-git-v2/*.png
+            .tmp/side-chat-browser/*.png
+          retention-days: 7
       - name: Build Windows packages without publishing
+        if: ${{ !cancelled() && steps.workbench.outcome != 'skipped' }}
         run: npm run dist:win
       - name: Verify packaged source and hashes
+        if: ${{ !cancelled() && steps.workbench.outcome != 'skipped' }}
         run: node scripts/verify-windows-release.mjs release
