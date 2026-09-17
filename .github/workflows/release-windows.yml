@@ -6,6 +6,11 @@ on:
       tag:
         description: Existing release tag
         required: true
+      prerelease:
+        description: Publish to the opt-in preview channel (stable updater ignores prereleases)
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: write
@@ -51,8 +56,17 @@ jobs:
       - name: Verify durable reliability and release invariants
         run: npm run test:reliability-batch3
 
+      - name: Verify audit and 0.9.7 regressions
+        run: npm run test:audit-suite
+
+      - name: Verify OCR, browser and real Electron behavior
+        run: npm run test:0.9.7
+
       - name: Build verified Windows packages
         run: npm run dist:win
+
+      - name: Verify production-origin document and terminal workflow
+        run: node scripts/run-desktop-checks.mjs
 
       - name: Verify packaged source, binaries and update hashes
         run: node scripts/verify-windows-release.mjs release
@@ -63,6 +77,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           $tag = $env:RELEASE_TAG
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
@@ -82,6 +97,6 @@ jobs:
             --repo $env:RELEASE_REPOSITORY `
             --title "AporiaX $tag — Preview" `
             --notes-file $notes `
-            --prerelease `
+            --prerelease=$env:RELEASE_PRERELEASE `
             --draft=false
           if ($LASTEXITCODE -ne 0) { throw "Release publication failed." }

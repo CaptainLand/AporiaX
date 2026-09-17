@@ -44,7 +44,7 @@ try {
   const result = await runHarness({ runId: "autonomous", workspacePath: root, permission: "workspace-write", approvalMode: "full-auto", signal: controller.signal, language: "en",
     messages: [{ role: "user", content: "Modify one file." }], onEvent: (e) => events.push(e),
     provider: { id: "fake", name: "fake", vendor: "openai", baseUrl: "https://test.invalid/v1", apiKey: "fake", models: [{ id: "test", supportsTools: true, contextWindow: 32000 }] }, modelId: "test" });
-  assert.equal(result.status, "completed"); assert.equal(result.subagents.length, 1);
+  assert.equal(result.status, "completed", JSON.stringify({ result, events }, null, 2)); assert.equal(result.subagents.length, 1);
   assert(result.changes.some((change) => change.path === "src/a.txt"));
   assert(events.some((e) => e.type === "builder.merge.completed"));
   assert.equal(await readFile(join(root, "other.txt"), "utf8"), "untouched");

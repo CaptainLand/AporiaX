@@ -11,8 +11,18 @@ export async function withUnderstandingWriteLock(filePath, action, { timeoutMs =
     database.exec("PRAGMA busy_timeout = 0");
     const deadline = Date.now() + timeoutMs;
     while (!acquired) {
-      try { database.exec("BEGIN IMMEDIATE"); acquired = true; }
+      let began = false;
+      try {
+        database.exec("BEGIN IMMEDIATE");
+        began = true;
+        // Materialize the guard transaction even on a new, zero-byte DB.
+        // Never run the JSON writer until SQLite accepted an actual write.
+        database.exec("CREATE TABLE IF NOT EXISTS aporiax_writer_guard (id INTEGER PRIMARY KEY CHECK(id = 1), generation INTEGER NOT NULL)");
+        database.exec("INSERT INTO aporiax_writer_guard(id, generation) VALUES(1, 1) ON CONFLICT(id) DO UPDATE SET generation = generation + 1");
+        acquired = true;
+      }
       catch (error) {
+        if (began) database.exec("ROLLBACK");
         if (![5, 6].includes(error.errcode) && !/database (?:is )?(?:locked|busy)/i.test(error.message)) throw error;
         if (Date.now() >= deadline) throw new Error("Understanding store is busy; retry after the other writer finishes.");
         await new Promise((done) => setTimeout(done, 25));

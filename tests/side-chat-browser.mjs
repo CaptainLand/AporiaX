@@ -191,9 +191,11 @@ try {
   await idle();
   await page.getByText("回答已停止，主任务未受影响。", { exact: true }).waitFor();
   await ask("等待测试");
-  await page.evaluate(() => window.wb.close("sidechat"));
+  await page.evaluate(async () => { await window.wb.close("sidechat"); });
   await page.getByRole("button", { name: "侧边聊天", exact: true }).click();
   await idle();
+  // Reopening mounts the pane before its asynchronous history load completes.
+  await page.waitForFunction(() => [...document.querySelectorAll(".side-chat-message")].filter((m) => m.textContent.includes("回答已停止，主任务未受影响。")).length === 2);
   assert.equal(await page.getByText("回答已停止，主任务未受影响。", { exact: true }).count(), 2);
   assert.equal(await modelTrigger.innerText(), "DeepSeek Pro");
   const captured = await page.evaluate(() => window.calls);

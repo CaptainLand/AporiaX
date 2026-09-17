@@ -25,7 +25,7 @@ if (!window.desktop?.workbench) window.desktop = { workbench: {
     if (input.action === "hide") return true;
     if (!resource) return { missing: true };
     if (input.action === "read") {
-      if (window.readFailures-- > 0) throw new Error("Temporary fixture transport error");
+      if ((!window.readFailureTarget || input.id === window.readFailureTarget) && window.readFailures-- > 0) throw new Error("Temporary fixture transport error");
       const start = Math.max(0, input.cursor || 0), cursor = Math.min(resource.output.length, start + 80000);
       return { ...resource, output: resource.output.slice(start, cursor), cursor, endCursor: resource.output.length, hasMore: cursor < resource.output.length };
     }

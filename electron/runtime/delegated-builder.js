@@ -38,6 +38,7 @@ export async function runIsolatedBuilder(options, execute) {
     kind: "worker", workspaceRoot, input, session, status, result,
   });
   try {
+    await persist("preparing", null);
     // Reconstitute unfinished edits, but only against the same base version.
     // A parent edit since interruption is a conflict, not permission to overwrite.
     const restore = [];

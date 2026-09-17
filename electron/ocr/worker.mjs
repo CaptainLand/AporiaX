@@ -1,3 +1,4 @@
+import { inspectImageDimensions, shouldRecognizePage, mergeRecognizedText } from "./preflight.js";
 import { parentPort, workerData } from "node:worker_threads";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -6,9 +7,9 @@ import { createWorker } from "tesseract.js";
 
 const require = createRequire(import.meta.url);
 Object.assign(globalThis, { DOMMatrix, ImageData, Path2D });
-const { data, pdf, from, to, language, rotation = 0, directory } = workerData;
+const { data, pdf, from, to, language, rotation = 0, directory, forceOcr = false } = workerData;
 const send = (value) => parentPort.postMessage(value);
-let recognizer, document, pageNumber = from;
+let recognizer, document, pdfjs, pageNumber = from;
 async function recognize(bytes) {
   if (!recognizer) recognizer = await createWorker(language, 1, {
     langPath: directory, cachePath: directory, cacheMethod: "none", gzip: true,
@@ -39,8 +40,8 @@ function rotate(canvas) {
 }
 try {
   if (pdf) {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    document = await pdfjs.getDocument({ data: new Uint8Array(data), isEvalSupported: false, useSystemFonts: false,
+    pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    document = await pdfjs.getDocument({ data: new Uint8Array(data), isEvalSupported: false, useSystemFonts: false, maxImageSize: 16000000,
       standardFontDataUrl: fileURLToPath(new URL("../../node_modules/pdfjs-dist/standard_fonts/", import.meta.url)),
       cMapUrl: fileURLToPath(new URL("../../node_modules/pdfjs-dist/cmaps/", import.meta.url)), cMapPacked: true }).promise;
     if (to > document.numPages) throw new Error(`文档共 ${document.numPages} 页，请调整页码范围。`);
@@ -60,8 +61,17 @@ try {
         canvas = createCanvas(Math.max(1, Math.ceil(viewport.width)), Math.max(1, Math.ceil(viewport.height)));
         await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
         canvas = rotate(canvas);
-        result = text ? { text, method: "text-layer", confidence: null } : await recognize(canvas.toBuffer("image/png"));
+        const operators = await page.getOperatorList();
+        const imageOps = new Set([pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject,
+          pdfjs.OPS.paintImageXObjectRepeat, pdfjs.OPS.paintImageMaskXObject]);
+        const hasImages = operators.fnArray.some((op) => imageOps.has(op));
+        if (shouldRecognizePage({ text, hasImages, forceOcr })) {
+          result = await recognize(canvas.toBuffer("image/png"));
+          if (text) result = { ...result, text: mergeRecognizedText(text, result.text), method: "mixed",
+            ...(!result.text.trim() ? { error: "图像文字未识别到；已保留原文字层，请核对原页。" } : {}) };
+        } else result = { text, method: "text-layer", confidence: null };
       } else {
+        inspectImageDimensions(data);
         const image = await loadImage(Buffer.from(data));
         if (image.width * image.height > 16000000 || Math.max(image.width, image.height) > 10000) throw new Error("图片尺寸过大，请缩小到 1600 万像素以内。");
         canvas = createCanvas(image.width, image.height);

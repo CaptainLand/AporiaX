@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "vite";
@@ -7,7 +7,7 @@ import { chromium } from "playwright-core";
 import { createWorkbenchGitService, runWorkbenchGit } from "../electron/workbench/git-service.js";
 import { verifyExistingTarget } from "../electron/runtime/workspace-runtime.js";
 
-const base = await mkdtemp(join(tmpdir(), "aporiax-git-setup-ui-")), root = join(base, "project"), empty = join(base, "empty"), cloned = join(base, "cloned"), bare = join(base, "remote.git");
+const base = await realpath(await mkdtemp(join(tmpdir(), "aporiax-git-setup-ui-"))), root = join(base, "project"), empty = join(base, "empty"), cloned = join(base, "cloned"), bare = join(base, "remote.git");
 for (const path of [root, empty, cloned, bare]) await mkdir(path);
 await mkdir(".tmp/workbench-git-v2", { recursive: true });
 const git = async (cwd, args) => { const value = await runWorkbenchGit(cwd, args); assert.equal(value.code, 0, value.stderr); return value.stdout.trim(); };

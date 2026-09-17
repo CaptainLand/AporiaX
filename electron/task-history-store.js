@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { atomicWriteFile, serializeStorage } from "./storage/atomic-file.js";
 import {
   mkdir,
   readFile,
@@ -26,22 +27,7 @@ function jsonBytes(value) {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
-async function atomicWrite(filePath, contents) {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, contents);
-  try {
-    await rename(tempPath, filePath);
-  } catch (error) {
-    if (error?.code === "EPERM" || error?.code === "EEXIST") {
-      await rm(filePath, { force: true });
-      await rename(tempPath, filePath);
-      return;
-    }
-    await rm(tempPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
-}
+const atomicWrite = atomicWriteFile;
 
 function decodeDataUrl(dataUrl) {
   const value = String(dataUrl || "");
@@ -78,6 +64,14 @@ export function createTaskHistoryStore(
   const tasksDir = join(root, "tasks");
   const blobsDir = join(root, "blobs");
   const indexPath = join(root, "index.json");
+  const migrationPath = join(root, "migration.json");
+  let diagnostics = [];
+  let damagedIndex = false;
+  const damagedTasks = new Set();
+  const diagnose = (code, path, error) => {
+    if (!diagnostics.some((item) => item.code === code && item.path === path))
+      diagnostics.push({ code, path, error: String(error?.message || error) });
+  };
   const legacyPaths = [
     join(String(dataDirectory), "aporiax-tasks.json"),
     join(String(dataDirectory), "deepagent-tasks.json"),
@@ -96,7 +90,8 @@ export function createTaskHistoryStore(
     await mkdir(blobsDir, { recursive: true });
     const file = blobPath(hash);
     try {
-      await readFile(file);
+      const existing = await readFile(file);
+      if (createHash("sha256").update(existing).digest("hex") !== hash) throw new Error("ATTACHMENT_BLOB_CORRUPT");
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
       await atomicWrite(file, buffer);
@@ -120,6 +115,7 @@ export function createTaskHistoryStore(
       throw new Error("Invalid attachment blob hash.");
     }
     const buffer = await readFile(blobPath(hash));
+    if (createHash("sha256").update(buffer).digest("hex") !== hash) throw new Error("ATTACHMENT_BLOB_CORRUPT");
     let type = "application/octet-stream";
     try {
       const meta = JSON.parse(await readFile(blobMetaPath(hash), "utf8"));
@@ -192,158 +188,186 @@ export function createTaskHistoryStore(
   async function readIndex() {
     try {
       const parsed = JSON.parse(await readFile(indexPath, "utf8"));
-      const ids = Array.isArray(parsed?.taskIds) ? parsed.taskIds : [];
-      return ids.map(String).filter((id) => TASK_ID_PATTERN.test(id));
+      if (!Array.isArray(parsed?.taskIds) || parsed.taskIds.some((id) => !TASK_ID_PATTERN.test(id)) ||
+          !Number.isSafeInteger(parsed.revision ?? 0) || (parsed.revision ?? 0) < 0)
+        throw new Error("Invalid task index.");
+      return { taskIds: [...new Set(parsed.taskIds)], revision: parsed.revision ?? 0 };
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      if (error.code === "ENOENT") return null;
+      damagedIndex = true;
+      diagnose("TASK_INDEX_CORRUPT", indexPath, error);
       return null;
     }
   }
 
-  async function writeIndex(taskIds) {
-    await atomicWrite(
-      indexPath,
-      JSON.stringify({
-        version: TASK_HISTORY_STORE_VERSION,
-        taskIds,
-        updatedAt: new Date().toISOString(),
-      }),
-    );
+  async function writeIndex(taskIds, revision) {
+    await atomicWrite(indexPath, JSON.stringify({ version: TASK_HISTORY_STORE_VERSION,
+      taskIds: [...new Set(taskIds)], revision, updatedAt: new Date().toISOString() }));
+  }
+
+  async function scanTaskIds() {
+    try { return (await readdir(tasksDir)).filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -5)).filter((id) => TASK_ID_PATTERN.test(id)); }
+    catch (error) { if (error.code === "ENOENT") return []; throw error; }
   }
 
   async function readTaskFile(taskId) {
     try {
       const parsed = JSON.parse(await readFile(taskPath(taskId), "utf8"));
-      return parsed && typeof parsed === "object" ? parsed : null;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || parsed.id !== taskId)
+        throw new Error("Invalid task record or mismatched id.");
+      return parsed;
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      if (error.code === "ENOENT") return null;
+      damagedTasks.add(taskId);
+      diagnose("TASK_FILE_CORRUPT", taskPath(taskId), error);
       return null;
     }
   }
 
   async function migrateLegacyIfNeeded() {
-    const existing = await readIndex();
-    if (existing) return;
-    let legacy;
-    let legacyPath = "";
+    let migration = null;
+    try { migration = JSON.parse(await readFile(migrationPath, "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") { diagnose("TASK_MIGRATION_CORRUPT", migrationPath, error); return; } }
+    const index = await readIndex();
+    if (damagedIndex || migration?.status === "completed" || (index && !migration)) return;
+    let legacy, legacyPath = "", sourceHash;
     for (const candidate of legacyPaths) {
       try {
-        legacy = JSON.parse(await readFile(candidate, "utf8"));
-        legacyPath = candidate;
-        break;
+        const bytes = await readFile(candidate);
+        legacy = JSON.parse(bytes.toString("utf8"));
+        sourceHash = createHash("sha256").update(bytes).digest("hex");
+        legacyPath = candidate; break;
       } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
+        if (error.code !== "ENOENT") { diagnose("TASK_LEGACY_CORRUPT", candidate, error); return; }
       }
     }
     if (!legacyPath) return;
-    if (!Array.isArray(legacy)) return;
-    const result = await saveTasks(legacy, {
-      writeIndex: false,
-      pruneStale: false,
-    });
-    await writeIndex(result.saved);
-    try {
-      await rename(legacyPath, `${legacyPath}.migrated`);
-    } catch {
-      await rm(legacyPath, { force: true });
+    if (!Array.isArray(legacy)) { diagnose("TASK_LEGACY_CORRUPT", legacyPath, "Expected an array."); return; }
+    if (migration && migration.sourceHash !== sourceHash) {
+      diagnose("TASK_MIGRATION_SOURCE_CHANGED", legacyPath, "Original migration source changed; manual reconciliation required."); return;
     }
+    const pending = migration ? new Set(migration.pending) : null;
+    const candidates = pending ? legacy.filter((task) => pending.has(String(task?.id || ""))) : legacy;
+    // Write intent before any new index. On a crash, re-run only missing records;
+    // never overwrite a newer task saved after an earlier partial migration.
+    migration = { version: 1, status: "pending", sourceHash, source: legacyPath,
+      pending: candidates.map((task) => String(task?.id || "")) };
+    await atomicWrite(migrationPath, JSON.stringify(migration));
+    const records = [];
+    for (const task of candidates) {
+      const existing = TASK_ID_PATTERN.test(String(task?.id || "")) ? await readTaskFile(task.id) : null;
+      // A crash may have committed a task file but not its index entry. Adopt
+      // that file using its current bytes rather than restoring an older copy.
+      records.push(existing || task);
+    }
+    const result = await saveTasksInternal(records, { migration: true });
+    migration.pending = result.failed.map((task) => task.id === "(missing)" ? "" : task.id);
+    migration.status = migration.pending.length ? "partial" : "completed";
+    await atomicWrite(migrationPath, JSON.stringify(migration));
+    if (migration.pending.length) {
+      diagnose("TASK_MIGRATION_PARTIAL", legacyPath, `${migration.pending.length} task(s) retained in the original file for retry.`);
+      return;
+    }
+    // Keep an archive. Failure to archive NEVER authorizes deleting the source.
+    try {
+      try { await readFile(`${legacyPath}.migrated`); return; }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+      await rename(legacyPath, `${legacyPath}.migrated`);
+    } catch (error) { diagnose("TASK_MIGRATION_ARCHIVE_FAILED", legacyPath, error); }
   }
 
-  async function loadTasks() {
+  async function loadTasksInternal() {
+    diagnostics = []; damagedTasks.clear(); damagedIndex = false;
     await migrateLegacyIfNeeded();
-    let ids = await readIndex();
-    if (!ids) {
-      try {
-        ids = (await readdir(tasksDir))
-          .filter((name) => name.endsWith(".json"))
-          .map((name) => name.slice(0, -5))
-          .filter((id) => TASK_ID_PATTERN.test(id));
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-        return null;
-      }
-    }
+    const index = await readIndex();
+    const ids = index?.taskIds ?? await scanTaskIds();
+    if (!index && !ids.length && !damagedIndex && !diagnostics.length) return null;
     const tasks = [];
     for (const id of ids) {
-      if (!TASK_ID_PATTERN.test(id)) continue;
       const task = await readTaskFile(id);
       if (task) tasks.push(hydrateTask(task));
+      else if (!damagedTasks.has(id)) diagnose("TASK_FILE_MISSING", taskPath(id), "Indexed task is missing; index entry retained.");
     }
     return tasks;
   }
 
-  async function saveTasks(tasks, { writeIndex: shouldWriteIndex = true, pruneStale = true } = {}) {
-    if (!Array.isArray(tasks)) {
-      throw new Error("Tasks must be an array.");
-    }
+  async function saveTasksInternal(tasks, options = {}) {
+    if (!Array.isArray(tasks)) throw new Error("Tasks must be an array.");
+    if (options.deletedTaskIds !== undefined && (!Array.isArray(options.deletedTaskIds) || options.deletedTaskIds.some(id => typeof id !== "string" || !TASK_ID_PATTERN.test(id))))
+      throw new Error("Invalid explicit task deletion ids.");
+    if (options.deletedTaskIds?.length && options.expectedRevision === undefined) throw new Error("Task deletion requires a revision.");
+    if (options.deletedTaskIds?.some(id => tasks.some(task => task?.id === id))) throw new Error("Cannot save and delete the same task.");
     await mkdir(tasksDir, { recursive: true });
     await mkdir(blobsDir, { recursive: true });
-    const saved = [];
-    const failed = [];
-    const taskIds = [];
+    const index = await readIndex();
+    if (damagedIndex) throw new Error("TASK_STORE_RECOVERY_REQUIRED: index is damaged; no task or index was overwritten.");
+    const revision = index?.revision ?? 0;
+    if (options.expectedRevision !== undefined && options.expectedRevision !== revision)
+      throw new Error("TASK_STORE_REVISION_CONFLICT: reload and reconcile; stale snapshot was not saved.");
+    const ids = new Set(index?.taskIds ?? await scanTaskIds());
+    const saved = [], failed = [];
+    const seen = new Set();
     for (const task of tasks) {
       const taskId = String(task?.id || "");
-      if (!TASK_ID_PATTERN.test(taskId)) {
-        failed.push({
-          id: taskId || "(missing)",
-          error: "Invalid task id.",
-        });
-        continue;
+      if (!TASK_ID_PATTERN.test(taskId) || seen.has(taskId)) {
+        failed.push({ id: taskId || "(missing)", error: "Invalid or duplicate task id." }); continue;
       }
-      taskIds.push(taskId);
+      seen.add(taskId);
       try {
         const persisted = await persistTask(task);
         const serialized = JSON.stringify(persisted);
-        const bytes = Buffer.byteLength(serialized, "utf8");
-        if (bytes > taskJsonLimit) {
-          const error = new Error(
-            `Task JSON exceeds the ${Math.floor(taskJsonLimit / (1024 * 1024))} MB limit.`,
-          );
-          error.code = TASK_JSON_TOO_LARGE;
-          throw error;
-        }
+        if (Buffer.byteLength(serialized, "utf8") > taskJsonLimit)
+          throw Object.assign(new Error(`Task JSON exceeds ${taskJsonLimit} bytes.`), { code: TASK_JSON_TOO_LARGE });
         const destination = taskPath(taskId);
+        let previous;
         try {
-          const previous = await readFile(destination, "utf8");
-          if (previous === serialized) {
-            saved.push(taskId);
-            continue;
-          }
+          previous = await readFile(destination, "utf8");
+          const record = JSON.parse(previous);
+          if (!record || record.id !== taskId) throw new Error("Invalid existing task record.");
         } catch (error) {
-          if (error?.code !== "ENOENT") throw error;
+          if (error.code !== "ENOENT") {
+            damagedTasks.add(taskId);
+            throw Object.assign(new Error("TASK_FILE_CORRUPT: original preserved; repair explicitly before replacing it."), { code: "TASK_FILE_CORRUPT" });
+          }
         }
-        await atomicWrite(destination, serialized);
-        saved.push(taskId);
-      } catch (error) {
-        failed.push({
-          id: taskId,
-          error: error?.message || "Failed to save this task.",
-          code: error?.code || "",
-        });
+        if (previous !== serialized) await atomicWrite(destination, serialized);
+        ids.add(taskId); saved.push(taskId);
+      } catch (error) { failed.push({ id: taskId, error: error.message, code: error.code || "" }); }
+    }
+    // Absence from a renderer snapshot is NOT a deletion. Production clients
+    // supply explicit ids AND a matching revision; partial saves never delete.
+    const deleted = [];
+    if (!failed.length && !options.migration && options.deletedTaskIds?.length) {
+      if (options.expectedRevision === undefined) throw new Error("Task deletion requires a revision.");
+      for (const id of options.deletedTaskIds) {
+        assertTaskId(id);
+        if (seen.has(id) || damagedTasks.has(id)) throw new Error("Cannot delete a present or damaged task implicitly.");
+        if (ids.delete(id)) deleted.push(id);
       }
     }
-    if (shouldWriteIndex) {
-      await writeIndex(taskIds);
+    const nextRevision = revision + 1;
+    await writeIndex([...ids], nextRevision);
+    // Deletion becomes durable at index commit. Keep originals in a tombstone
+    // directory for recovery; no recursive prune driven by a partial snapshot.
+    for (const id of deleted) {
+      try { const destination = join(root, "deleted", `${id}.${nextRevision}.json`);
+        await mkdir(dirname(destination), { recursive: true }); await rename(taskPath(id), destination); }
+      catch (error) { if (error.code !== "ENOENT") diagnose("TASK_DELETE_ARCHIVE_FAILED", taskPath(id), error); }
     }
-    if (pruneStale) {
-      try {
-        const kept = new Set(taskIds);
-        for (const name of await readdir(tasksDir)) {
-          if (!name.endsWith(".json")) continue;
-          const id = name.slice(0, -5);
-          if (kept.has(id)) continue;
-          await rm(taskPath(id), { force: true });
-        }
-      } catch {
-        // Removing stale task files is best-effort.
-      }
-    }
-    return {
-      ok: failed.length === 0,
-      saved,
-      failed,
-    };
+    return { ok: failed.length === 0, saved, failed, deleted, revision: nextRevision };
   }
+
+  const loadTasks = () => serializeStorage(root, loadTasksInternal);
+  const loadSnapshot = () => serializeStorage(root, async () => {
+    const tasks = await loadTasksInternal();
+    return { tasks, revision: (await readIndex())?.revision ?? 0, diagnostics: [...diagnostics], readOnly: damagedIndex };
+  });
+  const saveTasks = (tasks, options = {}) => {
+    // Snapshot at admission, not when the writer eventually acquires the queue.
+    const snapshot = structuredClone(tasks), settings = structuredClone(options);
+    return serializeStorage(root, () => saveTasksInternal(snapshot, settings));
+  };
 
   async function hydrateAttachmentBytes(attachment) {
     if (!attachment?.hash || attachment.dataUrl) return attachment;
@@ -380,6 +404,8 @@ export function createTaskHistoryStore(
     hydrateMessages,
     loadTask: (id) => readTaskFile(assertTaskId(id)),
     loadTasks,
+    loadSnapshot,
+    diagnostics: () => [...diagnostics],
     saveTasks,
   };
 }

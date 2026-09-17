@@ -1,3 +1,4 @@
+import { handleTrustedIpc, assertTrustedIpcSender } from "../security/trusted-ipc.js";
 import { app, ipcMain } from "electron";
 import { createDesktopAccountRuntime } from "./desktop-account-runtime.js";
 
@@ -8,24 +9,24 @@ export function getDesktopAccountRuntime() {
   return runtime;
 }
 
-ipcMain.handle("account:get", () => getDesktopAccountRuntime().getSnapshot());
-ipcMain.handle("account:sign-in", () => getDesktopAccountRuntime().startBrowserLogin());
-ipcMain.handle("account:refresh", () => getDesktopAccountRuntime().refresh());
-ipcMain.handle("account:sign-out", () => getDesktopAccountRuntime().signOut());
-ipcMain.handle("account:set-remote-enabled", (_event, enabled) =>
+handleTrustedIpc(ipcMain, "account:get", () => getDesktopAccountRuntime().getSnapshot());
+handleTrustedIpc(ipcMain, "account:sign-in", () => getDesktopAccountRuntime().startBrowserLogin());
+handleTrustedIpc(ipcMain, "account:refresh", () => getDesktopAccountRuntime().refresh());
+handleTrustedIpc(ipcMain, "account:sign-out", () => getDesktopAccountRuntime().signOut());
+handleTrustedIpc(ipcMain, "account:set-remote-enabled", (_event, enabled) =>
   getDesktopAccountRuntime().setRemoteEnabled(Boolean(enabled)),
 );
-ipcMain.handle("account:set-remote-file-access", (_event, enabled) =>
+handleTrustedIpc(ipcMain, "account:set-remote-file-access", (_event, enabled) =>
   getDesktopAccountRuntime().setRemoteFileAccess(Boolean(enabled)),
 );
-ipcMain.handle("account:sync-tasks", (_event, payload) =>
+handleTrustedIpc(ipcMain, "account:sync-tasks", (_event, payload) =>
   getDesktopAccountRuntime().syncRemoteTasks(payload),
 );
-ipcMain.handle("account:remote-commands", () =>
+handleTrustedIpc(ipcMain, "account:remote-commands", () =>
   getDesktopAccountRuntime().pollRemoteCommands(),
 );
 const observedConsumers = new WeakSet();
-ipcMain.handle("account:claim-remote-command", (event, commandId) => {
+handleTrustedIpc(ipcMain, "account:claim-remote-command", (event, commandId) => {
   const consumerId = String(event.sender.id);
   if (!observedConsumers.has(event.sender)) {
     observedConsumers.add(event.sender);
@@ -38,10 +39,10 @@ ipcMain.handle("account:claim-remote-command", (event, commandId) => {
   }
   return getDesktopAccountRuntime().claimRemoteCommand(commandId, consumerId);
 });
-ipcMain.handle("account:ack-remote-command", (_event, commandId, status, result, claim) =>
+handleTrustedIpc(ipcMain, "account:ack-remote-command", (_event, commandId, status, result, claim) =>
   getDesktopAccountRuntime().acknowledgeRemoteCommand(commandId, status, result, claim),
 );
-ipcMain.handle("account:execute-remote-file-command", (_event, command) =>
+handleTrustedIpc(ipcMain, "account:execute-remote-file-command", (_event, command) =>
   getDesktopAccountRuntime().executeRemoteFileCommand(command),
 );
 

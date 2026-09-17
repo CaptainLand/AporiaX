@@ -1,3 +1,4 @@
+import { handleTrustedIpc, assertTrustedIpcSender } from "../security/trusted-ipc.js";
 import { app, clipboard, dialog, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
@@ -398,7 +399,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
 export function registerWorkbench(getWindow) {
   const service = createWorkbenchService({ getWindow });
   installWorkbenchProvider(service);
-  ipcMain.handle("workbench:request", (event, input) => {
+  handleTrustedIpc(ipcMain, "workbench:request", (event, input) => {
     if (event.sender !== getWindow()?.webContents || event.senderFrame !== getWindow()?.webContents.mainFrame) throw new Error("Untrusted workbench sender.");
     return Promise.resolve(service.request(input)).catch((error) => {
       if (String(error?.message || "").includes("不属于当前任务")) return { missing: true };

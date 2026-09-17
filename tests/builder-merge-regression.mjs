@@ -13,7 +13,7 @@ const run = promisify(execFile);
 const originals = { open: fs.open, rename: fs.rename, rm: fs.rm };
 const scenarios = ["success", "partial-stage", "replace-failure", "rollback-failure", "journal-failure", "commit-journal-rollback-failure", "user-edit", "deletion-rollback", "preparation-failure"];
 for (const scenario of scenarios) {
-  const root = await fs.mkdtemp(join(tmpdir(), "aporiax-builder-atomic-"));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "aporiax-builder-atomic-")));
   let workspace;
   let recovery;
   const events = [];
@@ -105,7 +105,7 @@ console.log(`Builder merge regression: ${scenarios.length}/${scenarios.length} P
 // Exercise the production delegate wrapper as well as the low-level merger:
 // the recovery location must reach the task store and the worktree must survive.
 {
-  const root = await fs.mkdtemp(join(tmpdir(), "aporiax-builder-wrapper-"));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "aporiax-builder-wrapper-")));
   const session = {};
   const states = [];
   const agentId = "retained-fixture";
@@ -147,7 +147,7 @@ console.log(`Builder merge regression: ${scenarios.length}/${scenarios.length} P
     fs.rename = originals.rename;
     if (session.activeWorktree) {
       const base = dirname(session.activeWorktree);
-      const inside = relative(resolve(tmpdir()), resolve(base));
+      const inside = relative(await fs.realpath(tmpdir()), await fs.realpath(base));
       assert(inside && inside.startsWith("aporiax-builder-") && !inside.startsWith("..") && !isAbsolute(inside));
       await git("worktree", "remove", "--force", session.activeWorktree);
       await fs.rm(base, { recursive: true, force: true });

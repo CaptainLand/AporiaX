@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { validateApprovalResponse } from "./approval-response.js";
 import { withDurableRun } from "../runtime/durable-run.js";
@@ -112,6 +113,18 @@ export class HarnessTaskRuntime {
   #dataDirectory;
   #eventBus;
   #activeRuns = new Map();
+  #startingRuns = new Map();
+  #activeListeners = new Set();
+  subscribeActiveRuns(listener) {
+    this.#activeListeners.add(listener);
+    listener(this.listActiveRuns());
+    return () => this.#activeListeners.delete(listener);
+  }
+  #notifyActive() {
+    for (const listener of this.#activeListeners) {
+      try { listener(this.listActiveRuns()); } catch { /* observers cannot change task state */ }
+    }
+  }
   #pendingApprovals = new Map();
   #approvalGrantKey;
   #onIdle;
@@ -226,16 +239,19 @@ export class HarnessTaskRuntime {
   }
 
   hasActiveRuns() {
-    return this.#activeRuns.size > 0;
+    return this.#activeRuns.size + this.#startingRuns.size > 0;
   }
 
   getActiveRun(runId) {
-    const record = this.#activeRuns.get(String(runId || ""));
+    const key = String(runId || "");
+    const record = this.#activeRuns.get(key) || this.#startingRuns.get(key);
     if (!record) return null;
     return {
       runId: record.runId,
       taskId: record.taskId,
       clientId: record.clientId || null,
+      workspacePath: record.workspacePath || "",
+      phase: this.#startingRuns.has(record.runId) ? "preparing" : "running",
       paused: record.control.paused,
       startedAt: record.startedAt,
       pendingApprovals: [...this.#pendingApprovals.values()].filter(
@@ -245,7 +261,7 @@ export class HarnessTaskRuntime {
   }
 
   listActiveRuns() {
-    return [...this.#activeRuns.keys()]
+    return [...new Set([...this.#activeRuns.keys(), ...this.#startingRuns.keys()])]
       .map((runId) => this.getActiveRun(runId))
       .filter(Boolean);
   }
@@ -277,7 +293,7 @@ export class HarnessTaskRuntime {
     if (!safeRunId || safeRunId.length > 100) {
       throw new Error("A valid run id is required.");
     }
-    if (this.#activeRuns.has(safeRunId)) {
+    if (this.#activeRuns.has(safeRunId) || this.#startingRuns.has(safeRunId)) {
       throw new Error("This Harness run is already active.");
     }
     if (typeof execute !== "function") {
@@ -290,6 +306,7 @@ export class HarnessTaskRuntime {
       runId: safeRunId,
       taskId: String(taskId || ""),
       clientId: String(clientId || ""),
+      workspacePath: metadata?.workspacePath || "",
       controller,
       control,
       journalTail: Promise.resolve(),
@@ -301,7 +318,9 @@ export class HarnessTaskRuntime {
       onEvent,
     };
 
-    await beginRunJournal(this.#directory(), {
+    this.#startingRuns.set(safeRunId, record);
+    this.#notifyActive();
+    try { await beginRunJournal(this.#directory(), {
       runId: safeRunId,
       taskId,
       assistantId: metadata?.assistantId,
@@ -311,8 +330,12 @@ export class HarnessTaskRuntime {
       providerId: metadata?.providerId,
       modelId: metadata?.modelId,
       recoveryOfRunId: recoveryContext?.runId,
-    });
+    }); } catch (error) {
+      this.#startingRuns.delete(safeRunId); this.#notifyActive(); throw error;
+    }
     this.#activeRuns.set(safeRunId, record);
+    this.#startingRuns.delete(safeRunId);
+    this.#notifyActive();
 
     const emit = (payload = {}) => {
       const event = {
@@ -415,6 +438,7 @@ export class HarnessTaskRuntime {
           await durableWrite(() => markRunRecoveryStarted(this.#directory(), recoveryContext.runId, safeRunId));
         }
         const result = await withDurableRun({
+          recoveryDirectory: join(this.#directory(), "workspace-recovery"),
           workspacePath: metadata?.workspacePath || recoveryContext?.workspacePath,
           unresolved: copiedOperations.filter((operation) => ["started", "uncertain"].includes(operation.state)),
           confirmed: copiedOperations.filter((operation) => operation.state === "confirmed"),
@@ -456,6 +480,7 @@ export class HarnessTaskRuntime {
         clearTimeout(record.journalTimer);
         control.abort();
         this.#activeRuns.delete(safeRunId);
+        this.#notifyActive();
         for (const [approvalId, approval] of this.#pendingApprovals) {
           if (approval.runId !== safeRunId) continue;
           this.#pendingApprovals.delete(approvalId);

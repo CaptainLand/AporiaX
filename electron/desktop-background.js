@@ -30,11 +30,10 @@ export function installDesktopBackground() {
   let trayHintHandledThisSession = false;
   const activeRunRefs = new Map();
 
-  const activeRuns = () =>
-    [...activeRunRefs.entries()].map(([id, state]) => ({
-      id,
-      startedAt: state.startedAt,
-    }));
+  let runSource = null;
+  const activeRuns = () => runSource ? runSource().map((run) => ({
+    id: run.runId, startedAt: typeof run.startedAt === "string" ? Date.parse(run.startedAt) : run.startedAt,
+  })) : [...activeRunRefs.entries()].map(([id, state]) => ({ id, startedAt: state.startedAt }));
   const status = () => desktopBackgroundStatus(activeRuns());
 
   const showMainWindow = () => {
@@ -53,7 +52,7 @@ export function installDesktopBackground() {
   };
 
   const ensureTrayRefreshTimer = () => {
-    if (activeRunRefs.size === 0) {
+    if (activeRuns().length === 0) {
       stopTrayRefreshTimer();
       return;
     }
@@ -173,6 +172,8 @@ export function installDesktopBackground() {
   void app.whenReady().then(createTray);
 
   return {
+    setRunSource(source) { runSource = source; updateTray(); },
+    refresh: updateTray,
     runStarted(runId, { startedAt = Date.now() } = {}) {
       const id = String(runId || "").trim();
       if (!id) return status();

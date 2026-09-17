@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -11,6 +13,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      NODE_OPTIONS: --experimental-sqlite
     steps:
       - name: Check out source
         uses: actions/checkout@v4

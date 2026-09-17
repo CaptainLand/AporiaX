@@ -406,6 +406,8 @@ export class BuilderWorkspaceManager {
         ["worktree", "add", "--detach", worktreeRoot, "HEAD"],
         workspaceRoot,
       );
+      // Use the same physical spelling as verified tool paths on Windows.
+      worktreeRoot = await realpath(worktreeRoot);
       await overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes);
       signal?.throwIfAborted();
       const baseline = await captureScope(workspaceRoot, scopes, this.#limits);

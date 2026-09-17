@@ -1,3 +1,5 @@
+import { runIsolatedBuilder } from "./runtime/delegated-builder.js";
+import { saveRuntimeContext } from "./runtime/durable-run.js";
 export * from "./agent-runtime-core.js";
 
 import { realpath } from "node:fs/promises";
@@ -712,7 +714,7 @@ async function runOrchestratedHarness(options) {
         eventBus: orchestrationEvents,
         concurrency: Math.min(builderLimit, MAX_BUILDERS) + (plan.tasks.some((task) => task.executionRole === "main") ? 1 : 0),
       });
-      const workspaces = new BuilderWorkspaceManager({ eventBus: orchestrationEvents });
+      // Both orchestration entry points share runIsolatedBuilder's recovery lifecycle.
       emit(
         {
           type: "task_graph.planned",
@@ -750,7 +752,6 @@ async function runOrchestratedHarness(options) {
               contractKeys: node.contractKeys,
             },
             run: async () => {
-              let workspace = null;
               let started = false;
               try {
                 const inbox = mailbox.forTarget(node.id);
@@ -766,18 +767,15 @@ async function runOrchestratedHarness(options) {
                   inboxCount: inbox.length,
                 }, { budgetEvent: node.executionRole !== "main" });
                 started = true;
-                workspace = await workspaces.open({
-                  workspaceRoot,
-                  agentId,
-                  writeScopes: node.writeScopes,
-                });
-                if (resolve(workspace.workspaceRoot) === workspaceRoot) {
-                  await workspace.close().catch(() => undefined);
-                  workspace = null;
-                  throw new Error(
-                    "Builder workspace must use an isolated worktree; refusing parent-workspace fallback while a scope lease is required.",
-                  );
-                }
+                let merged;
+                const previousAgentId = `${options.recoveryContext?.runId || ""}-builder-${node.id}`;
+                const session = options.recoveryContext?.contexts?.[previousAgentId]?.session || {};
+                const integrated = await runIsolatedBuilder({
+                  agentId, input: { ...node, role: "builder", scope: node.writeScopes }, session,
+                  workspaceRoot, signal: options.signal, requestApproval: options.requestApproval,
+                  emit: (event) => { if (!event.type.startsWith("subagent.")) orchestrationEvents.emit(event); },
+                  onBuilderMerge: async (value) => { merged = value; },
+                }, async ({ workspaceRoot: childWorkspaceRoot, snapshotProvisional }) => {
                 const childContext = {
                   contract: plan.contract,
                   task: {
@@ -798,7 +796,12 @@ async function runOrchestratedHarness(options) {
                         ...options,
                         runId: `${agentId}-worker`,
                         taskId: `${options.taskId || "task"}:${node.id}`,
-                        workspacePath: workspace.workspaceRoot,
+                        workspacePath: childWorkspaceRoot,
+                        onContextCheckpoint: async () => {
+                          await snapshotProvisional();
+                          await saveRuntimeContext(agentId, { kind: "worker", workspaceRoot,
+                            input: { ...node, role: "builder", scope: node.writeScopes }, session, status: "running" });
+                        },
                         permission: "builder-write",
                         approvalMode: "manual",
                         understandingDirectory: null,
@@ -919,12 +922,13 @@ async function runOrchestratedHarness(options) {
                   );
                 }
 
-                const merged = await workspace.merge();
-                if (!merged.merged) {
-                  throw new Error(
-                    `Builder merge rejected: ${merged.conflicts.join(", ")}`,
-                  );
+                return { ...childResult, handoff, summary: handoff.summary || childResult.content };
+                });
+                if (!integrated.integrated || !merged?.merged) {
+                  throw new Error(integrated.summary || "Builder work retained but not integrated.");
                 }
+                const handoff = integrated.handoff;
+                const childResult = integrated;
                 for (const change of merged.checkpoints || []) {
                   emit(
                     {
@@ -932,7 +936,7 @@ async function runOrchestratedHarness(options) {
                       path: change.path,
                       additions: change.additions,
                       deletions: change.deletions,
-                      binary: false,
+                      binary: Boolean(change.binary),
                       created: change.created,
                       deleted: change.deleted,
                       source: "builder-merge",
@@ -996,8 +1000,6 @@ async function runOrchestratedHarness(options) {
                   }, { budgetEvent: node.executionRole !== "main" });
                 }
                 return result;
-              } finally {
-                await workspace?.close?.().catch(() => undefined);
               }
             },
           });

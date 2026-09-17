@@ -14,6 +14,8 @@ export class HarnessScheduler {
 
   enqueue({ id = randomUUID(), kind = "task", priority = 0, metadata = {}, signal, run }) {
     if (typeof run !== "function") throw new TypeError("Scheduled job requires a run function.");
+    if (this.#running.has(String(id)) || this.#queue.some((job) => job.id === String(id)))
+      throw new Error(`Duplicate scheduled job id: ${id}`);
     const job = {
       id: String(id),
       kind: String(kind || "task"),

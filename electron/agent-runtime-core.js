@@ -1,3 +1,4 @@
+import { createSafeDependencySession } from "./runtime/safe-dependency-session.js";
 import { spawn } from "node:child_process";
 import { validateDeliveryLinks } from "./runtime/delivery-links.js";
 import { appendSandboxRecoveryNotice } from "./runtime/sandbox-recovery-notice.js";
@@ -1046,6 +1047,7 @@ export async function runHarness({
   messages,
   signal,
   onEvent,
+  onContextCheckpoint = null,
   control = null,
   requestApproval = async () => ({ approved: false }),
   sandboxExecutor = runCommandWithFallback,
@@ -1196,10 +1198,12 @@ export async function runHarness({
     : null;
   witness = createWitnessMonitor({ emit: forwardEvent });
   const sandboxRecoveries = [];
+  const safeDependencySession = createSafeDependencySession();
   const commandSandboxExecutor = async (request = {}) => {
     const command = String(request.command || "").trim();
     const result = await sandboxExecutor({
       ...request,
+      dependencySession: safeDependencySession,
       localSandboxBaseDirectory: sandboxDataDirectory || request.localSandboxBaseDirectory,
       runId,
       taskId,
@@ -1538,12 +1542,15 @@ export async function runHarness({
   const previousUsage = savedMain?.cumulativeUsage || savedMain?.usage || null;
   const usageHistoryComplete = !recoveryContext || (previousUsage != null && savedMain?.usageHistoryComplete !== false);
   const cumulativeUsage = () => mergeTokenUsage(previousUsage, totalUsage);
-  const persistMainContext = () => saveRuntimeContext(runId, {
+  const persistMainContext = async () => {
+    await onContextCheckpoint?.();
+    return saveRuntimeContext(runId, {
     kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
     continuation: snapshotContinuation(selfCheck, changeMap), usage: totalUsage, cumulativeUsage: cumulativeUsage(), usageHistoryComplete,
     workers: [...subagents.values()].map(({ agentId, role, task, background, requiredForCompletion, collected, input }) =>
       ({ agentId, role, task, background, requiredForCompletion, collected, input })),
-  });
+    });
+  };
 
   const applyRuntimeControlBoundary = async () => {
     await control?.waitIfPaused?.(signal);
@@ -2756,7 +2763,7 @@ export async function runHarness({
               modelResult: await executeDurableTool(toolCall.function.name, parseToolArguments(toolCall), () => mcpRuntime.call(
                 toolCall.function.name,
                 parseToolArguments(toolCall),
-                { requestApproval },
+                { requestApproval, signal },
               ), requestApproval),
             };
           } else if (toolCall.function.name === "read_conversation_history") {
@@ -3202,6 +3209,7 @@ export async function runHarness({
     failedResult.content = appendSandboxRecoveryNotice(failedResult.content, sandboxRecoveries, language);
     return failedResult;
   } finally {
+    await safeDependencySession.close();
     await lspManager?.closeAll().catch(() => undefined);
     if (workbenchResources) await workbenchResources.release({ aborted: Boolean(signal?.aborted) }).catch((error) => forwardEvent({ type: "workbench.cleanup.failed", error: error.message }));
     else await processManager.closeAll().catch(() => undefined);

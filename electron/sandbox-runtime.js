@@ -18,7 +18,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { currentExecutionMode } from "./harness/agent-budget.js";
 import { applySandboxChanges, atomicJson, checkAbort, copyPrivateDependencies, hashSandboxFile, SNAPSHOT_MAX_BYTES, SNAPSHOT_MAX_FILES } from "./sandbox-files.js";
 
-export const SANDBOX_IMAGE = "aporiax-sandbox:0.1";
+export const SANDBOX_IMAGE = "aporiax-sandbox:0.2";
 export const SANDBOX_TIMEOUT_MS = 120_000;
 export const COMMAND_WATCHDOG_SLOW_MS = 45_000;
 export const COMMAND_WATCHDOG_INTERVENTION_MS = SANDBOX_TIMEOUT_MS;
@@ -39,7 +39,7 @@ const LOCAL_SANDBOX_IGNORED_NAMES = new Set([
   "node_modules",
 ]);
 
-export const SANDBOX_DOCKERFILE = `FROM node:20-bookworm-slim
+export const SANDBOX_DOCKERFILE = `FROM node:22.16.0-bookworm-slim
 
 RUN apt-get update \\
     && apt-get install -y --no-install-recommends \\
@@ -666,7 +666,7 @@ async function scanLocalSandboxFiles(rootPath, signal) {
 async function copyWorkspaceToLocalSandbox(
   workspaceRoot,
   sandboxWorkspace,
-  { budget, signal } = {},
+  { budget, signal, dependencySource = null } = {},
 ) {
   const dependencies = [];
   await cp(workspaceRoot, sandboxWorkspace, {
@@ -689,7 +689,26 @@ async function copyWorkspaceToLocalSandbox(
     },
   });
 
-  for (const path of dependencies) await copyPrivateDependencies(join(workspaceRoot, path), join(sandboxWorkspace, path), workspaceRoot, budget, signal);
+  if (dependencySource) {
+    // Discover dependencies installed by an earlier command, including package
+    // subdirectories absent from the host's original node_modules tree.
+    const pending = [""];
+    while (pending.length) {
+      const path = pending.pop();
+      for (const entry of await readdir(join(dependencySource, path), { withFileTypes: true })) {
+        if (entry.name === "node_modules") dependencies.push(join(path, entry.name));
+        else if (entry.isDirectory() && !LOCAL_SANDBOX_IGNORED_NAMES.has(entry.name)) pending.push(join(path, entry.name));
+      }
+    }
+  }
+  for (const path of new Set(dependencies)) {
+    let source = workspaceRoot;
+    if (dependencySource) {
+      try { await lstat(join(dependencySource, path)); source = dependencySource; }
+      catch (error) { if (error.code !== "ENOENT") throw error; continue; }
+    }
+    await copyPrivateDependencies(join(source, path), join(sandboxWorkspace, path), source, budget, signal);
+  }
 }
 
 async function synchronizeLocalSandbox({
@@ -763,6 +782,7 @@ export async function runLocalSandboxedCommand({
   taskId = "",
   onRecovery,
   beforeApply,
+  dependencySession = null,
 }) {
   workspaceRoot = await realpath(workspaceRoot);
   cwd = await realpath(cwd);
@@ -789,6 +809,7 @@ export async function runLocalSandboxedCommand({
 
   let started = false;
   let retained = false;
+  let sessionOwned = false;
   const manifest = { version: 1, state: "preparing", runId: String(runId), taskId: String(taskId), workspaceRoot, createdAt: new Date().toISOString(), command: String(command).slice(0, 2000), dependencies: "private-copy-not-synchronized" };
   const manifestPath = join(sandboxDirectory, "recovery.json");
   const preserve = async (reason, result) => {
@@ -811,7 +832,7 @@ export async function runLocalSandboxedCommand({
     await copyWorkspaceToLocalSandbox(
       workspaceRoot,
       sandboxWorkspace,
-      { budget, signal },
+      { budget, signal, dependencySource: dependencySession?.source(workspaceRoot, baselineFiles) || null },
     );
     const copied = await scanLocalSandboxFiles(sandboxWorkspace, signal);
     if (copied.size !== baselineFiles.size || [...copied].some(([path, hash]) => baselineFiles.get(path) !== hash)) throw new Error("Workspace changed while creating the sandbox snapshot; no command was started.");
@@ -847,7 +868,13 @@ export async function runLocalSandboxedCommand({
             signal,
             beforeApply,
           });
-    if (!retained) { manifest.state = "completed"; await atomicJson(manifestPath, manifest); }
+    if (!retained) {
+      manifest.state = "completed"; await atomicJson(manifestPath, manifest);
+      if (dependencySession) {
+        await dependencySession.accept(workspaceRoot, { directory: sandboxDirectory, workspace: sandboxWorkspace }, await scanLocalSandboxFiles(sandboxWorkspace, signal));
+        sessionOwned = true;
+      }
+    }
     return {
       ...result,
       sandbox: {
@@ -875,7 +902,7 @@ export async function runLocalSandboxedCommand({
     }
     throw error;
   } finally {
-    if (!retained) await removeLocalSandboxDirectory(
+    if (!retained && !sessionOwned) await removeLocalSandboxDirectory(
       sandboxDirectory,
       localSandboxBaseDirectory,
     ).catch(() => {});

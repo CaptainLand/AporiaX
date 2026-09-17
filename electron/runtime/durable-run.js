@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
+export const runtimeRecoveryDirectory = () => storage.getStore()?.recoveryDirectory || null;
 export const runtimeEvidenceStore = () => storage.getStore()?.evidenceStore || null;
 export async function saveRuntimeCheckpoint(checkpoint) {
   await storage.getStore()?.checkpoint(checkpoint);

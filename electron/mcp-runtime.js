@@ -44,6 +44,35 @@ function timeout(promise, timeoutMs, label) {
   });
 }
 
+// Local timeout/cancellation does not prove the remote action was undone.
+// Always pass the combined signal into the SDK AND bound our own wait for
+// servers/transports that ignore cancellation.
+export async function cancellableMcpRequest(invoke, timeoutMs, signals = [], label = "MCP request") {
+  const controller = new AbortController();
+  const sources = signals.filter(Boolean);
+  const cancel = () => controller.abort(Object.assign(new Error(`${label} cancelled; remote outcome may be uncertain.`), { name: "AbortError" }));
+  for (const signal of sources) signal.addEventListener("abort", cancel, { once: true });
+  if (sources.some(signal => signal.aborted)) cancel();
+  const duration = Math.max(1, Math.min(300000, Number(timeoutMs) || 30000));
+  const timer = setTimeout(() => controller.abort(Object.assign(new Error(`${label} timed out after ${duration} ms; remote outcome may be uncertain.`), { code: "MCP_TIMEOUT" })), duration);
+  let onAbort;
+  try {
+    controller.signal.throwIfAborted();
+    const cancelled = new Promise((_, reject) => {
+      onAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    return await Promise.race([Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return invoke({ signal: controller.signal, timeout: duration, resetTimeoutOnProgress: false });
+    }), cancelled]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+    for (const signal of sources) signal.removeEventListener("abort", cancel);
+  }
+}
+
 function toolSafePart(value, fallback = "item") {
   const normalized = String(value || "")
     .trim()
@@ -299,6 +328,7 @@ export class AporiaXMcpRuntime {
   #discoveryPromise = null;
   #errors = new Map();
   #closed = false;
+  #lifetime = new AbortController();
   #selectedTools = [];
   #permissionMode = "read-only";
   #resultStore = createMcpResultStore();
@@ -664,7 +694,8 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
     }
   }
 
-  async call(name, args = {}, { requestApproval } = {}) {
+  async call(name, args = {}, { requestApproval, signal } = {}) {
+    signal?.throwIfAborted();
     const localName = String(name || "");
     if (this.#closed) throw new Error("MCP runtime is closed.");
     if (this.#permissionMode === "builder-write") throw new Error("MCP tools are disabled for isolated Builders.");
@@ -682,9 +713,9 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
       const connection = this.#connection(args.server);
       const uri = String(args.uri || "").trim();
       if (!uri || uri.length > 8_000) throw new Error("A valid MCP resource URI is required.");
-      const result = await timeout(
-        connection.client.readResource({ uri }),
-        connection.server.timeoutMs,
+      const result = await cancellableMcpRequest(
+        options => connection.client.readResource({ uri }, options),
+        connection.server.timeoutMs, [signal, this.#lifetime.signal],
         `MCP ${connection.server.id} readResource`,
       );
       return this.#modelResult({
@@ -700,8 +731,8 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
       const connection = this.#connection(args.server);
       const promptName = String(args.name || "").trim();
       if (!promptName || promptName.length > 300) throw new Error("A valid MCP prompt name is required.");
-      const result = await timeout(
-        connection.client.getPrompt({
+      const result = await cancellableMcpRequest(
+        options => connection.client.getPrompt({
           name: promptName,
           arguments:
             args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
@@ -711,8 +742,8 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
                     .map(([key, value]) => [String(key), String(value)]),
                 )
               : {},
-        }),
-        connection.server.timeoutMs,
+        }, options),
+        connection.server.timeoutMs, [signal, this.#lifetime.signal],
         `MCP ${connection.server.id} getPrompt`,
       );
       return this.#modelResult(result);
@@ -722,6 +753,8 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
     if (!record) throw new Error(`Unknown MCP tool: ${localName}`);
     if (this.#permissionMode === "read-only" && !record.public.readOnly) throw new Error("MCP tool is not available in read-only mode.");
     await this.#approve(record, requestApproval);
+    signal?.throwIfAborted();
+    this.#lifetime.signal.throwIfAborted();
     this.#emit({
       type: "mcp.tool.started",
       serverId: record.public.serverId,
@@ -730,12 +763,12 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
       readOnly: record.public.readOnly,
     });
     try {
-      const result = await timeout(
-        record.connection.client.callTool({
+      const result = await cancellableMcpRequest(
+        options => record.connection.client.callTool({
           name: record.public.remoteName,
           arguments: args && typeof args === "object" && !Array.isArray(args) ? args : {},
-        }),
-        record.connection.server.timeoutMs,
+        }, undefined, options),
+        record.connection.server.timeoutMs, [signal, this.#lifetime.signal],
         `MCP ${record.public.serverId}/${record.public.remoteName}`,
       );
       const compacted = await this.#modelResult(result);
@@ -756,12 +789,13 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
         success: false,
         error: safeMcpError(error, record.connection.server),
       });
-      throw new Error(safeMcpError(error, record.connection.server));
+      throw Object.assign(new Error(safeMcpError(error, record.connection.server)), { name: error.name, code: error.code });
     }
   }
 
   async close() {
     this.#closed = true;
+    this.#lifetime.abort();
     await this.#discoveryPromise;
     const connections = [...this.#connections.values()];
     this.#connections.clear();

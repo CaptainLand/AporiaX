@@ -3297,12 +3297,15 @@ function App() {
   useEffect(() => {
     let active = true;
     const hydrateTasks = async () => {
+      let historyLoaded = false;
       if (!window.desktop?.tasks) {
         if (active) setStorageReady(true);
         return;
       }
       try {
         const storedTasks = await window.desktop.tasks.load();
+        const historyDiagnostics = await window.desktop.tasks.diagnostics?.() || [];
+        historyLoaded = !historyDiagnostics.some((item) => item.code === "TASK_INDEX_CORRUPT");
         if (!active) return;
         // The desktop JSON store is the durable authority once it exists.
         // Only a missing desktop file (null) may migrate the legacy startup
@@ -3325,7 +3328,9 @@ function App() {
         setActiveTaskId(
           chooseRestoredTaskId(hydratedTasks, sessionUi?.taskId),
         );
-        if (recoverableRuns.length) {
+        if (historyDiagnostics.length) {
+          setNotice(tr("部分历史需要恢复，原始文件已保留；请勿用缓存覆盖。", "Some history needs recovery. Original files were preserved; do not replace them with cached data."));
+        } else if (recoverableRuns.length) {
           setNotice(
             tr(
               "已恢复 {count} 个中断任务的检查点",
@@ -3335,9 +3340,9 @@ function App() {
           );
         }
       } catch {
-        if (active) setNotice(tr("任务历史加载失败，已使用本地缓存", "Task history failed to load; using the local cache"));
+        if (active) setNotice(tr("任务历史加载失败，缓存仅供查看；已暂停自动保存以保护原件。", "History failed to load. Cache is view-only; automatic saving is paused to preserve the originals."));
       } finally {
-        if (active) setStorageReady(true);
+        if (active) setStorageReady(historyLoaded);
       }
     };
     void hydrateTasks();

@@ -1,0 +1,79 @@
+name: Audit reliability
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: audit-reliability-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22.12.0, 22.16.0]
+        include:
+          - os: ubuntu-latest
+            node: '22'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Required audit and existing regression suite
+        run: npm run test:audit-suite
+      - name: Production renderer build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audit-results-${{ matrix.os }}-${{ matrix.node }}
+          path: .tmp/audit-results
+          retention-days: 7
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: npm
+      - run: npm ci
+      - name: Actual OCR, UI and ASAR-unpacked OCR
+        run: npm run test:0.9.7
+      - name: Build production preview before file-origin tests
+        run: npm run build
+      - name: Workbench and terminal regression
+        id: workbench
+        timeout-minutes: 10
+        run: node scripts/run-desktop-checks.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-regression-evidence
+          path: |
+            .tmp/audit-results
+            .tmp/terminal-v2/*.png
+            .tmp/workbench-documents-git/*.png
+            .tmp/workbench-git-v2/*.png
+            .tmp/side-chat-browser/*.png
+          retention-days: 7
+      - name: Build Windows packages without publishing
+        if: ${{ !cancelled() && steps.workbench.outcome != 'skipped' }}
+        run: npm run dist:win
+      - name: Verify packaged source and hashes
+        if: ${{ !cancelled() && steps.workbench.outcome != 'skipped' }}
+        run: node scripts/verify-windows-release.mjs release
