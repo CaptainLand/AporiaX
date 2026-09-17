@@ -30,18 +30,32 @@ AporiaX is a local-first Windows desktop agent. It edits code, runs commands, an
 > Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.
 > Binaries are unsigned. Quit the previous build before updating.
 
-## What it can do now
+## What it can do today
 
-- **Authorized workspace**: paged/ranged reads, search, file tree, preview, edits, multi-file patches; optional LSP diagnostics and navigation.
-- **Same-screen workbench**: files, in-app Browser, terminal, Git, and side chat beside the conversation. The Agent opens sidebar tabs with `present_to_user`; links in the final answer do not auto-open.
-- **Git**: diffs, stage, commit, branches, init/clone, remotes, and GitHub sign-in. Ordinary UTF-8 merge conflicts can be edited in the sidebar. PRs and checks for the current branch are read-only.
-- **Execution**: Direct writes the workspace; Safe uses a workspace copy and does not write the host `node_modules`; Isolated needs Docker and refuses to run without it. Risky actions still require approval.
-- **Models**: sign in for hosted DeepSeek V4 Flash / Pro, or add OpenAI-compatible / local providers. Cloud image attachments can use Cloud Vision; BYOK/local vision depends on your own model.
-- **Documents and extensions**: real `.docx` / `.pptx` / `.xlsx`. Skills and MCP share one capability system; inspect source and license before install.
-- **Visible rollback**: Route records what happened, Witness tracks live work, Anchor previews diffs and restores workspace files.
-- **Desktop**: tasks can continue in the Windows tray. Installed builds can check GitHub Releases in-app.
+| Capability | Current implementation |
+| --- | --- |
+| Code and workspace | Paged/ranged reads, bundled ripgrep, file tree, preview/editing, multi-file Unified Patch, Git status and diff |
+| Same-screen workbench | Files, Browser, terminal, Git, and side chat beside the conversation; Agent opens sidebar tabs with `present_to_user` |
+| Language intelligence | Persistent LSP diagnostics, definition, references, hover, document symbols, workspace symbols, plus approval-gated language-server installation |
+| Git / GitHub | Init, stage/commit/branch, remotes, pull/push, repository creation; sidebar editing of ordinary UTF-8 merge conflicts; read-only PR and CI for the current branch |
+| Permissions and execution | Smart Permission plus Direct / Safe / Isolated; Safe does not write the host `node_modules`; Isolated refuses to run without Docker |
+| Aporia Account | Browser authorization, PKCE, Main-only Access Token, safeStorage Refresh Token, account/quota/device state |
+| Aporia Cloud | Managed DeepSeek V4 Flash / Pro, rolling weekly quota, Main-process Gateway, isolated from BYOK / Local |
+| Cloud Vision | Explicit image attachments are analyzed once by Qwen3.5 Flash and passed to the DeepSeek Agent as compact text observations |
+| Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
+| Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents when complexity needs them |
+| Builder orchestration | Concurrency 0 / 1 / 2 / 3 / 4 / 6, default 2, with Task Graph, Scope Leases, isolated Git worktrees, and conflict-safe merge |
+| Agent collaboration | Shared Contracts, Plan Approval, structured handoffs, and a bounded mailbox; Main remains final integration authority |
+| Observable execution | Witness reports main/subagent activity, duration, failures, and self-check stages while Route preserves the full trace |
+| Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and conflict checks |
+| Independent checks | The main agent selects relevant commands and review; delivery with unverified or failed status is allowed |
+| Project understanding | Understanding stores reusable architecture, conventions, commands, preferences, and debugging knowledge for the workspace |
+| Extensions | Skills, MCP, Browser, Office, and native tools share the same capability system |
+| Multiple model APIs | Aporia Cloud plus multiple OpenAI-compatible providers/keys, `/models` discovery, and task-level model selection |
+| Desktop background | Tasks may continue in the Windows tray with restore/exit, completion notifications, and live runtime display |
+| Local OCR | Chinese/English engine remains; language data downloads on first use; composer, attachment, and sidebar entries are hidden for now |
 
-The local OCR engine is still present (Chinese/English; language data downloads on first use). Its UI entry points are hidden. See [SECURITY.md](SECURITY.md) for boundaries.
+See [SECURITY.md](SECURITY.md) for boundaries.
 
 <table>
   <tr>
