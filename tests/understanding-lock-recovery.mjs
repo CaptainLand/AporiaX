@@ -10,7 +10,9 @@ import { createProjectUnderstandingStore } from "../electron/project-understandi
 if (process.argv[2] === "hold-lock") {
   await withUnderstandingWriteLock(process.argv[3], async () => {
     process.send("locked");
-    await new Promise(() => { setInterval(() => {}, 1000); });
+    // Keep the pending action reachable through a real IPC waiter. An empty
+    // interval keeps the process alive but does not retain the promise resolver.
+    await new Promise((resolve) => { process.once("message", resolve); });
   });
 } else {
   const root = await mkdtemp(join(tmpdir(), "aporia-understanding-lock-"));
