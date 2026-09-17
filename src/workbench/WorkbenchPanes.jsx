@@ -6,7 +6,7 @@ import { SideChatPane } from "./SideChatPane.jsx";
 import { MarkdownPreview } from "./MarkdownPreview.jsx";
 import { DocxPreview } from "./DocxPreview.jsx";
 import { GitPane } from "./GitPane.jsx";
-import { OcrDialog, ocrSource } from "./OcrDialog.jsx";
+import { OCR_UI_ENABLED, OcrDialog, ocrSource } from "./OcrDialog.jsx";
 import { FileExplorerPanel } from "../agent-components.jsx";
 import { useI18n } from "../i18n";
 import { normalizeBrowserUrl } from "../../electron/browser-url.js";
@@ -377,7 +377,7 @@ function ImagePane({ src, title }) {
   const [ocrOpen, setOcrOpen] = useState(false);
   return <div className="workbench-file">
     <div className="workbench-toolbar">
-      {window.desktop?.ocr && ocrSource({ src, name: title }) && <button className="workbench-toolbar-btn" onClick={() => setOcrOpen(true)}>{tr("识别文字", "Recognize text")}</button>}
+      {OCR_UI_ENABLED && window.desktop?.ocr && ocrSource({ src, name: title }) && <button className="workbench-toolbar-btn" onClick={() => setOcrOpen(true)}>{tr("识别文字", "Recognize text")}</button>}
       <button className="workbench-toolbar-btn" onClick={() => { setFit(true); setZoom(1); }}>{tr("适应", "Fit")}</button>
       <button className="workbench-toolbar-btn" onClick={() => { setFit(false); setZoom(1); }}>{tr("原始", "Original")}</button>
       <button className="workbench-icon" aria-label={tr("缩小", "Zoom out")} onClick={() => { setFit(false); setZoom((z) => Math.max(0.25, z - 0.25)); }}>−</button>
@@ -390,14 +390,14 @@ function ImagePane({ src, title }) {
           onLoad={(event) => setSize({ width: event.target.naturalWidth, height: event.target.naturalHeight })}
           style={!fit && size ? { width: size.width * zoom, maxWidth: "none", maxHeight: "none" } : undefined} />
       </div>}
-    {ocrOpen && <OcrDialog source={ocrSource({ src, name: title })} onClose={() => setOcrOpen(false)} />}
+    {OCR_UI_ENABLED && ocrOpen && <OcrDialog source={ocrSource({ src, name: title })} onClose={() => setOcrOpen(false)} />}
   </div>;
 }
 
 function PdfOcrPane({ data, name, onOpenNative }) {
   const { tr } = useI18n();
   const [open, setOpen] = useState(false);
-  return <div className="workbench-notice"><p>{name}</p><p>{tr("可提取文字层或识别扫描页面，并逐页核对原文。", "Extract text or recognize scanned pages, with source page review.")}</p><button className="workbench-toolbar-btn" onClick={onOpenNative}>{tr("系统打开 PDF", "Open PDF externally")}</button>{window.desktop?.ocr && <button className="workbench-toolbar-btn" onClick={() => setOpen(true)}>{tr("读取 / 识别文字", "Read / recognize text")}</button>}{open && <OcrDialog source={{ base64: data, name }} onClose={() => setOpen(false)} />}</div>;
+  return <div className="workbench-notice"><p>{name}</p><p>{tr("可提取文字层或识别扫描页面，并逐页核对原文。", "Extract text or recognize scanned pages, with source page review.")}</p><button className="workbench-toolbar-btn" onClick={onOpenNative}>{tr("系统打开 PDF", "Open PDF externally")}</button>{OCR_UI_ENABLED && window.desktop?.ocr && <button className="workbench-toolbar-btn" onClick={() => setOpen(true)}>{tr("读取 / 识别文字", "Read / recognize text")}</button>}{OCR_UI_ENABLED && open && <OcrDialog source={{ base64: data, name }} onClose={() => setOpen(false)} />}</div>;
 }
 
 function displayBrowserUrl(url) {

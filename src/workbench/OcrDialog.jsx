@@ -4,6 +4,8 @@ import { useI18n } from "../i18n";
 import "./side-chat.css";
 import "./ocr.css";
 
+export const OCR_UI_ENABLED = false;
+
 export function ocrSource(value) {
   if (value.hash) return { hash: value.hash, name: value.name };
   const src = value.dataUrl || value.src || "";

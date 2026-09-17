@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.8 — 2026-09-17
+
+Task history, file writes, Builder recovery, Safe dependencies, and execution boundaries from the 0.9.7 reliability follow-up. The OCR toolbar entry is hidden while the local engine remains.
+
+- Task history survives partial migration, corrupt records, and interrupted index commits; deletes are explicit and archived.
+- Native writes, patches, and Office files use the same recoverable commit path as Builder merges.
+- Builder orchestration reuses delegated snapshot/merge; Kernel admits six concurrent Builders; duplicate schedule ids are rejected.
+- Safe keeps private dependency copies between successful commands in the same task; Isolated no longer silently falls back to the host.
+- OCR runs in a killable child process with mixed-page and force-OCR handling. Composer and sidebar OCR buttons are hidden for now.
+- Privileged IPC checks the main window, main frame, and app origin. MCP timeouts and cancels reach the SDK without claiming remote work was undone.
+
+[Release notes](docs/RELEASE_NOTES_v0.9.8.md)
+
 ## 0.9.7 — 2026-09-16
 
 Local OCR, Git conflict editing, a read-only PR page, and selectable Builder concurrency. GitHub last published 0.9.5, so this package also includes 0.9.6.

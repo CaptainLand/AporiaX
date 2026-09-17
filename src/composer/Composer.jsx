@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../i18n";
-import { OcrDialog, ocrSource } from "../workbench/OcrDialog.jsx";
+import { OCR_UI_ENABLED, OcrDialog, ocrSource } from "../workbench/OcrDialog.jsx";
 import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { getModel, getModelGroups } from "../models/model-catalog.js";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
@@ -491,7 +491,7 @@ export function Composer({
                         : ` · ${formatAttachmentSize(attachment.size)}`}
                     </small>
                   </span>
-                  {attachment.format === "PDF" && window.desktop?.ocr && <button type="button" aria-label={tr("识别 PDF 文字", "Recognize PDF text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
+                  {OCR_UI_ENABLED && attachment.format === "PDF" && window.desktop?.ocr && <button type="button" aria-label={tr("识别 PDF 文字", "Recognize PDF text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
                   <button
                     type="button"
                     aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
@@ -518,7 +518,7 @@ export function Composer({
                 >
                   <img src={attachmentImageSrc(attachment)} alt={attachment.name} draggable={false} />
                   <figcaption>{attachment.name}</figcaption>
-                  {window.desktop?.ocr && <button type="button" className="composer-ocr-button" aria-label={tr("识别图片文字", "Recognize image text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
+                  {OCR_UI_ENABLED && window.desktop?.ocr && <button type="button" className="composer-ocr-button" aria-label={tr("识别图片文字", "Recognize image text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
                   <button
                     type="button"
                     aria-label={tr("移除 {name}", "Remove {name}", { name: attachment.name })}
@@ -553,7 +553,7 @@ export function Composer({
         />
         <div className="composer-toolbar">
           <div className="composer-toolbar-left">
-            {window.desktop?.ocr && <button type="button" className="composer-add" title={tr("本地识别图片 / PDF 文字", "Local image / PDF OCR")} aria-label={tr("本地文字识别", "Local OCR")} onClick={() => setOcr({ source: null })}><span style={{ fontSize: 10 }}>OCR</span></button>}
+            {OCR_UI_ENABLED && window.desktop?.ocr && <button type="button" className="composer-add" title={tr("本地识别图片 / PDF 文字", "Local image / PDF OCR")} aria-label={tr("本地文字识别", "Local OCR")} onClick={() => setOcr({ source: null })}><span style={{ fontSize: 10 }}>OCR</span></button>}
             <input
               ref={imageInputRef}
               type="file"
@@ -755,7 +755,7 @@ export function Composer({
             ? tr("Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码", "Enter to send · Shift Enter for a new line · Add images, PDFs, documents, and code")
             : tr("Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件", "Enter to send · Shift Enter for a new line · Add PDFs, documents, and code")}
       </p>
-      {ocr && <OcrDialog key={task.id} source={ocr.source} onClose={() => setOcr(null)} onAttach={(attachment) => {
+      {OCR_UI_ENABLED && ocr && <OcrDialog key={task.id} source={ocr.source} onClose={() => setOcr(null)} onAttach={(attachment) => {
         if (attachments.length >= 6) { onNotice(tr("附件已满，请先移除一个附件。", "Remove an attachment first; limit is six.")); return false; }
         setAttachments((current) => current.length >= 6 ? current : [...current, attachment]);
         return true;

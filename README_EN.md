@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.7" src="https://img.shields.io/badge/source-v0.9.7-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.8" src="https://img.shields.io/badge/source-v0.9.8-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -30,8 +30,8 @@
 AporiaX is a local-first desktop agent that turns ambiguous requests into observable, verifiable, and reversible routes. It works inside an authorized workspace, edits code, creates real Office files, and keeps actions, evidence, changes, and deliverables visible instead of reducing the work to a chat response.
 
 > [!IMPORTANT]
-> The current AporiaX source and Windows release version is **`v0.9.7`**. The project remains in Preview.
-> 0.9.7 adds local OCR, Git conflict editing and a read-only PR page, plus higher Builder concurrency. It also includes the 0.9.6 link and Safe-sandbox recovery fixes.
+> The current AporiaX source and Windows release version is **`v0.9.8`**. The project remains in Preview.
+> 0.9.8 hardens task history, file writes, Builder recovery, and execution boundaries, and hides the composer OCR button for now. It also includes 0.9.7 OCR, Git conflicts, and Builder concurrency.
 > Aporia Account, Aporia Cloud, BYOK, and local-model paths remain independent.
 
 ## Why AporiaX
@@ -76,6 +76,16 @@ AporiaX is a local-first desktop agent that turns ambiguous requests into observ
     <td align="center"><strong>Extensions</strong><br><sub>Install reviewable methods, not new privileges</sub></td>
   </tr>
 </table>
+
+## What's new in 0.9.8: durable history and writes, OCR entry hidden
+
+- **Task history** retries partial migrations, keeps originals, loads around corrupt records, and archives explicit deletes.
+- **Recoverable writes** share Builder merge backups for ordinary files, patches, and Office output.
+- **Builders / Safe**: delegated snapshot/merge for explicit orchestration; Kernel admits six Builders; Safe keeps private dependencies between successful commands in one task.
+- **OCR** moves native work to a killable child process and handles mixed pages; composer, attachment, and sidebar OCR buttons are hidden for now.
+- **IPC / MCP**: privileged channels check the main window and app origin; timeouts and cancels reach MCP without claiming remote side effects were undone.
+
+[Read the complete 0.9.8 notes](docs/RELEASE_NOTES_v0.9.8.md)
 
 ## What's new in 0.9.7: local OCR, Git conflicts, and Builders
 
@@ -251,13 +261,13 @@ Scanned PDFs and images can be recognized with built-in local OCR (Chinese and E
 
 ## Download
 
-`main` is now the **v0.9.7 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
+`main` is now the **v0.9.8 source state**. Windows x64 installer and portable builds are available from GitHub Releases.
 
 | Windows x64 | Current public package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | All historical versions and release notes |
-| [0.9.7 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.7/AporiaX-Setup-0.9.7-x64.exe) | Recommended Windows x64 installer |
-| [0.9.7 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.7/AporiaX-Portable-0.9.7-x64.exe) | No-install Windows x64 package |
+| [0.9.8 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.8/AporiaX-Setup-0.9.8-x64.exe) | Recommended Windows x64 installer |
+| [0.9.8 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.8/AporiaX-Portable-0.9.8-x64.exe) | No-install Windows x64 package |
 
 After the first launch:
 
