@@ -1,0 +1,60 @@
+name: Harness loop development workspace
+on:
+  push:
+    branches: [codex/harness-loop-20260918]
+    paths: [.github/workflows/harness-loop-workbench.yml, .harness-loop.patch]
+permissions:
+  contents: read
+jobs:
+  export:
+    if: github.repository == 'CaptainLand/AporiaX'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - name: Export exact tracked source for offline verification
+        run: git archive HEAD | gzip > "$RUNNER_TEMP/harness-source.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harness-source
+          path: ${{ runner.temp }}/harness-source.tar.gz
+          retention-days: 3
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Export dependency workspace
+        run: tar -czf "$RUNNER_TEMP/harness-dependencies.tar.gz" node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harness-dependencies
+          path: ${{ runner.temp }}/harness-dependencies.tar.gz
+          retention-days: 3
+  apply-reviewed-patch:
+    if: github.repository == 'CaptainLand/AporiaX' && github.ref == 'refs/heads/codex/harness-loop-20260918'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/harness-loop-20260918
+      - name: Apply offline-reviewed diff only on the development branch
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          if test ! -f .harness-loop.patch; then exit 0; fi
+          git apply --check .harness-loop.patch
+          git apply --index .harness-loop.patch
+          git rm .harness-loop.patch .github/workflows/harness-loop-workbench.yml
+          git config user.name 'AporiaX Harness Maintenance'
+          git config user.email 'harness-maintenance@users.noreply.github.com'
+          git commit -m 'feat(harness): improve loop efficiency and bounded recovery with regression coverage'
+          git push origin HEAD:refs/heads/codex/harness-loop-20260918
