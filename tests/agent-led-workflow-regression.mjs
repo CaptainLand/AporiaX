@@ -150,7 +150,16 @@ try {
     model: { id: "test", supportsTools: true, supportsThinking: false, supportsImages: true },
   });
   assert.equal(vision.result.status, "completed");
-  assert.ok((vision.result.contextStats?.estimatedPromptTokens || 0) < 20000, "native vision requests must not treat Base64 as text tokens");
+  const largerVision = await scenario("native-vision-larger", [], {
+    messages: [{ role: "user", content: "Read this screenshot", attachments: [{ kind: "image", dataUrl: "data:image/png;base64," + "A".repeat(3000000) }] }],
+    model: { id: "test", supportsTools: true, supportsThinking: false, supportsImages: true },
+  });
+  assert.equal(largerVision.result.status, "completed");
+  // The fixed tool/instruction catalog already exceeds the old 20k cutoff on
+  // baseline main. Compare the controlled image-size change instead: transport
+  // bytes must not scale text-token pressure. Unknown image dimensions are equal.
+  assert.ok(Math.abs(vision.result.contextStats.estimatedPromptTokens - largerVision.result.contextStats.estimatedPromptTokens) < 64,
+    "increasing encoded image transport by 10x must not inflate text-token accounting");
 
   const blocked = await scenario("context-blocked", [], {
     messages: [{ role: "user", content: "长".repeat(40000) }],

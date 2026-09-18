@@ -22,7 +22,7 @@ export async function completeWithSteering({ provider, control, signal, body, on
     return { ...result, interrupted: interrupted || Boolean(control?.hasSteering?.()) };
   } catch (error) {
     if (!interrupted || signal?.aborted) throw error;
-    return { interrupted: true, message: { role: "assistant", content }, usage: error?.usage || null };
+    return { interrupted: true, message: { role: "assistant", content }, usage: error?.usage || null, attemptUsage: error?.attemptUsage || null };
   } finally {
     signal?.removeEventListener("abort", abort);
     unsubscribe?.();

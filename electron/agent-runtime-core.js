@@ -1,3 +1,7 @@
+import { completeLoopRequest } from "./runtime/loop-recovery.js";
+import { LoopMetrics } from "./runtime/loop-metrics.js";
+import { CompletionPolicy, normalizeLoopPolicy } from "./runtime/completion-policy.js";
+import { planToolBatches, executeToolBatch as mapWithConcurrency } from "./runtime/tool-batch.js";
 import { createSafeDependencySession } from "./runtime/safe-dependency-session.js";
 import { spawn } from "node:child_process";
 import { validateDeliveryLinks } from "./runtime/delivery-links.js";
@@ -1000,35 +1004,14 @@ function requestedPathsForToolCall(toolCall, workspaceRoot) {
   return [];
 }
 
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const runners = Array.from(
-    { length: Math.min(Math.max(1, limit), items.length) },
-    async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await worker(items[index], index);
-      }
-    },
-  );
-  await Promise.all(runners);
-  return results;
-}
-
-function mainToolBatchCanRunInParallel(toolCalls) {
-  if (!Array.isArray(toolCalls) || toolCalls.length < 2) return false;
-  return toolCalls.every((toolCall) => {
-    if (!PARALLEL_MAIN_TOOLS.has(toolCall?.function?.name)) return false;
-    if (toolCall.function.name !== "delegate_subagent") return true;
-    try {
-      const input = normalizeSubagentInput(parseToolArguments(toolCall));
-      return input.role !== "verify" || input.background;
-    } catch {
-      return false;
-    }
-  });
+function mainToolCanRunInParallel(toolCall) {
+  if (!PARALLEL_MAIN_TOOLS.has(toolCall?.function?.name)) return false;
+  if (toolCall.function.name !== "delegate_subagent") return true;
+  try {
+    const input = normalizeSubagentInput(parseToolArguments(toolCall));
+    // A foreground verifier can run commands; isolate it from adjacent readers.
+    return input.role !== "verify" || input.background;
+  } catch { return false; }
 }
 
 import { acquireWorkbenchResources } from "./workbench/runtime-provider.js";
@@ -1063,6 +1046,7 @@ export async function runHarness({
   recoveryContext = null,
   deferUnderstandingCuration = true,
   onNativeVisionRejected = null,
+  loopPolicy = {},
 }) {
   if (
     !providerConfig ||
@@ -1073,9 +1057,13 @@ export async function runHarness({
   ) {
     throw new Error("A valid model Provider is required.");
   }
+  const effectiveLoopPolicy = normalizeLoopPolicy(loopPolicy);
+  const completionPolicy = new CompletionPolicy(effectiveLoopPolicy);
+  const loopMetrics = new LoopMetrics();
   const forwardEvent = createEventEmitter(onEvent);
   let witness = null;
   const emit = (event) => {
+    loopMetrics.observe(event);
     forwardEvent(event);
     witness?.observe(event);
   };
@@ -1493,14 +1481,14 @@ export async function runHarness({
   let anchorCaptureError = "";
   let anchorBaselinePromise = null;
   let anchorDirty = false;
-  const toolProgress = new ToolProgressGuard();
+  const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: effectiveLoopPolicy.maxRepeatedEvidence });
   const observeToolProgress = (toolCall, modelResult) => {
     let input;
     try { input = parseToolArguments(toolCall); } catch { input = toolCall.function.arguments; }
     const warning = toolProgress.observe({ tool: toolCall.function.name, input, result: modelResult, version: verificationVersion(changeMap) });
     if (warning) {
       modelResult.progressWarning = warning;
-      emit({ type: "runtime.no_progress.warning", tool: toolCall.function.name, message: warning });
+      emit({ type: "runtime.no_progress.warning", tool: toolCall.function.name, message: warning, decision: toolProgress.lastDecision });
     }
   };
   const selfCheck = {
@@ -1546,6 +1534,7 @@ export async function runHarness({
     await onContextCheckpoint?.();
     return saveRuntimeContext(runId, {
     kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
+    loopMetrics: loopMetrics.snapshot(),
     continuation: snapshotContinuation(selfCheck, changeMap), usage: totalUsage, cumulativeUsage: cumulativeUsage(), usageHistoryComplete,
     workers: [...subagents.values()].map(({ agentId, role, task, background, requiredForCompletion, collected, input }) =>
       ({ agentId, role, task, background, requiredForCompletion, collected, input })),
@@ -1561,6 +1550,7 @@ export async function runHarness({
     });
     if (!sanitizedSteering.length) return;
     toolProgress.reset();
+    completionPolicy.reset();
     await saveRuntimeCheckpoint({ scopeId: runId, phase: "guidance-applied", latestGuidance: steeringMessages });
     conversation.push(...sanitizedSteering.map(taskRequest));
     inputHistory.push(...sanitizedSteering);
@@ -2237,6 +2227,7 @@ export async function runHarness({
         signal,
         applyControlBoundary: applyRuntimeControlBoundary,
       });
+      toolProgress.assertBudget();
       if (provider.supportsTools) {
         const nextDefinitions = [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)];
         if (JSON.stringify(nextDefinitions) !== JSON.stringify(enabledToolDefinitions)) {
@@ -2277,7 +2268,7 @@ export async function runHarness({
         relevantMemory: relevantDurableContext,
       });
       await persistMainContext();
-      const requestConversation = conversation;
+      let requestConversation = [...conversation];
       const completionBody = (requestMessages) => ({
           model: modelId,
           messages: providerMessages(requestMessages),
@@ -2309,12 +2300,19 @@ export async function runHarness({
               }
             : {}),
       });
+      const infer = () => completeLoopRequest({
+        conversation, contextCheckpoints, accounting: tokenAccounting, contextWindowTokens,
+        getBody: completionBody, signal, plan, persist: persistMainContext,
+        shouldYield: () => Boolean(control?.hasSteering?.()), onEvent: emit,
+        onFailedUsage: async (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); await persistMainContext(); },
+        complete: async (body) => {
+          loopMetrics.request(body);
+          return completeWithSteering({ provider, control, signal, onEvent: emit, body });
+        },
+      });
       let completion;
       try {
-        completion = await completeWithSteering({
-          provider, control, signal, onEvent: emit,
-          body: completionBody(requestConversation),
-        });
+        completion = await infer();
       } catch (error) {
         if (
           supportsImages &&
@@ -2341,14 +2339,12 @@ export async function runHarness({
           } catch {
             // Persisting the text-only setting must not block the retry.
           }
-          completion = await completeWithSteering({
-            provider, control, signal, onEvent: emit,
-            body: completionBody(conversation),
-          });
+          completion = await infer();
         } else {
           throw error;
         }
       }
+      requestConversation = completion.requestConversation || requestConversation;
       let { message } = completion;
       const { usage, interrupted: steered } = completion;
       if (message.content) inputHistory.push({ role: "assistant", content: message.content });
@@ -2357,7 +2353,7 @@ export async function runHarness({
         usage,
         requestConversation,
       );
-      totalUsage = mergeTokenUsage(totalUsage, usage);
+      totalUsage = mergeTokenUsage(totalUsage, completion.attemptUsage || usage);
       if (steered) {
         if (message.content) conversation.push({ role: "assistant", content: message.content });
         emit({ type: "response.steered", usage, totalUsage });
@@ -2391,7 +2387,7 @@ export async function runHarness({
         message = { role: "assistant", content: outcome.summary };
         await persistMainContext();
       }
-      const outcomeStatus = outcome?.status || "completed";
+      let outcomeStatus = outcome?.status || "completed";
       const turnDecision = turnCoordinator.observeModelResponse(message);
       if (turnDecision.kind === "final") {
         if (control?.hasSteering?.()) {
@@ -2418,8 +2414,23 @@ export async function runHarness({
             ].join("\n")));
           continue;
         }
+        if (effectiveLoopPolicy.requireVerifiedChanges) {
+          await refreshAnchorSnapshot({ force: true });
+          refreshVerification(selfCheck, changeMap);
+        }
+        const candidateChanges = buildChanges(changeMap);
+        const completionDecision = completionPolicy.evaluate({ status: outcomeStatus, changes: candidateChanges,
+          assessment: assessDelivery(selfCheck, candidateChanges, verificationVersion(changeMap)) });
+        if (completionDecision.action === "continue") {
+          conversation.push({ role: "assistant", content: message.content || "" });
+          conversation.push(harnessFeedback(completionDecision.reason));
+          emit({ type: "completion.continue", continuation: completionDecision.continuation });
+          await persistMainContext();
+          continue;
+        }
+        outcomeStatus = completionDecision.status;
+        if (completionDecision.reason) message = { ...message, content: `${message.content || ""}\n\n${completionDecision.reason}` };
         const changes = buildChanges(changeMap);
-        // Workflow evidence informs delivery; it is not an automatic veto.
         const finalizedAnchor = await finalizeAnchor(outcomeStatus);
         refreshVerification(selfCheck, changeMap);
         const deliveryAssessment = assessDelivery(selfCheck, buildChanges(changeMap), verificationVersion(changeMap));
@@ -2506,6 +2517,7 @@ export async function runHarness({
           changes: finalizedAnchor.changes,
           anchor: finalizedAnchor.anchor,
           usage: totalUsage,
+        loopMetrics: loopMetrics.snapshot(),
           cumulativeUsage: cumulativeUsage(),
           usageHistoryComplete,
           instructionFiles: [...instructionContext.loadedFiles],
@@ -2577,15 +2589,18 @@ export async function runHarness({
       const retryAfterScopedInstructions =
         await loadScopedContextForToolCalls(message.tool_calls);
 
-      if (mainToolBatchCanRunInParallel(message.tool_calls)) {
-        turnCoordinator.beginToolBatch(message.tool_calls, { parallel: true });
+      // Finish one contiguous read pool before crossing an exclusive barrier.
+      // The assistant's original call/result order remains the provider contract.
+      for (const batch of planToolBatches(message.tool_calls, mainToolCanRunInParallel)) {
+      if (batch.parallel) {
+        turnCoordinator.beginToolBatch(batch.calls, { parallel: true });
         emit({
           type: "parallel_batch.started",
-          count: message.tool_calls.length,
-          tools: message.tool_calls.map((call) => call.function.name),
+          count: batch.calls.length,
+          tools: batch.calls.map((call) => call.function.name),
         });
         const parallelResults = await mapWithConcurrency(
-          message.tool_calls,
+          batch.calls,
           MAX_PARALLEL_TOOL_CALLS,
           async (toolCall) => {
             throwIfAborted(signal);
@@ -2674,10 +2689,11 @@ export async function runHarness({
             });
             return { toolCall, result, success, detail };
           },
+          { signal },
         );
         for (const outcome of parallelResults) {
           const { toolCall, result, success, detail } = outcome;
-          const modelResult = result.modelResult;
+          const modelResult = await mcpRuntime.retainNativeResult(result.modelResult);
           observeToolProgress(toolCall, modelResult);
           recordInspectedChange(selfCheck, changeMap, toolCall.function.name, modelResult);
           steps.push({
@@ -2713,8 +2729,8 @@ export async function runHarness({
         continue;
       }
 
-      turnCoordinator.beginToolBatch(message.tool_calls, { parallel: false });
-      for (const toolCall of message.tool_calls) {
+      turnCoordinator.beginToolBatch(batch.calls, { parallel: false });
+      for (const toolCall of batch.calls) {
         throwIfAborted(signal);
         await control?.waitIfPaused?.(signal);
         if (control?.hasSteering?.()) {
@@ -3039,7 +3055,8 @@ export async function runHarness({
 
         if (result?.modelResult?.timedOut) success = false;
 
-        const modelResult = result.modelResult;
+        const modelResult = isMcpToolName(toolCall.function.name)
+          ? result.modelResult : await mcpRuntime.retainNativeResult(result.modelResult);
         observeToolProgress(toolCall, modelResult);
         const stepDetail = formatToolStepDetail(
           toolCall.function.name,
@@ -3092,6 +3109,7 @@ export async function runHarness({
         });
         await persistMainContext();
       }
+      } // contiguous tool batches
     }
 
   } catch (error) {
@@ -3104,6 +3122,7 @@ export async function runHarness({
       turnCoordinator.fail(storageError);
       emit({ type: "turn.failed", status: "blocked", error: content, changedFiles: buildChanges(changeMap).length });
       return { status: "blocked", error: true, content: appendSandboxRecoveryNotice(content, sandboxRecoveries, language), changes: buildChanges(changeMap), steps, usage: totalUsage,
+          loopMetrics: loopMetrics.snapshot(),
         cumulativeUsage: cumulativeUsage(), usageHistoryComplete, plan, selfCheck: buildSelfCheckResult(selfCheck, changeMap),
         persistence: { failed: true, lastSuccessfulContext: storageError.lastSuccessfulContext || null }, witness: witness.snapshot() };
     }
@@ -3119,6 +3138,7 @@ export async function runHarness({
         changes: finalizedAnchor.changes,
         anchor: finalizedAnchor.anchor,
         usage: totalUsage,
+        loopMetrics: loopMetrics.snapshot(),
         cumulativeUsage: cumulativeUsage(),
         usageHistoryComplete,
         instructionFiles: [...instructionContext.loadedFiles],
@@ -3159,7 +3179,7 @@ export async function runHarness({
       return interruptedResult;
     }
     const contextBlocked = error?.code === "CONTEXT_BUDGET_EXCEEDED";
-    const verificationBlocked = contextBlocked || error?.code === "VERIFICATION_UNAVAILABLE";
+    const verificationBlocked = contextBlocked || error?.code === "VERIFICATION_UNAVAILABLE" || error?.code === "LOOP_NO_PROGRESS";
     const finalizedAnchor = await finalizeAnchor(verificationBlocked ? "blocked" : "failed");
     const failedResult = {
       status: verificationBlocked ? "blocked" : "failed",
@@ -3172,6 +3192,7 @@ export async function runHarness({
       changes: finalizedAnchor.changes,
       anchor: finalizedAnchor.anchor,
       usage: totalUsage,
+      loopMetrics: loopMetrics.snapshot(),
       cumulativeUsage: cumulativeUsage(),
       usageHistoryComplete,
       instructionFiles: [...instructionContext.loadedFiles],
@@ -3209,6 +3230,7 @@ export async function runHarness({
     failedResult.content = appendSandboxRecoveryNotice(failedResult.content, sandboxRecoveries, language);
     return failedResult;
   } finally {
+    forwardEvent({ type: "loop.metrics", metrics: loopMetrics.snapshot() });
     await safeDependencySession.close();
     await lspManager?.closeAll().catch(() => undefined);
     if (workbenchResources) await workbenchResources.release({ aborted: Boolean(signal?.aborted) }).catch((error) => forwardEvent({ type: "workbench.cleanup.failed", error: error.message }));

@@ -3,6 +3,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'agent-led-workflow-regression.mjs',
+  'harness-loop-unit.mjs', 'harness-loop-provider.mjs', 'harness-loop-integration.mjs',
   'audit-reliability.mjs', 'audit-migration-index.mjs', 'task-history-store-smoke.mjs', 'task-store-smoke.mjs',
   'approval-response-regression.mjs', 'builder-merge-regression.mjs', 'builder-merge-crash.mjs',
   'context-continuation-regression.mjs', 'mcp-deferred-catalog.mjs', 'understanding-lock-recovery.mjs',

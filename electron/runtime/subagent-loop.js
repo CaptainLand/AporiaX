@@ -1,3 +1,6 @@
+import { completeLoopRequest } from "./loop-recovery.js";
+import { LoopMetrics } from "./loop-metrics.js";
+import { planToolBatches, executeToolBatch as mapWithConcurrency } from "./tool-batch.js";
 import {
   compactConversationForRequest as compactManagedConversation,
   createTokenAccounting,
@@ -40,23 +43,6 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
 }
 
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const runners = Array.from(
-    { length: Math.min(Math.max(1, limit), items.length) },
-    async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await worker(items[index], index);
-      }
-    },
-  );
-  await Promise.all(runners);
-  return results;
-}
-
 export async function runSubagentTask(options = {}) {
   if (!options.__budgetAdmitted) return withAgentBudgetAdmission({ role: options.input?.role, signal: options.signal, systemOwned: options.systemOwned },
     () => runSubagentTask({ ...options, __budgetAdmitted: true }));
@@ -89,6 +75,13 @@ export async function runSubagentTask(options = {}) {
     return runSubagentTask({ ...options, ...resolved, __modelResolved: true });
   }
   if (options.input?.role === "builder" && !options.__builderIsolated) return runIsolatedBuilder(options, runSubagentTask);
+  const loopMetrics = new LoopMetrics();
+  const originalEmit = options.emit;
+  options = { ...options, emit: (event) => {
+    loopMetrics.observe(event.type === "subagent.tool.started" ? { ...event, type: "tool.started" }
+      : event.type === "subagent.tool.completed" ? { ...event, type: "tool.completed" } : event);
+    originalEmit?.(event);
+  } };
   const {
     agentId,
     input,
@@ -222,6 +215,7 @@ export async function runSubagentTask(options = {}) {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
       if (session.pendingGuidance?.length) {
+        toolProgress.reset();
         conversation.push(...session.pendingGuidance.splice(0).map((content) => taskRequest({ role: "user", content })));
       }
       await saveRuntimeCheckpoint({ scopeId: agentId, role: input.role, task: input.task, workspaceRoot, status: "running", round, evidence: compactSubagentEvidence(evidence) });
@@ -231,23 +225,24 @@ export async function runSubagentTask(options = {}) {
       });
       compactManagedConversation({
         conversation,
-        onEvent: (event) =>
-          emit({ ...event, type: "subagent.context.compacted", agentId }),
+        onEvent: (event) => {
+          loopMetrics.observe(event);
+          emit({ ...event, type: "subagent.context.compacted", agentId });
+        },
         contextCheckpoints,
         contextWindowTokens,
         accounting: tokenAccounting,
         relevantMemory: relevant,
       });
       await persistSession();
-      const requestConversation = conversation;
-      const { message, usage } = await provider.complete({
-        signal,
-        onStreamEvent: (event) => {
-          if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
-        },
-        body: {
+      const completion = await completeLoopRequest({ conversation, contextCheckpoints,
+        accounting: tokenAccounting, contextWindowTokens, signal, persist: persistSession,
+        shouldYield: () => Boolean(session.pendingGuidance?.length),
+        onEvent: (event) => { loopMetrics.observe(event); emit({ ...event, type: `subagent.${event.type}`, agentId }); },
+        onFailedUsage: async (usage) => { usageTotal = mergeTokenUsage(usageTotal, usage); options.onUsage?.(usage); await persistSession(); },
+        getBody: (requestMessages) => ({
           model: modelId,
-          messages: providerMessages(requestConversation),
+          messages: providerMessages(requestMessages),
           ...(provider.supportsTools && enabledTools.length
             ? { tools: enabledTools, tool_choice: "auto" }
             : {}),
@@ -268,11 +263,21 @@ export async function runSubagentTask(options = {}) {
           thinking
             ? { reasoning_effort: effort === "max" ? "high" : "medium" }
             : {}),
+        }),
+        complete: async (body) => {
+          loopMetrics.request(body);
+          return provider.complete({ signal, body, onStreamEvent: (event) => {
+            loopMetrics.observe(event);
+            if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
+            if (event.type === "response.attempt.completed") emit({ ...event, type: "subagent.response.attempt.completed", agentId });
+          } });
         },
       });
+      const { message, usage, requestConversation } = completion;
+      if (completion.interrupted) continue;
       recordProviderUsage(tokenAccounting, usage, requestConversation);
-      usageTotal = mergeTokenUsage(usageTotal, usage);
-      options.onUsage?.(usage);
+      usageTotal = mergeTokenUsage(usageTotal, completion.attemptUsage || usage);
+      options.onUsage?.(completion.attemptUsage || usage);
       if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
         if (typeof message.content !== "string" || !message.content.trim()) throw new Error("MODEL_EMPTY_RESPONSE: subagent returned no evidence or report.");
         if (session.pendingGuidance?.length) {
@@ -293,7 +298,7 @@ export async function runSubagentTask(options = {}) {
               : "子 Agent 已完成，但没有返回文本报告。"),
           evidence: compactSubagentEvidence(evidence),
           steps: toolSteps.slice(-60),
-          usage: usageTotal,
+          usage: usageTotal, loopMetrics: loopMetrics.snapshot(),
           rounds: round,
           instructionFiles: [...instructionContext.loadedFiles],
         };
@@ -321,7 +326,9 @@ export async function runSubagentTask(options = {}) {
         tool_calls: message.tool_calls,
       });
       await persistSession();
-      const parallelBatch = subagentToolsAreParallel(message.tool_calls);
+      for (const batch of planToolBatches(message.tool_calls,
+        (call) => subagentToolsAreParallel([call, call]))) {
+      const parallelBatch = batch.parallel;
       const executeCall = async (toolCall) => {
         const toolName = toolCall.function.name;
         const capabilityPhase = ["review", "verify"].includes(input.role)
@@ -420,13 +427,8 @@ export async function runSubagentTask(options = {}) {
         if (input.role === "builder") await persistSession();
         return { toolCall, modelResult };
       };
-      const results = parallelBatch
-        ? await mapWithConcurrency(
-            message.tool_calls,
-            MAX_PARALLEL_TOOL_CALLS,
-            executeCall,
-          )
-        : await mapWithConcurrency(message.tool_calls, 1, executeCall);
+      const results = await mapWithConcurrency(batch.calls,
+        parallelBatch ? MAX_PARALLEL_TOOL_CALLS : 1, executeCall, { signal });
       for (const { toolCall, modelResult } of results) {
         let parsed;
         try { parsed = parseToolArguments(toolCall); } catch { parsed = toolCall.function.arguments; }
@@ -442,6 +444,7 @@ export async function runSubagentTask(options = {}) {
         });
       }
       await persistSession();
+      } // contiguous tool batches
     }
 
     const result = {
@@ -454,7 +457,7 @@ export async function runSubagentTask(options = {}) {
           : `子 Agent 已达到 ${effectiveMaxRounds} 轮安全预算。请把现有证据视为部分结果，或委派一个范围更小的后续任务。`,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
-      usage: usageTotal,
+      usage: usageTotal, loopMetrics: loopMetrics.snapshot(),
       rounds: effectiveMaxRounds,
       instructionFiles: [...instructionContext.loadedFiles],
     };
@@ -489,7 +492,7 @@ export async function runSubagentTask(options = {}) {
       summary: error.message,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
-      usage: usageTotal,
+      usage: usageTotal, loopMetrics: loopMetrics.snapshot(),
     };
     await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
     await persistSession("failed", result);

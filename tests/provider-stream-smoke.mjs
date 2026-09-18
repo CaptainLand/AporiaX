@@ -167,8 +167,11 @@ try {
     },
   );
   assert.equal(timeoutAttempts, 2, "a provider timeout should be retried only once");
-  assert.equal(timeoutRetryEvents.length, 1);
-  assert.equal(timeoutRetryEvents[0].maxAttempts, 2);
+  const timeoutRetries = timeoutRetryEvents.filter((event) => event.type === "response.retry");
+  assert.equal(timeoutRetries.length, 1);
+  assert.equal(timeoutRetries[0].maxAttempts, 2);
+  assert.equal(timeoutRetryEvents.filter((event) => event.type === "response.attempt.completed").length, 2,
+    "each timeout attempt has a terminal metric without changing the retry cap");
 
   const partialEvents = [];
   let partialAttempts = 0;
