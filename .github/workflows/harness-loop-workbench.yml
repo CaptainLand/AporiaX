@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
-      - name: Verify and apply the tested diff on the development branch
+      - name: Verify and apply non-workflow source changes
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
@@ -27,13 +27,14 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          if test ! -f .harness-loop.patch; then exit 0; fi
           test "$(cat .harness-loop.patch)" = "$PATCH_SHA256"
           cat .harness-loop.part0 .harness-loop.part1 .harness-loop.part2 .harness-loop.part3 | base64 --decode > "$RUNNER_TEMP/harness-loop.br"
           node -e 'const f=require("node:fs"),z=require("node:zlib"); f.writeFileSync(process.argv[2],z.brotliDecompressSync(f.readFileSync(process.argv[1])))' "$RUNNER_TEMP/harness-loop.br" "$RUNNER_TEMP/harness-loop.diff"
           echo "$PATCH_SHA256  $RUNNER_TEMP/harness-loop.diff" | sha256sum --check --strict
-          git apply --check "$RUNNER_TEMP/harness-loop.diff"
-          git apply --index "$RUNNER_TEMP/harness-loop.diff"
-          git rm .harness-loop.patch .harness-loop.part0 .harness-loop.part1 .harness-loop.part2 .harness-loop.part3 .github/workflows/harness-loop-workbench.yml
+          git apply --check --exclude='.github/workflows/*' "$RUNNER_TEMP/harness-loop.diff"
+          git apply --index --exclude='.github/workflows/*' "$RUNNER_TEMP/harness-loop.diff"
+          git rm .harness-loop.patch .harness-loop.part0 .harness-loop.part1 .harness-loop.part2 .harness-loop.part3
           git diff --cached --check
           git config user.name 'AporiaX Harness Maintenance'
           git config user.email 'harness-maintenance@users.noreply.github.com'
