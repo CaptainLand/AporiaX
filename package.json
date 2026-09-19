@@ -102,7 +102,8 @@
     "test:lsp-installer": "node --experimental-sqlite tests/lsp-installer-smoke.mjs",
     "test:workbench-state": "node --experimental-sqlite tests/workbench-state-smoke.mjs && node --experimental-sqlite tests/workbench-present-smoke.mjs && node --experimental-sqlite tests/composer-workbench-browser.mjs",
     "test:audit": "node --experimental-sqlite tests/audit-reliability.mjs",
-    "test:audit-suite": "node --experimental-sqlite scripts/run-audit-checks.mjs"
+    "test:audit-suite": "node --experimental-sqlite scripts/run-audit-checks.mjs",
+    "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

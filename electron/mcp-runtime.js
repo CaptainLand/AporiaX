@@ -332,6 +332,7 @@ export class AporiaXMcpRuntime {
   #selectedTools = [];
   #permissionMode = "read-only";
   #resultStore = createMcpResultStore();
+  #nativeResultRefs = new Map();
 
   constructor({
     servers = [],
@@ -422,7 +423,7 @@ export class AporiaXMcpRuntime {
       } }] : []),
       ...(connections.length || this.#resultStore.persistent ? [{ type: "function", function: {
         name: CORE_RESULT_READ,
-        description: "Read the full saved JSON of a large MCP result in UTF-8 byte pages. Use resultRef.id and nextOffset. resultRef.lifetime declares whether it survives task recovery; this never repeats the original tool action.",
+        description: "Read the full saved JSON of a large tool result (native or MCP) in UTF-8 byte pages. Use resultRef.id and nextOffset. resultRef.lifetime declares whether it survives task recovery; this never repeats the original tool action.",
         parameters: { type: "object", properties: {
           result_id: { type: "string" }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 4, maximum: 32000 },
         }, required: ["result_id"], additionalProperties: false },
@@ -817,8 +818,26 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
         }
       }),
     );
+    this.#nativeResultRefs.clear();
     await this.#resultStore.close();
     this.#emit({ type: "mcp.closed", servers: connections.length });
+  }
+
+  // Local native evidence shares the task-owned pager. No MCP server is called,
+  // no user path is accepted, and Builder-only tool sets remain unchanged.
+  async retainNativeResult(result) {
+    if (this.#permissionMode === "builder-write" || !this.#resultStore.persistent ||
+        !result || typeof result !== "object" || result.resultRef) return result;
+    const text = JSON.stringify(result);
+    if (text.length <= 16_000 || text.length > 1_000_000) return result;
+    const key = createHash("sha256").update(text).digest("hex");
+    let resultRef = this.#nativeResultRefs.get(key);
+    if (!resultRef) {
+      resultRef = await this.#resultStore.put(text);
+      this.#nativeResultRefs.set(key, resultRef);
+      if (this.#nativeResultRefs.size > 128) this.#nativeResultRefs.delete(this.#nativeResultRefs.keys().next().value);
+    }
+    return { ...result, resultRef };
   }
 
   async #modelResult(result) {

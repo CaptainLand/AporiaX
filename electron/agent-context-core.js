@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { normalizeTokenUsage } from "./runtime/token-usage.js";
+export { mergeTokenUsage } from "./runtime/token-usage.js";
 import { isHumanMessage } from "./runtime/task-conversation.js";
 import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
 import { conversationTokenMaterial } from "./runtime/multimodal-budget.js";
@@ -60,31 +62,6 @@ function normalizeUsageNumber(value) {
   return Number.isFinite(number) && number >= 0 ? number : 0;
 }
 
-function inputTokensFromUsage(usage) {
-  return normalizeUsageNumber(
-    usage?.prompt_tokens ??
-      usage?.input_tokens ??
-      usage?.promptTokens ??
-      usage?.inputTokens,
-  );
-}
-
-function outputTokensFromUsage(usage) {
-  return normalizeUsageNumber(
-    usage?.completion_tokens ??
-      usage?.output_tokens ??
-      usage?.completionTokens ??
-      usage?.outputTokens,
-  );
-}
-
-function totalTokensFromUsage(usage) {
-  const explicit = normalizeUsageNumber(
-    usage?.total_tokens ?? usage?.totalTokens,
-  );
-  return explicit || inputTokensFromUsage(usage) + outputTokensFromUsage(usage);
-}
-
 function countHeuristicTokens(text) {
   const value = String(text || "");
   if (!value) return 0;
@@ -104,61 +81,57 @@ export function createTokenAccounting() {
   return {
     source: "model-aware-heuristic",
     calibratedTokensPerCharacter: 0,
+    calibratedHeuristicScale: 1,
     providerOverheadTokens: 0,
     lastPromptTokens: 0,
     lastConversationCharacters: 0,
+    lastHeuristicTokens: 0,
+    lastProviderOverheadTokens: 0,
+    lastMaterialHash: "",
     requests: 0,
   };
 }
 
-export function estimateConversationTokens(
-  conversation,
-  accounting = null,
-) {
-  const { serialized, imageTokens } = conversationTokenMaterial(conversation);
+export function estimateConversationTokens(conversation, accounting = null) {
+  const { serialized, imageTokens, imageCount } = conversationTokenMaterial(conversation);
   const heuristic = countHeuristicTokens(serialized);
-  if (!accounting?.lastPromptTokens || !accounting.lastConversationCharacters)
-    return Math.max(1, heuristic + normalizeUsageNumber(accounting?.providerOverheadTokens)) + imageTokens;
-  const calibrated = Math.ceil(serialized.length * accounting.calibratedTokensPerCharacter + accounting.providerOverheadTokens);
-  const incremental = Math.ceil(accounting.lastPromptTokens +
-    (serialized.length - accounting.lastConversationCharacters) * accounting.calibratedTokensPerCharacter);
-  return Math.max(1, heuristic, calibrated, incremental) + imageTokens;
+  const overhead = normalizeUsageNumber(accounting?.providerOverheadTokens);
+  // Images never calibrate the text estimator; usage cannot separate their cost.
+  if (imageCount || !accounting?.lastMaterialHash) return Math.max(1, heuristic + overhead) + imageTokens;
+  const hash = createHash("sha256").update(serialized).digest("hex");
+  if (hash === accounting.lastMaterialHash && overhead === accounting.lastProviderOverheadTokens) {
+    return accounting.lastPromptTokens;
+  }
+  // Anchor to ONE measured request, then estimate only the changed material.
+  // The baseline already includes schema/protocol overhead. Do not add it twice.
+  return Math.max(1, Math.ceil(accounting.lastPromptTokens +
+    (heuristic - accounting.lastHeuristicTokens) * accounting.calibratedHeuristicScale +
+    overhead - accounting.lastProviderOverheadTokens));
 }
 
 export function recordProviderUsage(accounting, usage, conversation) {
-  if (!accounting || !usage) return accounting;
-  const promptTokens = inputTokensFromUsage(usage);
-  if (!promptTokens) return accounting;
-  const { serialized, imageCount } = conversationTokenMaterial(conversation);
+  const promptTokens = normalizeTokenUsage(usage)?.prompt_tokens;
+  if (!accounting || !Number.isFinite(promptTokens) || promptTokens <= 0) return accounting;
   accounting.requests += 1;
+  const { serialized, imageCount } = conversationTokenMaterial(conversation);
   if (imageCount) {
     accounting.source = "multimodal-heuristic";
     return accounting;
   }
   const heuristic = countHeuristicTokens(serialized);
-  const measuredRatio = Math.min(1.5, Math.max(0.08, promptTokens / Math.max(1, serialized.length)));
-  accounting.calibratedTokensPerCharacter = accounting.calibratedTokensPerCharacter > 0
-    ? accounting.calibratedTokensPerCharacter * 0.35 + measuredRatio * 0.65 : measuredRatio;
-  accounting.providerOverheadTokens = Math.max(0, Math.min(50_000, promptTokens - heuristic));
+  const overhead = normalizeUsageNumber(accounting.providerOverheadTokens);
+  const scale = (promptTokens - overhead) / Math.max(1, heuristic);
+  // Implausible/synthetic usage still anchors the identical request, but must
+  // not teach an arbitrary per-character rate to every subsequent request.
+  if (scale >= 0.1 && scale <= 4) accounting.calibratedHeuristicScale = scale;
+  accounting.calibratedTokensPerCharacter = promptTokens / Math.max(1, serialized.length);
   accounting.lastPromptTokens = promptTokens;
   accounting.lastConversationCharacters = serialized.length;
+  accounting.lastHeuristicTokens = heuristic;
+  accounting.lastProviderOverheadTokens = overhead;
+  accounting.lastMaterialHash = createHash("sha256").update(serialized).digest("hex");
   accounting.source = "provider-usage-calibrated";
   return accounting;
-}
-
-export function mergeTokenUsage(current, incoming) {
-  if (!incoming) return current || null;
-  const promptTokens =
-    inputTokensFromUsage(current) + inputTokensFromUsage(incoming);
-  const completionTokens =
-    outputTokensFromUsage(current) + outputTokensFromUsage(incoming);
-  const totalTokens =
-    totalTokensFromUsage(current) + totalTokensFromUsage(incoming);
-  return {
-    prompt_tokens: promptTokens,
-    completion_tokens: completionTokens,
-    total_tokens: totalTokens || promptTokens + completionTokens,
-  };
 }
 
 function safeJsonParse(value) {
@@ -169,7 +142,7 @@ function safeJsonParse(value) {
   }
 }
 
-function conciseToolEvidence(message) {
+export function conciseToolEvidence(message) {
   const parsed =
     typeof message?.content === "string"
       ? safeJsonParse(message.content)
@@ -190,7 +163,26 @@ function conciseToolEvidence(message) {
       typeof parsed.exitCode === "number" ? parsed.exitCode : null,
     error: parsed.error ? String(parsed.error).slice(0, 500) : null,
     truncated: Boolean(parsed.truncated),
+    toolCallId: message.tool_call_id || null,
+    ...(parsed.resultRef ? { resultRef: parsed.resultRef } : {}),
+    ...(parsed.sha256 ? { sha256: parsed.sha256 } : {}),
+    ...(parsed.readRange ? { readRange: parsed.readRange } : {}),
+    ...(parsed.timedOut ? { timedOut: true } : {}),
   };
+  // A failure without its diagnostic encourages repeating the same command.
+  // Retain bounded head AND tail (including assertion/stack locations), not
+  // merely exitCode. These remain untrusted observations, never instructions.
+  const excerpt = (value, limit = 2400) => {
+    const text = typeof value === "string" ? value : "";
+    return text.length <= limit ? text : `${text.slice(0, limit / 2)}\n[diagnostic truncated]\n${text.slice(-limit / 2)}`;
+  };
+  if (parsed.error || parsed.isError || parsed.timedOut || parsed.exitCode !== undefined && parsed.exitCode !== 0) {
+    evidence.diagnostic = {
+      stdout: excerpt(parsed.stdout || parsed.output || parsed.preview),
+      stderr: excerpt(parsed.stderr),
+      ...(parsed.isError ? { isError: true } : {}),
+    };
+  } else if (parsed.summary || parsed.message) evidence.summary = excerpt(parsed.summary || parsed.message, 800);
   if (Array.isArray(parsed.matches)) {
     evidence.matches = parsed.matches
       .slice(0, 12)
@@ -261,7 +253,7 @@ export function buildStructuredContextCheckpoint(
       evidence.push(item);
       if (item.path) files.push(item.path);
       if (item.command) commands.push(item.command);
-      if (item.error || (typeof item.exitCode === "number" && item.exitCode !== 0)) {
+      if (item.error || item.timedOut || item.diagnostic?.isError || (typeof item.exitCode === "number" && item.exitCode !== 0)) {
         failures.push(item);
       }
     }
@@ -305,20 +297,50 @@ export function compactConversationForRequest({
   accounting = null,
   plan = null,
   relevantMemory = [],
+  inputBudgetTokens = null,
 }) {
+  if (inputBudgetTokens !== null && (!Number.isSafeInteger(inputBudgetTokens) || inputBudgetTokens <= 0)) {
+    throw new TypeError("inputBudgetTokens must be a positive integer.");
+  }
   const reserveTokens = Math.min(Math.floor(contextWindowTokens * 0.4), Math.max(
     MIN_CONTEXT_RESERVE_TOKENS, Math.floor(contextWindowTokens * 0.14),
   ));
-  const compactAtTokens = Math.max(1, contextWindowTokens - reserveTokens);
+  const compactAtTokens = Math.max(1, Math.min(contextWindowTokens - reserveTokens, inputBudgetTokens ?? Infinity));
   const estimatedTokensBefore = estimateConversationTokens(
     conversation,
     accounting,
   );
   if (estimatedTokensBefore <= compactAtTokens) return null;
 
+  // First reclaim old, closed tool output only when a task-owned full-result
+  // reference exists. Recent exchanges stay verbatim; failure diagnostics and
+  // byte-page references survive. Never mutate the caller on budget failure.
+  let prunedToolOutputs = 0;
+  const workingConversation = conversation.map((message, index) => {
+    if (index >= conversation.length - 8 || message.role !== "tool" ||
+        typeof message.content !== "string" || message.content.length <= 8_000) return message;
+    const value = safeJsonParse(message.content);
+    if (!value?.resultRef?.id || value.resultRef.readTool !== "mcp_read_result") return message;
+    const summary = JSON.stringify({ ...conciseToolEvidence(message), contextCompacted: true,
+      note: "Full original tool result retained. Use resultRef.readTool with result_id=resultRef.id and nextOffset; do not repeat a side-effecting tool just to recover output." });
+    if (summary.length >= message.content.length) return message;
+    prunedToolOutputs++;
+    return { ...message, content: summary };
+  });
+  if (prunedToolOutputs && estimateConversationTokens(workingConversation, accounting) <= compactAtTokens) {
+    const checkpoint = { ...buildStructuredContextCheckpoint([], { plan }), prunedToolOutputs };
+    conversation.splice(0, conversation.length, ...workingConversation);
+    contextCheckpoints.push(checkpoint);
+    if (contextCheckpoints.length > 8) contextCheckpoints.splice(0, contextCheckpoints.length - 8);
+    onEvent?.({ type: "context.compacted", checkpoint, reason: "archived-tool-output-prune",
+      compactedMessages: 0, estimatedTokensBefore,
+      estimatedTokensAfter: estimateConversationTokens(conversation, accounting), contextWindowTokens });
+    return checkpoint;
+  }
+
   const prefix = "AporiaX durable context checkpoint:\n";
   const previous = [];
-  const messages = conversation.filter((message) => {
+  const messages = workingConversation.filter((message) => {
     if (message.role !== "system" || !String(message.content).startsWith(prefix)) return true;
     const value = safeJsonParse(message.content.slice(prefix.length));
     if (value) previous.push(value);
@@ -492,38 +514,72 @@ export function retrieveRelevantContext({
     .map(({ kind, value, score }) => ({ kind, value, score }));
 }
 
-export function upsertRelevantContextMessage(
-  conversation,
-  { checkpoints = [], memoryFacts = [], plan = null } = {},
-) {
+const relevantContextState = new WeakMap();
+
+function isRelevantContextMessage(message) {
+  return (
+    message?.role === "system" &&
+    String(message?.content || "").startsWith(RELEVANT_CONTEXT_PREFIX)
+  );
+}
+
+function removeRelevantContextMessages(conversation) {
   for (let index = conversation.length - 1; index >= 0; index -= 1) {
-    if (
-      conversation[index]?.role === "system" &&
-      String(conversation[index]?.content || "").startsWith(
-        RELEVANT_CONTEXT_PREFIX,
-      )
-    ) {
+    if (isRelevantContextMessage(conversation[index])) {
       conversation.splice(index, 1);
     }
   }
+}
+
+export function upsertRelevantContextMessage(
+  conversation,
+  { checkpoints = [], memoryFacts = [], plan = null, refresh = false } = {},
+) {
+  // Old saved runs may contain project recall copied into a checkpoint. Keep
+  // task evidence and decisions, but reload optional knowledge from its store.
+  const checkpointPrefix = "AporiaX durable context checkpoint:\n";
+  for (const message of conversation) {
+    if (message?.role !== "system" || typeof message.content !== "string" || !message.content.startsWith(checkpointPrefix)) continue;
+    try {
+      const checkpoint = JSON.parse(message.content.slice(checkpointPrefix.length));
+      if (checkpoint.relevantMemory?.length) {
+        checkpoint.relevantMemory = [];
+        message.content = checkpointPrefix + JSON.stringify(checkpoint);
+      }
+    } catch { /* Preserve malformed legacy evidence; recovery reports its integrity separately. */ }
+  }
+  const state = relevantContextState.get(conversation);
+  const history = conversation.filter((message) => message?.role !== "system" && !isRelevantContextMessage(message));
   const query = [
-    ...conversation.slice(-8).map(messageText),
-    ...(plan?.steps || []).map((step) => `${step.title} ${step.detail || ""}`),
+    ...history.slice(-8).map((message) => messageText(message).slice(-2400)),
+    ...(plan?.steps || []).filter((step) => step.status === "in_progress").map((step) => `${step.title} ${step.detail || ""}`),
   ]
     .filter(Boolean)
     .join("\n")
     .slice(-24_000);
-  const relevant = retrieveRelevantContext({
+  const key = createHash("sha256").update(JSON.stringify({ query, checkpoints, memoryFacts })).digest("hex");
+  const relevant = !refresh && state?.key === key ? state.items : retrieveRelevantContext({
     query,
     checkpoints,
     memoryFacts,
-  });
-  if (!relevant.length) return [];
-  const insertAt = leadingSystemCount(conversation);
-  conversation.splice(insertAt, 0, {
-    role: "system",
-    content: `${RELEVANT_CONTEXT_PREFIX}\n${JSON.stringify(relevant)}`,
-  });
+  }).map(({ kind, value }) => ({ kind, value }));
+  // Dynamic retrieval belongs near the tail, never before the stable system
+  // prefix. Remove obsolete context, including the old prefix-style injection.
+  const existing = conversation.find(isRelevantContextMessage);
+  if (existing && existing.aporiaSource === "retrieval" &&
+      existing.content === `${RELEVANT_CONTEXT_PREFIX}\n${JSON.stringify(relevant)}`) {
+    relevantContextState.set(conversation, { key, items: relevant });
+    return relevant;
+  }
+  removeRelevantContextMessages(conversation);
+  if (relevant.length) {
+    conversation.push({
+      role: "system",
+      aporiaSource: "retrieval",
+      content: `${RELEVANT_CONTEXT_PREFIX}\n${JSON.stringify(relevant)}`,
+    });
+  }
+  relevantContextState.set(conversation, { key, items: relevant });
   return relevant;
 }
 

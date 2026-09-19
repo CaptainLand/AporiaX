@@ -1,5 +1,8 @@
+import { mergeTokenUsage } from "./token-usage.js";
 import { providerChatEndpoint } from "../provider-config.js";
 import { providerMessages } from "./task-conversation.js";
+import { providerErrorCategory, providerRetryDelay, retryAfterMilliseconds } from "./provider-errors.js";
+import { compileModelRequest } from "./request-compiler.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -112,26 +115,45 @@ export async function callModelProvider({
   signal,
   onEvent,
 }) {
+  body = compileModelRequest(body);
+  let attemptUsage = null;
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
+    const started = performance.now();
+    onEvent?.({ type: "response.attempt.started", attempt });
     try {
-      return await callModelProviderOnce({
+      const result = await callModelProviderOnce({
         provider,
         body,
         signal,
         onEvent,
       });
+      onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
+        status: "completed", usage: result.usage, finishReason: result.finishReason });
+      attemptUsage = mergeTokenUsage(attemptUsage, result.usage);
+      return { ...result, attemptUsage };
     } catch (error) {
+      attemptUsage = mergeTokenUsage(attemptUsage, error.usage);
+      error.attemptUsage = attemptUsage;
+      error.category = providerErrorCategory(error);
+      onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
+        status: "failed", category: error.category, usage: error.usage || null });
       const maxAttempts = isProviderTimeoutError(error)
         ? PROVIDER_TIMEOUT_MAX_ATTEMPTS
         : PROVIDER_MAX_ATTEMPTS;
       if (
         signal?.aborted ||
         !error?.retryable ||
+        ["quota", "authorization", "context", "output-limit", "tool-protocol"].includes(error.category) ||
         attempt >= maxAttempts
       ) {
         throw error;
       }
-      const delayMs = 750 * 2 ** (attempt - 1);
+      const delayMs = providerRetryDelay(attempt, error.retryAfterMs);
+      if (delayMs > 120_000) {
+        error.retryDeferred = true;
+        error.message += " Retry-After exceeds the automatic wait budget; retry later rather than ignoring the server delay.";
+        throw error;
+      }
       onEvent?.({
         type: "response.retry",
         attempt: attempt + 1,
@@ -140,7 +162,8 @@ export async function callModelProvider({
         reason: error.message,
         provider: provider.name,
       });
-      await waitForAbortableDelay(delayMs, signal);
+      try { await waitForAbortableDelay(delayMs, signal); }
+      catch (error) { error.attemptUsage = attemptUsage; throw error; }
     }
   }
   throw new Error(
@@ -241,7 +264,12 @@ export async function callModelProviderOnce({
         payload?.error ||
         payload?.message ||
         `${provider.name} API returned HTTP ${response.status}.`;
-      throw createProviderError(provider, detail, response.status);
+      const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), response.status);
+      error.providerCode = payload?.error?.code || payload?.code || null;
+      error.retryAfterMs = retryAfterMilliseconds(response.headers);
+      error.category = providerErrorCategory(error);
+      if (["context", "quota", "authorization"].includes(error.category)) error.retryable = false;
+      throw error;
     }
     if (!response.body) {
       throw new Error(
@@ -303,14 +331,19 @@ export async function callModelProviderOnce({
       const error = createProviderError(provider, code, 0);
       error.retryable = false;
       error.usage = usage;
+      error.streamComplete = sawDone || Boolean(finishReason);
+      error.partialToolCalls = toolCalls.some(Boolean);
+      error.partialMessage = { content };
       onEvent?.({ type: "response.incomplete", code, finishReason, usage });
       throw error;
     };
     if (!sawDone && !finishReason) failIncomplete("PROVIDER_STREAM_INCOMPLETE");
     if (finishReason && !["stop", "tool_calls"].includes(finishReason)) failIncomplete(`PROVIDER_FINISH_${String(finishReason).toUpperCase()}`);
+    const callIds = new Set();
     for (const call of toolCalls.filter(Boolean)) {
       try {
-        if (!call.id || !call.function?.name) throw new Error();
+        if (!call.id || !call.function?.name || callIds.has(call.id)) throw new Error();
+        callIds.add(call.id);
         const args = JSON.parse(call.function.arguments);
         if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error();
       } catch { failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE"); }
@@ -333,6 +366,7 @@ export async function callModelProviderOnce({
       usage,
     };
   } catch (error) {
+    if (observedUsage && !error.usage) error.usage = observedUsage;
     if (signal?.aborted) throw Object.assign(createAbortError(), { usage: observedUsage });
     if (provider.kind === "aporia-cloud" && error?.message === "DESKTOP_ACCOUNT_SIGNED_OUT") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
@@ -346,6 +380,7 @@ export async function callModelProviderOnce({
         504,
       );
       timeoutError.retryable = !receivedStreamBytes;
+      timeoutError.usage = observedUsage;
       throw timeoutError;
     }
     if (error?.name === "AbortError") {

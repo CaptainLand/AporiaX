@@ -91,5 +91,8 @@ jobs:
       - name: Production test feedback smoke
         run: node tests/runtime-test-polish-smoke.mjs
 
+      - name: Harness loop efficiency and bounded recovery
+        run: npm run test:harness-loop
+
       - name: Build renderer
         run: npm run build
