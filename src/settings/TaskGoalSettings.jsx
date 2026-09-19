@@ -16,6 +16,23 @@ export function TaskGoalSettings({ task, onUpdateTask }) {
   return <section className="settings-section task-goal-settings">
     <div className="settings-label">{tr("任务决策与验收", "Decisions and acceptance")}</div>
     <p>{tr("决策按版本保存，模型判断不等于验证事实。验收只检查配置的条件；不会自行执行命令。", "Decisions are versioned assertions, not verified facts. Acceptance checks configured predicates only and never launches commands itself.")}</p>
+    <label>
+      <span>{tr("重复失败处理", "Repeated failure policy")}</span>
+      <select className="text-field" aria-label="Repeated failure policy" value={task.loopPolicy?.strategyMode ?? "advisory"}
+        onChange={(event) => onUpdateTask({ loopPolicy: { ...task.loopPolicy, strategyMode: event.target.value } })}>
+        <option value="advisory">{tr("提示优先（默认）", "Advisory (default)")}</option>
+        <option value="strict">{tr("严格限制", "Strict")}</option>
+      </select>
+    </label>
+    <small>{tr("提示优先不会因重新规划额度用尽而停止任务。严格模式按独立问题限制重复尝试，诊断命令仍需遵守原有权限。", "Advisory never stops a task for strategy-budget exhaustion. Strict limits repeated attempts per problem; diagnostic commands still follow existing permissions.")}</small>
+    {task.loopPolicy?.strategyMode === "strict" && <label>
+      <span>{tr("每个问题的重新规划额度", "Replans per problem")}</span>
+      <select className="text-field" aria-label="Replans per problem" value={task.loopPolicy?.maxStrategyInterventions ?? 2}
+        onChange={(event) => onUpdateTask({ loopPolicy: { ...task.loopPolicy, maxStrategyInterventions: Number(event.target.value) } })}>
+        <option value="0">{tr("仅提示，不拦截", "Warn only, no blocking")}</option>
+        {[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count}</option>)}
+      </select>
+    </label>}
     <details><summary>{tr("配置逐项验收（JSON）", "Configure per-requirement acceptance (JSON)")}</summary>
       <p>{tr("留空时读取工作区 .aporiax/acceptance.json。空 checks 表示需要人工核对，不会自动通过。命令检查须声明 inputs，并通过普通工具审批执行。", "Empty uses workspace .aporiax/acceptance.json. Empty checks require human review. Command checks require declared inputs and normal tool approval.")}</p>
       <textarea aria-label="Task acceptance contract" className="text-field" rows={12} value={draft} maxLength={64000}

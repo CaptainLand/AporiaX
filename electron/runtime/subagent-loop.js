@@ -1,5 +1,6 @@
 import { TaskBrief } from "./task-brief.js";
 import { StrategyHistory } from "./strategy-history.js";
+import { normalizeLoopPolicy } from "./completion-policy.js";
 import { assistantHistoryMessage } from "./task-conversation.js";
 import { completeLoopRequest } from "./loop-recovery.js";
 import { LoopMetrics } from "./loop-metrics.js";
@@ -190,7 +191,8 @@ export async function runSubagentTask(options = {}) {
     conversation[0].content = conversation[0].content.replace(/\nRelevant project memory:\n[\s\S]*$/, "");
   }
   const brief = new TaskBrief(session.taskBrief, { resumed: Boolean(session.taskBrief) });
-  const strategy = new StrategyHistory(session.strategyHistory);
+  const loopPolicy = normalizeLoopPolicy(options.loopPolicy);
+  const strategy = new StrategyHistory(session.strategyHistory, { mode: loopPolicy.strategyMode, maxInterventions: loopPolicy.maxStrategyInterventions });
   brief.syncSources(conversation);
   Object.assign(session, { conversation, contextCheckpoints, evidence, steps: toolSteps });
   const persistSession = async (status = "running", result = null) => {
@@ -367,7 +369,7 @@ export async function runSubagentTask(options = {}) {
             throw new Error(`Tool is not enabled by Agent Registry for ${input.role}: ${toolName}`);
           }
           const parsedInput = parseToolArguments(toolCall);
-          strategy.before(toolName);
+          strategy.before(toolName, parsedInput);
           await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
           const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
             instructionContext,

@@ -27,6 +27,15 @@ try {
   assert.equal((await page.evaluate(() => window.savedTask.taskContract)).requirements[0].checks[0].path, "source.txt");
   await page.getByRole("checkbox", { name: "Require current-version verification evidence" }).check();
   assert.equal(await page.evaluate(() => window.savedTask.loopPolicy.requireVerifiedChanges), true); checks.push("real settings: reject unsafe contract, save validated predicates and verification policy");
+  assert.equal(await page.getByRole("combobox", {name: "Repeated failure policy", exact: true}).inputValue(), "advisory");
+  await page.getByRole("combobox", {name: "Repeated failure policy", exact: true}).selectOption("strict");
+  await page.getByRole("combobox", {name: "Replans per problem", exact: true}).selectOption("4");
+  assert.equal(await page.evaluate(() => window.savedTask.loopPolicy.maxStrategyInterventions), 4);
+  await page.getByRole("combobox", {name: "Repeated failure policy", exact: true}).selectOption("advisory");
+  assert.equal(await page.getByRole("combobox", {name: "Replans per problem", exact: true}).count(), 0);
+  assert.equal(await page.evaluate(() => window.savedTask.loopPolicy.strategyMode), "advisory");
+  assert.equal(await page.evaluate(() => window.savedTask.loopPolicy.requireVerifiedChanges), true);
+  checks.push("advisory default, strict per-problem budget and switch back preserve other settings");
   await page.getByRole("button", { name: "Disable configured acceptance" }).click(); assert.equal(await page.evaluate(() => window.savedTask.taskContract), null);
   await page.getByRole("button", { name: "Save acceptance contract", exact: true }).click(); assert.equal(await page.evaluate(() => window.savedTask.taskContract), undefined); checks.push("explicit disable differs from empty workspace-config selection");
   for (const protocol of ["responses", "anthropic-messages", "deepseek-chat", "chat-completions"]) {

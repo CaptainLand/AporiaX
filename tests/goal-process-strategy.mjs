@@ -49,7 +49,7 @@ try {
 } finally { await manager.closeAll(); }
 const failure = (history, i) => history.observe({ callId: `fail-${i}`, tool: "run_command", input: { command: "npm test" }, result: { exitCode: 1, stderr: "AssertionError expected true, got false", timestamp: i } });
 await test("same diagnostic across edits requires fresh evidence before another mutation", () => {
-  const history = new StrategyHistory();
+  const history = new StrategyHistory(null, { mode: "strict" });
   for (let i = 0; i < 3; i++) { failure(history, i); history.observe({ callId: `write-${i}`, tool: "write_file", changes: [{ path: "a", afterContent: `v${i}` }], result: {} }); }
   assert(history.briefing().pending); assert.throws(() => history.before("write_file"), /REPLAN_REQUIRED/); history.before("read_file");
   assert.throws(() => history.replan({ hypothesis: "A different implementation may work now", evidence_call_ids: ["fake"] }), /FRESH_EVIDENCE/);
@@ -58,26 +58,108 @@ await test("same diagnostic across edits requires fresh evidence before another 
   assert.equal(result.accepted, true); history.before("write_file");
 });
 await test("changing only an output reference is not new diagnostic evidence", () => {
-  const history = new StrategyHistory();
+  const history = new StrategyHistory(null, { mode: "strict" });
   history.observe({ callId: "old", tool: "read_file", input: { path: "a" }, result: { content: "same", resultRef: "old" } });
   for (let i = 0; i < 3; i++) failure(history, i);
   history.observe({ callId: "repeated", tool: "read_file", input: { path: "a" }, result: { content: "same", resultRef: "new" } });
   assert.throws(() => history.replan({ hypothesis: "Try another strategy with this evidence", evidence_call_ids: ["repeated"] }), /FRESH_EVIDENCE/);
 });
 await test("alternating file contents trigger strategy check despite version changes", () => {
-  const history = new StrategyHistory();
+  const history = new StrategyHistory(null, { mode: "strict" });
   for (const [index, content] of ["A", "B", "A", "B"].entries()) history.observe({ callId: `c-${index}`, tool: "apply_patch", changes: [{ path: "a", afterContent: content }], result: {} });
   assert.equal(history.briefing().pending.reason, "File oscillates between the same two versions");
   assert.throws(() => history.before("apply_patch"), /REPLAN_REQUIRED/);
 });
 await test("failed strategy history persists, while an explicit new direction resets it", () => {
-  const first = new StrategyHistory(null, { maxInterventions: 1 });
+  const first = new StrategyHistory(null, { maxInterventions: 1, mode: "strict" });
   for (let i = 0; i < 3; i++) failure(first, i);
   first.observe({ callId: "new", tool: "search_text", input: { query: "missing" }, result: { matches: ["config"] } });
   first.replan({ hypothesis: "Inspect configuration instead of the original execution path", evidence_call_ids: ["new"] });
-  const resumed = new StrategyHistory(first.snapshot(), { maxInterventions: 1 });
+  const resumed = new StrategyHistory(first.snapshot(), { maxInterventions: 1, mode: "strict" });
   for (let i = 0; i < 3; i++) failure(resumed, i);
   assert.throws(() => resumed.assertBudget(), /STRATEGY_EXHAUSTED/);
   resumed.reset(); resumed.assertBudget(); resumed.before("write_file");
+});
+await test("advisory default warns without blocking edits, commands or exhausted budgets", () => {
+  const h = new StrategyHistory(null, { maxInterventions: 1 });
+  for (let i = 0; i < 3; i++) failure(h, i);
+  h.before("write_file"); h.before("run_command", { command: "npm test" });
+  h.observe({callId:"fresh",tool:"read_file",input:{path:"config"},result:{content:"new"}});
+  h.replan({hypothesis:"Diagnose the configuration rather than rewriting the consumer",evidence_call_ids:["fresh"]});
+  for (let i = 0; i < 3; i++) failure(h, i);
+  assert.equal(h.briefing().exhausted, true); assert.equal(h.briefing().blocking, false);
+  h.assertBudget(); h.before("write_file");
+  const resumed = new StrategyHistory(h.snapshot()); resumed.assertBudget(); resumed.before("write_file");
+});
+await test("strict pending allows other commands, process start and cleanup, not blind retry", () => {
+  const h = new StrategyHistory(null, {mode:"strict"});
+  for (let i = 0; i < 3; i++) failure(h, i);
+  h.before("run_command", {command:"node --version"});
+  h.before("start_process", {command:"node diagnostics.js"});
+  h.before("run_command", {command:"npm test",cwd:"other-project"});
+  h.before("kill_process"); h.before("wait_process");
+  assert.throws(() => h.before("run_command", {command:"npm test",cwd:"./"}), /REPLAN_REQUIRED/);
+  assert.throws(() => h.before("start_process", {command:"npm test"}), /REPLAN_REQUIRED/);
+  assert.throws(() => h.before("write_file"), /REPLAN_REQUIRED/);
+  h.observe({callId:"diagnostic",tool:"run_command",input:{command:"node diagnose.js"},result:{exitCode:1,stderr:"Missing runtime dependency"}});
+  assert.equal(h.replan({hypothesis:"Repair the missing runtime dependency reported by the diagnostic",evidence_call_ids:["diagnostic"]}).accepted, true);
+});
+await test("new process output and nonzero exit qualify; quiet polling and cursors do not", () => {
+  const h = new StrategyHistory(null, {mode:"strict"});
+  h.observe({callId:"old-log",tool:"read_process",input:{process_id:"p",cursor:0},result:{output:"known",cursor:5,exitCode:null}});
+  for (let i = 0; i < 3; i++) failure(h, i);
+  h.observe({callId:"quiet",tool:"wait_process",input:{process_id:"p",cursor:5},result:{output:"",cursor:5,waitReason:"timeout",exitCode:null}});
+  h.observe({callId:"same-log",tool:"wait_process",input:{process_id:"p",cursor:99},result:{output:"known",cursor:104,waitReason:"output",exitCode:null}});
+  assert.deepEqual(h.briefing().freshDiagnosticCallIds, []);
+  h.observe({callId:"new-log",tool:"wait_process",input:{process_id:"p",cursor:5},result:{output:"dependency missing",cursor:30,exitCode:1}});
+  assert.equal(h.replan({hypothesis:"Install the dependency identified in the process output",evidence_call_ids:["new-log"]}).accepted,true);
+});
+await test("independent problems each get their own budget, including across resume", () => {
+  let h = new StrategyHistory(null, {mode:"strict",maxInterventions:1});
+  for(let problem=0;problem<4;problem++) {
+    for(let i=0;i<3;i++) h.observe({callId:`fail-${problem}-${i}`,tool:"run_command",input:{command:"test "+problem},result:{exitCode:1,stderr:"failure"}});
+    h.assertBudget();
+    h.observe({callId:"fresh-"+problem,tool:"read_file",input:{path:"config-"+problem},result:{content:"diagnostic"}});
+    assert.equal(h.replan({hypothesis:"Repair the configuration based on the observed diagnostic",evidence_call_ids:["fresh-"+problem]}).remainingInterventions,0);
+    h = new StrategyHistory(h.snapshot(), {mode:"strict",maxInterventions:1});
+  }
+});
+await test("successful command resolves its old budget without clearing unrelated failures", () => {
+  const h = new StrategyHistory(null,{mode:"strict",maxInterventions:1});
+  for(let i=0;i<3;i++) failure(h,i);
+  h.observe({callId:"new",tool:"read_file",input:{path:"a"},result:{content:"config"}});
+  h.replan({hypothesis:"Correct the configuration after reading the failure source",evidence_call_ids:["new"]});
+  h.observe({callId:"success",tool:"run_command",input:{command:"npm test"},result:{exitCode:0}});
+  for(let i=0;i<3;i++) failure(h,i);
+  h.assertBudget(); assert.equal(h.briefing().exhausted,false);
+});
+await test("zero budget explicitly disables blocking even in strict mode", () => {
+  const h = new StrategyHistory(null,{mode:"strict",maxInterventions:0});
+  for(let i=0;i<3;i++) failure(h,i);
+  h.assertBudget(); h.before("write_file"); assert.equal(h.briefing().blocking,false);
+  assert.throws(()=>new StrategyHistory(null,{mode:"invalid"}),/POLICY_INVALID/);
+  assert.throws(()=>new StrategyHistory(null,{maxInterventions:5}),/POLICY_INVALID/);
+});
+await test("generic errors do not collapse genuinely different diagnostics", () => {
+  const h = new StrategyHistory(null,{mode:"strict"});
+  for(let i=0;i<3;i++) h.observe({callId:"f"+i,tool:"run_command",input:{command:"npm test"},result:{exitCode:1,error:"Command failed",stderr:"Different assertion "+i}});
+  assert.equal(h.briefing(),null);
+});
+await test("restored old global exhaustion is recomputed for its pending problem", () => {
+  const saved = {version:1,failures:[],edits:[],exhausted:true,
+    plans:[{hypothesis:"Previous unrelated issue",evidenceCallIds:["old"],priorFailure:{command:"old test"}}],
+    pending:{command:"new test",reason:"Repeated failure"}};
+  const h = new StrategyHistory(saved,{mode:"strict",maxInterventions:1});
+  h.assertBudget(); assert.equal(h.briefing().exhausted,false);
+});
+await test("recovery retains seen evidence; fake IDs and mutation receipts do not unlock", () => {
+  let h = new StrategyHistory(null,{mode:"strict"});
+  h.observe({callId:"before",tool:"read_process",result:{output:"known",exitCode:null}});
+  for(let i=0;i<3;i++) failure(h,i);
+  h = new StrategyHistory(h.snapshot(),{mode:"strict"});
+  h.observe({callId:"after",tool:"wait_process",result:{output:"known",cursor:999,exitCode:null}});
+  h.observe({callId:"write",tool:"run_command",input:{command:"write"},result:{exitCode:0},changes:[{path:"a",afterContent:"B"}]});
+  const replan=(id)=>h.replan({hypothesis:"This hypothesis needs real new diagnostic evidence",evidence_call_ids:[id]});
+  for(const id of ["after","write","fake"]) assert.throws(()=>replan(id),/FRESH_EVIDENCE/);
 });
 await finish();

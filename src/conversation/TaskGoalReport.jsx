@@ -15,6 +15,6 @@ export function TaskGoalReport({ brief, acceptance, strategy }) {
       <p>{entry.rationale}</p><small>{tr("模型记录，非验证通过；历史证据需重新核对。", "Agent assertion, not a pass. Historical evidence requires rechecking.")}</small>
       <ul>{(entry.evidence || []).map((item, i) => <li key={i}><code>{item.callId || item.sourceId}</code> {item.tool || "source"} {item.historical ? tr("（历史）", "(historical)") : ""}</li>)}</ul>
     </details>)}
-    {strategy?.pending && <p>{tr("等待新诊断和不同策略", "Awaiting fresh diagnostics and a different strategy")}: {strategy.pending.reason}</p>}
+    {strategy?.pending && <p>{strategy.blocking ? tr("等待新诊断和不同策略", "Awaiting fresh diagnostics and a different strategy") : tr("建议补充诊断并调整策略（不阻止任务）", "Consider fresh diagnostics and a different strategy (non-blocking)")}: {strategy.pending.reason}</p>}
   </details>;
 }

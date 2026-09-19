@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSubagentTask } from "../electron/runtime/subagent-loop.js";
+import { StrategyHistory } from "../electron/runtime/strategy-history.js";
 import { createOpenAICompatibleProvider } from "../electron/runtime/provider-stream.js";
 import { TOOL_REGISTRY } from "../electron/runtime/native-tool-catalog.js";
 import { runHarness } from "../electron/agent-runtime.js";
@@ -114,9 +115,36 @@ try {
       if (n === 6) return tools(call("replan", "replan_strategy", { hypothesis: "Change the configuration source instead of retrying the same command blindly", evidence_call_ids: ["diagnosis"] }));
       if (n === 7) { assert.equal(toolResult(body, "replan").accepted, true); return tools(call("fixed", "write_file", { path: "a.txt", content: "REPAIRED" })); }
       return sse({ content: "Changed strategy after new evidence; verification remains unclaimed." });
-    }, { sandboxExecutor: async () => { commands++; return { exitCode: 1, stdout: "", stderr: "same deterministic fixture failure" }; } });
+    }, { loopPolicy: { strategyMode: "strict", maxBriefSummaries: 0 }, sandboxExecutor: async () => { commands++; return { exitCode: 1, stdout: "", stderr: "same deterministic fixture failure" }; } });
     assert.equal(run.result.status, "completed", run.result.content); assert.equal(commands, 3); assert.equal(await readFile(join(run.workspace, "a.txt"), "utf8"), "REPAIRED");
     assert(run.events.some((event) => event.type === "strategy.replan_required")); assert.equal(run.result.strategy.previousHypotheses.length, 1);
+  });
+
+  await test("default main loop delivers after repeated errors without a new policy stop", async () => {
+    const run = await fixture((_body,n) => {
+      if(n<=3) return tools(call("failure-"+n,"run_command",{command:"fixture failing"}));
+      if(n===4) return tools(call("repair","write_file",{path:"a.txt",content:"ADVISORY_REPAIR"}));
+      return sse({content:"Preserved work and delivered with the failure disclosed."});
+    },{sandboxExecutor:async()=>({exitCode:1,stderr:"same failure"})});
+    assert.equal(run.result.status,"completed",run.result.content);
+    assert.equal(await readFile(join(run.workspace,"a.txt"),"utf8"),"ADVISORY_REPAIR");
+    assert.equal(run.result.strategy.blocking,false);
+  });
+  await test("strict main loop executes diagnostic command through approval and unlocks", async () => {
+    let commands=0, approvals=0;
+    const run = await fixture((body,n) => {
+      if(n<=3) return tools(call("failure-"+n,"run_command",{command:"fixture failing"}));
+      if(n===4) return tools(call("repeat","run_command",{command:"fixture failing"}));
+      if(n===5) {assert.match(toolResult(body,"repeat").error,/REPLAN_REQUIRED/);return tools(call("diagnostic","run_command",{command:"fixture diagnose"}));}
+      if(n===6) {assert.match(toolResult(body,"diagnostic").stdout,/missing dependency/);return tools(call("replan","replan_strategy",{hypothesis:"Repair the missing dependency observed in the authorized diagnostic",evidence_call_ids:["diagnostic"]}));}
+      if(n===7) {assert.equal(toolResult(body,"replan").accepted,true);return tools(call("repair","write_file",{path:"a.txt",content:"DIAGNOSED"}));}
+      return sse({content:"Diagnosed and repaired without claiming a test pass."});
+    },{loopPolicy:{strategyMode:"strict",maxBriefSummaries:0},
+      requestApproval:async()=>{approvals++;return {approved:true};},
+      sandboxExecutor:async({command})=>{commands++;return command==="fixture diagnose"?{exitCode:0,stdout:"missing dependency"}:{exitCode:1,stderr:"same failure"};}});
+    assert.equal(run.result.status,"completed",run.result.content);assert.equal(commands,4);
+    assert(approvals>=4,"diagnostic commands still require ordinary approval");
+    assert.equal(await readFile(join(run.workspace,"a.txt"),"utf8"),"DIAGNOSED");
   });
   for (const protocol of ["responses", "anthropic-messages"]) await test(`real main loop executes a native ${protocol} tool round-trip and preserves private continuation`, async () => {
     const run = await fixture((body, n, _workspace, url) => {
@@ -167,6 +195,16 @@ try {
       executeAuthorizedTool: async ({ input, toolCall }) => { assert.equal(toolCall.function.name, "read_file"); return { modelResult: { path: input.path, content: await readFile(join(workspace, input.path), "utf8") } }; } };
     const first = await runSubagentTask(options); assert.equal(first.status, "completed", first.summary); assert.equal(first.taskBrief.entries[0].summary, "Keep child source intact");
     const second = await runSubagentTask(options); assert.equal(second.status, "completed", second.summary); assert.equal(session.taskBrief.entries.length, 1); assert.equal(n, 4);
+    const history = new StrategyHistory(null, {mode:"strict",maxInterventions:1});
+    const fail = () => {for(let i=0;i<3;i++) history.observe({callId:"f"+i,tool:"run_command",input:{command:"fixture test"},result:{exitCode:1,stderr:"failed"}});};
+    fail(); history.observe({callId:"d",tool:"read_file",input:{path:"a"},result:{content:"diagnostic"}});
+    history.replan({hypothesis:"Try another approach after examining the new diagnostic",evidence_call_ids:["d"]}); fail();
+    session.strategyHistory = history.snapshot();
+    const advisory = await runSubagentTask({...options,loopPolicy:{strategyMode:"advisory"}});
+    assert.equal(advisory.status,"completed",advisory.summary); assert.equal(advisory.strategy.blocking,false);
+    session.strategyHistory = history.snapshot();
+    const strict = await runSubagentTask({...options,loopPolicy:{strategyMode:"strict",maxStrategyInterventions:4}});
+    assert.equal(strict.status,"completed",strict.summary); assert.equal(strict.strategy.exhausted,false);
   });
 } finally { globalThis.fetch = originalFetch; await closeRunJournalStore(data).catch(() => {}); await rm(root, { recursive: true, force: true }); }
 await finish();

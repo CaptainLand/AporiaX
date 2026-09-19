@@ -116,23 +116,37 @@ integration fixture needs three model requests (start, wait, delivery), zero
 `read_process` polling calls, and checks actual local process output and exit.
 This is a deterministic fixture, not a latency/cost claim for arbitrary tasks.
 
-## 4. Repeated failures require a different evidence-backed attempt
+## 4. Repeated failures suggest a different evidence-backed attempt
 
 `StrategyHistory` recognizes three same-command/same-diagnostic failures across
-workspace versions, and an A/B/A/B file-content oscillation. While a replan is
-pending, new mutations/commands/delegation are blocked, but existing approved
-diagnostic reads and safe task controls remain available. `replan_strategy`
-requires a different concise public hypothesis and newly observed diagnostic
-call IDs. Old evidence or volatile timestamps/result references alone do not
-qualify. The hypothesis remains an assertion, not a proof or permission grant.
+workspace versions, and an A/B/A/B file-content oscillation. The default
+`loopPolicy.strategyMode: "advisory"` reports a non-blocking recommendation:
+strategy budgets never stop the task in this mode. Task settings also offer an
+explicit `"strict"` mode. Only strict mode gates further mutation/delegation and
+the exact failing command in the same cwd until a replan is recorded.
 
-Main and child sessions retain this state during recovery. Intervention budget
-`maxStrategyInterventions` is 0–4 (default 2). Exhaustion preserves work and reports
-a blocked/failed outcome, not an endless retry. New human guidance can reset the
-strategy. This is bounded pattern recognition, not a claim to understand whether
-any paraphrased hypothesis is truly novel. Existing repeated-evidence and child
-round budgets still apply. No uncertain external side effect is replayed merely
-to gather output.
+Different commands, process start/read/wait and process cleanup stay reachable
+through the existing permission, scope, durable execution and sandbox checks.
+This is not a read-only shell classifier or a new security boundary. Starting a
+different command is not permission to replay an uncertain external side effect.
+New command diagnostics or process output/nonzero exits can support a replan;
+empty running polls, changed cursors/PIDs/timings and already-seen output cannot.
+Observed workspace mutations are not accepted as diagnostic receipts.
+`replan_strategy` still requires a different concise public hypothesis and newly
+observed diagnostic call IDs. The hypothesis is an assertion, not a proof or grant.
+
+Main and children share the user-selected policy and retain state during recovery.
+`maxStrategyInterventions` is 0–4 (default 2), counted per command/cwd/diagnostic
+problem or oscillating file, not globally across unrelated problems. Zero disables
+blocking, even in strict mode. A successful command resolves its previous budget;
+new human guidance resets the strategy. Strict exhaustion preserves work and
+reports blocked/failed; advisory exhaustion remains only a warning. Old global
+exhaustion snapshots are recomputed using the current policy and pending problem.
+History is bounded to 24 recent plans, 24 failures, 48 edits and 128 diagnostic
+fingerprints; fingerprints survive recovery, while usable evidence must be read
+again and actually change. Evicted old issues are treated as new observations.
+This is bounded pattern recognition, not semantic proof of novelty. Existing
+repeated-evidence and child round budgets still apply.
 
 ## 5. Explicit native protocol adapters
 
@@ -174,6 +188,20 @@ Unsupported models/options fail through the existing provider error path. This i
 native request/stream/function support, not feature parity with every hosted tool
 or provider beta. No real API key, paid model request, OAuth subscription or live
 model benchmark was used in this change.
+
+### Live-service release gate (not covered by simulated CI)
+
+Before advertising a native profile as production-validated, use an explicitly
+authorized test account and record provider/model/protocol/date, observed usage,
+and redacted outcomes for: (1) a thinking response followed by two tool-result
+round-trips, (2) cancellation while streaming and a new request, (3) durable
+restart with the same provider-bound continuation, and (4) an intentional model
+switch that never transmits opaque state to a different model. Use harmless
+fixture reads, not external side effects. Test an image only for a model the
+provider explicitly supports. Never put API keys or private reasoning in logs.
+An unrun or failed live case remains **unverified**, not a mock-test pass. Native
+profiles remain opt-in; compatible Chat is still the default. Paid calls require
+separate authorization and are not part of normal CI or this merge's evidence.
 
 Primary protocol references (reviewed 2026-09-19):
 - https://api-docs.deepseek.com/guides/thinking_mode

@@ -1459,7 +1459,7 @@ export async function runHarness({
   const taskBrief = new TaskBrief(savedMain?.taskBrief ?? inheritedBrief ?? null, { resumed: Boolean(savedMain || inheritedBrief), ownerKey: briefOwner });
   let briefSummaryAttempts = Math.min(2, Number(savedMain?.briefSummaryAttempts) || 0);
   taskBrief.syncSources(inputHistory);
-  const strategyHistory = new StrategyHistory(savedMain?.strategyHistory, { maxInterventions: effectiveLoopPolicy.maxStrategyInterventions });
+  const strategyHistory = new StrategyHistory(savedMain?.strategyHistory, { maxInterventions: effectiveLoopPolicy.maxStrategyInterventions, mode: effectiveLoopPolicy.strategyMode });
   const canReadAcceptance = getToolPermission(permissionPolicy, "read_file") === "allow";
   const acceptanceContract = acceptanceScope !== "task" || permission === "builder-write" ? null : await loadTaskContract(workspaceRoot,
     taskContract === undefined && savedMain?.taskAcceptance ? savedMain.taskAcceptance.contract : taskContract,
@@ -1510,7 +1510,8 @@ export async function runHarness({
     taskBrief.observe(observation);
     const previousPending = strategyHistory.briefing()?.pending;
     strategyHistory.observe(observation);
-    if (!previousPending && strategyHistory.briefing()?.pending) emit({ type: "strategy.replan_required", reason: strategyHistory.briefing().pending.reason });
+    const strategyStatus = strategyHistory.briefing();
+    if (!previousPending && strategyStatus?.pending) emit({ type: strategyStatus.blocking ? "strategy.replan_required" : "strategy.replan_recommended", mode: strategyStatus.mode, reason: strategyStatus.pending.reason });
     const warning = toolProgress.observe({ tool: toolCall.function.name, input, result: modelResult, version: verificationVersion(changeMap) });
     if (warning) {
       modelResult.progressWarning = warning;
@@ -1797,6 +1798,7 @@ export async function runHarness({
       effort: reasoningPolicy.effort,
       workspaceRoot,
       parentPermissionPolicy: permissionPolicy,
+      loopPolicy: effectiveLoopPolicy,
       approvalMode: effectiveApprovalMode,
       requestApproval,
       signal: childController.signal,
@@ -2686,7 +2688,7 @@ export async function runHarness({
             let result;
             let success = true;
             try {
-              strategyHistory.before(toolName);
+              strategyHistory.before(toolName, parseToolArguments(toolCall));
               if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
               if (retryAfterScopedInstructions.has(toolCall.id)) throw new Error("Review newly loaded scoped instructions and retry.");
               if (toolName === "delegate_subagent") {
@@ -2818,7 +2820,7 @@ export async function runHarness({
           ...activity,
         });
         try {
-          strategyHistory.before(toolCall.function.name);
+          strategyHistory.before(toolCall.function.name, parseToolArguments(toolCall));
           acceptancePreparation = await taskAcceptance.beforeTool(toolCall.function.name, parseToolArguments(toolCall));
           if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
           if (retryAfterScopedInstructions.has(toolCall.id)) {
