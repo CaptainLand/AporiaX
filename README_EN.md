@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.8" src="https://img.shields.io/badge/source-v0.9.8-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.9" src="https://img.shields.io/badge/source-v0.9.9-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX is a local-first Windows desktop agent. It edits code, runs commands, and creates Word / PowerPoint / Excel files inside an authorized workspace. Conversation, files, browser, terminal, and Git share one screen. Steps, evidence, and rollback stay in the UI instead of collapsing into a chat reply.
 
 > [!IMPORTANT]
-> Current source and Windows release: **`v0.9.8` Preview**.
-> This build hardens task history and file writes, and steadies Builder / Safe execution. The OCR engine remains; composer OCR buttons are hidden for now.
+> Current source and Windows release: **`v0.9.9` Preview**.
+> This build improves Harness task memory, recovery, process waiting, and acceptance evidence. Strict replanning and native provider protocols are opt-in.
 > Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.
 > Binaries are unsigned. Quit the previous build before updating.
 
@@ -92,25 +92,25 @@ See [SECURITY.md](SECURITY.md) for boundaries.
   </tr>
 </table>
 
-## 0.9.8
+## 0.9.9
 
-- Task history is harder to lose: partial migrations retry and keep originals, corrupt records do not block healthy tasks, deletes are archived.
-- Ordinary writes, patches, and Office files share recoverable commits with Builder merges.
-- Builders use delegated snapshot/merge. Concurrency is 0–6, default 2. Safe keeps private dependencies between successful commands in one task.
-- OCR runs in a killable child process. Composer, attachment, and sidebar OCR buttons are hidden for now.
-- Privileged IPC checks the main window origin. MCP timeout/cancel does not claim remote side effects were undone.
+- Keep source-backed decisions, rejected approaches, and open questions across long tasks; retain diagnostics and result references through compaction.
+- Share ordered tool scheduling between main and child agents; wait for process output/exit events to avoid unnecessary polling.
+- Bound context/output recovery and advise replanning on repeated failures or oscillation; strict per-issue budgets are optional.
+- Optional acceptance contracts check files and existing command evidence without launching project tests or claiming unverified success.
+- Explicitly select native provider protocols while compatible Chat remains the default. No live-model A/B speed or cost claim is made.
 
-[Full 0.9.8 notes](docs/RELEASE_NOTES_v0.9.8.md) · [Changelog](CHANGELOG.md)
+[Full 0.9.9 notes and comparison](docs/RELEASE_NOTES_v0.9.9.md) · [Changelog](CHANGELOG.md)
 
 ## Download
 
-`main` is **v0.9.8**. Windows x64 installer and portable builds are on GitHub Releases.
+`main` is **v0.9.9**. Windows x64 installer and portable builds are on GitHub Releases.
 
 | Windows x64 | Current package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | History and notes |
-| [0.9.8 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.8/AporiaX-Setup-0.9.8-x64.exe) | Recommended |
-| [0.9.8 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.8/AporiaX-Portable-0.9.8-x64.exe) | No install |
+| [0.9.9 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.9/AporiaX-Setup-0.9.9-x64.exe) | Recommended |
+| [0.9.9 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.9/AporiaX-Portable-0.9.9-x64.exe) | No install |
 
 First launch:
 

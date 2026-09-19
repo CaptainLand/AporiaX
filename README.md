@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.8" src="https://img.shields.io/badge/source-v0.9.8-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.9" src="https://img.shields.io/badge/source-v0.9.9-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区里改代码、跑命令、生成 Word / PPT / Excel；对话和文件、浏览器、终端、Git 在同一屏，步骤、依据和回退都留在界面里，而不是只给一段聊天回复。
 
 > [!IMPORTANT]
-> 当前源码与 Windows 发行为 **`v0.9.8` Preview**。
-> 本版加固任务历史和文件写入，Builder / Safe 更稳；OCR 引擎仍在，输入栏入口暂时隐藏。
+> 当前源码与 Windows 发行为 **`v0.9.9` Preview**。
+> 本版重点改进 Harness 长任务记忆、失败恢复、进程等待与验收证据；严格重规划和原生模型协议按需开启。
 > Aporia Account、Aporia Cloud、自己的 API 与本地模型相互独立，额度用尽不会偷偷切到另一条路径。
 > 安装包未代码签名。请先退出旧版再更新。
 
@@ -92,25 +92,25 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
   </tr>
 </table>
 
-## 0.9.8
+## 0.9.9
 
-- 任务历史更不容易写丢：部分迁移可重试并保留原件，损坏记录不挡住其余任务，删除会归档。
-- 普通写文件、补丁和 Office 与 Builder 合并共用可恢复提交。
-- Builder 走委派快照与合并；并发可选 0–6，默认 2。Safe 在同一任务的成功命令之间保留私有依赖。
-- OCR 改到可终止子进程；输入栏、附件和侧栏按钮暂时隐藏。
-- 特权操作校验主窗口来源；MCP 超时/取消不把远端副作用说成已经撤销。
+- 长任务保留有来源的决策、否决方案和待确认问题；压缩上下文时保留关键诊断与结果引用。
+- 主 Agent 与子 Agent 共用有序工具调度，后台进程可等待输出/退出事件，减少无效查询。
+- 上下文溢出和不完整模型输出采用有限恢复；重复失败/来回修改触发重规划建议，严格预算可选。
+- 可选验收契约只核对文件与已有命令证据，不自行启动项目测试，也不把未验证说成通过。
+- 原生模型协议按 Provider 显式选择，兼容 Chat 默认路径不变；尚无真实模型 A/B 提速或成本结论。
 
-[完整 0.9.8 说明](docs/RELEASE_NOTES_v0.9.8.md) · [更新历史](CHANGELOG.md)
+[完整 0.9.9 说明与版本对比](docs/RELEASE_NOTES_v0.9.9.md) · [更新历史](CHANGELOG.md)
 
 ## 下载
 
-`main` 当前是 **v0.9.8**。Windows x64 安装版与便携版在 GitHub Releases。
+`main` 当前是 **v0.9.9**。Windows x64 安装版与便携版在 GitHub Releases。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 历史版本与发行说明 |
-| [0.9.8 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.8/AporiaX-Setup-0.9.8-x64.exe) | 推荐 |
-| [0.9.8 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.8/AporiaX-Portable-0.9.8-x64.exe) | 无需安装 |
+| [0.9.9 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.9/AporiaX-Setup-0.9.9-x64.exe) | 推荐 |
+| [0.9.9 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.9/AporiaX-Portable-0.9.9-x64.exe) | 无需安装 |
 
 第一次使用：
 

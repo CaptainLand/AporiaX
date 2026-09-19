@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.9 — 2026-09-19
+
+Harness reliability and long-task efficiency from PR #63 and #64, including the pre-release review fixes. Existing permissions, durable storage, and workspace protections remain in place.
+
+- Calibrate context estimates against reported usage; retain diagnostic evidence and page archived large tool results without replaying operations.
+- Persist bounded task decisions, rejected approaches, and open questions across compaction with revision checks and source references.
+- Share ordered read pools and write barriers between main and child agents; wait for process output/exit events instead of repeated polling.
+- Bound inference repairs and detect repeated failures or oscillation. Advisory replanning remains the default; strict per-issue budgets are opt-in.
+- Add optional evidence-based acceptance contracts without automatically launching test commands or claiming unverified completion.
+- Add opt-in native provider protocols and attempt-level observability. Compatible Chat remains the default; live paid-provider A/B validation is still outstanding.
+
+[Release notes and 0.9.8 comparison](docs/RELEASE_NOTES_v0.9.9.md)
+
 ## 0.9.8 — 2026-09-17
 
 Task history, file writes, Builder recovery, Safe dependencies, and execution boundaries from the 0.9.7 reliability follow-up. The OCR toolbar entry is hidden while the local engine remains.
