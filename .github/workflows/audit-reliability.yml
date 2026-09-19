@@ -66,6 +66,7 @@ jobs:
           name: desktop-regression-evidence
           path: |
             .tmp/audit-results
+            .tmp/goal-ui/*.png
             .tmp/terminal-v2/*.png
             .tmp/workbench-documents-git/*.png
             .tmp/workbench-git-v2/*.png

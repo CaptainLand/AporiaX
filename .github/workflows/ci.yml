@@ -94,5 +94,8 @@ jobs:
       - name: Harness loop efficiency and bounded recovery
         run: npm run test:harness-loop
 
+      - name: Goal-oriented Harness and native protocol regression
+        run: npm run test:goal-loop
+
       - name: Build renderer
         run: npm run build
