@@ -841,6 +841,7 @@ handleTrustedIpc(ipcMain, "providers:discover", async (event, request) => {
   }
   return discoverProviderModels({
     baseUrl: request?.baseUrl,
+    protocol: request?.protocol,
     apiKey,
   });
 });

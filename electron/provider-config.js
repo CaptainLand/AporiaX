@@ -1,3 +1,4 @@
+import { normalizeProviderProtocol } from "./runtime/native-provider-codec.js";
 import { randomUUID } from "node:crypto";
 import { modelSupportsVision, normalizeImageCapability } from "./model-vision.js";
 
@@ -87,6 +88,7 @@ export const DEFAULT_DEEPSEEK_PROVIDER = Object.freeze({
 const PROVIDER_HINTS = [
   ["api.deepseek.com", "deepseek", "DeepSeek"],
   ["api.openai.com", "openai", "OpenAI"],
+  ["api.anthropic.com", "anthropic", "Anthropic"],
   ["openrouter.ai", "openrouter", "OpenRouter"],
   ["api.groq.com", "groq", "Groq"],
   ["api.together.xyz", "together", "Together AI"],
@@ -113,10 +115,10 @@ export function normalizeProviderBaseUrl(value) {
   parsed.hash = "";
   parsed.search = "";
   let pathname = parsed.pathname.replace(/\/+$/, "");
-  pathname = pathname.replace(/\/chat\/completions$/i, "");
+  pathname = pathname.replace(/\/(?:chat\/completions|responses|messages)$/i, "");
   if (!pathname || pathname === "/") {
     const host = parsed.hostname.toLowerCase();
-    if (host === "api.openai.com") pathname = "/v1";
+    if (["api.openai.com", "api.anthropic.com"].includes(host)) pathname = "/v1";
     if (host === "openrouter.ai") pathname = "/api/v1";
     if (host === "api.groq.com") pathname = "/openai/v1";
     if (host === "api.together.xyz") pathname = "/v1";
@@ -160,8 +162,11 @@ export function inferModelCapabilities(modelId, vendor) {
   if (vendor === "deepseek") {
     supportsThinking = /deepseek|reasoner/i.test(value);
     thinkingMode = supportsThinking ? "deepseek" : "none";
+  } else if (vendor === "anthropic") {
+    supportsThinking = /claude/.test(value);
+    thinkingMode = supportsThinking ? "reasoning-effort" : "none";
   } else if (vendor === "openai") {
-    supportsThinking = /(?:^|[-_/])(gpt-5|o1|o3|o4)(?:[-_/.:]|$)/i.test(
+    supportsThinking = /(?:^|[-_/])(gpt-[5-9]|o1|o3|o4)(?:[-_/.:]|$)/i.test(
       value,
     );
     thinkingMode = supportsThinking ? "reasoning-effort" : "none";
@@ -209,6 +214,7 @@ export function normalizeProviderModels(models, vendor) {
         typeof source.supportsTools === "boolean"
           ? source.supportsTools
           : true,
+      ...(Number.isSafeInteger(source.maxOutputTokens) && source.maxOutputTokens >= 256 && source.maxOutputTokens <= 128000 ? { maxOutputTokens: source.maxOutputTokens } : {}),
       contextWindow:
         Number.isFinite(Number(source.contextWindow)) &&
         Number(source.contextWindow) >= 32_000
@@ -258,10 +264,20 @@ export function normalizeProviderInput(input, existing = null) {
         ? input.id
         : randomUUID();
   const source = inferred.vendor === "local" ? "local" : "user-provider";
+  const protocol = normalizeProviderProtocol(input?.protocol ?? existing?.protocol);
+  const anthropicThinking = input?.anthropicThinking ?? existing?.anthropicThinking ?? "adaptive";
+  if (!["adaptive", "manual"].includes(anthropicThinking)) throw new Error("Invalid Anthropic thinking mode.");
+  const maxOutputTokens = input?.maxOutputTokens ?? existing?.maxOutputTokens ?? 8192;
+  const thinkingBudget = input?.thinkingBudget ?? existing?.thinkingBudget ?? 2048;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 256 || maxOutputTokens > 128000 ||
+      !Number.isSafeInteger(thinkingBudget) || thinkingBudget < 1024 || thinkingBudget > 127999 ||
+      (protocol === "anthropic-messages" && anthropicThinking === "manual" && thinkingBudget >= maxOutputTokens))
+    throw new Error("Invalid native output/thinking token budget.");
   return {
     id,
     name,
     kind: "openai-compatible",
+    protocol, anthropicThinking, maxOutputTokens, thinkingBudget,
     vendor: inferred.vendor,
     source,
     billing: billingForSource(source),
@@ -281,7 +297,8 @@ export function providerChatEndpoint(baseUrl) {
   return `${normalizeProviderBaseUrl(baseUrl)}/chat/completions`;
 }
 
-function providerHeaders(apiKey) {
+function providerHeaders(apiKey, protocol) {
+  if (protocol === "anthropic-messages") return { Accept: "application/json", "anthropic-version": "2023-06-01", ...(apiKey ? { "x-api-key": apiKey } : {}) };
   return {
     Accept: "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -291,8 +308,10 @@ function providerHeaders(apiKey) {
 export async function discoverProviderModels({
   baseUrl,
   apiKey = "",
+  protocol = "chat-completions",
   signal,
 }) {
+  protocol = normalizeProviderProtocol(protocol);
   const normalizedBaseUrl = normalizeProviderBaseUrl(baseUrl);
   const identity = inferProviderIdentity(normalizedBaseUrl);
   const controller = new AbortController();
@@ -301,7 +320,7 @@ export async function discoverProviderModels({
   const timeout = setTimeout(() => controller.abort(), 20_000);
   try {
     const response = await fetch(providerModelsEndpoint(normalizedBaseUrl), {
-      headers: providerHeaders(String(apiKey || "").trim()),
+      headers: providerHeaders(String(apiKey || "").trim(), protocol),
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => null);
@@ -348,6 +367,10 @@ export function publicProviderSummary(record) {
     id: record.id,
     name: record.name,
     kind: record.kind,
+    protocol: normalizeProviderProtocol(record.protocol),
+    anthropicThinking: record.anthropicThinking || "adaptive",
+    maxOutputTokens: record.maxOutputTokens || 8192,
+    thinkingBudget: record.thinkingBudget || 2048,
     vendor,
     source,
     billing: record.billing || billingForSource(source),

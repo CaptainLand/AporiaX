@@ -466,6 +466,7 @@ function builderChildBudget() {
   return planAgentBudget({
     workspacePath: "builder-worktree",
     permission: "builder-write",
+                        acceptanceScope: "worker",
     messages: [
       {
         role: "user",
@@ -492,6 +493,7 @@ function plannerChildBudget() {
   return planAgentBudget({
     workspacePath: "planner-workspace",
     permission: "read-only",
+            acceptanceScope: "planner",
     messages: [{ role: "user", content: "orchestration preflight" }],
     agentBudget: {
       profile: "direct",
@@ -618,6 +620,7 @@ async function runOrchestratedHarness(options) {
             runId: `${options.runId || "run"}-orchestration-planner`,
             taskId: `${options.taskId || "task"}-orchestration-planner`,
             permission: "read-only",
+            acceptanceScope: "planner",
             approvalMode: "manual",
             messages: [
               {
@@ -803,6 +806,7 @@ async function runOrchestratedHarness(options) {
                             input: { ...node, role: "builder", scope: node.writeScopes }, session, status: "running" });
                         },
                         permission: "builder-write",
+                        acceptanceScope: "worker",
                         approvalMode: "manual",
                         understandingDirectory: null,
                         messages: [

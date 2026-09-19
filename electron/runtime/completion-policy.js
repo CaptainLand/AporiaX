@@ -11,7 +11,9 @@ export function normalizeLoopPolicy(value = {}) {
     throw new TypeError("loopPolicy.requireVerifiedChanges must be boolean.");
   return Object.freeze({ requireVerifiedChanges: value.requireVerifiedChanges === true,
     maxCompletionContinuations: integer("maxCompletionContinuations", 1, 0, 3),
-    maxRepeatedEvidence: integer("maxRepeatedEvidence", 0, 0, 64) });
+    maxRepeatedEvidence: integer("maxRepeatedEvidence", 0, 0, 64),
+    maxStrategyInterventions: integer("maxStrategyInterventions", 2, 0, 4),
+    maxBriefSummaries: integer("maxBriefSummaries", 1, 0, 2) });
 }
 
 export class CompletionPolicy {

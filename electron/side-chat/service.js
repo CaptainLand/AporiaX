@@ -110,7 +110,7 @@ export function createSideChatService({ dataDirectory, resolveProvider, loadTask
         if (JSON.stringify(messages).length > contextBudget) throw new Error("侧聊上下文已达上限，请清空侧聊历史或缩小问题范围。");
         if (answer.content) answer.content += "\n\n";
         const roundStart = answer.content.length;
-        const completion = await callProvider({ provider, signal: controller.signal,
+        const completion = await callProvider({ provider: { ...provider, nativeModel: model }, signal: controller.signal,
           body: { model: model.id, messages,
             ...(snapshot && model.supportsTools !== false && round < 3 ? { tools, tool_choice: "auto" } : {}),
             ...(model.thinkingMode === "deepseek" ? { thinking: { type: "disabled" } } : {}),
@@ -136,7 +136,9 @@ export function createSideChatService({ dataDirectory, resolveProvider, loadTask
         }
         if (!snapshot || round >= 3) throw new Error("侧聊只读查询次数已达上限，请缩小问题范围。");
         if (result.tool_calls.length > 4) throw new Error("侧聊查询过多，请缩小问题范围。");
-        messages.push({ role: "assistant", content: result.content || "", tool_calls: result.tool_calls });
+        messages.push({ role: "assistant", content: result.content || "", tool_calls: result.tool_calls,
+          ...(result.aporiaNative ? { aporiaNative: result.aporiaNative } : {}),
+          ...(result.reasoning_content ? { reasoning_content: result.reasoning_content } : {}) });
         for (const call of result.tool_calls) {
           if (call.function?.name !== "read_task_records") throw new Error("侧聊禁止执行此工具。");
           const args = JSON.parse(call.function.arguments || "{}");

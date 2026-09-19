@@ -79,6 +79,8 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
     return record;
   }
 
+  const notify = (record) => { for (const wake of [...(record.waiters || [])]) wake(); };
+
   function append(record, stream, chunk) {
     const text = chunk.toString("utf8");
     if (!text) return;
@@ -88,6 +90,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
       record.output = record.output.slice(removed);
       record.baseOffset += removed;
     }
+    notify(record);
     emit({
       type: "process.output",
       processId: record.id,
@@ -96,7 +99,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
     });
   }
 
-  return {
+  const api = {
     start({ command, cwd }) {
       const normalized = String(command || "").trim();
       if (!normalized || normalized.length > 2_000) {
@@ -134,6 +137,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         startedAt: new Date().toISOString(),
         finishedAt: null,
         requestedExecutionMode,
+        waiters: new Set(),
       };
       processes.set(record.id, record);
       child.stdout.on("data", (chunk) => append(record, "stdout", chunk));
@@ -146,6 +150,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         record.signal = signal || null;
         record.finishedAt = new Date().toISOString();
         disposeChildStreams(child);
+        notify(record);
         emit({ type: "process.exited", ...publicState(record) });
       });
       emit({ type: "process.started", ...publicState(record) });
@@ -168,6 +173,43 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
       };
     },
 
+    // Wait on the runtime's output/exit events instead of asking the model to
+    // poll. Register then recheck to close the output-before-subscribe race.
+    async wait({ processId, cursor = 0, maxChars = 40_000, timeoutMs = 30_000,
+      until = "output", signal, onSteering } = {}) {
+      if (!Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 120_000 || !["output", "exit"].includes(until))
+        throw new Error("Invalid process wait cursor, timeout or condition.");
+      const record = recordFor(processId);
+      if (record.waiters.size >= 32) throw new Error("Too many waits for this process.");
+      signal?.throwIfAborted();
+      return new Promise((resolveWait, rejectWait) => {
+        let timer, unsubscribe, settled = false;
+        const finish = (reason, error) => {
+          if (settled) return;
+          settled = true; clearTimeout(timer); record.waiters.delete(wake);
+          signal?.removeEventListener("abort", abort); unsubscribe?.();
+          if (error) rejectWait(error);
+          else resolveWait({ ...api.read({ processId, cursor, maxChars }), waitReason: reason,
+            ...(reason === "guidance" ? { skipped: true, reason: "New user guidance pending; replan before waiting again." } : {}) });
+        };
+        const wake = () => {
+          if (record.status === "exited") finish("exit");
+          else if (record.status === "stopping") finish("stopping");
+          else if (until === "output" && (record.baseOffset + record.output.length > cursor || cursor < record.baseOffset)) finish("output");
+        };
+        const abort = () => finish("cancelled", Object.assign(new Error("Process wait interrupted."), { name: "AbortError" }));
+        record.waiters.add(wake);
+        signal?.addEventListener("abort", abort, { once: true });
+        timer = setTimeout(() => finish("timeout"), timeoutMs);
+        if (typeof onSteering === "function") {
+          unsubscribe = onSteering(() => finish("guidance"));
+          // A subscriber may synchronously report already-queued guidance.
+          if (settled) unsubscribe?.();
+        }
+        if (signal?.aborted) abort(); else wake();
+      });
+    },
+
     write({ processId, data, close = false }) {
       const record = recordFor(processId);
       if (record.status !== "running" || !record.child.stdin?.writable) {
@@ -186,6 +228,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
       const record = recordFor(processId);
       if (record.status === "running") {
         record.status = "stopping";
+        notify(record);
         await terminateTree(record.child);
         disposeChildStreams(record.child);
       }
@@ -195,6 +238,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
     async closeAll() {
       await Promise.all([...processes.values()].map(async (record) => {
         if (record.status === "running" || record.status === "stopping") {
+          record.status = "stopping"; notify(record);
           await terminateTree(record.child);
         }
         disposeChildStreams(record.child);
@@ -202,4 +246,5 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
       processes.clear();
     },
   };
+  return api;
 }

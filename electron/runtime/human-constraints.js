@@ -13,7 +13,7 @@ export function explicitlyReplacesAllConstraints(message) {
     /^(?:please\s+)?(?:discard|ignore|replace|cancel)\s+all\s+(?:earlier|previous|prior)\s+(?:requirements|constraints|instructions)[.!\n]/i.test(text);
 }
 
-export function reconcileHumanConstraints(conversation, history, previous = null) {
+export function reconcileHumanConstraints(conversation, history, previous = null, { pinActive = false } = {}) {
   const entries = [];
   const superseded = new Map();
   let latestReset = null;
@@ -35,6 +35,12 @@ export function reconcileHumanConstraints(conversation, history, previous = null
     if (replacement) {
       message.aporiaPinned = false;
       message.aporiaSupersededBy = replacement;
+    } else if (pinActive) {
+      // Raw persisted user messages may predate aporiaPinned. Active human
+      // requirements must not disappear merely because only the newest turn
+      // passed through taskRequest(). Only an explicit human reset revokes them.
+      message.aporiaPinned = true;
+      delete message.aporiaSupersededBy;
     }
   }
   if (latestReset && latestReset !== previous?.latestReset) {

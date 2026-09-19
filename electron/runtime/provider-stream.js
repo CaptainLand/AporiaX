@@ -1,3 +1,4 @@
+import { compileProviderWire, normalizeNativeResponse } from "./native-provider-codec.js";
 import { mergeTokenUsage } from "./token-usage.js";
 import { providerChatEndpoint } from "../provider-config.js";
 import { providerMessages } from "./task-conversation.js";
@@ -99,14 +100,14 @@ function createProviderError(provider, code, status = 0) {
   return error;
 }
 
-async function fetchProviderResponse(provider, init) {
+async function fetchProviderResponse(provider, init, wire) {
   if (provider.kind === "aporia-cloud") {
     if (typeof provider.authenticatedFetch !== "function") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
     }
     return provider.authenticatedFetch("/v1/chat/completions", init);
   }
-  return fetch(providerChatEndpoint(provider.baseUrl), init);
+  return normalizeNativeResponse(await fetch(wire.url, init), wire);
 }
 
 export async function callModelProvider({
@@ -187,7 +188,7 @@ export function createOpenAICompatibleProvider({
     supportsModel: (modelId) => model.id === modelId,
     complete: ({ body, signal, onStreamEvent }) =>
       callModelProvider({
-        provider: config,
+        provider: { ...config, nativeModel: model },
         body,
         signal,
         onEvent:
@@ -222,6 +223,7 @@ export async function callModelProviderOnce({
   throwIfAborted(signal);
   // All callers, including subagents and side chat, share this last boundary.
   if (Array.isArray(body.messages)) body = { ...body, messages: providerMessages(body.messages) };
+  const wire = compileProviderWire(provider, body);
   const controller = new AbortController();
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });
@@ -243,19 +245,11 @@ export async function callModelProviderOnce({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(provider.kind !== "aporia-cloud" && provider.apiKey
-          ? { Authorization: `Bearer ${provider.apiKey}` }
-          : {}),
+        ...wire.headers,
       },
-      body: JSON.stringify({
-        ...body,
-        stream: true,
-        ...(["deepseek", "openai"].includes(provider.vendor)
-          ? { stream_options: { include_usage: true } }
-          : {}),
-      }),
+      body: JSON.stringify(wire.body),
       signal: controller.signal,
-    });
+    }, wire);
 
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
@@ -279,6 +273,7 @@ export async function callModelProviderOnce({
 
     let content = "";
     let reasoningContent = "";
+    let nativeState = null;
     let usage = null;
     let buffer = "";
     const toolCalls = [];
@@ -295,6 +290,7 @@ export async function callModelProviderOnce({
       const payload = JSON.parse(data);
       const streamError = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
       if (streamError) throw createProviderError(provider, streamError, 0);
+      if (payload.aporia_native_state && ["responses", "anthropic-messages"].includes(wire.protocol)) nativeState = payload.aporia_native_state;
       if (payload.usage) { usage = payload.usage; observedUsage = payload.usage; }
       const choice = payload?.choices?.[0];
       if (choice?.finish_reason != null) finishReason = choice.finish_reason;
@@ -333,7 +329,7 @@ export async function callModelProviderOnce({
       error.usage = usage;
       error.streamComplete = sawDone || Boolean(finishReason);
       error.partialToolCalls = toolCalls.some(Boolean);
-      error.partialMessage = { content };
+      error.partialMessage = { content, ...(reasoningContent ? { reasoning_content: reasoningContent } : {}), ...(nativeState ? { aporiaNative: nativeState } : {}) };
       onEvent?.({ type: "response.incomplete", code, finishReason, usage });
       throw error;
     };
@@ -356,6 +352,7 @@ export async function callModelProviderOnce({
       streamComplete: true,
       message: {
         content,
+        ...(nativeState ? { aporiaNative: nativeState } : {}),
         ...(reasoningContent
           ? { reasoning_content: reasoningContent }
           : {}),

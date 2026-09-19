@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'goal-brief-acceptance.mjs', 'goal-process-strategy.mjs', 'goal-native-provider.mjs', 'goal-loop-integration.mjs',
   'agent-led-workflow-regression.mjs',
   'harness-loop-unit.mjs', 'harness-loop-provider.mjs', 'harness-loop-integration.mjs',
   'audit-reliability.mjs', 'audit-migration-index.mjs', 'task-history-store-smoke.mjs', 'task-store-smoke.mjs',

@@ -1,3 +1,4 @@
+import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { UnderstandingControls } from "./settings/UnderstandingControls.jsx";
 import { AppUpdateControls, AppUpdateToast, updateToastKey } from "./settings/AppUpdateControls.jsx";
@@ -2403,6 +2404,10 @@ function emptyProviderForm() {
     apiKey: "",
     modelsText: "",
     modelsById: {},
+    protocol: "chat-completions",
+    maxOutputTokens: 8192,
+    anthropicThinking: "adaptive",
+    thinkingBudget: 2048,
   };
 }
 
@@ -2410,10 +2415,17 @@ const PROVIDER_PRESETS = [
   {
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
+    protocol: "deepseek-chat",
   },
   {
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
+    protocol: "responses",
+  },
+  {
+    name: "Anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    protocol: "anthropic-messages",
   },
   {
     name: "OpenRouter",
@@ -2431,6 +2443,10 @@ function providerToForm(provider) {
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
+    protocol: provider.protocol || "chat-completions",
+    maxOutputTokens: provider.maxOutputTokens || 8192,
+    anthropicThinking: provider.anthropicThinking || "adaptive",
+    thinkingBudget: provider.thinkingBudget || 2048,
     apiKey: "",
     modelsText: (provider.models || [])
       .map((model) => model.id)
@@ -2486,6 +2502,7 @@ function ProviderManagerModal({
       const result = await window.desktop.providers.discover({
         id: form.id || undefined,
         baseUrl: form.baseUrl,
+        protocol: form.protocol,
         apiKey: form.apiKey,
       });
       setForm((current) => ({
@@ -2533,8 +2550,12 @@ function ProviderManagerModal({
         id: form.id || undefined,
         name: form.name,
         baseUrl: form.baseUrl,
+        protocol: form.protocol,
         apiKey: form.apiKey,
         models: buildProviderModels(modelIds, form.modelsById),
+        maxOutputTokens: Number(form.maxOutputTokens),
+        anthropicThinking: form.anthropicThinking,
+        thinkingBudget: Number(form.thinkingBudget),
       });
       const nextProviders = await onChanged();
       setForm(providerToForm(savedProvider));
@@ -2593,7 +2614,7 @@ function ProviderManagerModal({
           <div className="modal-header">
             <div>
               <h2>{tr("模型 Provider", "Model providers")}</h2>
-              <p>{tr("添加多个 OpenAI-compatible API，并为任务自由选择模型。", "Add multiple OpenAI-compatible APIs and choose any model per task.")}</p>
+              <p>{tr("选择兼容或原生协议，添加 Provider 并为任务选择模型。", "Choose compatible or native protocols and select a provider/model per task.")}</p>
             </div>
             <IconButton label={tr("关闭", "Close")} type="button" onClick={onClose}>
               <X size={18} />
@@ -2656,6 +2677,7 @@ function ProviderManagerModal({
                           ...current,
                           name: preset.name,
                           baseUrl: preset.baseUrl,
+                          protocol: preset.protocol || "chat-completions",
                           modelsText: "",
                           modelsById: {},
                         }));
@@ -2700,6 +2722,7 @@ function ProviderManagerModal({
                   placeholder="https://api.example.com/v1"
                 />
               </label>
+              <ProviderProtocolFields form={form} setForm={setForm} />
               <label className="provider-key-field">
                 <span>
                   {editingProvider?.hasApiKey
@@ -3823,6 +3846,8 @@ function App() {
         thinking: targetTask.thinking,
         effort: targetTask.effort,
         permission: targetTask.permission,
+        taskContract: targetTask.taskContract,
+        loopPolicy: targetTask.loopPolicy,
         executionMode: taskExecutionMode(targetTask.executionMode),
         approvalMode: taskApprovalMode(targetTask.approvalMode),
         builderLimit: normalizeBuilderCount(
@@ -3882,6 +3907,10 @@ function App() {
                           sandbox: result.sandbox || null,
                           tools: result.tools || [],
                           selfCheck: result.selfCheck || null,
+                          taskBrief: result.taskBrief || null,
+                          acceptance: result.acceptance || null,
+                          strategy: result.strategy || null,
+                          loopMetrics: result.loopMetrics || null,
                           understanding: result.understanding || null,
                           plan: result.plan || message.plan || null,
                           contextCheckpoints:

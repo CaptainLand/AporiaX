@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 const VOLATILE = new Set(["timestamp", "startedAt", "completedAt", "finishedAt", "duration", "durationMs", "elapsedMs", "callId", "requestId", "progressWarning", "resultRef"]);
-const CONTROL_TOOLS = new Set(["collect_subagents", "delegate_subagent", "followup_subagent", "cancel_subagent", "finish_task", "update_plan", "complete_self_check", "request_self_check"]);
+const CONTROL_TOOLS = new Set(["task_brief", "replan_strategy", "wait_process", "collect_subagents", "delegate_subagent", "followup_subagent", "cancel_subagent", "finish_task", "update_plan", "complete_self_check", "request_self_check"]);
 function stable(value, omitVolatile = false) {
   if (Array.isArray(value)) return value.map((item) => stable(item, omitVolatile));
   if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort()

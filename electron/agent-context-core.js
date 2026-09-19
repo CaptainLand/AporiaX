@@ -356,6 +356,7 @@ export function compactConversationForRequest({
   }
   const latestUser = groups.findLastIndex((group) => isHumanMessage(group[0]));
   const protectedGroup = (index) => index === latestUser ||
+    groups[index].some((message) => message.aporiaTaskBrief === true) ||
     groups[index].some((message) => message.aporiaPinned && isHumanMessage(message)) ||
     groups[index].some((message) => isAnchorRestoreNotice(message)) ||
     (groups[index][0].role === "system" && groups[index][0].aporiaSource !== "retrieval");

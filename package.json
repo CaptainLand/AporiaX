@@ -103,7 +103,9 @@
     "test:workbench-state": "node --experimental-sqlite tests/workbench-state-smoke.mjs && node --experimental-sqlite tests/workbench-present-smoke.mjs && node --experimental-sqlite tests/composer-workbench-browser.mjs",
     "test:audit": "node --experimental-sqlite tests/audit-reliability.mjs",
     "test:audit-suite": "node --experimental-sqlite scripts/run-audit-checks.mjs",
-    "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs"
+    "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs",
+    "test:goal-loop": "node --experimental-sqlite tests/goal-brief-acceptance.mjs && node --experimental-sqlite tests/goal-process-strategy.mjs && node --experimental-sqlite tests/goal-native-provider.mjs && node --experimental-sqlite tests/goal-loop-integration.mjs",
+    "test:goal-ui": "node tests/goal-ui-browser.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

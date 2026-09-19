@@ -17,7 +17,7 @@ export function isHumanMessage(message) {
 export function providerMessages(messages) {
   return (messages || []).map((message, index) => {
     if (!message || typeof message !== "object") throw invalidMessage(index, "missing message");
-    const { aporiaSource, aporiaPinned, aporiaSupersededBy, ...wire } = message;
+    const { aporiaSource, aporiaPinned, aporiaSupersededBy, aporiaTaskBrief, aporiaContinuation, ...wire } = message;
     // Tool-only assistant messages may omit text. Tool receipts may not: an
     // undefined property disappears entirely when the request is serialized.
     if (wire.role === "assistant" && wire.content === undefined && wire.tool_calls?.length) wire.content = null;
@@ -76,4 +76,14 @@ export function recoverConversation(messages) {
     }
   }
   return result;
+}
+
+// Keep provider-bound continuation internally even when public delivery combines
+// text chunks. Only public text is returned to the conversation UI.
+export function assistantHistoryMessage(message) {
+  const source = message.aporiaContinuation || message;
+  return { role: "assistant", content: source.content ?? "",
+    ...(source.tool_calls?.length ? { tool_calls: source.tool_calls } : {}),
+    ...(source.reasoning_content ? { reasoning_content: source.reasoning_content } : {}),
+    ...(source.aporiaNative ? { aporiaNative: source.aporiaNative } : {}) };
 }

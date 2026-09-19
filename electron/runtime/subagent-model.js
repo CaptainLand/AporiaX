@@ -35,12 +35,12 @@ export function resolveSubagentReasoningPolicy({
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   builder: Object.freeze({
     description: "Implement the delegated task only within explicit write scopes in an isolated Git worktree. Return changes, verification evidence and remaining issues. Do not delegate again or publish.",
-    tools: new Set(["list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "apply_patch"]),
+    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "apply_patch"]),
   }),
   explore: Object.freeze({
     description:
       "Search and understand the codebase. Return concise findings with exact file and line evidence. Do not edit files.",
-    tools: new Set([
+    tools: new Set(["task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -52,7 +52,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   review: Object.freeze({
     description:
       "Review existing code or artifacts for correctness, security, completeness, maintainability, and regressions. Report actionable findings with evidence. Do not edit files.",
-    tools: new Set([
+    tools: new Set(["task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -64,7 +64,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   verify: Object.freeze({
     description:
       "Verify a focused claim using repository inspection and relevant project commands. Do not edit source files. Report the exact command, exit code, evidence, and remaining uncertainty.",
-    tools: new Set([
+    tools: new Set(["task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -77,7 +77,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   curator: Object.freeze({
     description:
       "Extract durable, reusable project understanding from verified task changes. Read the supporting files and return only the requested JSON proposal. Do not edit files or invent unsupported facts.",
-    tools: new Set([
+    tools: new Set(["task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -190,6 +190,7 @@ async function realCandidate(path) {
 }
 
 export async function assertSubagentRealScope(toolName, input, scope, workspaceRoot) {
+  if (["task_brief", "replan_strategy"].includes(toolName)) return; // local session controls; dispatch still checks permissions
   assertSubagentScope(toolName, input, scope);
   if (!workspaceRoot) throw new Error("Subagent requires a verified workspace.");
   const root = await realpath(workspaceRoot);

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { LanguageSwitch, useI18n } from "../i18n";
 import { IconButton, SegmentedControl, Switch } from "../components/Controls.jsx";
+import { TaskGoalSettings } from "./TaskGoalSettings.jsx";
 import { TaskCapabilityCards } from "./TaskCapabilityCards.jsx";
 
 export function SettingsPanel({
@@ -48,6 +49,7 @@ export function SettingsPanel({
         </IconButton>
       </div>
 
+      <TaskGoalSettings key={task.id} task={task} onUpdateTask={onUpdateTask} />
       <section className="settings-section">
         <div className="settings-label">{tr("模型服务", "Model service")}</div>
         <div className="api-status-row">
