@@ -21,33 +21,41 @@ export async function loadTaskContract(workspaceRoot, supplied, { canRead = true
 }
 
 async function readBounded(root, name, limit = MAX_FILE) {
-  // Resolve directory aliases (including Windows 8.3 paths) before applying
-  // the existing real-path containment guard. Never relax the target guard.
+  // Canonicalize Windows short-path aliases before the real containment check.
   root = await getVerifiedWorkspaceRoot(root);
   const target = await verifyExistingTarget(root, name);
-  const stat = await lstat(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) throw new Error("ACCEPTANCE_UNSUPPORTED_FILE");
+  const stat = await lstat(target, { bigint: true });
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > BigInt(limit)) throw new Error("ACCEPTANCE_UNSUPPORTED_FILE");
+  const changed = (phase) => new Error(`ACCEPTANCE_FILE_CHANGED_DURING_READ: ${phase}`);
+  const sameVersion = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size &&
+    a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
   const handle = await open(target, "r");
-  let bytes;
   try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > limit || opened.size !== stat.size || opened.dev !== stat.dev || opened.ino !== stat.ino) throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
-    const buffer = Buffer.alloc(Math.min(limit + 1, opened.size + 1));
+    const opened = await handle.stat({ bigint: true });
+    // Windows fast path-stat and handle-stat can report different dev values.
+    // Compare like APIs, never ignore a device mismatch between two handles.
+    // BigInt preserves NTFS file IDs beyond Number's exact-integer range.
+    if (!opened.isFile() || opened.size > BigInt(limit) || opened.size !== stat.size || opened.ino !== stat.ino)
+      throw changed("open identity");
+    const buffer = Buffer.alloc(Math.min(limit + 1, Number(opened.size) + 1));
     let total = 0;
     while (total < buffer.length) { const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total); if (!bytesRead) break; total += bytesRead; }
-    const after = await handle.stat(), current = await lstat(target);
-    // Compare each timestamp with the same stat API. Windows path-stat and
-    // handle-stat may expose different timestamp precision for the same file.
-    // Both views must stay unchanged, and the opened inode must remain at the
-    // authorized path. This still rejects writes between either observation.
-    const unchanged = (a, b) => a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
-    if (total !== opened.size || !unchanged(opened, after) || !unchanged(stat, current) ||
-        current.ino !== opened.ino || current.dev !== opened.dev || !current.isFile() || current.isSymbolicLink())
-      throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
-    if (await verifyExistingTarget(root, name) !== target) throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
-    bytes = buffer.subarray(0, total);
+    const after = await handle.stat({ bigint: true }), current = await lstat(target, { bigint: true });
+    if (BigInt(total) !== opened.size || !sameVersion(opened, after) || !sameVersion(stat, current) ||
+        !current.isFile() || current.isSymbolicLink()) throw changed("read version");
+    if (await verifyExistingTarget(root, name) !== target) throw changed("resolved path");
+    // Reopen the still-authorized path and compare fstat to fstat, including the
+    // volume ID. Merely dropping dev from a cross-API comparison is not enough.
+    const verification = await open(target, "r");
+    try {
+      const resolved = await verification.stat({ bigint: true });
+      if (!resolved.isFile() || !sameVersion(opened, resolved)) throw changed("reopened identity");
+    } finally { await verification.close(); }
+    const last = await lstat(target, { bigint: true });
+    if (!last.isFile() || last.isSymbolicLink() || !sameVersion(stat, last) ||
+        await verifyExistingTarget(root, name) !== target) throw changed("final path");
+    return buffer.subarray(0, total);
   } finally { await handle.close(); }
-  return bytes;
 }
 
 /** Trusted caller/project contract is captured once. Model text cannot edit it.
