@@ -1,3 +1,4 @@
+import { TaskGoalReport } from "./TaskGoalReport.jsx";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
@@ -1397,6 +1398,7 @@ export function Conversation({
               />
             )}
             {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}
+            {!restored && <TaskGoalReport brief={message.taskBrief} acceptance={message.acceptance} strategy={message.strategy} />}
           </React.Fragment>
         );
         return isHistoricalFailure(message, latestAssistant) ? (

@@ -1,3 +1,7 @@
+import { TaskBrief } from "./task-brief.js";
+import { StrategyHistory } from "./strategy-history.js";
+import { normalizeLoopPolicy } from "./completion-policy.js";
+import { assistantHistoryMessage } from "./task-conversation.js";
 import { completeLoopRequest } from "./loop-recovery.js";
 import { LoopMetrics } from "./loop-metrics.js";
 import { planToolBatches, executeToolBatch as mapWithConcurrency } from "./tool-batch.js";
@@ -170,6 +174,7 @@ export async function runSubagentTask(options = {}) {
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
         ...(input.role === "builder" ? [`Modify only these write scopes: ${input.writeScopes.join(", ")}. Changes are provisional until the Harness merges them. Do not run commands, delegate, or publish. Report unverified checks to the parent.`] : []),
         "Work independently and return a concise evidence-backed report to the parent agent.",
+        "Use task_brief for durable concise decisions and replan_strategy with fresh diagnostics when repeated failures require a different approach. These do not grant extra permissions.",
         "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
         "Do not expose hidden reasoning. Report conclusions, evidence, commands, and uncertainty only.",
         instructionContext.root.content
@@ -185,8 +190,13 @@ export async function runSubagentTask(options = {}) {
   if (conversation[0]?.role === "system" && typeof conversation[0].content === "string") {
     conversation[0].content = conversation[0].content.replace(/\nRelevant project memory:\n[\s\S]*$/, "");
   }
+  const brief = new TaskBrief(session.taskBrief, { resumed: Boolean(session.taskBrief) });
+  const loopPolicy = normalizeLoopPolicy(options.loopPolicy);
+  const strategy = new StrategyHistory(session.strategyHistory, { mode: loopPolicy.strategyMode, maxInterventions: loopPolicy.maxStrategyInterventions });
+  brief.syncSources(conversation);
   Object.assign(session, { conversation, contextCheckpoints, evidence, steps: toolSteps });
   const persistSession = async (status = "running", result = null) => {
+    session.taskBrief = brief.snapshot(); session.strategyHistory = strategy.snapshot();
     await options.snapshotProvisional?.();
     await saveRuntimeContext(agentId, {
       kind: "worker", workspaceRoot: options.ownerWorkspaceRoot || workspaceRoot, input, session, status, result,
@@ -215,9 +225,12 @@ export async function runSubagentTask(options = {}) {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
       if (session.pendingGuidance?.length) {
-        toolProgress.reset();
+        toolProgress.reset(); strategy.reset();
         conversation.push(...session.pendingGuidance.splice(0).map((content) => taskRequest({ role: "user", content })));
       }
+      strategy.assertBudget();
+      brief.syncSources(conversation);
+      brief.inject(conversation, { strategy: strategy.briefing() });
       await saveRuntimeCheckpoint({ scopeId: agentId, role: input.role, task: input.task, workspaceRoot, status: "running", round, evidence: compactSubagentEvidence(evidence) });
       const relevant = upsertRelevantContextMessage(conversation, {
         checkpoints: contextCheckpoints,
@@ -281,7 +294,7 @@ export async function runSubagentTask(options = {}) {
       if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
         if (typeof message.content !== "string" || !message.content.trim()) throw new Error("MODEL_EMPTY_RESPONSE: subagent returned no evidence or report.");
         if (session.pendingGuidance?.length) {
-          conversation.push({ role: "assistant", content: message.content });
+          conversation.push(assistantHistoryMessage(message));
           continue;
         }
         const summary = String(message.content || "")
@@ -298,11 +311,11 @@ export async function runSubagentTask(options = {}) {
               : "子 Agent 已完成，但没有返回文本报告。"),
           evidence: compactSubagentEvidence(evidence),
           steps: toolSteps.slice(-60),
-          usage: usageTotal, loopMetrics: loopMetrics.snapshot(),
+          usage: usageTotal, loopMetrics: loopMetrics.snapshot(), taskBrief: brief.snapshot(), strategy: strategy.briefing(),
           rounds: round,
           instructionFiles: [...instructionContext.loadedFiles],
         };
-        conversation.push({ role: "assistant", content: message.content });
+        conversation.push(assistantHistoryMessage(message));
         await persistSession("completed", result);
         await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
         emit({
@@ -323,6 +336,7 @@ export async function runSubagentTask(options = {}) {
         role: "assistant",
         content: message.content ?? null,
         ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
+        ...(message.aporiaNative ? { aporiaNative: message.aporiaNative } : {}),
         tool_calls: message.tool_calls,
       });
       await persistSession();
@@ -335,7 +349,7 @@ export async function runSubagentTask(options = {}) {
           ? "self-check"
           : "work";
         const capability = capabilityFor(toolName, capabilityPhase);
-        let modelResult;
+        let modelResult, appliedChanges = [];
         let success = true;
         emit({
           type: "subagent.tool.started",
@@ -355,8 +369,9 @@ export async function runSubagentTask(options = {}) {
             throw new Error(`Tool is not enabled by Agent Registry for ${input.role}: ${toolName}`);
           }
           const parsedInput = parseToolArguments(toolCall);
+          strategy.before(toolName, parsedInput);
           await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
-          const scoped = await resolveScopedInstructions(
+          const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
             instructionContext,
             subagentToolPaths(toolName, parsedInput),
           );
@@ -385,7 +400,9 @@ export async function runSubagentTask(options = {}) {
             sandboxStatus,
             signal,
             parseArguments: parseToolArguments,
-            executeAuthorized: executeAuthorizedTool,
+            executeAuthorized: ["task_brief", "replan_strategy"].includes(toolName)
+              ? async ({ input }) => ({ modelResult: toolName === "task_brief" ? brief.apply(input) : strategy.replan(input) })
+              : executeAuthorizedTool,
             executeContext: {
               workspaceRoot,
               sandboxExecutor,
@@ -393,12 +410,17 @@ export async function runSubagentTask(options = {}) {
               durableScope: agentId,
             },
           });
+          appliedChanges = executed.changes || (executed.change ? [executed.change] : []);
           modelResult = compactSubagentModelResult(executed.modelResult);
         } catch (error) {
           if (error?.name === "AbortError") throw error;
           success = false;
           modelResult = { error: error.message };
         }
+        let observedInput;
+        try { observedInput = parseToolArguments(toolCall); } catch { observedInput = {}; }
+        brief.observe({ callId: toolCall.id, tool: toolName, input: observedInput, result: modelResult, version: "worker-current" });
+        strategy.observe({ callId: toolCall.id, tool: toolName, input: observedInput, result: modelResult, changes: appliedChanges });
         const item = subagentEvidence(toolName, modelResult);
         evidence.push(item);
         toolSteps.push({
@@ -457,7 +479,7 @@ export async function runSubagentTask(options = {}) {
           : `子 Agent 已达到 ${effectiveMaxRounds} 轮安全预算。请把现有证据视为部分结果，或委派一个范围更小的后续任务。`,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
-      usage: usageTotal, loopMetrics: loopMetrics.snapshot(),
+      usage: usageTotal, loopMetrics: loopMetrics.snapshot(), taskBrief: brief.snapshot(), strategy: strategy.briefing(),
       rounds: effectiveMaxRounds,
       instructionFiles: [...instructionContext.loadedFiles],
     };
@@ -492,7 +514,7 @@ export async function runSubagentTask(options = {}) {
       summary: error.message,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
-      usage: usageTotal, loopMetrics: loopMetrics.snapshot(),
+      usage: usageTotal, loopMetrics: loopMetrics.snapshot(), taskBrief: brief.snapshot(), strategy: strategy.briefing(),
     };
     await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
     await persistSession("failed", result);

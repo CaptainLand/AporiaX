@@ -32,7 +32,7 @@ try {
     const worker = await manager.open({ workspaceRoot: root, agentId: `capacity-${index}`, writeScopes: [file] });
     opened.push(worker); return worker;
   }));
-  assert.ok(results.every((result) => result.status === "fulfilled"), JSON.stringify(results));
+  assert.ok(results.every((result) => result.status === "fulfilled"), JSON.stringify(results.map((result) => result.status === "rejected" ? { status: result.status, error: result.reason?.message } : { status: result.status })));
   assert.equal(manager.leases().length, 6);
   let checkpointJsonBytes = 0, worktreeBytes = 0;
   for (const worker of opened) {

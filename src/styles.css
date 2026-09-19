@@ -12851,3 +12851,10 @@ button.anchor-history-heading:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Bounded goal-loop diagnostics: no raw provider continuation state. */
+.task-goal-report { margin: 12px 0; padding: 12px; border: 1px solid var(--border, #8885); border-radius: 12px; overflow-wrap: anywhere; }
+.task-goal-report summary, .task-goal-settings summary { cursor: pointer; }
+.task-goal-report details { margin: 8px 0; }
+.task-goal-settings textarea { width: 100%; font-family: monospace; resize: vertical; box-sizing: border-box; }
+.task-goal-settings small { display: block; margin-top: 8px; opacity: .8; }

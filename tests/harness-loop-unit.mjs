@@ -169,6 +169,9 @@ await test("completion defaults do not force verification; explicit policy is bo
   assert.equal(policy.evaluate({ ...input, assessment: { waived: true } }).status, "completed");
   assert.equal(policy.evaluate({ ...input, status: "blocked" }).status, "blocked");
   assert.throws(() => normalizeLoopPolicy({ requireVerifiedChanges: "false" }), /boolean/);
+  assert.equal(normalizeLoopPolicy().strategyMode, "advisory");
+  assert.equal(normalizeLoopPolicy({strategyMode: "strict"}).strategyMode, "strict");
+  assert.throws(() => normalizeLoopPolicy({strategyMode: "invalid"}), /strategyMode/);
 });
 await test("metrics hold counters and hashes internally, not prompt text", () => {
   const metrics = new LoopMetrics(); const body = { model: "fixture", messages: [{ role: "user", content: "private fixture content" }] };

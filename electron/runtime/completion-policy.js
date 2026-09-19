@@ -9,9 +9,14 @@ export function normalizeLoopPolicy(value = {}) {
   };
   if (value.requireVerifiedChanges !== undefined && typeof value.requireVerifiedChanges !== "boolean")
     throw new TypeError("loopPolicy.requireVerifiedChanges must be boolean.");
+  const strategyMode = value.strategyMode ?? "advisory";
+  if (!["advisory", "strict"].includes(strategyMode)) throw new TypeError("Invalid loopPolicy.strategyMode.");
   return Object.freeze({ requireVerifiedChanges: value.requireVerifiedChanges === true,
+    strategyMode,
     maxCompletionContinuations: integer("maxCompletionContinuations", 1, 0, 3),
-    maxRepeatedEvidence: integer("maxRepeatedEvidence", 0, 0, 64) });
+    maxRepeatedEvidence: integer("maxRepeatedEvidence", 0, 0, 64),
+    maxStrategyInterventions: integer("maxStrategyInterventions", 2, 0, 4),
+    maxBriefSummaries: integer("maxBriefSummaries", 1, 0, 2) });
 }
 
 export class CompletionPolicy {

@@ -26,9 +26,19 @@ function dimensions(url) {
 export function conversationTokenMaterial(conversation) {
   let imageTokens = 0;
   let imageCount = 0;
+  let opaqueTokens = 0;
   function visit(value) {
     if (Array.isArray(value)) return value.map(visit);
     if (!value || typeof value !== "object") return value;
+    if (value.aporiaNative?.items) {
+      // Opaque signatures/encrypted bytes are transport data. Use bounded provider
+      // output usage conservatively for the returned block instead of counting
+      // its duplicate public transcript and encoded continuation as text twice.
+      const reported = Number(value.aporiaNative.outputTokens);
+      opaqueTokens += Number.isFinite(reported) && reported > 0 ? Math.min(128000, reported) : 4096;
+      const { aporiaNative, content, tool_calls, reasoning_content, ...rest } = value;
+      return { ...visit(rest), nativeAssistant: "[provider-bound continuation]" };
+    }
     if (["image_url", "input_image", "image"].includes(value.type)) {
       imageCount++;
       const image = value.image_url;
@@ -43,8 +53,8 @@ export function conversationTokenMaterial(conversation) {
           : 4096;
       return { type: value.type, image: "[image]" };
     }
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !["aporiaSource", "aporiaPinned", "aporiaSupersededBy"].includes(key)).map(([key, item]) => [key, visit(item)]));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !["aporiaSource", "aporiaPinned", "aporiaSupersededBy", "aporiaTaskBrief"].includes(key)).map(([key, item]) => [key, visit(item)]));
   }
-  return { serialized: JSON.stringify(visit(conversation || [])), imageTokens, imageCount };
+  return { serialized: JSON.stringify(visit(conversation || [])), imageTokens: imageTokens + opaqueTokens, imageCount: imageCount + (opaqueTokens ? 1 : 0) };
 }
 

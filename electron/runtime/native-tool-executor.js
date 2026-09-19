@@ -165,6 +165,7 @@ export function createNativeToolExecutor({
 
   return async function executeAuthorizedTool({
     toolCall,
+    onSteering,
     toolName = toolCall.function.name,
     input,
     workspaceRoot,
@@ -605,6 +606,13 @@ export function createNativeToolExecutor({
           maxChars: input.max_chars,
         }),
       };
+    }
+
+    if (toolName === "wait_process") {
+      if (!processManager?.wait) throw new Error("Process wait runtime is unavailable.");
+      return { modelResult: await processManager.wait({ processId: input.process_id, cursor: input.cursor ?? 0,
+        maxChars: input.max_chars, timeoutMs: input.timeout_ms ?? 30000, until: input.until || "output", signal,
+        onSteering }) };
     }
 
     if (toolName === "write_stdin") {

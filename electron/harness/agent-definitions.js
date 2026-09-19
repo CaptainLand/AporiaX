@@ -5,7 +5,7 @@ const NAME_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/;
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
 const readPermissions = (extra = {}) => Object.freeze({
   "*": "deny",
-  ...Object.fromEntries(["list_directory", "read_file", "search_text", "git_status", "git_diff", "inspect_office_file"].map((name) => [name, "allow"])),
+  ...Object.fromEntries(["list_directory", "read_file", "search_text", "git_status", "git_diff", "inspect_office_file", "task_brief", "replan_strategy"].map((name) => [name, "allow"])),
   ...extra,
 });
 
@@ -15,6 +15,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Search and understand the codebase with exact evidence. Do not edit files.",
     tools: Object.freeze([
+      "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -34,6 +35,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Review current code or artifacts for correctness, security, completeness, maintainability, and regressions. Do not edit files.",
     tools: Object.freeze([
+      "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -53,6 +55,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Verify focused claims using repository evidence and project commands. Do not edit source files.",
     tools: Object.freeze([
+      "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -73,6 +76,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Extract durable, reusable Project Understanding from verified task changes.",
     tools: Object.freeze([
+      "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -92,6 +96,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Implement and verify one delegated change inside an isolated worktree and explicit non-overlapping write scopes.",
     tools: Object.freeze([
+      "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
       "search_text",
@@ -113,6 +118,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       apply_patch: "allow",
       run_command: "allow",
       complete_self_check: "allow",
+      task_brief: "allow", replan_strategy: "allow",
     }),
     maxRounds: 8,
     background: true,

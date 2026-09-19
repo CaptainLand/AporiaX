@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const tests = [
+  ['node', 'goal-ui-browser.mjs'],
   ['node', 'side-chat-smoke.mjs'], ['node', 'side-chat-browser.mjs'],
   ['node', 'workbench-git-smoke.mjs'], ['node', 'workbench-documents-git-browser.mjs'],
   ['node', 'workbench-git-setup-smoke.mjs'], ['node', 'workbench-git-setup-browser.mjs'],

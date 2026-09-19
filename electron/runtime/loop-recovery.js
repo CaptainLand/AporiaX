@@ -19,7 +19,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         // Completed text-only continuation includes the preserved prefix. Tool
         // continuations keep normal protocol messages; they are not concatenated.
         message: partialAnswers.length && !result.interrupted && !result.message?.tool_calls?.length
-          ? { ...result.message, content: [...partialAnswers, result.message?.content || ""].join("\n") }
+          ? { ...result.message, aporiaNative: undefined, aporiaContinuation: result.message, content: [...partialAnswers, result.message?.content || ""].join("\n") }
           : result.message };
     } catch (error) {
       if (error?.attemptUsage || error?.usage) await onFailedUsage(error.attemptUsage || error.usage);
@@ -38,7 +38,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
       } else if (category === "output-limit" && corrections < 1 && error.streamComplete &&
                  !error.partialToolCalls && error.partialMessage?.content?.trim()) {
         partialAnswers.push(error.partialMessage.content);
-        conversation.push({ role: "assistant", content: error.partialMessage.content });
+        conversation.push({ role: "assistant", ...error.partialMessage });
         conversation.push(harnessFeedback("The previous answer reached the output limit. Continue from that partial text without repeating it. No tool call from the truncated response was executed. Do not claim an unfinished task is complete."));
         corrections++;
       } else if (category === "tool-protocol" && corrections < 1 && error.streamComplete) {
@@ -46,7 +46,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         corrections++;
       } else {
         if (category === "output-limit" && error.streamComplete && !error.partialToolCalls && error.partialMessage?.content?.trim()) {
-          conversation.push({ role: "assistant", content: error.partialMessage.content });
+          conversation.push({ role: "assistant", ...error.partialMessage });
           await persist(); // Even an exhausted continuation keeps its partial text.
         }
         throw error;

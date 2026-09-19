@@ -1,3 +1,5 @@
+import { REPLAN_TOOL } from "./strategy-history.js";
+import { TASK_BRIEF_TOOL } from "./task-brief.js";
 import { ToolRegistry } from "../agent-core.js";
 import { SKILL_RESOURCE_TOOL } from "../skill-resources.js";
 import { HISTORY_TOOL } from "./conversation-history.js";
@@ -8,6 +10,18 @@ import { MAX_SUBAGENT_ROUNDS } from "./subagent-model.js";
 export const MAX_SEARCH_RESULTS = 200;
 
 export const TOOL_DEFINITIONS = [
+  TASK_BRIEF_TOOL,
+  REPLAN_TOOL,
+  { type: "function", function: {
+    name: "wait_process",
+    description: "Wait for new output or exit of an already-started task process without repeated model polling. No new command is executed. Prefer until=exit for a build/test, output for an interactive process. A timeout is not failure and does not kill the process; user guidance/cancel interrupts waiting.",
+    parameters: { type: "object", properties: {
+      process_id: { type: "string" }, cursor: { type: "integer", minimum: 0 },
+      until: { type: "string", enum: ["output", "exit"] },
+      timeout_ms: { type: "integer", minimum: 0, maximum: 120000 },
+      max_chars: { type: "integer", minimum: 1, maximum: 80000 },
+    }, required: ["process_id"], additionalProperties: false },
+  } },
   SKILL_RESOURCE_TOOL,
   {
     type: "function",
@@ -918,6 +932,9 @@ export const TOOL_RISKS = {
   run_command: "execute",
   start_process: "execute",
   read_process: "read",
+  wait_process: "read",
+  task_brief: "control",
+  replan_strategy: "control",
   write_stdin: "control",
   kill_process: "control",
   present_to_user: "read",
