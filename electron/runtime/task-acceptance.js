@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { lstat, open } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
-import { verifyExistingTarget } from "./workspace-runtime.js";
+import { getVerifiedWorkspaceRoot, verifyExistingTarget } from "./workspace-runtime.js";
 
 const MAX_FILE = 8 * 1024 * 1024;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
@@ -21,6 +21,9 @@ export async function loadTaskContract(workspaceRoot, supplied, { canRead = true
 }
 
 async function readBounded(root, name, limit = MAX_FILE) {
+  // Resolve directory aliases (including Windows 8.3 paths) before applying
+  // the existing real-path containment guard. Never relax the target guard.
+  root = await getVerifiedWorkspaceRoot(root);
   const target = await verifyExistingTarget(root, name);
   const stat = await lstat(target);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) throw new Error("ACCEPTANCE_UNSUPPORTED_FILE");
@@ -28,13 +31,20 @@ async function readBounded(root, name, limit = MAX_FILE) {
   let bytes;
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > limit || opened.dev !== stat.dev || opened.ino !== stat.ino) throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
+    if (!opened.isFile() || opened.size > limit || opened.size !== stat.size || opened.dev !== stat.dev || opened.ino !== stat.ino) throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
     const buffer = Buffer.alloc(Math.min(limit + 1, opened.size + 1));
     let total = 0;
     while (total < buffer.length) { const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total); if (!bytesRead) break; total += bytesRead; }
     const after = await handle.stat(), current = await lstat(target);
-    if (total !== opened.size || stat.size !== after.size || stat.mtimeMs !== after.mtimeMs || current.ino !== opened.ino || current.dev !== opened.dev || current.isSymbolicLink())
+    // Compare each timestamp with the same stat API. Windows path-stat and
+    // handle-stat may expose different timestamp precision for the same file.
+    // Both views must stay unchanged, and the opened inode must remain at the
+    // authorized path. This still rejects writes between either observation.
+    const unchanged = (a, b) => a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+    if (total !== opened.size || !unchanged(opened, after) || !unchanged(stat, current) ||
+        current.ino !== opened.ino || current.dev !== opened.dev || !current.isFile() || current.isSymbolicLink())
       throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
+    if (await verifyExistingTarget(root, name) !== target) throw new Error("ACCEPTANCE_FILE_CHANGED_DURING_READ");
     bytes = buffer.subarray(0, total);
   } finally { await handle.close(); }
   return bytes;

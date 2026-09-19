@@ -138,7 +138,10 @@ export function createSideChatService({ dataDirectory, resolveProvider, loadTask
         if (result.tool_calls.length > 4) throw new Error("侧聊查询过多，请缩小问题范围。");
         messages.push({ role: "assistant", content: result.content || "", tool_calls: result.tool_calls,
           ...(result.aporiaNative ? { aporiaNative: result.aporiaNative } : {}),
-          ...(result.reasoning_content ? { reasoning_content: result.reasoning_content } : {}) });
+          // Only the explicitly selected DeepSeek continuation protocol needs
+          // reasoning_content. Generic side-chat history must remain public.
+          ...((provider.protocol === "deepseek-chat" || provider.vendor === "deepseek") && result.reasoning_content
+            ? { reasoning_content: result.reasoning_content } : {}) });
         for (const call of result.tool_calls) {
           if (call.function?.name !== "read_task_records") throw new Error("侧聊禁止执行此工具。");
           const args = JSON.parse(call.function.arguments || "{}");

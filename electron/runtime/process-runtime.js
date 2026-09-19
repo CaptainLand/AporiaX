@@ -13,7 +13,9 @@ function shellCommand(command) {
     const systemRoot = process.env.SystemRoot || "C:\\Windows";
     return {
       program: join(systemRoot, "System32", "cmd.exe"),
-      args: ["/d", "/s", "/c", command],
+      // Match Node's CMD shell invocation: preserve inner executable/argument
+      // quotes instead of applying CRT backslash escaping to a shell program.
+      args: ["/d", "/s", "/c", `"${command}"`],
     };
   }
   return { program: "/bin/sh", args: ["-lc", command] };
@@ -120,6 +122,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         cwd,
         env: createHostFallbackEnvironment(process.env, "persistent-host"),
         shell: false,
+        windowsVerbatimArguments: process.platform === "win32",
         detached: process.platform !== "win32",
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
