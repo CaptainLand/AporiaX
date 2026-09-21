@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { validateApprovalResponse } from "./approval-response.js";
 import { withDurableRun } from "../runtime/durable-run.js";
+import { createRunControl } from "../runtime/run-control.js";
 import {
   acknowledgeRecoverableRun,
   appendRunJournalEvents,
@@ -23,71 +24,6 @@ function createAbortError(message = "The task was interrupted.") {
   return Object.assign(new Error(message), { name: "AbortError" });
 }
 
-function createRunControl() {
-  let paused = false;
-  let pauseWaiters = [];
-  const steeringQueue = [];
-  const steeringListeners = new Set();
-
-  const settlePauseWaiters = () => {
-    const waiters = pauseWaiters;
-    pauseWaiters = [];
-    for (const waiter of waiters) waiter.resolve();
-  };
-
-  return {
-    get paused() {
-      return paused;
-    },
-    pause() {
-      if (paused) return false;
-      paused = true;
-      return true;
-    },
-    resume() {
-      if (!paused) return false;
-      paused = false;
-      settlePauseWaiters();
-      return true;
-    },
-    enqueueSteering(message) {
-      steeringQueue.push(message);
-      for (const listener of steeringListeners) listener();
-      return steeringQueue.length;
-    },
-    hasSteering: () => steeringQueue.length > 0,
-    onSteering(listener) {
-      steeringListeners.add(listener);
-      return () => steeringListeners.delete(listener);
-    },
-    consumeSteering() {
-      return steeringQueue.splice(0, steeringQueue.length);
-    },
-    async waitIfPaused(signal) {
-      if (!paused) return;
-      if (signal?.aborted) throw createAbortError();
-      await new Promise((resolveWait, rejectWait) => {
-        let waiterEntry = null;
-        const handleAbort = () => {
-          pauseWaiters = pauseWaiters.filter((waiter) => waiter !== waiterEntry);
-          rejectWait(createAbortError());
-        };
-        signal?.addEventListener("abort", handleAbort, { once: true });
-        waiterEntry = {
-          resolve: () => {
-            signal?.removeEventListener("abort", handleAbort);
-            resolveWait();
-          },
-        };
-        pauseWaiters.push(waiterEntry);
-      });
-    },
-    abort() {
-      paused = false;
-      settlePauseWaiters();
-    },
-  };
-}
 
 function normalizeSteeringMessage(message = {}) {
   const content = String(message?.content || "").trim();
@@ -129,6 +65,16 @@ export class HarnessTaskRuntime {
   #approvalGrantKey;
   #onIdle;
   #taskStarter = null;
+  #environment = { online: true, sleeping: false };
+
+  setEnvironment(patch) {
+    Object.assign(this.#environment, patch);
+    for (const record of [...this.#activeRuns.values(), ...this.#startingRuns.values()]) {
+      if (this.#environment.sleeping) record.control.suspend();
+      else if (patch.sleeping === false) record.control.wake(this.#environment.online);
+      record.control.setOnline(this.#environment.online);
+    }
+  }
 
   constructor({
     dataDirectory,
@@ -253,6 +199,7 @@ export class HarnessTaskRuntime {
       workspacePath: record.workspacePath || "",
       phase: this.#startingRuns.has(record.runId) ? "preparing" : "running",
       paused: record.control.paused,
+      pauseReasons: record.control.snapshot().pauseReasons,
       startedAt: record.startedAt,
       pendingApprovals: [...this.#pendingApprovals.values()].filter(
         (approval) => approval.runId === record.runId,
@@ -335,6 +282,26 @@ export class HarnessTaskRuntime {
     }
     this.#activeRuns.set(safeRunId, record);
     this.#startingRuns.delete(safeRunId);
+    let lastPauseKey = "";
+    const unsubscribeControl = control.onChange((state) => {
+      if (record.controller.signal.aborted) return;
+      const key = state.pauseReasons.join("|");
+      if (lastPauseKey !== key) {
+        lastPauseKey = key;
+        this.#publish(record, { type: state.paused ? "control.paused" : "control.resumed",
+          pauseReasons: state.pauseReasons, timestamp: new Date().toISOString() });
+      }
+      record.journalTail = this.#flushJournal(record).then(async () => {
+        if (record.persistenceError) throw record.persistenceError;
+        await saveRunCheckpoint(this.#directory(), safeRunId, { scopeId: "run-control", phase: "control", ...state });
+        await updateRunJournalMetadata(this.#directory(), safeRunId, { status: state.paused ? "paused" : "running" });
+      }).catch((error) => { this.#persistenceFailed(record, error); throw record.persistenceError; });
+      record.journalTail.catch(() => {});
+      this.#notifyActive();
+      return record.journalTail;
+    });
+    if (this.#environment.sleeping) control.suspend();
+    control.setOnline(this.#environment.online);
     this.#notifyActive();
 
     const emit = (payload = {}) => {
@@ -438,6 +405,7 @@ export class HarnessTaskRuntime {
           await durableWrite(() => markRunRecoveryStarted(this.#directory(), recoveryContext.runId, safeRunId));
         }
         const result = await withDurableRun({
+          control,
           recoveryDirectory: join(this.#directory(), "workspace-recovery"),
           workspacePath: metadata?.workspacePath || recoveryContext?.workspacePath,
           unresolved: copiedOperations.filter((operation) => ["started", "uncertain"].includes(operation.state)),
@@ -456,12 +424,16 @@ export class HarnessTaskRuntime {
             read: (page) => readRunEvidence(this.#directory(), safeRunId, page),
           },
           operation: (value) => durableWrite(() => saveRunOperation(this.#directory(), safeRunId, value)),
-        }, () => execute({
+        }, async () => {
+          await control.waitIfPaused(controller.signal);
+          return execute({
           signal: controller.signal,
           control,
           emit,
           requestApproval,
-        }));
+          });
+        });
+        await control.flush();
         await this.#flushJournal(record);
         if (record.persistenceError) return { ...result, status: "blocked", error: true, content: record.persistenceError.message,
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
@@ -478,6 +450,7 @@ export class HarnessTaskRuntime {
         throw error;
       } finally {
         clearTimeout(record.journalTimer);
+        unsubscribeControl();
         control.abort();
         this.#activeRuns.delete(safeRunId);
         this.#notifyActive();
@@ -517,26 +490,17 @@ export class HarnessTaskRuntime {
   async pause(runId, { clientId = "" } = {}) {
     const record = this.#activeRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
-    if (!record.control.pause()) return true;
-    const payload = { type: "control.paused" };
-    this.#publish(record, payload);
-    await updateRunJournalMetadata(this.#directory(), record.runId, {
-      status: "paused",
-      lastEventType: payload.type,
-    }).catch(() => undefined);
+    record.control.pause();
+    await record.control.flush();
     return true;
   }
 
   async resume(runId, { clientId = "" } = {}) {
     const record = this.#activeRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
-    if (!record.control.resume()) return true;
-    const payload = { type: "control.resumed" };
-    this.#publish(record, payload);
-    await updateRunJournalMetadata(this.#directory(), record.runId, {
-      status: "running",
-      lastEventType: payload.type,
-    }).catch(() => undefined);
+    record.control.resume();
+    record.control.retryNetwork();
+    await record.control.flush();
     return true;
   }
 

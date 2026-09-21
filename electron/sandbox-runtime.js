@@ -15,6 +15,8 @@ import {
   sep,
 } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { runtimeRunControl } from "./runtime/durable-run.js";
+import { activeTimeout } from "./runtime/run-control.js";
 import { currentExecutionMode } from "./harness/agent-budget.js";
 import { applySandboxChanges, atomicJson, checkAbort, copyPrivateDependencies, hashSandboxFile, SNAPSHOT_MAX_BYTES, SNAPSHOT_MAX_FILES } from "./sandbox-files.js";
 
@@ -114,6 +116,8 @@ function runProcess({
   watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
 }) {
   if (signal?.aborted) return Promise.reject(createAbortError());
+  const control = runtimeRunControl();
+  const activeNow = control?.activeNow || Date.now;
 
   return new Promise((resolvePromise, rejectPromise) => {
     let stdout = "";
@@ -121,7 +125,7 @@ function runProcess({
     let settled = false;
     let timedOut = false;
     let forcedFinish = null;
-    let lastOutputAt = Date.now();
+    let lastOutputAt = activeNow();
     const watchdogEvents = [];
     const child = spawn(program, args, {
       cwd,
@@ -135,8 +139,8 @@ function runProcess({
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
-      clearTimeout(slowTimer);
+      timeout();
+      slowTimer();
       if (forcedFinish) clearTimeout(forcedFinish);
       signal?.removeEventListener("abort", handleAbort);
       callback(value);
@@ -148,18 +152,18 @@ function runProcess({
     const notifyWatchdog = (stage, detail = {}) => {
       const notice = {
         stage,
-        elapsedMs: Date.now() - startedAt,
-        idleMs: Date.now() - lastOutputAt,
+        elapsedMs: activeNow() - startedAt,
+        idleMs: activeNow() - lastOutputAt,
         ...detail,
       };
       watchdogEvents.push(notice);
       onWatchdog?.(notice);
     };
-    const startedAt = Date.now();
-    const slowTimer = setTimeout(() => {
+    const startedAt = activeNow();
+    const slowTimer = activeTimeout(() => {
       if (!settled) notifyWatchdog("slow");
-    }, Math.min(watchdogSlowMs, Math.max(10, timeoutMs - 1)));
-    const timeout = setTimeout(() => {
+    }, Math.min(watchdogSlowMs, Math.max(10, timeoutMs - 1)), control);
+    const timeout = activeTimeout(() => {
       timedOut = true;
       notifyWatchdog("intervention", { reason: "timeout" });
       terminateProcessTree(child);
@@ -177,18 +181,18 @@ function runProcess({
         });
       }, 4_000);
       forcedFinish.unref?.();
-    }, timeoutMs);
+    }, timeoutMs, control);
 
     signal?.addEventListener("abort", handleAbort, { once: true });
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString("utf8");
-      lastOutputAt = Date.now();
+      lastOutputAt = activeNow();
       stdout = trimOutput(stdout + text);
       onOutput?.({ stream: "stdout", text });
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8");
-      lastOutputAt = Date.now();
+      lastOutputAt = activeNow();
       stderr = trimOutput(stderr + text);
       onOutput?.({ stream: "stderr", text });
     });

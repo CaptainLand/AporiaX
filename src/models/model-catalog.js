@@ -51,7 +51,7 @@ const MODEL_SOURCE_GROUPS = [
 ];
 
 function providerSource(provider) {
-  if (provider?.source === "aporia-cloud" || provider?.kind === "aporia-cloud") {
+  if (provider?.id === "aporia-cloud" || provider?.source === "aporia-cloud" || provider?.kind === "aporia-cloud") {
     return "aporia-cloud";
   }
   if (provider?.source === "local" || provider?.vendor === "local") return "local";
@@ -92,6 +92,13 @@ export function getAvailableModels(providers) {
       source,
       billing,
       managed: Boolean(provider.managed),
+      disabled: Boolean(model.disabled || provider.disabled || (source === "aporia-cloud" && provider.accountStatus !== "authenticated")),
+      disabledReasonZh: source === "aporia-cloud" && provider.accountStatus !== "authenticated"
+        ? provider.accountStatus === "booting" ? "正在检查登录状态…" : "登录 Aporia Cloud 后可用"
+        : model.disabledReasonZh || provider.disabledReasonZh,
+      disabledReasonEn: source === "aporia-cloud" && provider.accountStatus !== "authenticated"
+        ? provider.accountStatus === "booting" ? "Checking sign-in…" : "Sign in to Aporia Cloud to use"
+        : model.disabledReasonEn || provider.disabledReasonEn,
       description: modelDescription(provider, source, "zh"),
       descriptionZh: modelDescription(provider, source, "zh"),
       descriptionEn: modelDescription(provider, source, "en"),
@@ -112,19 +119,20 @@ export function getModelGroups(providers) {
 
 export function getModel(providers, providerId, modelId) {
   const models = getAvailableModels(providers);
+  // Keep an explicit selection, including a signed-out Cloud model. Never
+  // silently move an existing task to a different provider/billing route.
+  if (providerId || modelId) {
+    return models.find((model) => model.id === modelId && (!providerId || model.providerId === providerId))
+      || { ...EMPTY_MODEL, providerId: providerId || "", id: modelId || "", name: "模型不可用", shortName: "选择模型", disabled: true };
+  }
   return (
-    models.find(
-      (model) =>
-        model.providerId === providerId && model.id === modelId,
-    ) ||
-    models.find((model) => model.id === modelId) ||
-    models[0] ||
+    models.find((model) => !model.disabled) ||
     EMPTY_MODEL
   );
 }
 
 export function getDefaultTaskConfig(providers) {
-  const model = getAvailableModels(providers)[0] || EMPTY_MODEL;
+  const model = getAvailableModels(providers).find((model) => !model.disabled) || EMPTY_MODEL;
   return {
     ...DEFAULT_TASK_OPTIONS,
     thinking: Boolean(model.supportsThinking),

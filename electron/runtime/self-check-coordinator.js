@@ -137,6 +137,7 @@ export function createSelfCheckCoordinator({
           ),
         },
         `${segmentId}-review-${index + 1}`,
+        { systemOwned: true },
       ),
     );
     const verifyPromise = verificationCandidates.length

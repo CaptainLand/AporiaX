@@ -13,10 +13,11 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "0.9.9",
+  "version": "1.0.0-preview",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
+    "test:suspension": "node --experimental-sqlite tests/automatic-task-suspension.mjs",
     "test:0.9.7": "node --experimental-sqlite tests/release097-git.mjs && node --experimental-sqlite tests/release097-builders.mjs && node --experimental-sqlite tests/release097-ocr.mjs && node --experimental-sqlite tests/release097-browser.mjs && electron tests/release097-electron.cjs && electron tests/release097-asar.cjs",
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
@@ -72,6 +73,7 @@
     "test:self-check-evidence": "node --experimental-sqlite tests/self-check-evidence-smoke.mjs",
     "test:subagent-model": "node --experimental-sqlite tests/subagent-model-smoke.mjs",
     "test:subagent-loop": "node --experimental-sqlite tests/subagent-loop-smoke.mjs",
+    "test:agent-coordination": "node --experimental-sqlite scripts/run-audit-checks.mjs agent-activity.mjs subagent-contract.mjs subagent-lifecycle-regression.mjs subagent-model-smoke.mjs subagent-loop-smoke.mjs native-tool-catalog-smoke.mjs self-check-coordinator-smoke.mjs runtime-background-integration.mjs route-activity-model.mjs harness-event-reducer-smoke.mjs runtime-autonomous-builder.mjs runtime-worker-continuation.mjs runtime-context-recovery.mjs harness-long-task-reliability.mjs runtime-smoke.mjs context-continuation-regression.mjs human-constraints.mjs self-check-evidence-smoke.mjs harness-collaboration-smoke.mjs harness-v2-orchestration-smoke.mjs && node tests/agent-activity-browser.mjs && node tests/route-activity-browser.mjs",
     "test:native-tool-executor": "node --experimental-sqlite tests/native-tool-executor-smoke.mjs",
     "test:workspace-runtime": "node --experimental-sqlite tests/workspace-runtime-smoke.mjs",
     "test:conversation-runtime": "node --experimental-sqlite tests/conversation-runtime-smoke.mjs",

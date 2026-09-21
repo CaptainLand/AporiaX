@@ -96,6 +96,7 @@ assert.deepEqual(
     delivery: null,
     segments: [],
     seal: null,
+    recoveryChanges: [],
   },
 );
 

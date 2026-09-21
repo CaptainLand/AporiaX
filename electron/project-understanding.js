@@ -15,7 +15,7 @@ const MAX_CONTEXT_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const writeQueues = new Map();
 
 // Reload under a shared writer lock; never overwrite another run's newer state.
-async function serializeStore(filePath, action, lockFile = true) {
+export async function serializeStore(filePath, action, lockFile = true) {
   const key = filePath || action;
   const previous = writeQueues.get(key) || Promise.resolve();
   const pending = previous.catch(() => {}).then(async () => {
@@ -55,15 +55,16 @@ const CATEGORIES = new Set([
 const SECRET_PATTERN =
   /(?:sk-[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{16,}|authorization\s*:\s*bearer|api[_ -]?key\s*[=:]|secret\s*[=:]|private key-----)/i;
 
-function projectDigest(workspaceRoot) {
+export function projectDigest(workspaceRoot) {
   return createHash("sha256")
     .update(resolve(workspaceRoot).toLowerCase())
     .digest("hex")
     .slice(0, 24);
 }
 
-function understandingPath(baseDirectory, workspaceRoot) {
-  return join(baseDirectory, `${projectDigest(workspaceRoot)}.json`);
+function understandingPath(baseDirectory, workspaceRoot, knowledgeProjectId = "legacy") {
+  if (knowledgeProjectId !== "legacy" && !/^kp-[a-f0-9]{24}$/.test(knowledgeProjectId)) throw new Error("Invalid knowledge project ID.");
+  return join(baseDirectory, `${projectDigest(workspaceRoot)}${knowledgeProjectId === "legacy" ? "" : `.${knowledgeProjectId}`}.json`);
 }
 
 function cleanText(value, maximum) {
@@ -212,10 +213,11 @@ function publicState(data) {
 export async function createProjectUnderstandingStore({
   baseDirectory,
   workspaceRoot,
+  knowledgeProjectId = "legacy",
 }) {
   const filePath =
     baseDirectory && workspaceRoot
-      ? understandingPath(baseDirectory, workspaceRoot)
+      ? understandingPath(baseDirectory, workspaceRoot, knowledgeProjectId)
       : null;
   let data = normalizeLoadedData(null, workspaceRoot || "");
 
@@ -285,7 +287,7 @@ export async function createProjectUnderstandingStore({
   const store = {
     path: filePath,
     snapshot() {
-      return publicState(data);
+      return { ...publicState(data), knowledgeProjectId };
     },
     refresh: () => serializeStore(filePath, refresh, false),
     async setSettings(patch = {}) {
@@ -325,6 +327,27 @@ export async function createProjectUnderstandingStore({
         .sort((left, right) => right.score - left.score)
         .slice(0, Math.max(1, Math.min(40, limit)))
         .map((item) => clone(item.fact));
+    },
+    async readKnowledge({ query = "", factIds = [], limit = 8 } = {}) {
+      await store.refresh();
+      const matches = factIds.length ? data.facts.filter((fact) => factIds.includes(fact.id)) : store.retrieve(query, 40);
+      const facts = [];
+      let size = 0;
+      for (const source of matches) {
+        if (facts.length >= Math.max(1, Math.min(8, Number(limit) || 8))) break;
+        const fact = clone(source);
+        const age = Date.parse(fact.lastConfirmedAt || "");
+        const warnings = [];
+        if (!Number.isFinite(age) || Date.now() - age > MAX_CONTEXT_AGE_MS) warnings.push("outdated");
+        for (const evidence of (fact.evidence || []).filter((item) => item.type === "file")) {
+          if (!evidence.fingerprint || evidence.fingerprint !== await evidenceFingerprint(workspaceRoot, evidence.reference)) { warnings.push("file_changed_or_unavailable"); break; }
+        }
+        const entry = { ...fact, knowledgeProjectId, warnings, advisory: true };
+        const chars = JSON.stringify(entry).length;
+        if (size + chars > 8_000) continue;
+        facts.push(entry); size += chars;
+      }
+      return { facts, truncated: facts.length < matches.length, advisory: "Reference only; verify against current files and the latest user request." };
     },
     async commit({
       taskId = "",

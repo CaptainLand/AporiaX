@@ -816,6 +816,8 @@ export function FileExplorerPanel({
   embedded = false,
   initialPath = "",
   onOpenFile,
+  renderPreview,
+  headerActions,
 }) {
   const { tr } = useI18n();
   const [entriesByDirectory, setEntriesByDirectory] = useState({});
@@ -832,6 +834,7 @@ export function FileExplorerPanel({
   const [editorContent, setEditorContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [previewRevision, setPreviewRevision] = useState(0);
   const editable = Boolean(
     preview &&
       !preview.binary &&
@@ -946,6 +949,7 @@ export function FileExplorerPanel({
 
   const openFile = async (entry) => {
     if (entry.type !== "file") return;
+    if (renderPreview) { setSelectedPath(entry.path); return; }
     if (
       dirty &&
       entry.path !== selectedPath &&
@@ -994,7 +998,9 @@ export function FileExplorerPanel({
       }
       if (!cancelled) {
         if (onOpenFile) {
-          onOpenFile(initialPath);
+          // Revealing an initial path must not open another sidebar tab. The
+          // tree's explicit double-click remains the file-opening gesture.
+          setSelectedPath(initialPath);
         } else {
           await openFile({
             path: initialPath,
@@ -1008,7 +1014,7 @@ export function FileExplorerPanel({
     return () => {
       cancelled = true;
     };
-  }, [initialPath, selectedPath, workspacePath]);
+  }, [initialPath, workspacePath]);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -1054,13 +1060,14 @@ export function FileExplorerPanel({
 
   return (
     <aside
-      className={`file-explorer-panel ${embedded ? "embedded" : ""} ${onOpenFile ? "tree-only" : ""}`}
+      className={`file-explorer-panel ${embedded ? "embedded" : ""} ${onOpenFile ? "tree-only" : ""} ${headerActions ? "with-header-actions" : ""}`}
       style={style}
       onKeyDown={(event) => {
         if (
           (event.ctrlKey || event.metaKey) &&
           event.key.toLowerCase() === "s"
         ) {
+          if (renderPreview || onOpenFile) return;
           event.preventDefault();
           void saveFile();
         }
@@ -1072,7 +1079,8 @@ export function FileExplorerPanel({
           <strong>{tr("文件与代码", "Files and code")}</strong>
         </div>
         <div>
-          <button type="button" aria-label={tr("刷新文件", "Refresh files")} onClick={loadTree}>
+          {headerActions}
+          <button type="button" aria-label={tr("刷新文件", "Refresh files")} onClick={() => { void loadTree(); setPreviewRevision((value) => value + 1); }}>
             <RefreshCw size={15} />
           </button>
           {!embedded && (
@@ -1087,7 +1095,7 @@ export function FileExplorerPanel({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={tr("搜索已打开的文件", "Search opened files")}
+          placeholder={tr("搜索已加载的文件", "Search loaded files")}
           aria-label={tr("搜索已加载的工作区文件", "Search loaded workspace files")}
         />
       </div>
@@ -1152,7 +1160,7 @@ export function FileExplorerPanel({
           )}
         </div>
         <div className="workspace-preview">
-          {previewLoading ? (
+          {renderPreview ? renderPreview(selectedPath, previewRevision) : previewLoading ? (
             <div className="workspace-preview-empty">
               <LoaderCircle className="spin" size={17} />
               {tr("正在加载文件", "Loading file")}

@@ -2,19 +2,29 @@ import { compactConversationForRequest, estimateConversationTokens } from "../ag
 import { harnessFeedback } from "./task-conversation.js";
 import { providerErrorCategory } from "./provider-errors.js";
 import { conversationTokenMaterial } from "./multimodal-budget.js";
+import { runtimeRunControl, saveRuntimeCheckpoint } from "./durable-run.js";
+import { isTemporaryNetworkError } from "./run-control.js";
 
 // Recover inference, never tool execution. A bounded repair must change the
 // request. Do not replay an already-executed/uncertain external operation.
 export async function completeLoopRequest({ conversation, contextCheckpoints, accounting,
   contextWindowTokens, getBody, complete, persist = async () => {}, onEvent = () => {},
-  onFailedUsage = () => {}, shouldYield = () => false, signal, plan = null }) {
+  onFailedUsage = () => {}, shouldYield = () => false, signal, plan = null, scopeId = "main" }) {
+  const control = runtimeRunControl();
   let compactions = 0, corrections = 0;
   const partialAnswers = [];
   while (true) {
     signal?.throwIfAborted();
+    await control?.waitIfPaused(signal);
+    if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation: [...conversation] };
     const requestConversation = [...conversation];
     try {
-      const result = await complete(getBody(requestConversation));
+      const result = control
+        ? await control.runRequest((requestSignal) => complete(getBody(requestConversation), requestSignal), signal)
+        : await complete(getBody(requestConversation), signal);
+      control?.networkSucceeded();
+      await control?.waitIfPaused(signal);
+      if (shouldYield()) return { ...result, interrupted: true, requestConversation, partialAnswers };
       return { ...result, requestConversation, partialAnswers,
         // Completed text-only continuation includes the preserved prefix. Tool
         // continuations keep normal protocol messages; they are not concatenated.
@@ -24,6 +34,18 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
     } catch (error) {
       if (error?.attemptUsage || error?.usage) await onFailedUsage(error.attemptUsage || error.usage);
       if (signal?.aborted) throw error;
+      if (control && (error?.code === "TASK_SUSPENDED" || isTemporaryNetworkError(error))) {
+        if (error.code !== "TASK_SUSPENDED") control.waitForNetwork();
+        await saveRuntimeCheckpoint({ scopeId: "incomplete-response:" + scopeId, phase: "suspended-response",
+          incomplete: true, content: error.partialMessage?.content || "", usage: error.attemptUsage || error.usage || null,
+          usageIncomplete: !error.usage, toolCallsExecuted: false });
+        await persist();
+        onEvent({ type: "response.suspended", incomplete: true, usageIncomplete: !error.usage });
+        await control.waitIfPaused(signal);
+        // A fresh request uses the same confirmed history, not partial calls.
+        onEvent({ type: "response.reset", phase: "environment-recovery" });
+        continue;
+      }
       if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation };
       const category = providerErrorCategory(error);
       if (category === "context" && compactions < 2) {

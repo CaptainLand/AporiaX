@@ -21,8 +21,9 @@ export function ModelChoice({ model, selected, onSelect, compact = false }) {
 
   return (
     <button
-      className={`model-choice ${selected ? "selected" : ""} ${compact ? "compact" : ""}`}
-      onClick={() => onSelect(model)}
+      className={`model-choice ${selected && !model.disabled ? "selected" : ""} ${compact ? "compact" : ""}`}
+      disabled={Boolean(model.disabled)}
+      onClick={() => { if (!model.disabled) onSelect(model); }}
       type="button"
     >
       <span className="model-choice-icon">
@@ -31,9 +32,9 @@ export function ModelChoice({ model, selected, onSelect, compact = false }) {
       <span className="model-choice-copy">
         <span className="model-choice-name">{model.name}</span>
         {!compact && <code className="model-choice-id">{model.id}</code>}
-        <small>{tr(model.descriptionZh || model.description, model.descriptionEn || model.description)}</small>
+        <small>{model.disabled ? tr(model.disabledReasonZh || "模型不可用", model.disabledReasonEn || "Model unavailable") : tr(model.descriptionZh || model.description, model.descriptionEn || model.description)}</small>
       </span>
-      {selected && <Check size={17} className="model-choice-check" />}
+      {selected && !model.disabled && <Check size={17} className="model-choice-check" />}
     </button>
   );
 }

@@ -11,7 +11,7 @@ export function harnessFeedback(content) {
 }
 
 export function isHumanMessage(message) {
-  return message?.role === "user" && !["harness", "retrieval"].includes(message.aporiaSource);
+  return message?.role === "user" && !["harness", "retrieval", "delegation"].includes(message.aporiaSource);
 }
 
 export function providerMessages(messages) {

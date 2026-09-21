@@ -38,7 +38,7 @@ function SideChatMarkdown({ content, sources, onOpenLink }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm, remarkAutolinkBoundary]} urlTransform={(url) => url.startsWith("#record-") ? url : messageLinkUrl(url)} components={components}>{content}</ReactMarkdown>;
 }
 
-export function SideChatPane({ task, workbench, providers = [], isRunning = false, isPaused = false, onSendToMain }) {
+export function SideChatPane({ task, workbench, providers = [], isRunning = false, isPaused = false, onSendToMain, onManageProviders }) {
   const { tr } = useI18n();
   const [mode, setMode] = useState(() => workbench.draft("sidechat:mode") === "general" ? "general" : "task");
   const [messages, setMessages] = useState([]);
@@ -69,8 +69,8 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
   const [selected, setSelected] = useState(() => {
     try { return localStorage.getItem(scope + ":sidechat-model") || ""; } catch { return ""; }
   });
-  const choice = options.find((o) => o.value === selected)
-    || options.find((o) => o.providerId === task.providerId && o.modelId === task.modelId) || options[0];
+  const choice = selected ? options.find((o) => o.value === selected)
+    : options.find((o) => o.providerId === task.providerId && o.modelId === task.modelId) || options.find((o) => !o.disabled);
   const request = (action, extra = {}) => {
     if (!window.desktop?.sideChat) return Promise.reject(new Error("请重启最新版 AporiaX 桌面端以使用侧边聊天。"));
     return window.desktop.sideChat.request({ action, taskId: task.id, scope, mode, ...extra });
@@ -132,7 +132,7 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
 
   const updateDraft = (value) => { setDraft(value); workbench.saveDraft("sidechat:" + mode, value); };
   const send = async () => {
-    if (!draft.trim() || busy || loading || !choice) return;
+    if (!draft.trim() || busy || loading || !choice || choice.disabled) return;
     const key = viewKey, content = draft.trim(), requestId = crypto.randomUUID();
     setPending(requestId); setError(""); followRef.current = true;
     setMessages((current) => [...current, { id: "user-" + requestId, role: "user", content, createdAt: new Date().toISOString() }]);
@@ -239,11 +239,11 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
       <textarea ref={inputRef} rows={1} aria-label={tr("侧聊输入", "Side chat input")} placeholder={tr("问问 AporiaX…", "Message AporiaX…")} maxLength={8000} value={draft} onChange={(e) => updateDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
       <div className="side-chat-composer-footer">
-        <SideChatModelPicker options={options} choice={choice} disabled={busy} onSelect={(value) => {
+        <SideChatModelPicker options={options} choice={choice} disabled={busy} onManageProviders={onManageProviders} onSelect={(value) => {
           setSelected(value); try { localStorage.setItem(scope + ":sidechat-model", value); } catch { setError("模型选择无法保存：本地存储不可用。"); }
         }} />
         {busy ? <button type="button" className="side-chat-submit" aria-label={tr("停止侧聊", "Stop side chat")} onClick={() => void cancel()}><Square size={14} /></button>
-          : <button type="submit" className="side-chat-submit" aria-label={tr("发送侧聊", "Send side chat")} disabled={loading || !draft.trim() || !choice}><ArrowUp size={17} /></button>}
+          : <button type="submit" className="side-chat-submit" aria-label={tr("发送侧聊", "Send side chat")} disabled={loading || !draft.trim() || !choice || choice.disabled}><ArrowUp size={17} /></button>}
       </div>
     </form>
 

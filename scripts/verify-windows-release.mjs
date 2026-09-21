@@ -40,14 +40,18 @@ for (const name of [".env", "aporiax-providers.json", "deepseek-credentials.json
   assert.ok(!entries.some((path) => path === name || path.startsWith(name + "/")), `Unexpected private/development artifact: ${name}`);
 }
 const setup = `AporiaX-Setup-${version}-x64.exe`, portable = `AporiaX-Portable-${version}-x64.exe`;
-const names = [setup, portable, setup + ".blockmap", "latest.yml"];
+const channel = version.includes("-") ? version.split("-")[1].split(".")[0] : "latest";
+// Local --publish never builds can still emit latest.yml for a prerelease,
+// depending on the configured publisher. Validate its exact version below.
+const updateFile = (await readdir(output)).includes(channel + ".yml") ? channel + ".yml" : "latest.yml";
+const names = [setup, portable, setup + ".blockmap", updateFile];
 const blobs = new Map();
 for (const name of names) blobs.set(name, await readFile(join(output, name)));
 for (const name of [setup, portable]) {
   assert.equal(blobs.get(name).subarray(0, 2).toString(), "MZ");
   assert.ok(blobs.get(name).length > 50_000_000, `Suspiciously small package: ${name}`);
 }
-const metadata = yaml.load(blobs.get("latest.yml").toString());
+const metadata = yaml.load(blobs.get(updateFile).toString());
 assert.equal(metadata.version, version); assert.equal(metadata.path, setup);
 assert.equal(metadata.sha512, hash(blobs.get(setup), "sha512", "base64"));
 const installer = metadata.files.find((file) => file.url === setup);

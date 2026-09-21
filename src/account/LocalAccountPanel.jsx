@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Check,
   CircleUserRound,
@@ -12,6 +12,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { useAccount } from "./AccountContext.jsx";
 import "./local-account.css";
 
 function quotaPercent(quota) {
@@ -25,34 +26,10 @@ function primaryModel(models = []) {
 
 export function LocalAccountPanel() {
   const { tr } = useI18n();
-  const [account, setAccount] = useState({ status: "booting" });
-  const [busy, setBusy] = useState(false);
+  const { account, setAccount, busy: accountBusy, error, setError, api, signIn: accountSignIn, refresh: accountRefresh, signOut: accountSignOut } = useAccount();
+  const [actionBusy, setBusy] = useState(false);
+  const busy = accountBusy || actionBusy;
   const [menuOpen, setMenuOpen] = useState(false);
-  const [error, setError] = useState("");
-
-  const api = window.desktop?.account;
-
-  useEffect(() => {
-    let active = true;
-    if (!api?.get) {
-      setAccount({ status: "unavailable" });
-      return undefined;
-    }
-    api.get()
-      .then((snapshot) => {
-        if (!active) return;
-        setAccount(snapshot || { status: "anonymous" });
-        setError(snapshot?.error || "");
-      })
-      .catch((loadError) => {
-        if (!active) return;
-        setAccount({ status: "error" });
-        setError(loadError?.message || "APORIAX_ACCOUNT_LOAD_FAILED");
-      });
-    return () => {
-      active = false;
-    };
-  }, [api]);
 
   const profile = account?.profile;
   const visibleName = profile?.displayName || profile?.email?.split("@")[0] || "AporiaX";
@@ -63,49 +40,21 @@ export function LocalAccountPanel() {
   const remoteFilesEnabled = Boolean(account?.remoteFiles?.enabled);
 
   const signIn = async () => {
-    if (!api?.signIn || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      const snapshot = await api.signIn();
-      if (!snapshot?.canceled) {
-        setAccount(snapshot || { status: "anonymous" });
-        setMenuOpen(Boolean(snapshot?.profile));
-      }
-    } catch (signInError) {
-      setError(signInError?.message || "DESKTOP_LOGIN_FAILED");
-    } finally {
-      setBusy(false);
-    }
+    if (busy) return;
+    const snapshot = await accountSignIn();
+    if (snapshot && !snapshot.canceled) setMenuOpen(Boolean(snapshot.profile));
   };
 
   const refresh = async () => {
-    if (!api?.refresh || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      const snapshot = await api.refresh();
-      setAccount(snapshot || { status: "anonymous" });
-      if (snapshot?.status !== "authenticated") setMenuOpen(false);
-    } catch (refreshError) {
-      setError(refreshError?.message || "APORIAX_ACCOUNT_REFRESH_FAILED");
-    } finally {
-      setBusy(false);
-    }
+    if (busy) return;
+    const snapshot = await accountRefresh();
+    if (snapshot && snapshot.status !== "authenticated") setMenuOpen(false);
   };
 
   const signOut = async () => {
-    if (!api?.signOut || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      setAccount(await api.signOut());
-      setMenuOpen(false);
-    } catch (signOutError) {
-      setError(signOutError?.message || "APORIAX_ACCOUNT_SIGN_OUT_FAILED");
-    } finally {
-      setBusy(false);
-    }
+    if (busy) return;
+    const snapshot = await accountSignOut();
+    if (snapshot) setMenuOpen(false);
   };
 
   const toggleRemoteSync = async () => {

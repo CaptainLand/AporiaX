@@ -94,7 +94,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
   builder: Object.freeze({
     name: "builder",
     description:
-      "Implement and verify one delegated change inside an isolated worktree and explicit non-overlapping write scopes.",
+      "Implement one delegated change inside an isolated worktree and explicit non-overlapping write scopes. Main/Verify owns command verification after integration.",
     tools: Object.freeze([
       "task_brief", "replan_strategy",
       "list_directory",
@@ -104,8 +104,6 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_diff",
       "write_file",
       "apply_patch",
-      "run_command",
-      "complete_self_check",
     ]),
     permissions: Object.freeze({
       "*": "deny",
@@ -116,15 +114,13 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       git_diff: "allow",
       write_file: "allow",
       apply_patch: "allow",
-      run_command: "allow",
-      complete_self_check: "allow",
       task_brief: "allow", replan_strategy: "allow",
     }),
     maxRounds: 8,
     background: true,
     triggers: Object.freeze(["task.builder.ready"]),
     systemPrompt:
-      "Modify only the delegated write scopes. You may run relevant build, test, lint, or typecheck commands inside your isolated worktree to verify the implementation. Never broaden the scope, access unrelated external systems, or edit files owned by another Builder.",
+      "Modify only the delegated write scopes. Do not run shell commands, delegate, or publish. Report suggested relevant checks and unverified work to Main/Verify. Never broaden the scope, access unrelated external systems, or edit files owned by another Builder.",
   }),
 });
 

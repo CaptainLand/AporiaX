@@ -1,5 +1,5 @@
 import { getToolPermission } from "../agent-core.js";
-import { executeDurableTool } from "./durable-run.js";
+import { executeDurableTool, waitForRuntimeResume } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
 import { requireToolResult } from "./task-conversation.js";
 import { projectScriptFingerprint } from "./project-script-trust.js";
@@ -40,6 +40,7 @@ export async function dispatchNativeTool({
   executeContext = {},
 } = {}) {
   assertNotAborted(signal);
+  await waitForRuntimeResume(signal);
   const toolName = String(toolCall?.function?.name || "");
   const descriptor = registry?.get?.(toolName) || null;
   if (!descriptor) throw new Error(`Unsupported tool: ${toolName || "unknown"}`);
@@ -96,6 +97,7 @@ export async function dispatchNativeTool({
   }
 
   if (toolName === "read_external_file") {
+    await waitForRuntimeResume(signal);
     const directoryResult = await tryReadExternalDirectory(input?.path, {
       signal,
     });

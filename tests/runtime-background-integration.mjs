@@ -42,6 +42,9 @@ try {
       });
       await childWaiting.promise;
       if (!optional) allowChildFinish.resolve();
+      if (!optional && mainRounds === 3) return call('accept', 'review_subagent_result', {
+        agent_id: 'background-false-sub-1', report_id: 'background-false-sub-1:1', decision: 'accepted', reason: 'Read the returned note evidence; it answers the delegated question.', evidence_ids: ['background-false-sub-1:1:read-note'],
+      });
       return sse({ content: "Main answer ready." });
     };
     try {
@@ -51,9 +54,9 @@ try {
         sandboxStatusResolver: async () => ({ available: false, state: "unavailable", autoApprovalSafe: false }),
         requestApproval: async () => ({ approved: false }), onEvent: (event) => events.push(event) });
       assert.equal(result.status, "completed", result.content);
-      assert.equal(mainRounds, optional ? 2 : 3, "only required work should add a collection/integration round");
+      assert.equal(mainRounds, optional ? 2 : 4, "required work is collected and explicitly accepted; optional work does not block delivery");
       assert.equal(childAborted, optional);
-      assert.equal(result.usage.total_tokens, optional ? 33 : 55, "completed child calls stay counted, without double counting");
+      assert.equal(result.usage.total_tokens, optional ? 33 : 66, "completed child and acceptance calls stay counted, without double counting");
       assert.equal(events.some((e) => e.type === "subagent.optional.skipped"), optional);
     } finally { clearTimeout(deadline); controller.abort(); allowChildFinish.resolve(); }
   }

@@ -4,6 +4,8 @@ import { providerChatEndpoint } from "../provider-config.js";
 import { providerMessages } from "./task-conversation.js";
 import { providerErrorCategory, providerRetryDelay, retryAfterMilliseconds } from "./provider-errors.js";
 import { compileModelRequest } from "./request-compiler.js";
+import { runtimeRunControl } from "./durable-run.js";
+import { isTemporaryNetworkError } from "./run-control.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -143,6 +145,7 @@ export async function callModelProvider({
         : PROVIDER_MAX_ATTEMPTS;
       if (
         signal?.aborted ||
+        (runtimeRunControl() && isTemporaryNetworkError(error)) ||
         !error?.retryable ||
         ["quota", "authorization", "context", "output-limit", "tool-protocol"].includes(error.category) ||
         attempt >= maxAttempts
@@ -230,6 +233,7 @@ export async function callModelProviderOnce({
   let idleTimedOut = false;
   let receivedStreamBytes = false;
   let observedUsage = null;
+  let receivedContent = "";
   let idleTimeout = null;
   const resetIdleTimeout = () => {
     clearTimeout(idleTimeout);
@@ -298,6 +302,7 @@ export async function callModelProviderOnce({
       if (!delta) return;
       if (typeof delta.content === "string" && delta.content) {
         content += delta.content;
+        receivedContent = content;
         onEvent?.({ type: "response.delta", delta: delta.content });
       }
       if (typeof delta.reasoning_content === "string") reasoningContent += delta.reasoning_content;
@@ -363,8 +368,9 @@ export async function callModelProviderOnce({
       usage,
     };
   } catch (error) {
+    if (receivedContent && !error.partialMessage) error.partialMessage = { content: receivedContent };
     if (observedUsage && !error.usage) error.usage = observedUsage;
-    if (signal?.aborted) throw Object.assign(createAbortError(), { usage: observedUsage });
+    if (signal?.aborted) throw Object.assign(createAbortError(), { usage: observedUsage, partialMessage: { content: receivedContent } });
     if (provider.kind === "aporia-cloud" && error?.message === "DESKTOP_ACCOUNT_SIGNED_OUT") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
     }

@@ -16,6 +16,7 @@ import { useI18n } from "../i18n";
 import { OCR_UI_ENABLED, OcrDialog, ocrSource } from "../workbench/OcrDialog.jsx";
 import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { getModel, getModelGroups } from "../models/model-catalog.js";
+import { ModelSetupActions } from "../models/ModelSetupActions.jsx";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
 import {
   attachmentImageSrc,
@@ -30,7 +31,7 @@ import {
   normalizeBuilderCount,
 } from "../../electron/harness/builder-count.js";
 
-function ModelMenu({ task, providers, onUpdate, onClose }) {
+function ModelMenu({ task, providers, onUpdate, onClose, onManageProviders }) {
   const { tr } = useI18n();
   const menuRef = useRef(null);
   const selectedModel = getModel(
@@ -91,6 +92,7 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
           </div>
         ))}
       </div>
+      <ModelSetupActions onManageProviders={onManageProviders} />
       <div className="model-menu-divider" />
       <div className="model-menu-row">
         <div>
@@ -100,7 +102,7 @@ function ModelMenu({ task, providers, onUpdate, onClose }) {
         <Switch
           checked={task.thinking}
           label={tr("深度思考", "Deep thinking")}
-          disabled={!selectedModel.supportsThinking}
+          disabled={!selectedModel.id || selectedModel.disabled || !selectedModel.supportsThinking}
           onChange={(thinking) => onUpdate({ thinking })}
         />
       </div>
@@ -269,6 +271,8 @@ export function Composer({
   onResume,
   onUpdateTask,
   onNotice,
+  onManageProviders,
+  collapsed = false,
   isRunning,
   isPaused,
   queuedCount = 0,
@@ -291,6 +295,7 @@ export function Composer({
     task.modelId,
   );
   const builderLimit = normalizeBuilderCount(task.builderLimit, DEFAULT_BUILDER_LIMIT);
+  const modelReady = Boolean(model.id && !model.disabled);
   const mentionAutocomplete = useWorkspaceMentionAutocomplete({
     value: message,
     setValue: setMessage,
@@ -304,6 +309,10 @@ export function Composer({
       (!content && !attachments.length) ||
       attachmentLoading
     ) {
+      return;
+    }
+    if (!isRunning && !modelReady) {
+      setModelMenuOpen(true);
       return;
     }
     if (attachments.some(isImageAttachment) && !model.supportsImages) {
@@ -435,6 +444,7 @@ export function Composer({
   return (
     <div
       className="composer-shell"
+      hidden={collapsed}
       onDragOver={(event) => {
         if (isComposerAttachmentDrag(event.dataTransfer)) {
           event.preventDefault();
@@ -626,10 +636,14 @@ export function Composer({
                   providers={providers}
                   onClose={() => setModelMenuOpen(false)}
                   onUpdate={(patch) => onUpdateTask(patch)}
+                  onManageProviders={onManageProviders ? () => { setModelMenuOpen(false); onManageProviders(); } : undefined}
                 />
               )}
               <button
-                className={`model-trigger ${modelMenuOpen ? "active" : ""}`}
+                className={`model-trigger ${modelMenuOpen ? "active" : ""} ${!modelReady ? "needs-setup" : ""}`}
+                type="button"
+                aria-label={tr("选择模型", "Choose a model")}
+                aria-expanded={modelMenuOpen}
                 onClick={(event) => {
                   event.stopPropagation();
                   setBuilderMenuOpen(false);
@@ -637,8 +651,8 @@ export function Composer({
                 }}
               >
                 <model.icon size={15} />
-                <span>{model.shortName}</span>
-                {task.thinking && (
+                <span>{modelReady ? model.shortName : tr("选择模型", "Choose a model")}</span>
+                {modelReady && task.thinking && (
                   <span className="thinking-pill">{task.effort}</span>
                 )}
                 <ChevronDown size={14} />
@@ -719,6 +733,7 @@ export function Composer({
               }
               disabled={
                 attachmentLoading ||
+                (!isRunning && !modelReady) ||
                 (!message.trim() && !attachments.length)
               }
               onClick={send}
@@ -751,6 +766,8 @@ export function Composer({
                 "任务运行中 · 可以继续纠偏，新要求会在安全边界立即接入",
                 "Task running · keep steering; new guidance is applied at a safe boundary",
               )
+          : !modelReady
+            ? tr("先登录 Cloud 或添加自己的 API，输入内容会保留。", "Sign in to Cloud or add your own API first. Your draft is kept.")
           : model.supportsImages
             ? tr("Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码", "Enter to send · Shift Enter for a new line · Add images, PDFs, documents, and code")
             : tr("Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件", "Enter to send · Shift Enter for a new line · Add PDFs, documents, and code")}

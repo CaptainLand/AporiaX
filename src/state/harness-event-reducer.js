@@ -130,7 +130,8 @@ export function reduceHarnessTaskEvent(
           ? appendProgressUpdate(message, {
               id: routeId(event, "progress-note"),
               kind: "progress",
-              title: tr("阶段进展", "Progress update"),
+                title: event.phase === "environment-recovery" ? tr("未完成响应（已保留）", "Incomplete response (retained)") : tr("阶段进展", "Progress update"),
+                ...(event.phase === "environment-recovery" ? { incomplete: true } : {}),
               content,
               createdAt: now(),
             })
@@ -154,7 +155,11 @@ export function reduceHarnessTaskEvent(
         ? tr("审查", "Review")
         : event.role === "verify"
           ? tr("验证", "Verify")
-          : tr("探索", "Explore");
+          : event.role === "builder"
+            ? tr("构建", "Builder")
+            : event.role === "explore" || !event.role
+              ? tr("探索", "Explore")
+              : event.role;
     const startedAt = now();
     return updateRunAssistant(tasks, run, (message) => ({
       ...message,
@@ -164,6 +169,8 @@ export function reduceHarnessTaskEvent(
           id: routeId(event, "subagent-tool"),
           callId: `${event.agentId}:${event.callId || ""}`,
           agentId: event.agentId,
+          role: event.role || "explore",
+          actor: "subagent",
           stage: meta.stage,
           title: `${roleLabel} · ${meta.title}`,
           tool: event.tool,
@@ -194,8 +201,9 @@ export function reduceHarnessTaskEvent(
       route[routeIndex] = {
         ...route[routeIndex],
         capability: event.capability || route[routeIndex].capability || null,
-        status: event.success ? "completed" : "failed",
-        detail: event.detail || route[routeIndex].detail,
+        status: event.skipped ? "skipped" : event.retry ? "retry" : event.success ? "completed" : "failed",
+        detail: event.error || event.detail || route[routeIndex].detail,
+        error: event.error || "",
         path: event.path || route[routeIndex].path,
         command: event.command || route[routeIndex].command,
         exitCode: event.exitCode,
@@ -266,7 +274,11 @@ export function reduceHarnessTaskEvent(
               : event.success
                 ? "completed"
                 : "failed",
-          detail: event.detail || route[routeIndex].detail,
+          detail: event.error || event.detail || route[routeIndex].detail,
+          error: event.error || "",
+          exitCode: Number.isInteger(event.exitCode) ? event.exitCode : null,
+          path: event.path || route[routeIndex].path,
+          command: event.command || route[routeIndex].command,
           finishedAt,
         };
       }
@@ -274,6 +286,10 @@ export function reduceHarnessTaskEvent(
         for (let index = 0; index < routeIndex; index += 1) {
           if (
             route[index].tool === event.tool &&
+            route[index].agentId === route[routeIndex].agentId &&
+            Boolean(route[index].path || route[index].command) &&
+            route[index].path === route[routeIndex].path &&
+            route[index].command === route[routeIndex].command &&
             ["failed", "retry"].includes(route[index].status)
           ) {
             route[index] = {

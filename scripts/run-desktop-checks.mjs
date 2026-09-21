@@ -5,6 +5,12 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const tests = [
+  ['node', 'model-onboarding-browser.mjs'],
+  ['node', 'understanding-ui-browser.mjs'],
+  ['node', 'workspace-preview-browser.mjs'],
+  ['node', 'route-activity-model.mjs'],
+  ['node', 'route-activity-browser.mjs'],
+  ['node', 'knowledge-projects.mjs'],
   ['node', 'goal-ui-browser.mjs'],
   ['node', 'side-chat-smoke.mjs'], ['node', 'side-chat-browser.mjs'],
   ['node', 'workbench-git-smoke.mjs'], ['node', 'workbench-documents-git-browser.mjs'],

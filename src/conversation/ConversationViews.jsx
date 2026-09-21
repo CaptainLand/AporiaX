@@ -1,4 +1,6 @@
 import { TaskGoalReport } from "./TaskGoalReport.jsx";
+import { RouteActivityView } from "./RouteActivityView.jsx";
+import { activityActor, describeRouteRecord } from "./route-activity-model.js";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
@@ -10,7 +12,6 @@ import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ArrowRight,
-  Brain,
   Check,
   ChevronDown,
   Copy,
@@ -20,20 +21,11 @@ import {
   Files,
   History,
   LoaderCircle,
-  Pause,
   RotateCcw,
-  Search,
-  ShieldCheck,
   Undo2,
   X,
 } from "lucide-react";
 import { ApprovalCard, DiffReviewPanel, UserAttachments } from "../agent-components";
-import {
-  buildWitnessRouteBlocks,
-  collectTaskRouteRuns,
-  getRouteToolMeta,
-  summarizeRoutePrompt,
-} from "../p0-model";
 import { useI18n } from "../i18n";
 import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles } from "../state/task-outcome-view.js";
 import {
@@ -1086,23 +1078,15 @@ function describeWitnessRecord(record, tr, language) {
     };
   }
   if (record.kind === "tool") {
-    const meta = getRouteToolMeta(record.tool, "work", language);
-    const actor =
-      record.actor === "subagent"
-        ? record.role === "review"
-          ? tr("审查 Agent", "Review agent")
-          : record.role === "verify"
-            ? tr("验证 Agent", "Verify agent")
-            : tr("探索 Agent", "Explore agent")
-        : tr("主 Agent", "Main agent");
+    const description = describeRouteRecord(record, language);
     return {
-      title: `${actor} · ${meta.title}`,
-      detail: record.path || record.command || record.detail || "",
+      title: `${activityActor(record, language)} · ${description.title}`,
+      detail: description.detail,
     };
   }
   const descriptions = {
     "turn.started": [tr("Witness 开始记录", "Witness started recording"), tr("正在建立任务进度账本", "Creating the task progress ledger")],
-    "response.reset": [tr("主 Agent 正在思考", "Main agent is thinking"), tr("正在整理证据并决定下一步", "Reviewing evidence and deciding the next step")],
+    "response.reset": [tr("主 Agent 模型响应阶段", "Main agent response phase"), tr("活动信号来自模型响应，不代表已完成工作", "Response activity does not imply completed work")],
     "plan.updated": [tr("行动路径已更新", "Action route updated"), record.detail],
     "parallel_batch.started": [tr("正在并行处理独立工作", "Running independent work in parallel"), tr("并发执行 {count} 个动作", "Running {count} actions concurrently", { count: record.detail || 0 })],
     "subagent.started": [tr("子 Agent 已开始工作", "Subagent started working"), record.detail],
@@ -1448,336 +1432,6 @@ export function Conversation({
   );
 }
 
-export function RouteView({
-  task,
-  isRunning,
-  approval,
-  approvalResponding,
-  onRespondApproval,
-  onRevert,
-  onSaveChanges,
-  onNotice,
-}) {
-  const { tr, language } = useI18n();
-  const runs = collectTaskRouteRuns(task);
-  const latestRunId = runs.at(-1)?.id || null;
-  const [selectedRunId, setSelectedRunId] = useState(latestRunId);
-  const [review, setReview] = useState(null);
-  const [reverting, setReverting] = useState(false);
-  const selectedRun =
-    runs.find((run) => run.id === selectedRunId) || runs.at(-1);
-  const routeBlocks = buildWitnessRouteBlocks(selectedRun, language);
-  const completedCount = routeBlocks.filter(
-    (block) => block.status === "completed",
-  ).length;
-  const totalCount = routeBlocks.length;
-  const selectedRunIndex = Math.max(
-    0,
-    runs.findIndex((run) => run.id === selectedRun?.id),
-  );
-  const reviewRun = runs.find((run) => run.id === review?.runId);
-  const reviewChanges = (reviewRun?.changes || []).filter(
-    (change) => !review?.paths?.length || review.paths.includes(change.path),
-  );
-  const witnessDescription = describeWitnessRecord(
-    selectedRun?.witness?.current,
-    tr,
-    language,
-  );
-
-  const blockIcon = (block) => {
-    if (block.status === "running") {
-      return <LoaderCircle className="spin" size={18} />;
-    }
-    if (block.status === "attention" || block.status === "interrupted") {
-      return <AlertTriangle size={18} />;
-    }
-    if (block.kind === "understand") return <Brain size={18} />;
-    if (block.kind === "explore") return <Search size={18} />;
-    if (block.kind === "plan") return <History size={18} />;
-    if (block.kind === "execute") return <Files size={18} />;
-    if (block.kind === "verify") return <ShieldCheck size={18} />;
-    if (block.kind === "coordinate") return <Pause size={18} />;
-    return <Check size={18} />;
-  };
-
-  useEffect(() => {
-    setSelectedRunId(latestRunId);
-    setReview(null);
-  }, [task.id]);
-
-  useEffect(() => {
-    if (!isRunning || !latestRunId) return;
-    setSelectedRunId(latestRunId);
-    setReview(null);
-  }, [isRunning, latestRunId]);
-
-  const revertChanges = async (paths) => {
-    if (!reviewRun) return;
-    setReverting(true);
-    try {
-      await onRevert(reviewRun.messageId, paths);
-    } finally {
-      setReverting(false);
-    }
-  };
-
-  if (!runs.length && !isRunning) {
-    return (
-      <div className="route-empty">
-        <span>Route</span>
-        <h2>{tr("行动路径尚未展开。", "No route has unfolded yet.")}</h2>
-        <p>{tr("任务开始执行后，真实的观察、修改与验证会依次出现在这里。", "Once execution begins, observations, changes, and verification will appear here in order.")}</p>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="route-view">
-        <header className="route-overview">
-          <div>
-            <span className="route-kicker">
-              {tr("Route · 第 {count} 次任务", "Route · Task run {count}", { count: selectedRunIndex + 1 })}
-            </span>
-            <h2>
-              {selectedRun?.summary ||
-                summarizeRoutePrompt(selectedRun?.prompt || task.title)}
-            </h2>
-          </div>
-          <div className="route-overview-actions">
-            {runs.length > 1 && (
-              <label className="route-run-picker">
-                <span>{tr("任务轮次", "Task run")}</span>
-                <select
-                  value={selectedRun?.id || ""}
-                  disabled={isRunning}
-                  onChange={(event) => {
-                    setSelectedRunId(event.target.value);
-                    setReview(null);
-                  }}
-                >
-                  {runs.map((run, index) => (
-                    <option value={run.id} key={run.id}>
-                      {tr("第 {count} 轮", "Run {count}", { count: index + 1 })} ·{" "}
-                      {run.summary || summarizeRoutePrompt(run.prompt)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <div
-              className={`route-state ${
-                selectedRun?.status === "running" ? "running" : ""
-              }`}
-            >
-              <span />
-              {selectedRun?.status === "running"
-                  ? tr("执行中", "Running")
-                  : tr("{done}/{total} 个阶段完成", "{done}/{total} sections complete", {
-                    done: completedCount,
-                    total: totalCount,
-                  })}
-            </div>
-          </div>
-        </header>
-
-        {selectedRun?.status === "running" && selectedRun?.witness && (
-          <div className="route-live-status">
-            <Eye size={15} />
-            <div>
-              <strong>{witnessDescription.title}</strong>
-              <span>{witnessDescription.detail}</span>
-            </div>
-            <em>
-              {tr(
-                "Witness 已保留 {count} 条记录",
-                "Witness retained {count} records",
-                { count: selectedRun.witness.records?.length || 0 },
-              )}
-            </em>
-          </div>
-        )}
-
-        <div className="route-block-list">
-          {routeBlocks.map((block) => {
-            const statusText =
-              block.status === "running"
-                ? tr("正在进行", "In progress")
-                : block.status === "attention"
-                  ? tr("包含需注意项", "Needs attention")
-                  : block.status === "interrupted"
-                    ? tr("已停止", "Stopped")
-                    : tr("已完成", "Complete");
-            return (
-              <details
-                className={`route-block ${block.kind} ${block.status}`}
-                key={block.id}
-                defaultOpen={block.status === "running"}
-              >
-                <summary>
-                  <span className="route-block-icon">{blockIcon(block)}</span>
-                  <span className="route-block-copy">
-                    <b>{block.label}</b>
-                    <strong>{block.title}</strong>
-                    <span>{block.summary}</span>
-                  </span>
-                  <span className="route-block-status">{statusText}</span>
-                  <ChevronDown size={16} />
-                </summary>
-
-                <div className="route-block-body">
-                  {block.planSteps.length > 0 && (
-                    <div className="route-block-plan">
-                      {block.planSteps.map((step) => (
-                        <div className={step.status || "pending"} key={step.id}>
-                          <span>
-                            {step.status === "completed" ? (
-                              <Check size={13} />
-                            ) : step.status === "in_progress" ? (
-                              <LoaderCircle className="spin" size={13} />
-                            ) : step.status === "blocked" ? (
-                              <AlertTriangle size={13} />
-                            ) : (
-                              <span />
-                            )}
-                          </span>
-                          <div>
-                            <strong>{step.title}</strong>
-                            {step.detail && <p>{step.detail}</p>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {block.paths.length > 0 && (
-                    <div className="route-block-section">
-                      <span>{tr("涉及位置", "Files and locations")}</span>
-                      <div className="route-block-paths">
-                        {block.paths.map((path) => (
-                          <code key={path}>{path}</code>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {block.commands.length > 0 && (
-                    <div className="route-block-section">
-                      <span>{tr("执行命令", "Commands")}</span>
-                      <div className="route-block-commands">
-                        {block.commands.map((command) => (
-                          <code key={command}>{command}</code>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {block.changes.length > 0 && (
-                    <div className="route-block-section">
-                      <span>{tr("产生修改", "Changes")}</span>
-                      <div className="route-block-changes">
-                        {block.changes.map((change) => (
-                          <button
-                            type="button"
-                            key={change.path}
-                            onClick={() =>
-                              setReview({
-                                runId: selectedRun.id,
-                                paths: [change.path],
-                                path: change.path,
-                              })
-                            }
-                          >
-                            <code>{change.path}</code>
-                            <span>
-                              <b>+{change.additions || 0}</b>
-                              <i>-{change.deletions || 0}</i>
-                            </span>
-                            <ArrowRight size={13} />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {block.records.length > 0 && (
-                    <details className="route-block-records">
-                      <summary>
-                        <span>
-                          {tr(
-                            "查看 {count} 条具体行动",
-                            "View {count} individual actions",
-                            { count: block.records.length },
-                          )}
-                        </span>
-                        <ChevronDown size={14} />
-                      </summary>
-                      <div>
-                        {block.records.map((record) => {
-                          const description = record.legacyEntry?.title
-                            ? {
-                                title: record.legacyEntry.title,
-                                detail:
-                                  record.path ||
-                                  record.command ||
-                                  record.detail ||
-                                  "",
-                              }
-                            : describeWitnessRecord(record, tr, language);
-                          return (
-                            <div
-                              className={`route-block-record ${record.status || "completed"}`}
-                              key={record.id}
-                            >
-                              <span>
-                                {["running", "waiting"].includes(record.status) ? (
-                                  <LoaderCircle className="spin" size={12} />
-                                ) : record.status === "failed" ? (
-                                  <AlertTriangle size={12} />
-                                ) : (
-                                  <Check size={12} />
-                                )}
-                              </span>
-                              <div>
-                                <strong>{description.title}</strong>
-                                {description.detail && (
-                                  <code>{description.detail}</code>
-                                )}
-                              </div>
-                              <time>{formatWitnessElapsed(record.elapsedMs)}</time>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </details>
-                  )}
-                </div>
-              </details>
-            );
-          })}
-        </div>
-
-        <ApprovalCard
-          approval={approval}
-          responding={approvalResponding}
-          onRespond={onRespondApproval}
-        />
-      </div>
-      {reviewChanges.length > 0 && (
-        <DiffReviewPanel
-          changes={reviewChanges}
-          reverting={reverting}
-          workspacePath={task.workspacePath}
-          initialPath={review?.path || ""}
-          onClose={() => setReview(null)}
-          onSave={(result) =>
-            onSaveChanges(reviewRun.messageId, result)
-          }
-          onNotice={onNotice}
-          onRevert={revertChanges}
-        />
-      )}
-    </>
-  );
+export function RouteView(props) {
+  return <RouteActivityView {...props} />;
 }

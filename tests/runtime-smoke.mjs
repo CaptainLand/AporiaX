@@ -996,6 +996,11 @@ try {
       path: "architecture.txt",
     }),
     { content: "The runtime persists progress through an event journal." },
+    createToolDelta("accept-exploration", "review_subagent_result", {
+      agent_id: "subagent-runtime-smoke-sub-1", report_id: "subagent-runtime-smoke-sub-1:1",
+      decision: "accepted", reason: "The report cites architecture.txt and answers the assigned question.",
+      evidence_ids: ["subagent-runtime-smoke-sub-1:1:sub-read-1"],
+    }),
     { content: "The explore subagent confirmed that persistence uses an event journal." },
   ];
   let subagentResponseIndex = 0;
@@ -1074,6 +1079,12 @@ try {
         /"background":true/.test(String(message.content || "")),
     );
     if (hasCollectedResults) {
+      const accepted = requestMessages.some((message) => message.role === "tool" && /"status":"accepted"/.test(String(message.content || "")));
+      if (!accepted) return createSseResponse(createToolDelta("accept-background", "review_subagent_result", {
+        agent_id: "background-subagent-runtime-smoke-sub-1", report_id: "background-subagent-runtime-smoke-sub-1:1",
+        decision: "accepted", reason: "The collected report cites the persistence mechanism from architecture.txt.",
+        evidence_ids: ["background-subagent-runtime-smoke-sub-1:1:background-read-1"],
+      }));
       return createSseResponse({
         content: "The background evidence was collected before delivery.",
       });
@@ -1111,7 +1122,7 @@ try {
   assert.equal(backgroundSubagentResult.status, "completed");
   assert.equal(backgroundSubagentResult.subagents.length, 1);
   assert.equal(backgroundSubagentResult.subagents[0].status, "completed");
-  assert.equal(backgroundParentRequests, 3);
+  assert.equal(backgroundParentRequests, 4);
   assert.equal(backgroundChildRequests, 2);
   assert.equal(
     backgroundEvents.some(
@@ -1329,6 +1340,7 @@ try {
     permission: "workspace-write",
     approvalMode: "sandbox-auto",
     understandingDirectory: join(testRoot, "understanding-integration"),
+    knowledgeEnabled: true, knowledgeProjectId: "legacy",
     messages: [
       {
         role: "user",
@@ -1342,9 +1354,12 @@ try {
     },
     onEvent: (event) => harnessEvents.push(event),
   });
-  assert.equal(harnessResult.status, "completed");
+  assert.equal(harnessResult.status, "completed", harnessResult.content);
   assert.equal(harnessResult.understanding?.committed, true);
   assert.equal(harnessResult.understanding?.currentRevision, 1);
+  assert.equal(harnessResult.witness.agentActivity.roles.curator.activations, 1);
+  assert.equal(harnessResult.witness.agentActivity.roles.review.activations, 2);
+  assert.equal(harnessResult.witness.agentActivity.roles.verify.activations, 0, 'Deterministic commands must not count as model-backed Verify activations');
   assert.equal(
     harnessEvents.some((event) => event.type === "understanding.updated"),
     true,
@@ -1521,6 +1536,7 @@ try {
     permission: "workspace-write",
     memoryDirectory: untouchedLegacyMemoryDirectory,
     understandingDirectory: unifiedUnderstandingDirectory,
+    knowledgeEnabled: true, knowledgeProjectId: "legacy",
     messages: [
       {
         role: "user",
@@ -1614,6 +1630,7 @@ try {
     effort: "max",
     permission: "workspace-write",
     understandingDirectory: deferredUnderstandingDirectory,
+    knowledgeEnabled: true, knowledgeProjectId: "legacy",
     deferUnderstandingCuration: true,
     messages: [
       {

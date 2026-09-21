@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { waitForRuntimeResume } from "../runtime/durable-run.js";
 import { normalizeBuilderCount } from "./builder-count.js";
 
 const budgetStorage = new AsyncLocalStorage();
@@ -344,6 +345,7 @@ export function requestAgentBudgetRole(role) {
 // Admission queues execution instead of charging failed launch attempts.
 // A slot covers the worker's full execution including Builder integration.
 export async function withAgentBudgetAdmission({ role, signal, systemOwned = false }, execute) {
+  await waitForRuntimeResume(signal);
   const context = budgetStorage.getStore();
   if (!context || systemOwned) return execute();
   requestAgentBudgetRole(role);
@@ -363,7 +365,7 @@ export async function withAgentBudgetAdmission({ role, signal, systemOwned = fal
     if (available(role)) entry.grant();
     else { context.admissionQueue.push(entry); telemetry(); }
   });
-  try { signal?.throwIfAborted(); return await execute(); }
+  try { signal?.throwIfAborted(); await waitForRuntimeResume(signal); return await execute(); }
   finally {
     context.admissionActive--;
     if (role === "builder") context.admissionBuilders--;
@@ -423,6 +425,7 @@ export function runWithAgentBudget(plan, { onEvent = null } = {}, fn) {
     executionMode: context.executionMode,
     reason: normalized.reason,
     score: normalized.score,
+    builderConcurrency: normalized.builderConcurrency,
     limits: context.limits,
   });
   return budgetStorage.run(context, fn);

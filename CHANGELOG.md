@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-preview — 2026-09-22
+
+Preview of task continuity, clearer multi-agent collaboration, and a simpler workspace UI. This is a prerelease, not the final 1.0.0 release.
+
+- Wait and reconnect after temporary transport failures; suspend new work on sleep and continue after wake while preserving manual pause and stop precedence.
+- Share pause gates across Main, subagents, tools, and Builder queues; persist pending guidance, received context, partial response checkpoints, and operation receipts without replaying uncertain effects.
+- Exclude paused time from command watchdogs and suppress Witness stall alerts while suspended. App exit/crash/power-loss recovery remains manual.
+- Separate child results from Main acceptance, inherit original user constraints, and align Builder tools with scoped file writes and Main/Verify-owned command checks.
+- Show newest-first execution records, detail dialogs, per-run agent activation counts, and configured Builder concurrency/queue/peak.
+- Add multiple on-demand knowledge projects per workspace and per-task controls; simplify knowledge UI and reuse sidebar file previews with collapsed Anchors.
+- Disable unavailable signed-out Cloud models and guide first-time users toward their own API or account login.
+- Verified 67 regression scripts, 15 suspension scenarios, browser flows, packaged Electron recovery/ConPTY, and byte-identical packaged sources. Physical sleep/network testing remains outstanding.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-preview.md)
+
 ## 0.9.9 — 2026-09-19
 
 Harness reliability and long-task efficiency from PR #63 and #64, including the pre-release review fixes. Existing permissions, durable storage, and workspace protections remain in place.

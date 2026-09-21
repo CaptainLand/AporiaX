@@ -283,6 +283,7 @@ export function subagentEvidence(toolName, result) {
     query: value.query || null,
     exitCode: typeof value.exitCode === "number" ? value.exitCode : null,
     timedOut: Boolean(value.timedOut),
+    skipped: Boolean(value.skipped),
     error: value.error ? String(value.error).slice(0, 500) : null,
     preview: String(
       value.content ||

@@ -91,7 +91,7 @@ export function WorkbenchTabs({
               {tab.kind === "terminal" ? <TerminalSquare size={12} /> : resource && resource.status !== "exited" && resource.status !== "closed" ? (
                 <span className={`workbench-tab-dot ${resource.owner === "user" ? "warn" : ""}`} />
               ) : null}
-              <span className="workbench-tab-title">{tab.title || TITLES[tab.kind] || tab.kind}</span>
+              <span className="workbench-tab-title">{tab.kind === "understanding" ? tr("项目知识", "Understanding") : tab.kind === "route" ? tr("执行记录", "Route") : tab.kind === "workspace" ? tr("工作区", "Workspace") : tab.title || TITLES[tab.kind] || tab.kind}</span>
               <span
                 className="workbench-tab-close"
                 role="button"

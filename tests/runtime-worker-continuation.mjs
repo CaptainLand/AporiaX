@@ -45,6 +45,7 @@ try {
     if(main===2)return call("collect-a","collect_subagents",{wait:true});
     if(main===3)return call("follow","followup_subagent",{agent_id:"continuation-sub-1",task:"Follow-up B: explain the evidence already read."});
     if(main===4)return call("collect-b","collect_subagents",{wait:true});
+    if(main===5)return call('accept-b','review_subagent_result',{agent_id:'continuation-sub-1',report_id:'continuation-sub-1:2',decision:'accepted',reason:'The continuation explains the retained file evidence.',evidence_ids:['continuation-sub-1:1:read']});
     assert(continued);return sse({content:"Both parts complete."});
   };
   const result=await runHarness({runId:"continuation",taskId:"fixture",workspacePath:root,provider:{id:"fake",name:"fake",vendor:"openai",baseUrl:"https://test.invalid/v1",apiKey:"fake",models:[{id:"test",supportsTools:true,contextWindow:32000}]},modelId:"test",permission:"read-only",approvalMode:"manual",language:"en",signal:controller.signal,messages:[{role:"user",content:"Explore the file and follow up."}],agentBudget:{profile:"read",maxTotalSubagents:1,maxActiveSubagents:1},onEvent:e=>events.push(e)});
@@ -52,5 +53,7 @@ try {
   assert(!events.some(e=>e.type==="agent_budget.denied"));
   assert.equal(kernel.sessions.get("continuation-sub-1").metadata.continuations,1);
   assert.equal(result.subagents.length,1);
+  assert.equal(result.subagents[0].acceptance.status,'accepted');
+  assert.equal(result.witness.agentActivity.roles.explore.activations,2);
 } finally {clearTimeout(timer);globalThis.fetch=originalFetch;clearDefaultAgentRuntimeBroker();await rm(root,{recursive:true,force:true});}
 console.log("Worker continuation through Kernel, retained context, bounded collect-any and reused budget slot: PASS");

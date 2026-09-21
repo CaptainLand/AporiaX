@@ -105,6 +105,8 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("workspace:restore-anchor", request),
   },
   understanding: {
+    projects: (request) => ipcRenderer.invoke("understanding:projects", request),
+    createProject: (request) => ipcRenderer.invoke("understanding:create-project", request),
     setSettings: (request) => ipcRenderer.invoke("understanding:settings", request),
     get: (workspacePath) =>
       ipcRenderer.invoke("understanding:get", workspacePath),

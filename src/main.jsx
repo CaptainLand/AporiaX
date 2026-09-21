@@ -1,6 +1,7 @@
 import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { UnderstandingControls } from "./settings/UnderstandingControls.jsx";
+import { ProjectUnderstandingPanel } from "./understanding/ProjectUnderstandingPanel.jsx";
+import { TaskKnowledgeControls } from "./understanding/TaskKnowledgeControls.jsx";
 import { AppUpdateControls, AppUpdateToast, updateToastKey } from "./settings/AppUpdateControls.jsx";
 import { buildAnchorRestoreNotice } from "../electron/anchor-restore-notice.js";
 import { taskApprovalMode } from "./state/approval-mode.js";
@@ -85,11 +86,14 @@ import {
 } from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
 import { WorkbenchLayout } from "./workbench/WorkbenchLayout.jsx";
+import { WorkspaceFilePreview } from "./workbench/WorkspaceFilePreview.jsx";
 import { CollapsedDropRail } from "./workbench/CollapsedDropRail.jsx";
 import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
+import { AccountProvider, useAccount } from "./account/AccountContext.jsx";
+import { ModelSetupActions } from "./models/ModelSetupActions.jsx";
 import { buildRemoteTaskSyncPayload } from "./account/remote-sync.js";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
@@ -119,6 +123,7 @@ const SESSION_UI_KEY = "aporiax.session-ui.v1";
 const SETTINGS_PANEL_WIDTH_KEY = "aporiax.settings-panel-width.v1";
 const FILES_PANEL_WIDTH_KEY = "aporiax.files-panel-width.v1";
 const THEME_STORAGE_KEY = "aporiax.theme.v2";
+const WORKSPACE_ANCHOR_VISIBLE_KEY = "aporiax.workspace-anchor-visible.v1";
 const SESSION_VIEWS = new Set([
   "dialogue",
   "route",
@@ -401,6 +406,7 @@ function Sidebar({
   onNewTask,
   onRenameTask,
   onDeleteTask,
+  onToggleKnowledge,
   onNotice,
   runningTaskIds,
   searchOpen,
@@ -661,6 +667,9 @@ function Sidebar({
             {tr("在资源管理器中打开", "Open in File Explorer")}
           </button>
           <div className="sidebar-context-divider" />
+          <button type="button" role="menuitem" disabled={!contextTask.workspacePath} onClick={() => { onToggleKnowledge(contextTask.id); setContextMenu(null); }}>
+            <Brain size={15} />{contextTask.knowledgeEnabled ? tr("关闭项目知识", "Disable project knowledge") : tr("开启项目知识", "Enable project knowledge")}
+          </button>
           <button
             className="danger"
             type="button"
@@ -726,6 +735,8 @@ function NewTaskModal({
     getDefaultTaskConfig(providers),
   );
   const [selectingFolder, setSelectingFolder] = useState(false);
+  const [knowledge, setKnowledge] = useState({ knowledgeEnabled: false, knowledgeProjectId: "" });
+  useEffect(() => { setKnowledge({ knowledgeEnabled: false, knowledgeProjectId: "" }); }, [workspacePath]);
   const titleRef = useRef(null);
   const hasModels = getAvailableModels(providers).length > 0;
 
@@ -778,6 +789,7 @@ function NewTaskModal({
     if ((!workspacePath && !trimmedTitle) || !hasModels) return;
     onCreate({
       ...config,
+      ...knowledge,
       title:
         trimmedTitle ||
         (workspaceName
@@ -839,8 +851,8 @@ function NewTaskModal({
               </select>
               <p className="field-hint">
                 {tr(
-                  "一个工作区对应一个项目，同一项目可以包含多个独立任务。",
-                  "One workspace is one project, and each project can contain multiple tasks.",
+                  "同一工作区可以包含多个任务和独立的知识项目。",
+                  "A workspace can contain multiple tasks and independent knowledge projects.",
                 )}
               </p>
             </section>
@@ -891,6 +903,8 @@ function NewTaskModal({
               maxLength={80}
             />
           </section>
+
+          <TaskKnowledgeControls workspacePath={workspacePath} enabled={knowledge.knowledgeEnabled} projectId={knowledge.knowledgeProjectId} onChange={(patch) => setKnowledge((current) => ({ ...current, ...patch }))} />
 
           <section className="form-section">
             <label className="field-label">{tr("文件权限", "File access")}</label>
@@ -1370,266 +1384,6 @@ function AnchorHistory({
   );
 }
 
-function ProjectUnderstandingPanel({
-  task,
-  refreshToken,
-  onOpenFile,
-  onNotice,
-}) {
-  const { tr } = useI18n();
-  const [state, setState] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [confirmRevision, setConfirmRevision] = useState("");
-  const [reverting, setReverting] = useState("");
-  const understandingLoad = useRef(0);
-
-  const loadUnderstanding = async () => {
-    if (!task.workspacePath || !window.desktop?.understanding?.get) return;
-    const loadId = ++understandingLoad.current;
-    setLoading(true);
-    setError("");
-    try {
-      const next = await window.desktop.understanding.get(task.workspacePath);
-      if (understandingLoad.current === loadId) setState(next);
-    } catch (loadError) {
-      if (understandingLoad.current !== loadId) return;
-      setError(
-        loadError?.message ||
-          tr("无法加载项目理解", "Unable to load Project Understanding"),
-      );
-    } finally {
-      if (understandingLoad.current === loadId) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    setState(null);
-    setConfirmRevision("");
-    void loadUnderstanding();
-    return () => { understandingLoad.current++; };
-  }, [task.workspacePath, refreshToken]);
-
-  const revertTo = async (revision) => {
-    if (confirmRevision !== revision.id) {
-      setConfirmRevision(revision.id);
-      return;
-    }
-    setReverting(revision.id);
-    try {
-      const result = await window.desktop.understanding.revert({
-        workspacePath: task.workspacePath,
-        taskId: task.id,
-        revisionId: revision.id,
-      });
-      setState(result.state);
-      setConfirmRevision("");
-      onNotice(
-        tr(
-          "项目理解已恢复到修订 {revision}，并保留了新的回退记录",
-          "Project Understanding was restored from revision {revision} with a new revert record",
-          { revision: revision.number },
-        ),
-      );
-    } catch (revertError) {
-      onNotice(
-        revertError?.message ||
-          tr("项目理解恢复失败", "Failed to restore Project Understanding"),
-      );
-    } finally {
-      setReverting("");
-    }
-  };
-
-  const categoryLabels = {
-    architecture: tr("架构", "Architecture"),
-    module: tr("模块", "Modules"),
-    command: tr("命令", "Commands"),
-    convention: tr("约定", "Conventions"),
-    decision: tr("决策", "Decisions"),
-    verification: tr("验证", "Verification"),
-    known_issue: tr("已知问题", "Known issues"),
-    preference: tr("偏好", "Preferences"),
-  };
-  const groupedFacts = Object.entries(
-    (state?.facts || []).reduce((groups, fact) => {
-      const key = fact.category || "convention";
-      groups[key] = [...(groups[key] || []), fact];
-      return groups;
-    }, {}),
-  );
-
-  return (
-    <section className="understanding-view">
-      <header className="understanding-hero">
-        <div className="understanding-mark">
-          <Brain size={21} />
-        </div>
-        <div>
-          <span>{tr("项目共享上下文", "Shared project context")}</span>
-          <h2>Project Understanding</h2>
-          <p>
-            {tr(
-              "可选的项目知识参考。保留来源与修订历史，不替代当前文件和你的最新要求。",
-              "Optional project knowledge with sources and revision history, not a substitute for current files or your latest instructions.",
-            )}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="understanding-refresh"
-          disabled={loading}
-          onClick={() => void loadUnderstanding()}
-        >
-          <RotateCcw className={loading ? "spin" : ""} size={15} />
-          {tr("刷新", "Refresh")}
-        </button>
-      </header>
-
-      {error ? (
-        <div className="understanding-error">
-          <AlertTriangle size={17} />
-          <span>{error}</span>
-        </div>
-      ) : loading && !state ? (
-        <div className="understanding-loading">
-          <LoaderCircle className="spin" size={20} />
-          {tr("正在读取项目理解…", "Loading Project Understanding…")}
-        </div>
-      ) : (
-        <div className="understanding-layout">
-          <main className="understanding-facts">
-            <UnderstandingControls key={task.workspacePath} workspacePath={task.workspacePath} state={state} onChange={setState} />
-            <div className="understanding-summary">
-              <div>
-                <strong>{state?.facts?.length || 0}</strong>
-                <span>{tr("条已保存知识", "saved facts")}</span>
-              </div>
-              <div>
-                <strong>{state?.currentRevision || 0}</strong>
-                <span>revision</span>
-              </div>
-              <div>
-                <strong>{groupedFacts.length}</strong>
-                <span>{tr("个知识维度", "knowledge areas")}</span>
-              </div>
-            </div>
-
-            {!groupedFacts.length ? (
-              <div className="understanding-empty">
-                <Brain size={28} />
-                <h3>{tr("这个项目还没有形成共享理解", "This project has no shared Understanding yet")}</h3>
-                <p>
-                  {tr(
-                    "可以选择启用自动整理；只查看知识不会额外消耗模型额度。",
-                    "You can opt into automatic curation. Viewing saved knowledge does not use model quota.",
-                  )}
-                </p>
-              </div>
-            ) : (
-              groupedFacts.map(([category, facts]) => (
-                <section className="understanding-group" key={category}>
-                  <div className="understanding-group-title">
-                    <span>{categoryLabels[category] || category}</span>
-                    <small>{facts.length}</small>
-                  </div>
-                  <div className="understanding-fact-list">
-                    {facts.map((fact) => (
-                      <article className="understanding-fact" key={fact.id}>
-                        <p>{fact.content}</p>
-                        <div className="understanding-fact-meta">
-                          <span>
-                            {tr("置信度", "Confidence")} {Math.round((fact.confidence || 0) * 100)}%
-                          </span>
-                          {(fact.evidence || []).slice(0, 4).map((evidence, index) => (
-                            <button
-                              type="button"
-                              key={`${fact.id}-evidence-${index}`}
-                              disabled={evidence.type !== "file"}
-                              onClick={() =>
-                                evidence.type === "file" &&
-                                onOpenFile(evidence.reference)
-                              }
-                            >
-                              <FileText size={12} />
-                              {evidence.reference || evidence.detail}
-                            </button>
-                          ))}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ))
-            )}
-          </main>
-
-          <aside className="understanding-history">
-            <div className="understanding-history-title">
-              <History size={16} />
-              <div>
-                <strong>{tr("修订历史", "Revision history")}</strong>
-                <span>{tr("可追踪，也可安全回退", "Traceable and safely reversible")}</span>
-              </div>
-            </div>
-            <div className="understanding-revisions">
-              {(state?.revisions || []).length ? (
-                state.revisions.map((revision) => {
-                  const current = revision.number === state.currentRevision;
-                  const confirming = confirmRevision === revision.id;
-                  return (
-                    <article
-                      className={`understanding-revision ${current ? "current" : ""}`}
-                      key={revision.id}
-                    >
-                      <div className="understanding-revision-head">
-                        <span>r{revision.number}</span>
-                        {current && <small>{tr("当前", "Current")}</small>}
-                      </div>
-                      <p>{revision.summary}</p>
-                      <div className="understanding-revision-meta">
-                        <span>{revision.factCount} facts</span>
-                        <span>{new Date(revision.createdAt).toLocaleString()}</span>
-                      </div>
-                      {!current && (
-                        <div className="understanding-revision-actions">
-                          {confirming && (
-                            <button type="button" onClick={() => setConfirmRevision("")}>
-                              {tr("取消", "Cancel")}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className={confirming ? "confirm" : ""}
-                            disabled={Boolean(reverting)}
-                            onClick={() => void revertTo(revision)}
-                          >
-                            {reverting === revision.id ? (
-                              <LoaderCircle className="spin" size={13} />
-                            ) : (
-                              <Undo2 size={13} />
-                            )}
-                            {confirming
-                              ? tr("确认恢复", "Confirm restore")
-                              : tr("恢复此版本", "Restore")}
-                          </button>
-                        </div>
-                      )}
-                    </article>
-                  );
-                })
-              ) : (
-                <p className="understanding-no-history">
-                  {tr("完成任务后会在这里形成第一条 revision。", "The first revision will appear here after a completed task.")}
-                </p>
-              )}
-            </div>
-          </aside>
-        </div>
-      )}
-    </section>
-  );
-}
 
 function TaskWorkspace({
   task,
@@ -1681,6 +1435,12 @@ function TaskWorkspace({
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewMenu, setViewMenu] = useState(null);
+  const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
+  const [routeDialogOpen, setRouteDialogOpen] = useState(false);
+  const [anchorVisible, setAnchorVisible] = useState(() => {
+    try { return localStorage.getItem(WORKSPACE_ANCHOR_VISIBLE_KEY) === "true"; }
+    catch { return false; }
+  });
   const [settingsPanelWidth, setSettingsPanelWidth] = useState(() =>
     readPanelWidth(
       SETTINGS_PANEL_WIDTH_KEY,
@@ -1917,9 +1677,18 @@ function TaskWorkspace({
     setMoreMenuOpen(false);
   };
 
+  const toggleAnchor = () => {
+    const next = !anchorVisible;
+    setAnchorVisible(next);
+    try { localStorage.setItem(WORKSPACE_ANCHOR_VISIBLE_KEY, String(next)); }
+    catch { onNotice(tr("显示设置未能保存，重启后会恢复默认。", "Display preference could not be saved; it will reset after restart.")); }
+  };
+  const anchorToggle = <button className="workspace-anchor-toggle" type="button" aria-pressed={anchorVisible} aria-label={anchorVisible ? tr("隐藏 Anchor 快照", "Hide Anchor snapshots") : tr("显示 Anchor 快照", "Show Anchor snapshots")} title={anchorVisible ? tr("隐藏 Anchor 快照", "Hide Anchor snapshots") : tr("显示 Anchor 快照", "Show Anchor snapshots")} onClick={toggleAnchor}><History size={14} /><span>Anchor</span></button>;
+
   const workbenchBuiltins = {
     route: (
       <RouteView
+        onDialogChange={setRouteDialogOpen}
         key={task.id}
         task={task}
         isRunning={isRunning}
@@ -1933,14 +1702,16 @@ function TaskWorkspace({
     ),
     workspace: (
       <div className="workspace-view-stack workspace-tree-only">
-        <AnchorHistory
+        {anchorVisible && <AnchorHistory
           task={task}
           isRunning={isRunning}
           onRestore={onRestoreAnchor}
-        />
+        />}
         <FileExplorerPanel
+          key={workbench.key}
           workspacePath={task.workspacePath}
           embedded
+          headerActions={anchorToggle}
           initialPath={workspaceFocusPath}
           onNotice={onNotice}
           onOpenFile={(path) => workbench.openFile(path)}
@@ -1949,6 +1720,9 @@ function TaskWorkspace({
     ),
     understanding: (
       <ProjectUnderstandingPanel
+        onDialogChange={setKnowledgeDialogOpen}
+        onUpdateTask={onUpdateTask}
+        isRunning={isRunning}
         task={task}
         refreshToken={task.understandingRevision || 0}
         onNotice={onNotice}
@@ -2111,10 +1885,10 @@ function TaskWorkspace({
 
         <nav className="thread-view-tabs" aria-label={tr("任务视图", "Task views")}>
           {[
-            { id: "dialogue", label: "Dialogue" },
-            { id: "route", label: "Route" },
-            { id: "workspace", label: "Workspace" },
-            { id: "understanding", label: "Understanding" },
+            { id: "dialogue", label: tr("对话", "Dialogue") },
+            { id: "route", label: tr("执行记录", "Route") },
+            { id: "workspace", label: tr("工作区", "Workspace") },
+            { id: "understanding", label: tr("项目知识", "Understanding") },
           ].map((view) => (
             <button
               className={activeView === view.id ? "active" : ""}
@@ -2205,6 +1979,7 @@ function TaskWorkspace({
             aria-hidden={activeView !== "route"}
           >
             <RouteView
+              onDialogChange={setRouteDialogOpen}
               key={task.id}
               task={task}
               isRunning={isRunning}
@@ -2223,16 +1998,19 @@ function TaskWorkspace({
             aria-hidden={activeView !== "workspace"}
           >
             <div className="workspace-view-stack">
-              <AnchorHistory
+              {anchorVisible && <AnchorHistory
                 task={task}
                 isRunning={isRunning}
                 onRestore={onRestoreAnchor}
-              />
+              />}
               <FileExplorerPanel
+                key={workbench.key}
                 workspacePath={task.workspacePath}
                 embedded
+                headerActions={anchorToggle}
                 initialPath={workspaceFocusPath}
                 onNotice={onNotice}
+                renderPreview={(path, revision) => <WorkspaceFilePreview path={path} revision={revision} task={task} workbench={workbench} onNotice={onNotice} />}
               />
             </div>
           </div>
@@ -2243,6 +2021,9 @@ function TaskWorkspace({
             aria-hidden={activeView !== "understanding"}
           >
             <ProjectUnderstandingPanel
+              onDialogChange={setKnowledgeDialogOpen}
+              onUpdateTask={onUpdateTask}
+              isRunning={isRunning}
               task={task}
               refreshToken={task.understandingRevision || 0}
               onNotice={onNotice}
@@ -2254,7 +2035,9 @@ function TaskWorkspace({
           </div>
         </div>
 
+        {activeView === "understanding" && <div className="knowledge-return"><span>{isRunning ? tr("任务仍在运行，可随时返回对话", "Task is running. Return to chat at any time.") : tr("按知识项目独立保存，任务按需读取", "Saved per project; read by tasks on demand")}</span><button type="button" onClick={() => switchView("dialogue")}><MessageSquare size={14} />{tr("返回对话", "Back to chat")}</button></div>}
         <Composer
+          collapsed={activeView === "understanding"}
           task={task}
           providers={providers}
           onSend={onSend}
@@ -2263,6 +2046,7 @@ function TaskWorkspace({
           onResume={onResume}
           onUpdateTask={onUpdateTask}
           onNotice={onNotice}
+          onManageProviders={onManageProviders}
           isRunning={isRunning}
           isPaused={isPaused}
           queuedCount={task.messages.filter(
@@ -2279,11 +2063,11 @@ function TaskWorkspace({
       {workbench.layout.open ? (
         <WorkbenchLayout
           workbench={workbench}
-          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu)}
+          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu) || knowledgeDialogOpen || routeDialogOpen}
           onNotice={onNotice}
           onNeedWorkspace={onSelectWorkspace}
           builtins={workbenchBuiltins}
-          sideChat={{ providers, isRunning, isPaused, onSendToMain: (content) => onSend(content, [], { taskId: task.id }) }}
+          sideChat={{ providers, isRunning, isPaused, onManageProviders, onSendToMain: (content) => onSend(content, [], { taskId: task.id }) }}
         />
       ) : (
         <CollapsedDropRail workbench={workbench} onNotice={onNotice} />
@@ -2467,10 +2251,12 @@ function ProviderManagerModal({
   onNotice,
   onSaved,
   embedded = false,
+  startAdding = false,
 }) {
   const { tr } = useI18n();
+  const customProviders = providers.filter((provider) => !provider.managed && provider.id !== "aporia-cloud");
   const [form, setForm] = useState(() =>
-    providers[0] ? providerToForm(providers[0]) : emptyProviderForm(),
+    !startAdding && customProviders[0] ? providerToForm(customProviders[0]) : emptyProviderForm(),
   );
   const [saving, setSaving] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -2627,7 +2413,7 @@ function ProviderManagerModal({
             {embedded && (
               <div className="provider-list-heading">
                 <span>Providers</span>
-                <small>{providers.length}</small>
+                <small>{customProviders.length}</small>
               </div>
             )}
             <button
@@ -2641,7 +2427,7 @@ function ProviderManagerModal({
               <Plus size={15} />
               {tr("新增 API", "Add API")}
             </button>
-            {providers.map((provider) => (
+            {customProviders.map((provider) => (
               <button
                 className={form.id === provider.id ? "active" : ""}
                 type="button"
@@ -2661,6 +2447,7 @@ function ProviderManagerModal({
           </aside>
 
           <div className="provider-editor">
+            <ModelSetupActions compact />
             {!editingProvider && (
               <div className="provider-presets">
                 <span>{tr("常用服务", "Common services")}</span>
@@ -2833,6 +2620,7 @@ function ProviderManagerModal({
 
 function ApplicationSettingsModal({
   initialSection = "general",
+  startAddingProvider = false,
   theme,
   onThemeChange,
   providers,
@@ -3061,6 +2849,7 @@ function ApplicationSettingsModal({
             ) : section === "models" ? (
               <ProviderManagerModal
                 embedded
+                startAdding={startAddingProvider}
                 providers={providers}
                 onClose={() => setSection("general")}
                 onChanged={onProvidersChanged}
@@ -3131,7 +2920,11 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [completionNotice, setCompletionNotice] = useState(null);
-  const [providers, setProviders] = useState([]);
+  const [providerRecords, setProviders] = useState([]);
+  const { account } = useAccount();
+  const providers = useMemo(() => providerRecords.map((provider) => provider.id === "aporia-cloud" || provider.source === "aporia-cloud" || provider.kind === "aporia-cloud"
+    ? { ...provider, accountStatus: account.status } : provider), [providerRecords, account.status]);
+  const [startAddingProvider, setStartAddingProvider] = useState(false);
   const [providersReady, setProvidersReady] = useState(false);
   const [resumeNewTaskAfterProvider, setResumeNewTaskAfterProvider] =
     useState(false);
@@ -3188,7 +2981,8 @@ function App() {
     });
   };
 
-  const openApplicationSettings = (section = "general") => {
+  const openApplicationSettings = (section = "general", addProvider = false) => {
+    setStartAddingProvider(addProvider);
     setApplicationSettingsSection(section);
     setApplicationSettingsOpen(true);
   };
@@ -3536,6 +3330,8 @@ function App() {
               getFolderName(patch.workspacePath) ||
               tr("无工作区", "No workspace"),
             projectId: projectIdForWorkspace(patch.workspacePath),
+            knowledgeEnabled: false,
+            knowledgeProjectId: "",
           }
         : patch;
     setTasks((current) =>
@@ -3716,6 +3512,12 @@ function App() {
       return true;
     }
 
+    const selectedModel = getModel(providers, targetTask.providerId, targetTask.modelId);
+    if (!selectedModel.id || selectedModel.disabled) {
+      setNotice(tr("请先登录 Aporia Cloud，或在模型选择中添加自己的 API。输入内容已保留。", "Sign in to Aporia Cloud or add your own API in the model picker. Your draft is kept."));
+      return false;
+    }
+
     const runId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     const retryAssistantId = request.retryAssistantId || "";
@@ -3816,6 +3618,7 @@ function App() {
     );
     runsRef.current.set(runId, {
       taskId: targetTask.id,
+      workspacePath: targetTask.workspacePath,
       assistantId,
       routeCounter: 0,
       approvalMode: taskApprovalMode(targetTask.approvalMode),
@@ -3841,8 +3644,10 @@ function App() {
         sourceUserId: userMessage.id,
         prompt: userMessage.content,
         workspacePath: targetTask.workspacePath,
-        providerId: targetTask.providerId,
-        modelId: targetTask.modelId,
+        knowledgeEnabled: targetTask.knowledgeEnabled === true,
+        knowledgeProjectId: targetTask.knowledgeProjectId || "",
+        providerId: selectedModel.providerId,
+        modelId: selectedModel.id,
         thinking: targetTask.thinking,
         effort: targetTask.effort,
         permission: targetTask.permission,
@@ -4677,6 +4482,10 @@ function App() {
             onNewTask={requestNewTask}
             onRenameTask={renameTaskById}
             onDeleteTask={deleteTask}
+            onToggleKnowledge={(taskId) => {
+              setTasks((current) => current.map((task) => task.id === taskId ? { ...task, knowledgeEnabled: !task.knowledgeEnabled } : task));
+              setNotice(tr("已修改本任务项目知识开关，下次运行生效；不会自动注入知识。", "Task knowledge setting updated for the next run. No knowledge is automatically injected."));
+            }}
             onNotice={setNotice}
             runningTaskIds={runningTaskIds}
             searchOpen={searchOpen}
@@ -4734,7 +4543,7 @@ function App() {
               onUpdateTask={updateActiveTask}
               isRunning={runningTaskIds.has(activeTask.id)}
               isPaused={runningTaskIds.has(activeTask.id) && runPaused}
-              onManageProviders={() => openApplicationSettings("models")}
+              onManageProviders={() => openApplicationSettings("models", true)}
               sandboxStatus={sandboxStatus}
               sandboxPreparing={sandboxPreparing}
               onPrepareSandbox={() => void prepareCommandSandbox()}
@@ -4769,7 +4578,9 @@ function App() {
       )}
       {applicationSettingsOpen && (
         <ApplicationSettingsModal
+          key={`${applicationSettingsSection}:${startAddingProvider}`}
           initialSection={applicationSettingsSection}
+          startAddingProvider={startAddingProvider}
           theme={theme}
           onThemeChange={setTheme}
           providers={providers}
@@ -4851,7 +4662,7 @@ function App() {
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <I18nProvider>
-      <App />
+      <AccountProvider><App /></AccountProvider>
     </I18nProvider>
   </React.StrictMode>,
 );

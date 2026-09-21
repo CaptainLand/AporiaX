@@ -32,6 +32,7 @@ export const ROUTE_STAGE_META = {
 const ROUTE_TOOL_META = {
   delegate_subagent: { stage: "lens", zh: "委派子 Agent", en: "Delegate subagent" },
   collect_subagents: { stage: "lens", zh: "收集子 Agent 结果", en: "Collect subagent results" },
+  review_subagent_result: { stage: "lens", zh: "验收子任务成果", en: "Review subagent result" },
   remember_project_fact: {
     stage: "route",
     zh: "提交项目理解候选",
@@ -209,8 +210,8 @@ function witnessBlockTitle(block, run, language) {
   }
   if (block.kind === "execute") {
     return english
-      ? `Complete ${count} creation or editing action${count === 1 ? "" : "s"}`
-      : `完成 ${count} 项创建与修改`;
+      ? `${count} creation or editing action${count === 1 ? "" : "s"}`
+      : `${count} 项创建与修改`;
   }
   if (block.kind === "verify" && block.commands.length) {
     return english
@@ -678,6 +679,7 @@ export function collectTaskRouteRuns(task) {
         completedAt: message.completedAt || null,
         status: message.status || "completed",
         entries,
+        rawEntries: message.route || [],
         changes: message.changes || [],
         selfCheck: message.selfCheck || null,
         plan: message.plan || null,
@@ -689,6 +691,7 @@ export function collectTaskRouteRuns(task) {
       (run) =>
         run.entries.length > 0 ||
         run.changes.length > 0 ||
+        (run.witness?.records?.length || 0) > 0 ||
         run.status === "running",
     );
 }

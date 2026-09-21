@@ -102,7 +102,10 @@ assert.match(preload, /account:sign-in/);
 assert.doesNotMatch(preload, /accessToken|refreshToken/);
 
 const accountPanel = await readFile("src/account/LocalAccountPanel.jsx", "utf8");
-assert.match(accountPanel, /window\.desktop\?\.account/);
+assert.match(accountPanel, /useAccount/);
+const accountContext = await readFile("src/account/AccountContext.jsx", "utf8");
+assert.match(accountContext, /window\.desktop\?\.account/);
+assert.match(accountContext, /revision\.current !== expected/);
 assert.match(accountPanel, /Continue in browser/);
 assert.match(accountPanel, /Aporia Cloud 未连接/);
 assert.doesNotMatch(accountPanel, /local-account-inline-error/);

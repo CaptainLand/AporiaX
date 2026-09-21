@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { taskSuspensionLabel } from "../state/task-suspension.js";
 import { splitSteeredReply } from "../state/steering-messages.js";
 import {
   closeRunningRouteEntries,
@@ -75,6 +76,7 @@ export function useHarnessEvents({
       delegate_subagent: tr("正在委派子 Agent", "Delegating to a subagent"),
       collect_subagents: tr("正在收集子 Agent 结果", "Collecting subagent results"),
       remember_project_fact: tr("正在提交项目理解候选", "Proposing Project Understanding"),
+      project_knowledge: tr("正在按需访问项目知识", "Accessing project knowledge on demand"),
       list_directory: tr("正在浏览工作区", "Browsing workspace"),
       read_file: tr("正在读取文件", "Reading file"),
       read_external_file: tr("等待批准后读取工作区外文件", "Waiting for approval to read an external file"),
@@ -109,6 +111,14 @@ export function useHarnessEvents({
     const unsubscribe = window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+      if (event.type === "knowledge.project.selected") {
+        setTasks((current) => current.map((task) => task.id === run.taskId && normalizeWorkspacePath(task.workspacePath) === normalizeWorkspacePath(event.workspaceRoot || run.workspacePath) && !task.knowledgeProjectId ? { ...task, knowledgeProjectId: event.knowledgeProjectId } : task));
+        return;
+      }
+      if (event.type === "knowledge.read") {
+        setTasks((current) => current.map((task) => task.id === run.taskId && normalizeWorkspacePath(task.workspacePath) === normalizeWorkspacePath(event.workspaceRoot || run.workspacePath) ? { ...task, knowledgeReads: [...(task.knowledgeReads || []), { projectId: event.knowledgeProjectId, count: event.count, query: event.query, at: event.timestamp || new Date().toISOString() }].slice(-20) } : task));
+        return;
+      }
       if (event.type === "agent_budget.queue" || event.type === "agent_budget.planned") {
         setTasks((current) => current.map((task) => task.id === run.taskId ? { ...task, builderActivity: {
           runId: event.runId, running: event.runningBuilders || 0, queued: event.queuedBuilders || 0,
@@ -145,10 +155,10 @@ export function useHarnessEvents({
       if (event.type === "control.paused") {
         setRunPaused(run.taskId, true);
         setRunStatus({
-          title: tr("任务已暂停", "Task paused"),
+          title: taskSuspensionLabel(event.pauseReasons, language),
           detail: tr(
-            "已停在安全边界；可以补充要求、检查 Route，或继续运行",
-            "Stopped at a safe boundary. Add guidance, inspect Route, or resume.",
+            "上下文和已完成的操作会保留；可补充要求、停止，或点继续尝试恢复。手动暂停不会自动解除。",
+            "Context and completed work are retained. Add guidance, stop, or resume to retry. Manual pause is never cleared automatically.",
           ),
         });
         return;
@@ -398,7 +408,7 @@ export function useHarnessEvents({
           const workspaceKey = normalizeWorkspacePath(sourceTask?.workspacePath);
           return current.map((task) =>
             workspaceKey && normalizeWorkspacePath(task.workspacePath) === workspaceKey
-              ? { ...task, understandingRevision: event.revision }
+              ? { ...task, understandingRevision: (task.understandingRevision || 0) + 1 }
               : task,
           );
         });
@@ -407,8 +417,8 @@ export function useHarnessEvents({
           detail:
             event.summary ||
             tr(
-              "同一工作区的后续任务将读取这份带证据的理解",
-              "Future tasks in this workspace will read this evidence-backed understanding",
+              "已保存到独立知识项目，任务需要时可按需读取",
+              "Saved to its knowledge project, available for on-demand reading",
             ),
         });
         return;

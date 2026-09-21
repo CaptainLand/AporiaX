@@ -261,7 +261,8 @@ const registry = createAgentDefinitionRegistry();
 const builderDefinition = registry.get("builder");
 assert(builderDefinition);
 assert(builderDefinition.tools.includes("write_file"));
-assert(builderDefinition.tools.includes("run_command"));
+assert(!builderDefinition.tools.includes("run_command"), "Isolated Builders must delegate command verification to Main/Verify");
+assert(registry.get("verify").tools.includes("run_command"));
 
 const builderPolicy = createPermissionPolicy("builder-write");
 assert.equal(getToolPermission(builderPolicy, "write_file"), "allow");

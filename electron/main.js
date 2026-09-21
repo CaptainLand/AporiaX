@@ -3,6 +3,8 @@ import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc
 import {
   BrowserWindow,
   Notification,
+  net,
+  powerMonitor,
   app,
   clipboard,
   dialog,
@@ -53,7 +55,9 @@ import {
   prepareSandbox,
 } from "./sandbox-runtime.js";
 import { createHarnessTaskRuntime } from "./harness/task-runtime.js";
+import { monitorTaskEnvironment } from "./runtime/environment-monitor.js";
 import { createProjectUnderstandingStore } from "./project-understanding.js";
+import { createKnowledgeWorkspace } from "./knowledge-projects.js";
 import { setDesktopTrayImage } from "./desktop-background.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
@@ -149,7 +153,7 @@ function getProjectUnderstandingDirectory() {
   return join(app.getPath("userData"), "project-understanding");
 }
 
-async function openProjectUnderstanding(workspacePath) {
+async function openProjectUnderstanding(workspacePath, knowledgeProjectId = "legacy") {
   if (
     typeof workspacePath !== "string" ||
     !workspacePath.trim() ||
@@ -162,6 +166,7 @@ async function openProjectUnderstanding(workspacePath) {
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
     throw new Error("The workspace must be a real directory.");
   }
+  if (knowledgeProjectId !== "legacy") return (await createKnowledgeWorkspace({ baseDirectory: getProjectUnderstandingDirectory(), workspaceRoot })).open(knowledgeProjectId);
   return createProjectUnderstandingStore({
     baseDirectory: getProjectUnderstandingDirectory(),
     workspaceRoot,
@@ -778,14 +783,28 @@ handleTrustedIpc(ipcMain, "workspace:restore-anchor", async (event, request) => 
   return restoreWorkspaceAnchor(request);
 });
 
-handleTrustedIpc(ipcMain, "understanding:get", async (event, workspacePath) => {
+handleTrustedIpc(ipcMain, "understanding:get", async (event, request) => {
   assertTrustedSender(event);
-  return (await openProjectUnderstanding(workspacePath)).snapshot();
+  return (await openProjectUnderstanding(typeof request === "string" ? request : request?.workspacePath, typeof request === "string" ? "legacy" : request?.knowledgeProjectId || "legacy")).snapshot();
+});
+
+handleTrustedIpc(ipcMain, "understanding:projects", async (event, request) => {
+  assertTrustedSender(event);
+  const legacy = await openProjectUnderstanding(request?.workspacePath);
+  const workspace = await createKnowledgeWorkspace({ baseDirectory: getProjectUnderstandingDirectory(), workspaceRoot: legacy.snapshot().workspace });
+  return workspace.list();
+});
+
+handleTrustedIpc(ipcMain, "understanding:create-project", async (event, request) => {
+  assertTrustedSender(event);
+  const legacy = await openProjectUnderstanding(request?.workspacePath);
+  const workspace = await createKnowledgeWorkspace({ baseDirectory: getProjectUnderstandingDirectory(), workspaceRoot: legacy.snapshot().workspace });
+  return workspace.create({ name: request?.name, description: request?.description, directory: request?.directory, taskId: request?.taskId });
 });
 
 handleTrustedIpc(ipcMain, "understanding:revert", async (event, request) => {
   assertTrustedSender(event);
-  const store = await openProjectUnderstanding(request?.workspacePath);
+  const store = await openProjectUnderstanding(request?.workspacePath, request?.knowledgeProjectId || "legacy");
   return store.revertTo(request?.revisionId, {
     taskId: request?.taskId,
   });
@@ -793,7 +812,7 @@ handleTrustedIpc(ipcMain, "understanding:revert", async (event, request) => {
 
 handleTrustedIpc(ipcMain, "understanding:settings", async (event, request) => {
   assertTrustedSender(event);
-  const store = await openProjectUnderstanding(request?.workspacePath);
+  const store = await openProjectUnderstanding(request?.workspacePath, request?.knowledgeProjectId || "legacy");
   return store.setSettings(request?.settings);
 });
 
@@ -969,6 +988,8 @@ handleTrustedIpc(ipcMain,
 
 app.whenReady().then(() => {
   if (!hasSingleInstanceLock) return;
+  const disposeEnvironment = monitorTaskEnvironment({ powerMonitor, net, runtime: harnessTaskRuntime });
+  app.once("will-quit", disposeEnvironment);
   if (process.platform === "win32") {
     app.setAppUserModelId("com.aporiax.desktop");
   }

@@ -13,6 +13,7 @@ import { LanguageSwitch, useI18n } from "../i18n";
 import { IconButton, SegmentedControl, Switch } from "../components/Controls.jsx";
 import { TaskGoalSettings } from "./TaskGoalSettings.jsx";
 import { TaskCapabilityCards } from "./TaskCapabilityCards.jsx";
+import { ModelSetupActions } from "../models/ModelSetupActions.jsx";
 
 export function SettingsPanel({
   task,
@@ -29,9 +30,9 @@ export function SettingsPanel({
   const { tr } = useI18n();
   const [recoveryError, setRecoveryError] = useState("");
   const provider =
-    providers.find((candidate) => candidate.id === task.providerId) ||
-    providers[0];
+    providers.find((candidate) => candidate.id === task.providerId);
   const cloudProvider = provider?.source === "aporia-cloud" || provider?.kind === "aporia-cloud";
+  const cloudNeedsLogin = cloudProvider && provider.accountStatus !== "authenticated";
   const executionMode = taskExecutionMode(task.executionMode);
   const approvalMode = taskApprovalMode(task.approvalMode);
   const approvalLabel = approvalMode === "full-auto"
@@ -54,7 +55,7 @@ export function SettingsPanel({
         <div className="settings-label">{tr("模型服务", "Model service")}</div>
         <div className="api-status-row">
           <div className="api-status-copy">
-            <span className={`api-status-dot ${provider ? "ready" : ""}`} />
+            <span className={`api-status-dot ${provider && !cloudNeedsLogin ? "ready" : ""}`} />
             <div>
               <strong>
                 {provider
@@ -65,7 +66,7 @@ export function SettingsPanel({
                   : tr("需要添加模型 API", "Add a model API")}
               </strong>
               <span>
-                {cloudProvider
+                {cloudNeedsLogin ? tr("登录 Aporia Cloud 后可用", "Sign in to Aporia Cloud to use") : cloudProvider
                   ? tr(
                       "Aporia Account · 使用每周额度 · 无需 API Key",
                       "Aporia Account · Weekly quota · No API key required",
@@ -83,6 +84,7 @@ export function SettingsPanel({
             </button>
           )}
         </div>
+        {(!provider || cloudNeedsLogin) && <ModelSetupActions onManageProviders={onManageProviders} compact />}
       </section>
 
       <section className="settings-section">

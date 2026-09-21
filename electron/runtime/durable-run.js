@@ -4,6 +4,10 @@ import { resolve } from "node:path";
 
 const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
+export const runtimeRunControl = () => storage.getStore()?.control || null;
+export async function waitForRuntimeResume(signal = storage.getStore()?.signal) {
+  await runtimeRunControl()?.waitIfPaused(signal);
+}
 export const runtimeRecoveryDirectory = () => storage.getStore()?.recoveryDirectory || null;
 export const runtimeEvidenceStore = () => storage.getStore()?.evidenceStore || null;
 export async function saveRuntimeCheckpoint(checkpoint) {
@@ -93,6 +97,7 @@ async function reconcile(context, tool, input, fingerprint, requestApproval, sco
 }
 export async function executeDurableTool(tool, input, execute, requestApproval, { scope = null } = {}) {
   const context = storage.getStore();
+  await context?.control?.waitIfPaused(context.signal);
   if (!context || READ_ONLY.has(tool)) return execute();
   const operationId = randomUUID();
   const fingerprint = createHash("sha256").update(JSON.stringify(scope ? [tool, stableInput(input), scope] : [tool, stableInput(input)])).digest("hex");
@@ -101,6 +106,11 @@ export async function executeDurableTool(tool, input, execute, requestApproval, 
   const target = typeof input?.path === "string" ? input.path : undefined;
   const intent = { operationId, tool, target, cwd: input?.cwd || ".", ...(scope ? { scope } : {}), fingerprint, state: "started" };
   await context.operation(intent);
+  try { await context.control?.waitIfPaused(context.signal); }
+  catch (error) {
+    if (error?.name === "AbortError") await context.operation({ ...intent, state: "cancelled", resolution: "aborted-before-execution" });
+    throw error;
+  }
   if (context.signal?.aborted) {
     await context.operation({ ...intent, state: "cancelled", resolution: "aborted-before-execution" });
     abortIfNeeded(context);

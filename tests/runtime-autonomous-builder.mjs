@@ -31,20 +31,27 @@ try {
     assert(!text.includes("Harness orchestration preflight"), "default avoids an extra planner round");
     if (text.includes("You are the AporiaX builder subagent.")) {
       assert(!body.tools.some((tool) => ["delegate_subagent", "run_command", "github_push"].includes(tool.function.name)));
+      assert.match(text, /Keep the original palette/);
+      assert.doesNotMatch(text, /You may run relevant build/);
       if (++worker === 1) return call("outside", "apply_patch", { path: "src/a.txt", patch: "--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-untouched\n+oops\n" });
       if (worker === 2) { assert.match(text, /outside.*scope/i); return call("write", "write_file", { path: "src/a.txt", content: "after" }); }
-      return sse({ content: "Implemented a.txt; no tests were run." });
+      return call('worker-done', 'finish_subagent', { status: 'completed', summary: 'Implemented a.txt; no tests were run.' });
     }
     if (++main === 1) return call("spawn", "delegate_subagent", { role: "builder", task: "Change src/a.txt to after, preserve other files.", write_scopes: ["src/a.txt"], background: true });
     if (main === 2) return call("collect", "collect_subagents", { wait: true });
+    if (main === 3) return call('inspect-merged', 'read_file', { path: 'src/a.txt' });
+    if (main === 4) return call('accept-worker', 'review_subagent_result', { agent_id: 'autonomous-sub-1', report_id: 'autonomous-sub-1:1', decision: 'accepted', reason: 'Read the merged file and confirmed the requested content. Tests were not requested or run.', evidence_ids: ['main:inspect-merged'] });
     assert.equal(await readFile(join(root, "src/a.txt"), "utf8"), "after");
     return call("finish", "finish_task", { status: "completed", summary: "Updated a.txt. Tests not run." });
   };
   const events = [];
   const result = await runHarness({ runId: "autonomous", workspacePath: root, permission: "workspace-write", approvalMode: "full-auto", signal: controller.signal, language: "en",
-    messages: [{ role: "user", content: "Modify one file." }], onEvent: (e) => events.push(e),
+    messages: [{ role: "user", content: "Modify one file. Keep the original palette and do not add dependencies." }], onEvent: (e) => events.push(e),
     provider: { id: "fake", name: "fake", vendor: "openai", baseUrl: "https://test.invalid/v1", apiKey: "fake", models: [{ id: "test", supportsTools: true, contextWindow: 32000 }] }, modelId: "test" });
-  assert.equal(result.status, "completed", JSON.stringify({ result, events }, null, 2)); assert.equal(result.subagents.length, 1);
+  assert.equal(result.status, "completed", result.content); assert.equal(result.subagents.length, 1);
+  assert.equal(result.subagents[0].acceptance.status, 'accepted');
+  assert(events.some((e) => e.type === 'subagent.reviewed'));
+  assert.equal(events.filter((e) => e.type === 'tool.started' && e.tool === 'run_command').length, 0, 'Review must not auto-run workspace tests');
   assert(result.changes.some((change) => change.path === "src/a.txt"));
   assert(events.some((e) => e.type === "builder.merge.completed"));
   assert.equal(await readFile(join(root, "other.txt"), "utf8"), "untouched");

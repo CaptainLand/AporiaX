@@ -1,3 +1,5 @@
+import { createAgentActivityTracker } from './harness/agent-activity.js';
+
 const DEFAULT_HEARTBEAT_MS = 15_000;
 const LONG_RUNNING_MS = 45_000;
 const STALLED_MS = 120_000;
@@ -19,12 +21,12 @@ function isoTime(value) {
 
 function recordDetail(event) {
   return clipped(
-    event?.path ||
-      event?.command ||
+    event?.error ||
       event?.detail ||
       event?.task ||
       event?.summary ||
-      event?.error ||
+      event?.path ||
+      event?.command ||
       "",
   );
 }
@@ -45,6 +47,9 @@ function publicRecord(record, currentTime) {
     detail: record.detail || "",
     path: record.path || "",
     command: record.command || "",
+    error: record.error || "",
+    exitCode: record.exitCode ?? null,
+    lastActivityAt: record.lastActivityAt || record.startedAt,
     parallel: Boolean(record.parallel),
     startedAt: record.startedAt,
     completedAt: record.completedAt || null,
@@ -55,6 +60,7 @@ function publicRecord(record, currentTime) {
         : currentTime) - Date.parse(record.startedAt),
     ),
     longRunning: Boolean(record.longRunning),
+    acceptance: record.acceptance || null,
   };
 }
 
@@ -64,11 +70,14 @@ export function createWitnessMonitor({
   now = () => Date.now(),
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
+  initialAgentActivity = null,
+  control = null,
 } = {}) {
   const startedAtMs = now();
   const records = [];
   const recordIndex = new Map();
   const agents = new Map();
+  const agentActivity = createAgentActivityTracker(initialAgentActivity);
   const alerts = [];
   const failureStreaks = new Map();
   let revision = 0;
@@ -78,6 +87,8 @@ export function createWitnessMonitor({
   let lastMeaningfulAt = startedAtMs;
   let disposed = false;
   let plan = null;
+  let pauseReasons = [];
+  let pauseStartedAt = null;
 
   const trimRecords = () => {
     while (records.length > MAX_RECORDS) {
@@ -110,6 +121,8 @@ export function createWitnessMonitor({
       detail: clipped(input.detail),
       path: clipped(input.path, 320),
       command: clipped(input.command, 700),
+      error: clipped(input.error, 1200),
+      exitCode: Number.isInteger(input.exitCode) ? input.exitCode : null,
       parallel: Boolean(input.parallel),
       startedAt: isoTime(timestamp),
       lastActivityAt: isoTime(timestamp),
@@ -132,10 +145,17 @@ export function createWitnessMonitor({
     record.eventType = event?.type || record.eventType;
     record.status = event?.skipped
       ? "skipped"
-      : success
-        ? "completed"
-        : "failed";
+      : event?.retry
+        ? "retry"
+        : success && ["partial", "blocked", "needs_input"].includes(event?.status)
+          ? event.status
+          : success
+            ? "completed"
+            : "failed";
     record.completedAt = isoTime(timestamp);
+    record.lastActivityAt = isoTime(timestamp);
+    record.error = clipped(event?.error, 1200);
+    record.exitCode = Number.isInteger(event?.exitCode) ? event.exitCode : null;
     record.detail = recordDetail(event) || record.detail;
     record.path = clipped(event?.path, 320) || record.path;
     record.command = clipped(event?.command, 700) || record.command;
@@ -200,7 +220,8 @@ export function createWitnessMonitor({
     return {
       version: 1,
       revision,
-      status,
+      status: control?.paused ? "paused" : status,
+      pauseReasons: control?.snapshot().pauseReasons || pauseReasons,
       phase,
       startedAt: isoTime(startedAtMs),
       updatedAt: isoTime(currentTime),
@@ -208,7 +229,9 @@ export function createWitnessMonitor({
       lastMeaningfulAt: isoTime(lastMeaningfulAt),
       current,
       records: publicRecords,
+      omittedRecords: Math.max(0, recordCounter - records.length),
       agents: [...agents.values()].map((agent) => ({ ...agent })),
+      agentActivity: agentActivity.snapshot(),
       alerts: alerts.map((alert) => ({ ...alert })),
       plan,
       counters: {
@@ -238,6 +261,7 @@ export function createWitnessMonitor({
   const observe = (event) => {
     if (disposed || !event || event.type === "witness.updated") return;
     const timestamp = eventTime(event, now);
+    agentActivity.observe(event);
     let meaningful = true;
 
     switch (event.type) {
@@ -253,6 +277,10 @@ export function createWitnessMonitor({
         }
         return; // Heartbeat publishes activity at a bounded rate, not per token.
       }
+      case 'agent_budget.queue':
+      case 'agent_budget.planned':
+      case 'agent_budget.escalated':
+        break;
       case "turn.started":
         status = "running";
         phase = "preparing";
@@ -350,6 +378,16 @@ export function createWitnessMonitor({
         }
         break;
       }
+      case "response.retry":
+        addRecord({
+          key: `retry:${timestamp}:${recordCounter + 1}`,
+          timestamp,
+          kind: "warning",
+          eventType: "response.retry",
+          status: "retry",
+          detail: clipped(event.reason || "Model request retry"),
+        });
+        break;
       case "witness.command.slow":
         addAlert({
           code: `slow-command:${clipped(event.command, 80)}`,
@@ -371,7 +409,9 @@ export function createWitnessMonitor({
         });
         break;
       case "subagent.started": {
+        if (event.activationId && agents.get(event.agentId)?.activationId === event.activationId) return;
         const agent = {
+          activationId: event.activationId,
           agentId: event.agentId,
           role: event.role || "explore",
           task: clipped(event.task, 500),
@@ -422,15 +462,33 @@ export function createWitnessMonitor({
         );
         break;
       case "subagent.completed":
-      case "subagent.failed": {
+      case "subagent.failed":
+      case "subagent.cancelled": {
         const success = event.type === "subagent.completed";
         const agent = agents.get(event.agentId);
         if (agent) {
-          agent.status = success ? event.status || "completed" : "failed";
+          agent.status = success ? event.status || "completed" : event.type === 'subagent.cancelled' ? 'interrupted' : "failed";
+          agent.acceptance = event.acceptance || null;
           agent.completedAt = isoTime(timestamp);
           agent.summary = clipped(event.summary || event.error, 700);
         }
-        finishRecord(`agent:${event.agentId}`, event, success);
+        const finished = finishRecord(`agent:${event.agentId}`, event, success);
+        if (finished) {
+          if (event.type === 'subagent.cancelled') finished.status = 'interrupted';
+          if (event.status === 'budget_exhausted') finished.status = 'partial';
+          finished.acceptance = event.acceptance || null;
+        }
+        break;
+      }
+      case 'subagent.reviewed': {
+        const agent = agents.get(event.agentId);
+        if (agent) agent.acceptance = event.acceptance;
+        const record = recordIndex.get(`agent:${event.agentId}`);
+        if (record) record.acceptance = event.acceptance;
+        addRecord({ key: `review:${event.agentId}:${event.acceptance?.reportId}:${event.acceptance?.status}`, timestamp,
+          kind: 'checkpoint', eventType: event.type, actor: 'main',
+          status: event.acceptance?.status === 'accepted' ? 'completed' : 'partial',
+          detail: `${event.agentId}: ${event.acceptance?.reason || ''}` });
         break;
       }
       case "instructions.loaded":
@@ -523,16 +581,27 @@ export function createWitnessMonitor({
         break;
       case "control.paused":
         status = "paused";
+        pauseReasons = event.pauseReasons || ["user"];
+        if (pauseStartedAt == null) pauseStartedAt = timestamp;
         addRecord({
           key: `paused:${timestamp}`,
           timestamp,
           kind: "status",
           eventType: "control.paused",
+          detail: pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : "用户暂停",
           status: "completed",
         });
         break;
       case "control.resumed":
         status = "running";
+        pauseReasons = [];
+        if (pauseStartedAt != null) {
+          for (const record of records) if (["running", "waiting"].includes(record.status)) {
+            // Retain real timestamps; restart inactivity observation on resume.
+            record.lastActivityAt = isoTime(timestamp);
+          }
+          pauseStartedAt = null;
+        }
         addRecord({
           key: `resumed:${timestamp}`,
           timestamp,
@@ -589,6 +658,7 @@ export function createWitnessMonitor({
   };
 
   const heartbeat = () => {
+    if (control?.paused) return;
     if (disposed || !["running", "waiting"].includes(status)) return;
     const timestamp = now();
     const active = records.filter((record) =>
@@ -613,6 +683,14 @@ export function createWitnessMonitor({
   const interval =
     heartbeatMs > 0 ? setIntervalFn(heartbeat, heartbeatMs) : null;
   interval?.unref?.();
+  let pauseKey = "";
+  const unsubscribeControl = control?.onChange((state) => {
+    const key = state.pauseReasons.join("|");
+    if (key === pauseKey) return;
+    pauseKey = key;
+    observe({ type: state.paused ? "control.paused" : "control.resumed",
+      pauseReasons: state.pauseReasons, timestamp: isoTime(now()) });
+  });
 
   return {
     observe,
@@ -621,6 +699,7 @@ export function createWitnessMonitor({
     dispose() {
       if (disposed) return;
       disposed = true;
+      unsubscribeControl?.();
       if (interval) clearIntervalFn(interval);
     },
   };

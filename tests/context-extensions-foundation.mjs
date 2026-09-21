@@ -59,7 +59,7 @@ try {
       const body = JSON.parse(request.body);
       assert(!body.messages[0].content.includes("DATABASE_SENTINEL"), "root system never holds memory copies");
       const text = body.messages.map((item) => String(item.content || "")).join("\n");
-      assert.equal(text.includes("DATABASE_SENTINEL"), enabled);
+      assert.equal(text.includes("DATABASE_SENTINEL"), false, "Legacy useForContext no longer causes automatic injection");
       assert(!text.includes("PASTEL_SENTINEL"));
       assert(!body.tools?.some((tool) => tool.function.name === "remember_project_fact"));
       assert(!body.messages[0].content.includes("AporiaX curator subagent"));

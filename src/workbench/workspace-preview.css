@@ -1,0 +1,18 @@
+.workspace-rich-preview { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: #fff; color: #303940; }
+.workspace-inline-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 38px; padding: 6px 12px; border-bottom: 1px solid #e2e7eb; font-size: 12px; color: #68757e; }
+.workspace-inline-toolbar > svg { flex-shrink: 0; }
+.workspace-inline-toolbar > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-inline-toolbar button { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; padding: 6px 8px; border-radius: 6px; background: #eef5f8; color: #377f9e; font-size: 12px; cursor: pointer; }
+.workspace-inline-content { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; overflow: hidden; }
+.workspace-inline-content > * { flex: 1 1 auto; min-width: 0; }
+.workspace-inline-content .document-toolbar { flex-wrap: wrap; }
+.file-explorer-panel.tree-only.with-header-actions > header { display: flex; }
+.file-explorer-panel.embedded > header button.workspace-anchor-toggle { display: inline-flex; align-items: center; gap: 5px; width: auto; min-width: 78px; padding: 6px 8px; border-radius: 6px; white-space: nowrap; font-size: 12px; }
+.file-explorer-panel.embedded > header .workspace-anchor-toggle > span { color: inherit; font-size: inherit; text-transform: none; letter-spacing: normal; }
+.workspace-anchor-toggle > svg { flex-shrink: 0; }
+.file-explorer-panel > header .workspace-anchor-toggle[aria-pressed="true"] { color: #377f9e; background: #eef5f8; }
+.workspace-anchor-toggle:focus-visible, .workspace-inline-toolbar button:focus-visible { outline: 2px solid #377f9e; outline-offset: 2px; }
+:root[data-theme="dark"] .workspace-rich-preview { background: #14181d; color: #dce3e8; }
+:root[data-theme="dark"] .workspace-inline-toolbar { border-color: #2a323b; color: #a0acb8; }
+:root[data-theme="dark"] .workspace-inline-toolbar button, :root[data-theme="dark"] .file-explorer-panel > header .workspace-anchor-toggle[aria-pressed="true"] { background: #283945; color: #8cc7df; }
+@media (max-width: 1100px) { .workspace-inline-toolbar button > span { display: none; } }

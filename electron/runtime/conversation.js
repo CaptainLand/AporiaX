@@ -138,7 +138,7 @@ export function sanitizeConversation(
         ? message.content.slice(0, -(guidance.length + 2)) : message.content;
       const provenance = {
         ...(guidance ? { aporiaSkillContext: guidance } : {}),
-        ...(["human", "harness", "retrieval"].includes(message.aporiaSource) ? { aporiaSource: message.aporiaSource } : {}),
+        ...(["human", "harness", "retrieval", "delegation"].includes(message.aporiaSource) ? { aporiaSource: message.aporiaSource } : {}),
         ...(message.aporiaPinned === true ? { aporiaPinned: true } : {}),
         ...(message.aporiaSupersededBy ? { aporiaSupersededBy: String(message.aporiaSupersededBy) } : {}),
       };

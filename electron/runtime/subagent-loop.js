@@ -18,10 +18,11 @@ import {
 import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js";
 import { ToolProgressGuard } from "./tool-progress-guard.js";
 import { dispatchNativeTool } from "./tool-dispatcher.js";
-import { saveRuntimeCheckpoint, saveRuntimeContext } from "./durable-run.js";
-import { taskRequest, providerMessages } from "./task-conversation.js";
+import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume } from "./durable-run.js";
+import { providerMessages } from "./task-conversation.js";
 import { runIsolatedBuilder } from "./delegated-builder.js";
 import { withAgentBudgetAdmission } from "../harness/agent-budget.js";
+import { FINISH_SUBAGENT_TOOL, readWorkerOutcome, syncDelegationContext } from './subagent-contract.js';
 import {
   MAX_SUBAGENT_RESULT_CHARS,
   SUBAGENT_ROLE_CONFIG,
@@ -48,6 +49,7 @@ function throwIfAborted(signal) {
 }
 
 export async function runSubagentTask(options = {}) {
+  await waitForRuntimeResume(options.signal);
   if (!options.__budgetAdmitted) return withAgentBudgetAdmission({ role: options.input?.role, signal: options.signal, systemOwned: options.systemOwned },
     () => runSubagentTask({ ...options, __budgetAdmitted: true }));
   const broker = getDefaultAgentRuntimeBroker();
@@ -147,6 +149,7 @@ export async function runSubagentTask(options = {}) {
         roleConfig.tools.has(definition.function.name) &&
         (!definitionTools || definitionTools.has(definition.function.name)),
     );
+  enabledTools.push(FINISH_SUBAGENT_TOOL);
   const instructionContext = await loadProjectInstructionContext(workspaceRoot);
   const session = options.session || {};
   const contextCheckpoints = session.contextCheckpoints || [];
@@ -177,6 +180,7 @@ export async function runSubagentTask(options = {}) {
         "Use task_brief for durable concise decisions and replan_strategy with fresh diagnostics when repeated failures require a different approach. These do not grant extra permissions.",
         "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
         "Do not expose hidden reasoning. Report conclusions, evidence, commands, and uncertainty only.",
+        "Use finish_subagent alone to report completed, partial, blocked or needs_input. Execution completion is not parent acceptance or proof of verification. Inherited user requirements take precedence over Main's paraphrase; report conflicts without broadening scope.",
         instructionContext.root.content
           ? `Project instructions:\n${instructionContext.root.content}`
           : "",
@@ -184,7 +188,7 @@ export async function runSubagentTask(options = {}) {
         .filter(Boolean)
         .join("\n"),
     },
-    taskRequest({ role: "user", content: input.task }),
+    { role: "user", content: input.task, aporiaSource: 'delegation', aporiaPinned: true },
   ];
   // Migrate resumed workers from the old fixed-prefix memory injection.
   if (conversation[0]?.role === "system" && typeof conversation[0].content === "string") {
@@ -206,9 +210,18 @@ export async function runSubagentTask(options = {}) {
     32_000,
     Number(modelConfig.contextWindow || DEFAULT_CONTEXT_WINDOW_TOKENS),
   );
+  session.activationSequence = (session.activationSequence || 0) + 1;
+  const activationId = `${agentId}:${session.activationSequence}`;
+  const refreshInheritedContext = async () => {
+    const context = options.getDelegationContext ? await options.getDelegationContext() : session.delegationContext;
+    if (context) { session.delegationContext = context; return syncDelegationContext(conversation, context); }
+    return false;
+  };
+  await refreshInheritedContext();
 
   emit({
     type: "subagent.started",
+    activationId,
     agentId,
     role: input.role,
     task: input.task,
@@ -224,9 +237,10 @@ export async function runSubagentTask(options = {}) {
   try {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
+      await refreshInheritedContext();
       if (session.pendingGuidance?.length) {
         toolProgress.reset(); strategy.reset();
-        conversation.push(...session.pendingGuidance.splice(0).map((content) => taskRequest({ role: "user", content })));
+        conversation.push(...session.pendingGuidance.splice(0).map((content) => ({ role: 'user', content, aporiaSource: 'delegation', aporiaPinned: true })));
       }
       strategy.assertBudget();
       brief.syncSources(conversation);
@@ -249,7 +263,7 @@ export async function runSubagentTask(options = {}) {
       });
       await persistSession();
       const completion = await completeLoopRequest({ conversation, contextCheckpoints,
-        accounting: tokenAccounting, contextWindowTokens, signal, persist: persistSession,
+        accounting: tokenAccounting, contextWindowTokens, signal, persist: persistSession, scopeId: agentId,
         shouldYield: () => Boolean(session.pendingGuidance?.length),
         onEvent: (event) => { loopMetrics.observe(event); emit({ ...event, type: `subagent.${event.type}`, agentId }); },
         onFailedUsage: async (usage) => { usageTotal = mergeTokenUsage(usageTotal, usage); options.onUsage?.(usage); await persistSession(); },
@@ -277,20 +291,37 @@ export async function runSubagentTask(options = {}) {
             ? { reasoning_effort: effort === "max" ? "high" : "medium" }
             : {}),
         }),
-        complete: async (body) => {
+        complete: async (body, requestSignal = signal) => {
           loopMetrics.request(body);
-          return provider.complete({ signal, body, onStreamEvent: (event) => {
+          return provider.complete({ signal: requestSignal, body, onStreamEvent: (event) => {
             loopMetrics.observe(event);
             if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
             if (event.type === "response.attempt.completed") emit({ ...event, type: "subagent.response.attempt.completed", agentId });
           } });
         },
       });
-      const { message, usage, requestConversation } = completion;
+      let { message } = completion;
+      const { usage, requestConversation } = completion;
       if (completion.interrupted) continue;
       recordProviderUsage(tokenAccounting, usage, requestConversation);
       usageTotal = mergeTokenUsage(usageTotal, completion.attemptUsage || usage);
       options.onUsage?.(completion.attemptUsage || usage);
+      // A user may steer the parent while a worker is waiting for its model.
+      // Discard that stale action proposal before it can perform side effects.
+      if (await refreshInheritedContext()) continue;
+      let outcome;
+      try { outcome = readWorkerOutcome(message, parseToolArguments); }
+      catch (error) {
+        conversation.push(assistantHistoryMessage(message));
+        for (const call of message.tool_calls || []) conversation.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: error.message, executed: false }) });
+        continue;
+      }
+      if (outcome) {
+        conversation.push(assistantHistoryMessage(message));
+        conversation.push({ role: 'tool', tool_call_id: outcome.call.id, content: JSON.stringify({ recorded: true, accepted: false }) });
+        message = { role: 'assistant', content: outcome.summary };
+      }
+      const issuedContextRevision = session.delegationContext?.revision;
       if (!Array.isArray(message.tool_calls) || !message.tool_calls.length) {
         if (typeof message.content !== "string" || !message.content.trim()) throw new Error("MODEL_EMPTY_RESPONSE: subagent returned no evidence or report.");
         if (session.pendingGuidance?.length) {
@@ -303,7 +334,9 @@ export async function runSubagentTask(options = {}) {
         const result = {
           agentId,
           role: input.role,
-          status: "completed",
+          status: outcome?.status || "completed",
+          reportId: activationId,
+          acceptance: { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' },
           summary:
             summary ||
             (language === "en"
@@ -316,10 +349,12 @@ export async function runSubagentTask(options = {}) {
           instructionFiles: [...instructionContext.loadedFiles],
         };
         conversation.push(assistantHistoryMessage(message));
-        await persistSession("completed", result);
+        await persistSession(result.status, result);
         await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
         emit({
           type: "subagent.completed",
+          activationId,
+          acceptance: result.acceptance,
           agentId,
           role: input.role,
           status: result.status,
@@ -344,6 +379,7 @@ export async function runSubagentTask(options = {}) {
         (call) => subagentToolsAreParallel([call, call]))) {
       const parallelBatch = batch.parallel;
       const executeCall = async (toolCall) => {
+        await waitForRuntimeResume(signal);
         const toolName = toolCall.function.name;
         const capabilityPhase = ["review", "verify"].includes(input.role)
           ? "self-check"
@@ -362,6 +398,8 @@ export async function runSubagentTask(options = {}) {
           ...activityFor(toolCall),
         });
         try {
+          await refreshInheritedContext();
+          if (session.delegationContext?.revision !== issuedContextRevision) throw new Error('SUBAGENT_GUIDANCE_CHANGED: action skipped; replan using updated user requirements.');
           if (!roleConfig.tools.has(toolName)) {
             throw new Error(`Tool is not available to ${input.role}: ${toolName}`);
           }
@@ -421,7 +459,7 @@ export async function runSubagentTask(options = {}) {
         try { observedInput = parseToolArguments(toolCall); } catch { observedInput = {}; }
         brief.observe({ callId: toolCall.id, tool: toolName, input: observedInput, result: modelResult, version: "worker-current" });
         strategy.observe({ callId: toolCall.id, tool: toolName, input: observedInput, result: modelResult, changes: appliedChanges });
-        const item = subagentEvidence(toolName, modelResult);
+        const item = { ...subagentEvidence(toolName, modelResult), evidenceId: `${activationId}:${toolCall.id}`, callId: toolCall.id };
         evidence.push(item);
         toolSteps.push({
           name: toolName,
@@ -473,6 +511,8 @@ export async function runSubagentTask(options = {}) {
       agentId,
       role: input.role,
       status: "budget_exhausted",
+      reportId: activationId,
+      acceptance: { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' },
       summary:
         language === "en"
           ? `The subagent reached its ${effectiveMaxRounds}-round safety budget. Use its evidence as partial results or delegate a narrower follow-up.`
@@ -487,6 +527,8 @@ export async function runSubagentTask(options = {}) {
     await persistSession("budget_exhausted", result);
     emit({
       type: "subagent.completed",
+      activationId,
+      acceptance: result.acceptance,
       agentId,
       role: input.role,
       status: result.status,
@@ -500,7 +542,7 @@ export async function runSubagentTask(options = {}) {
   } catch (error) {
     if (error?.name === "AbortError") {
       await persistSession("interrupted");
-      emit({ type: "subagent.cancelled", agentId, role: input.role, systemOwned });
+      emit({ type: "subagent.cancelled", activationId, agentId, role: input.role, systemOwned });
       // A cancelled optional worker can have completed billable rounds.
       error.usage = usageTotal;
       error.evidence = compactSubagentEvidence(evidence);
@@ -511,6 +553,8 @@ export async function runSubagentTask(options = {}) {
       agentId,
       role: input.role,
       status: "failed",
+      reportId: activationId,
+      acceptance: { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' },
       summary: error.message,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
@@ -520,6 +564,8 @@ export async function runSubagentTask(options = {}) {
     await persistSession("failed", result);
     emit({
       type: "subagent.failed",
+      activationId,
+      acceptance: result.acceptance,
       agentId,
       role: input.role,
       error: error.message,

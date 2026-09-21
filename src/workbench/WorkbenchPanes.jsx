@@ -190,7 +190,7 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
   );
 }
 
-function FilePane({ tab, task, workbench, onNotice }) {
+export function FilePane({ tab, task, workbench, onNotice, previewOnly = false }) {
   const { tr, language } = useI18n();
   const filePath = toWorkspaceRelativePath(task.workspacePath, tab.path) || tab.path;
   const ext = extensionOf(filePath);
@@ -241,7 +241,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
         if (generation !== loadGeneration.current) return;
         setPayload({ kind: preview.binary ? "binary" : "text", ...preview });
         const next = preview.binary ? "" : preview.content || "";
-        const draft = workbench.draft(tab.id);
+        const draft = previewOnly ? null : workbench.draft(tab.id);
         setSaved(next);
         setContent(typeof draft === "string" ? draft : next);
         if (typeof draft === "string" && draft !== next) {
@@ -258,14 +258,14 @@ function FilePane({ tab, task, workbench, onNotice }) {
   }, [tab.id, tab.path, filePath, tab.revision, task.workspacePath, reload]);
 
   useEffect(() => {
-    if (!payload) return;
+    if (!payload || previewOnly) return;
     if (dirty) workbench.dirty.current.add(tab.id);
     else workbench.dirty.current.delete(tab.id);
     if (mode === "edit") workbench.saveDraft(tab.id, content);
   }, [content, dirty, mode, tab.id, payload]);
 
   const save = async () => {
-    if (saving || payload?.readOnly || payload?.truncated) return;
+    if (previewOnly || saving || payload?.readOnly || payload?.truncated) return;
     setSaving(true); setFailure("");
     const submitted = content;
     try {
@@ -329,7 +329,7 @@ function FilePane({ tab, task, workbench, onNotice }) {
           onChange={(event) => setQuery(event.target.value)}
           placeholder={tr("搜索", "Search")}
         />}
-        {mode !== "edit" ? (
+        {previewOnly ? null : mode !== "edit" ? (
           <button type="button" className="workbench-toolbar-btn" disabled={payload.readOnly || payload.truncated} onClick={() => setMode("edit")}>
             {tr("编辑", "Edit")}
           </button>

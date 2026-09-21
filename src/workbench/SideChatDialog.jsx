@@ -4,7 +4,7 @@ import { useI18n } from "../i18n";
 
 // The native top layer keeps details out of the conversation layout and supplies
 // a focus trap without mounting another window or touching the main Agent run.
-export function SideChatDialog({ title, subtitle, label, onClose, children, footer }) {
+export function SideChatDialog({ title, subtitle, label, onClose, children, footer, className = "" }) {
   const { tr } = useI18n();
   const dialogRef = useRef(null), closeRef = useRef(null), backdropPress = useRef(false);
   const titleId = useId(), subtitleId = useId();
@@ -25,7 +25,7 @@ export function SideChatDialog({ title, subtitle, label, onClose, children, foot
     const rect = dialogRef.current.getBoundingClientRect();
     return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
   };
-  return <dialog ref={dialogRef} className="side-chat-dialog" aria-label={label} aria-labelledby={label ? undefined : titleId} aria-describedby={subtitle ? subtitleId : undefined}
+  return <dialog ref={dialogRef} className={`side-chat-dialog ${className}`.trim()} aria-label={label} aria-labelledby={label ? undefined : titleId} aria-describedby={subtitle ? subtitleId : undefined}
     onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }}
     onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}
     onPointerDown={(event) => { backdropPress.current = outside(event); }}

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v0.9.9" src="https://img.shields.io/badge/source-v0.9.9-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/main"><img alt="Source v1.0.0-preview" src="https://img.shields.io/badge/source-v1.0.0--preview-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区里改代码、跑命令、生成 Word / PPT / Excel；对话和文件、浏览器、终端、Git 在同一屏，步骤、依据和回退都留在界面里，而不是只给一段聊天回复。
 
 > [!IMPORTANT]
-> 当前源码与 Windows 发行为 **`v0.9.9` Preview**。
-> 本版重点改进 Harness 长任务记忆、失败恢复、进程等待与验收证据；严格重规划和原生模型协议按需开启。
+> 当前源码与 Windows 预览版为 **`v1.0.0-preview`**，不是 1.0.0 正式版。
+> 本版新增断网等待与睡眠唤醒续跑，完善主/子 Agent 协作、执行记录、按需项目知识与首次使用引导。
 > Aporia Account、Aporia Cloud、自己的 API 与本地模型相互独立，额度用尽不会偷偷切到另一条路径。
 > 安装包未代码签名。请先退出旧版再更新。
 
@@ -45,11 +45,12 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 | 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
 | 自适应多 Agent | Adaptive Agent Budget 按任务复杂度分配额外 Agent；简单任务保持 Main-only |
 | Builder 编排 | 并发可选 0 / 1 / 2 / 3 / 4 / 6，默认 2；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
-| Agent 协作 | Shared Contract、Plan Approval、结构化 handoff 与有界 mailbox；Main 保持最终集成权 |
-| 可观察执行 | Witness 在 Dialogue 实时记录主/子 Agent、当前动作、耗时、失败与自检阶段；Route 保留完整路径 |
+| Agent 协作 | 主 Agent 传递原始要求，子 Agent 独立上下文与结构化结果；返回结果与主 Agent 验收分开，Builder 不运行 shell，验证由 Main / Verify 负责 |
+| 可观察执行 | 执行记录按最新在前展示当前动作、详情和真实状态；逐轮统计 Main / Explore / Review / Verify / Curator / Builder 激活次数、Builder 并发/排队/峰值 |
+| 暂停与恢复 | 临时断网等待，睡眠后唤醒续跑；主/子 Agent 共用暂停控制，保留已接收上下文与操作收据，不自动重放未知副作用 |
 | 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、对话级 Anchor、跨轮恢复与冲突检查 |
 | 独立检查 | 主 Agent 明确选择相关命令与审查；允许带着未验证/失败状态交付 |
-| 项目理解 | Understanding 持续沉淀架构、约定、命令、偏好和调试经验，供项目内任务共享 |
+| 项目知识 | 一个工作区可有多个知识项目；按任务选择开关与知识项目，模型通过工具按需读取，不将整库硬塞进上下文；保留来源和修订历史 |
 | 扩展 | Skill 文件夹、MCP JSON、Browser、Office 与原生工具统一进入 Capability 系统 |
 | 多模型 API | Aporia Cloud、多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
 | 桌面后台 | 关闭窗口时可收至系统托盘继续任务；托盘恢复/退出、Windows 完成通知、任务运行时间显示 |
@@ -71,16 +72,16 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
     <td width="50%"><img src="docs/assets/route.png" alt="AporiaX Route 行动路径" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>Dialogue</strong><br><sub>任务、自检、产物与追问</sub></td>
-    <td align="center"><strong>Route</strong><br><sub>工具、文件、命令与具体修改</sub></td>
+    <td align="center"><strong>对话</strong><br><sub>任务、自检、产物与追问</sub></td>
+    <td align="center"><strong>执行记录</strong><br><sub>工具、文件、命令与具体修改</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/workspace.png" alt="AporiaX Workspace 文件树与 Anchor" /></td>
     <td width="50%"><img src="docs/assets/understanding.png" alt="AporiaX Project Understanding 项目共享理解" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>Workspace</strong><br><sub>文件树、预览与 Anchor</sub></td>
-    <td align="center"><strong>Understanding</strong><br><sub>项目内共享的架构与约定</sub></td>
+    <td align="center"><strong>工作区</strong><br><sub>文件树、预览与可折叠 Anchor</sub></td>
+    <td align="center"><strong>项目知识</strong><br><sub>分类保存、按需读取的架构与约定</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/settings-general.png" alt="AporiaX 通用设置" /></td>
@@ -92,31 +93,39 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
   </tr>
 </table>
 
-## 0.9.9
+部分截图来自早期版本，当前界面以安装包为准。
 
-- 长任务保留有来源的决策、否决方案和待确认问题；压缩上下文时保留关键诊断与结果引用。
-- 主 Agent 与子 Agent 共用有序工具调度，后台进程可等待输出/退出事件，减少无效查询。
-- 上下文溢出和不完整模型输出采用有限恢复；重复失败/来回修改触发重规划建议，严格预算可选。
-- 可选验收契约只核对文件与已有命令证据，不自行启动项目测试，也不把未验证说成通过。
-- 原生模型协议按 Provider 显式选择，兼容 Chat 默认路径不变；尚无真实模型 A/B 提速或成本结论。
+## 1.0.0-preview
 
-[完整 0.9.9 说明与版本对比](docs/RELEASE_NOTES_v0.9.9.md) · [更新历史](CHANGELOG.md)
+- **中断不再直接等于失败**：临时连接故障进入等待并退避重连；系统睡眠暂停新工作，唤醒后继续。手动暂停不会被自动解除，停止后不会被唤醒事件复活。
+- **主/子 Agent 协作更明确**：独立上下文保留用户约束，结构化结果等待验收；暂停门控覆盖子任务与 Builder 队列，保留用户设置的并发上限。
+- **执行记录更直观**：当前动作与历史分开、最新记录在前，支持详情弹窗、逐轮 Agent 激活统计和 Builder 并发/排队展示。
+- **项目知识按需使用**：一个工作区支持多个知识项目，新建任务可选择启用；简化项目切换和设置，知识由模型按需读取。
+- **更顺畅的首次使用与文件查看**：未登录的 Cloud 模型不可选择并提示添加自有 API；工作区复用侧栏文件预览，Anchor 默认收起。
+- **保留 0.9.9 的长任务基础**：有来源的决策与诊断保存、有序工具调度、进程事件等待和证据验收；不强制无关测试，不伪称验证通过。
+
+验证：**67/67** 个回归脚本、15 个自动暂停/恢复场景、浏览器状态展示及真实安装包内恢复/终端测试通过。尚无真实模型 A/B 提速或成本结论。
+
+> 自动恢复要求应用进程仍存活；断电、退出或崩溃后仍需手动恢复。保留的是应用已接收且可保存的任务状态，不包括模型尚未返回的内部计算。未知结果的命令/上传等不会盲目重放，重连也可能重复计费。真实硬件断网、睡眠/唤醒仍待进一步实测。
+
+[完整 1.0.0-preview 说明](docs/RELEASE_NOTES_v1.0.0-preview.md) · [0.9.9 说明](docs/RELEASE_NOTES_v0.9.9.md) · [更新历史](CHANGELOG.md)
 
 ## 下载
 
-`main` 当前是 **v0.9.9**。Windows x64 安装版与便携版在 GitHub Releases。
+`main` 当前是 **v1.0.0-preview**。本版以 GitHub **Pre-release** 发布，不替换稳定版 Latest；请从下面的预览版链接下载。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 历史版本与发行说明 |
-| [0.9.9 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.9/AporiaX-Setup-0.9.9-x64.exe) | 推荐 |
-| [0.9.9 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v0.9.9/AporiaX-Portable-0.9.9-x64.exe) | 无需安装 |
+| [1.0.0-preview 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview/AporiaX-Setup-1.0.0-preview-x64.exe) | 推荐 |
+| [1.0.0-preview 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview/AporiaX-Portable-1.0.0-preview-x64.exe) | 无需安装 |
+| [SHA-256 校验值](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview/SHA256SUMS-1.0.0-preview.txt) | 下载后核对 |
 
 第一次使用：
 
 1. 新建任务并选择本地工作目录。
-2. 登录 Aporia Account 使用 Aporia Cloud，或添加自己的 OpenAI-compatible / 本地 Provider。
-3. 描述目标，查看 Route、文件修改、自检和产物。
+2. 在模型选择中添加自己的 API / 本地 Provider，或登录 Aporia Account 使用 Aporia Cloud；未登录时 Cloud 模型置灰。
+3. 按需选择本任务的项目知识，描述目标，在执行记录与工作区查看动作、文件修改和产物。
 
 ## 从源码运行
 
@@ -136,13 +145,16 @@ npm run dev          # 开发
 npm run build        # 生产渲染进程
 npm run dist:win     # Windows 安装版与便携版
 npm run test:audit-suite
+npm run test:suspension # 自动暂停与恢复专项
 ```
 
 ## 子 Agent 与项目约定
 
 只读探索、审查、验证可以交给独立子 Agent。可写的 Git 任务可委派 Builder：并发 **0 / 1 / 2 / 3 / 4 / 6，默认 2**，在独立 worktree 里按范围写入，冲突检查通过后由主 Agent 合入。
 
-工作区识别 `AGENTS.md`、`APORIAX.md`、`DEEPAGENT.md` 以及 `.aporiax/rules/*.md`。Understanding 保存已验证命令、架构约定和明确偏好，拒绝写入凭据。
+Builder 只在授权范围内通过文件工具修改，不自行运行 shell 或发布；Main / Verify 根据任务需要验证，主 Agent 对返回结果进行验收。
+
+工作区识别 `AGENTS.md`、`APORIAX.md`、`DEEPAGENT.md` 以及 `.aporiax/rules/*.md`。项目知识可分项目保存命令、架构约定和明确偏好；任务可关闭知识或按需读取，不强制注入整库，并拒绝写入凭据。
 
 项目根目录可用 `.aporiax.json` **收紧**权限，不能把只读任务提升为可写：
 

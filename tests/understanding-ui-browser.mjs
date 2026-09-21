@@ -1,0 +1,255 @@
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { createServer, preview } from "vite";
+import { chromium } from "playwright-core";
+
+const production = process.env.KNOWLEDGE_PRODUCTION === "1";
+const baseline = process.env.KNOWLEDGE_BASELINE === "1";
+const server = production ? await preview({ preview: { host: "127.0.0.1", port: 0 } }) : await createServer({ server: { host: "127.0.0.1", port: 0, open: false, watch: null } });
+let browser;
+try {
+  if (!production) await server.listen();
+  browser = await chromium.launch({ executablePath: process.env.TEST_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, bypassCSP: !production });
+  page.setDefaultTimeout(10000);
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    localStorage.clear();
+    localStorage.setItem("aporiax.language.v1", "zh-CN");
+    localStorage.setItem("aporiax.session-ui.v1", JSON.stringify({ taskId: "knowledge-fixture", welcomeDismissed: true }));
+    const task = { id: "knowledge-fixture", title: "知识界面测试", workspacePath: "D:/Fixture", workspaceName: "示例项目", providerId: "own", modelId: "own-model", effort: "high", messages: [], createdAt: new Date().toISOString() };
+    const categories = ["architecture", "module", "convention", "preference", "command", "verification", "decision", "known_issue"];
+    const content = ["前端使用 React，后台使用 Node.js，通过服务接口通信。", "订单模块负责创建和查询订单，入口是 src/orders.js。", "提交前保留用户已有修改，使用项目现有格式。", "项目文档和注释优先使用中文。", "npm start 启动本地预览，端口由项目配置决定。", "npm test 用于运行项目单元测试；每次交付需重新核对结果。", "生产数据库使用 PostgreSQL；开发配置不等于上线配置。", "旧版启动脚本在路径含空格时存在问题，修改后需重新验证。"];
+    const facts = Array.from({ length: 18 }, (_, i) => ({ id: "fact-" + i, category: categories[i % 8], content: content[i % 8] + (i > 7 ? ` 补充记录 ${i}。` : ""), confidence: .85, lastConfirmedAt: new Date().toISOString(), evidence: [{ type: i % 2 ? "user" : "file", reference: i % 2 ? "任务中的项目约定" : "package.json", detail: "这是一段支持该条目的来源说明。" }] }));
+    window.fixture = { state: { facts, currentRevision: 13, settings: { useForContext: false, autoCurate: false }, revisions: [{ id: "r13", number: 13, summary: "补充项目知识", factCount: 18, createdAt: new Date().toISOString(), changes: [] }, { id: "r12", number: 12, summary: "记录常用命令和约定", factCount: 16, createdAt: new Date().toISOString(), changes: [{ operation: "add", category: "command", content: "npm start 启动项目" }] }] }, calls: [], failSettings: false, failLoad: false };
+    const fixture = window.fixture;
+    window.desktop = {
+      theme: { set: async () => {} }, account: { get: async () => ({ status: "anonymous" }) },
+      providers: { list: async () => [{ id: "own", name: "自己的 API", models: [{ id: "own-model", name: "Own model", shortName: "Own model" }] }] },
+      tasks: { load: async () => [task], save: async (tasks) => { fixture.tasks = structuredClone(tasks); } }, harness: { onEvent: () => () => {}, recoverableRuns: async () => [] },
+      sandbox: { status: async () => ({ localAvailable: true }) },
+      workspace: { listTree: async () => ({ entries: [] }) },
+      workbench: { request: async (request) => { fixture.calls.push(request); return request.action === "list" ? [] : true; }, subscribe: () => () => {} },
+      understanding: {
+        projects: async () => [{ id: "legacy", name: "未分类（旧知识）" }, ...(fixture.projects || [])],
+        createProject: async ({ name, description }) => { if (fixture.failCreate) throw new Error("创建失败，请重试"); const existing = (fixture.projects || []).find((p) => p.name === name); if (existing) return { project: existing, created: false }; const project = { id: "kp-test-project", name, description }; fixture.projects = [...(fixture.projects || []), project]; return { project, created: true }; },
+        get: async (request) => { if (fixture.failLoad) throw new Error("读取失败，请重试"); if (fixture.loadDelay?.[request?.knowledgeProjectId]) await new Promise((resolve) => setTimeout(resolve, fixture.loadDelay[request.knowledgeProjectId])); if (request?.knowledgeProjectId && request.knowledgeProjectId !== "legacy") return { facts: [], revisions: [], currentRevision: 0, settings: { autoCurate: false } }; return structuredClone(fixture.state); },
+        setSettings: async ({ settings }) => { fixture.calls.push({ action: "settings", settings }); if (fixture.failSettings) throw new Error("保存失败，请重试"); if (fixture.settingsDelay) await new Promise((resolve) => setTimeout(resolve, fixture.settingsDelay)); fixture.state.settings = { ...fixture.state.settings, ...settings }; return structuredClone(fixture.state); },
+        revert: async (request) => { fixture.calls.push({ action: "revert", ...request }); fixture.state.currentRevision = 14; return { state: structuredClone(fixture.state) }; },
+      },
+    };
+  });
+  await page.goto(server.resolvedUrls.local[0], { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.locator(".ax-welcome__enter, .thread-view-tabs").first().waitFor({ timeout: 30000 });
+  if (await page.locator(".ax-welcome__enter").isVisible()) await page.locator(".ax-welcome__enter").click();
+  await page.getByRole("textbox", { name: "任务输入", exact: true }).fill("保留的聊天草稿");
+  await page.locator(".thread-view-tabs").getByRole("button", { name: /Understanding|项目知识/ }).click();
+  await mkdir(".tmp/understanding-ui", { recursive: true });
+  if (baseline) {
+    await page.locator(".understanding-summary").waitFor();
+    assert.equal(await page.locator(".understanding-history").isVisible(), true);
+    assert.equal(await page.getByRole("textbox", { name: "任务输入", exact: true }).isVisible(), true);
+    await page.screenshot({ path: ".tmp/understanding-ui/before.png" });
+    console.log("BASELINE: large header/settings/stats, permanent history column, full composer visible.");
+  } else {
+    await page.locator(".knowledge-item").first().waitFor();
+    assert.equal(await page.locator(".knowledge-item").count(), 18);
+    assert.equal(await page.getByRole("textbox", { name: "任务输入", exact: true }).isVisible(), false);
+    assert.equal(await page.locator(".understanding-history").count(), 0);
+    assert.ok((await page.locator(".knowledge-item").first().boundingBox()).y < 500, "Facts remain above the fold with project selection");
+    await page.screenshot({ path: ".tmp/understanding-ui/after-light.png" });
+    const panel = page.locator(".thread-view-panel.understanding-panel .knowledge-panel");
+    const openSettings = async (scope = panel) => {
+      await scope.locator(".knowledge-project-trigger").click();
+      const settings = page.getByRole("dialog", { name: "知识设置", exact: true });
+      await settings.waitFor();
+      return settings;
+    };
+    const panelBox = await panel.boundingBox(), triggerBox = await panel.locator(".knowledge-project-trigger").boundingBox();
+    assert.equal(await page.locator(".knowledge-project-bar").count(), 0, "The full-width project selector is removed");
+    assert.equal(await panel.locator(".knowledge-heading p, .knowledge-summary").count(), 0, "No duplicate project subtitle or stats outside settings");
+    assert.ok(triggerBox.width <= 190 && triggerBox.height <= 36, "Project settings use a compact name button");
+    assert.equal(await panel.locator(".knowledge-project-trigger").innerText(), "未分类（旧知识）");
+    assert.ok(panelBox.width >= (await page.locator(".thread-view-panel.understanding-panel").boundingBox()).width - 20, "Knowledge list spans the pane width");
+    const search = panel.getByRole("searchbox", { name: "搜索项目知识" });
+    await search.fill("package.json");
+    assert.equal(await panel.locator(".knowledge-item").count(), 9, "Search includes evidence paths");
+    await search.fill("does-not-exist");
+    await panel.getByText("没有匹配的知识", { exact: true }).waitFor();
+    await panel.getByRole("button", { name: "清除筛选", exact: true }).click();
+    await panel.getByRole("button", { name: "命令与验证", exact: true }).click();
+    assert.equal(await panel.locator(".knowledge-item").count(), 4);
+    await panel.getByRole("button", { name: "全部", exact: true }).click();
+    const firstEntry = panel.locator(".knowledge-item").first();
+    const detailTrigger = firstEntry.locator(".knowledge-detail-trigger");
+    await firstEntry.locator("p").click();
+    assert.equal(await page.locator("dialog[open]").count(), 0, "Clicking the entry body does not open a dialog");
+    assert.equal(await firstEntry.evaluate((el) => el.tagName), "ARTICLE");
+    assert.equal(await firstEntry.evaluate((el) => getComputedStyle(el).userSelect), "text");
+    await firstEntry.locator("p").evaluate((el) => { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); });
+    assert.ok((await page.evaluate(() => window.getSelection().toString())).includes("前端使用 React"), "Knowledge body stays selectable for copying");
+    await page.evaluate(() => window.getSelection().removeAllRanges());
+    const arrowBox = await detailTrigger.boundingBox();
+    assert.ok(arrowBox.width <= 32 && arrowBox.height <= 32, "Only the small arrow region is interactive");
+    await detailTrigger.focus();
+    await page.keyboard.press("Enter");
+    let dialog = page.getByRole("dialog", { name: "知识详情", exact: true });
+    await dialog.waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "package.json", exact: true }).count(), 1);
+    assert.equal(await panel.locator(".knowledge-item").first().boundingBox().then((box) => box.y < 500), true);
+    await dialog.getByText("更多信息", { exact: true }).click();
+    await dialog.getByText(/不是正确率/).waitFor();
+    await page.screenshot({ path: ".tmp/understanding-ui/detail-light.png" });
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("dialog[open]").count(), 0);
+    assert.equal(await detailTrigger.evaluate((el) => el === document.activeElement), true);
+    dialog = await openSettings();
+    await dialog.getByText("18 条已保存", { exact: true }).waitFor();
+    await dialog.getByText("本任务：知识关闭", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "false");
+    await page.evaluate(() => { window.fixture.failSettings = true; });
+    await dialog.getByRole("switch", { name: "自动记录", exact: true }).click();
+    await dialog.getByRole("alert").waitFor();
+    assert.equal(await dialog.getByRole("switch", { name: "自动记录", exact: true }).getAttribute("aria-checked"), "false");
+    await page.evaluate(() => { window.fixture.failSettings = false; });
+    await dialog.getByRole("switch", { name: "自动记录", exact: true }).click();
+    await page.waitForFunction(() => window.fixture.state.settings.autoCurate);
+    assert.equal(await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "false", "Recording and task recall remain independent");
+    await dialog.getByRole("button", { name: "关闭弹窗", exact: true }).click();
+    assert.equal(await panel.locator(".knowledge-summary").count(), 0, "Settings state stays out of the main page");
+    assert.equal(await panel.locator(".knowledge-project-trigger").evaluate((el) => el === document.activeElement), true);
+    await panel.getByRole("button", { name: "修订历史", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "修订历史", exact: true });
+    await dialog.getByText("查看该次修改", { exact: true }).click();
+    await dialog.getByText(/新增 · npm start/).waitFor();
+    await dialog.getByRole("button", { name: "恢复此版本", exact: true }).click();
+    assert.equal(await page.evaluate(() => window.fixture.calls.filter((item) => item.action === "revert").length), 0, "Restore requires confirmation");
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await dialog.getByRole("button", { name: "恢复此版本", exact: true }).click();
+    await dialog.getByRole("button", { name: "确认恢复", exact: true }).click();
+    await page.waitForFunction(() => window.fixture.state.currentRevision === 14);
+    assert.equal(await page.evaluate(() => window.fixture.calls.find((item) => item.action === "revert").revisionId), "r12");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.fixture.failLoad = true; });
+    await panel.getByRole("button", { name: "刷新知识", exact: true }).click();
+    await panel.getByRole("alert").waitFor();
+    assert.equal(await panel.locator(".knowledge-item").count(), 18, "Refresh errors retain existing entries");
+    await page.evaluate(() => { window.fixture.failLoad = false; });
+    await panel.getByRole("button", { name: "刷新知识", exact: true }).click();
+    await panel.getByRole("alert").waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "返回对话", exact: true }).click();
+    assert.equal(await page.getByRole("textbox", { name: "任务输入", exact: true }).inputValue(), "保留的聊天草稿");
+    await page.locator(".thread-view-tabs").getByRole("button", { name: "项目知识", exact: true }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "在侧栏打开", exact: true }).click();
+    const side = page.locator(".workbench-panel .knowledge-panel");
+    await side.locator(".knowledge-item").first().waitFor();
+    const resizer = page.locator(".workbench-resizer");
+    await resizer.focus();
+    for (let i = 0; i < 12; i++) await resizer.press("ArrowRight");
+    assert.equal(await side.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true, "Narrow pane has no horizontal overflow");
+    assert.equal(await page.getByRole("textbox", { name: "任务输入", exact: true }).isVisible(), true, "Sidebar knowledge must not hide main composer");
+    assert.equal(await side.locator(".knowledge-project-trigger > span").isVisible(), true, "Narrow panes keep the project name visible");
+    dialog = await openSettings(side);
+    assert.equal(await dialog.getByRole("switch", { name: "自动记录", exact: true }).getAttribute("aria-checked"), "true");
+    await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).click();
+    await dialog.getByText("本任务：按需读取", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.screenshot({ path: ".tmp/understanding-ui/sidebar-light.png" });
+    await page.evaluate(() => { window.fixture.projects = [{ id: "kp-long", name: "这是一个用于确认窄侧栏省略与完整标题的很长知识项目名称" }]; window.dispatchEvent(new CustomEvent("aporiax:knowledge-changed", { detail: "D:/Fixture" })); });
+    dialog = await openSettings(side);
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("kp-long");
+    await page.keyboard.press("Escape");
+    assert.ok((await side.locator(".knowledge-project-trigger").boundingBox()).width <= 160, "Long names stay compact in the narrow sidebar");
+    assert.equal(await side.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true, "Long project names do not overflow");
+    assert.ok((await side.locator(".knowledge-project-trigger").getAttribute("title")).includes("很长知识项目名称"), "The complete name remains available in the tooltip");
+    dialog = await openSettings(side);
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("legacy");
+    await page.keyboard.press("Escape");
+    await page.locator(".thread-view-tabs").getByRole("button", { name: "项目知识", exact: true }).click();
+    await page.locator(".workbench-panel button[title='收起侧栏']").click();
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await page.screenshot({ path: ".tmp/understanding-ui/after-dark.png" });
+    dialog = await openSettings();
+    await dialog.getByText("本任务：按需读取", { exact: true }).waitFor();
+    await page.screenshot({ path: ".tmp/understanding-ui/settings-dark.png" });
+    await page.evaluate(() => { window.fixture.settingsDelay = 300; });
+    await page.getByRole("dialog").getByRole("switch", { name: "自动记录", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !window.fixture.state.settings.autoCurate);
+    await openSettings();
+    assert.equal(await page.getByRole("dialog").getByRole("switch", { name: "自动记录", exact: true }).getAttribute("aria-checked"), "false", "Closing a saving dialog must not lose its updated state");
+    await page.keyboard.press("Escape");
+    // Multi-project browsing and task binding are deliberately separate.
+    dialog = await openSettings();
+    await dialog.getByRole("button", { name: "新建知识项目", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "新建知识项目", exact: true });
+    await dialog.getByLabel("知识项目名称", { exact: true }).fill("商城网站");
+    await page.evaluate(() => { window.fixture.failCreate = true; });
+    await dialog.getByRole("button", { name: "创建", exact: true }).click();
+    await dialog.getByRole("alert").waitFor();
+    await page.evaluate(() => { window.fixture.failCreate = false; });
+    await dialog.getByRole("button", { name: "创建", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    await panel.getByText("还没有保存的项目知识", { exact: true }).waitFor();
+    assert.equal(await panel.locator(".knowledge-project-trigger").innerText(), "商城网站");
+    dialog = await openSettings();
+    assert.equal(await dialog.getByLabel("查看知识项目", { exact: true }).inputValue(), "kp-test-project");
+    await dialog.getByRole("button", { name: "用于本任务", exact: true }).click();
+    await dialog.getByRole("button", { name: "本任务使用中", exact: true }).waitFor();
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("legacy");
+    await panel.locator(".knowledge-item").first().waitFor({ state: "attached" });
+    assert.equal(await panel.locator(".knowledge-item").count(), 18);
+    assert.equal(await dialog.isVisible(), true, "Project changes keep the settings dialog open");
+    assert.equal(await page.getByRole("dialog").getByLabel("任务知识来源", { exact: true }).inputValue(), "kp-test-project", "Browsing legacy does not change task binding");
+    await page.keyboard.press("Escape");
+    assert.equal(await panel.locator(".knowledge-project-trigger").evaluate((el) => el === document.activeElement), true, "Closing after project changes restores focus to the name button");
+    // A late response from the old project must not paint the selected project.
+    dialog = await openSettings();
+    await page.evaluate(() => { window.fixture.loadDelay = { "kp-test-project": 150 }; });
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("kp-test-project");
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("legacy");
+    await dialog.getByText("18 条已保存", { exact: true }).waitFor();
+    await page.waitForTimeout(220);
+    assert.equal(await panel.locator(".knowledge-item").count(), 18, "Slow previous project reads cannot replace current knowledge");
+    await page.evaluate(() => { window.fixture.loadDelay = {}; window.fixture.settingsDelay = 180; });
+    await dialog.getByRole("switch", { name: "自动记录", exact: true }).click();
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("kp-test-project");
+    await dialog.getByText("0 条已保存", { exact: true }).waitFor();
+    await page.waitForFunction(() => window.fixture.state.settings.autoCurate);
+    assert.equal(await panel.locator(".knowledge-item").count(), 0, "An old project's pending settings write cannot leak its facts");
+    assert.equal(await dialog.getByRole("switch", { name: "自动记录", exact: true }).getAttribute("aria-checked"), "false", "Auto-recording reflects the selected project");
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("legacy");
+    await page.keyboard.press("Escape");
+    await page.locator(".task-item.active").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "关闭项目知识", exact: true }).click();
+    dialog = await openSettings();
+    await dialog.getByText("本任务：知识关闭", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator(".task-item.active").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "开启项目知识", exact: true }).click();
+    dialog = await openSettings();
+    await dialog.getByText("本任务：按需读取", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "在 示例项目 中新建任务", exact: true }).click();
+    const modal = page.locator(".new-task-modal");
+    assert.equal(await modal.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "false", "New tasks default off independently");
+    await modal.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).click();
+    await modal.getByLabel("任务知识来源", { exact: true }).selectOption("kp-test-project");
+    await page.screenshot({ path: ".tmp/understanding-ui/new-task-knowledge.png" });
+    await modal.locator("#task-title").fill("独立知识新任务");
+    await modal.getByRole("button", { name: "创建任务", exact: true }).click();
+    await page.waitForFunction(() => window.fixture.tasks?.some((t) => t.title === "独立知识新任务" && t.knowledgeEnabled && t.knowledgeProjectId === "kp-test-project"));
+    await page.locator(".task-item").filter({ hasText: "知识界面测试" }).click();
+    await page.locator(".thread-view-tabs").getByRole("button", { name: "项目知识", exact: true }).click();
+    dialog = await openSettings();
+    await dialog.getByLabel("查看知识项目", { exact: true }).selectOption("legacy");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.fixture.state.facts = []; window.fixture.state.revisions = []; });
+    await panel.getByRole("button", { name: "刷新知识", exact: true }).click();
+    await panel.getByText("还没有保存的项目知识", { exact: true }).waitFor();
+    assert.equal(await page.locator(".toast").filter({ hasText: /not a function/ }).count(), 0);
+    console.log(`PASS knowledge UI (${production ? "production CSP" : "dev"}): compact project settings, arrow-only details/text selection/focus, async project isolation, project creation/error/browse isolation, task binding, new-task toggle/persistence, context menu, search/history, draft retention and narrow sidebar sync.`);
+  }
+  assert.deepEqual(errors, []);
+} finally { await browser?.close(); if (production) await new Promise((resolve) => server.httpServer.close(resolve)); else await server.close(); }

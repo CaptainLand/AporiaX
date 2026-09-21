@@ -26,7 +26,9 @@ app.whenReady().then(async () => {
   await delay(1000);
   await request({ action: "write", id: terminal.id, data: "Write-Output ('PACKAGED_' + 'TERMINAL_OK')\r" });
   let cursor = 0, output = "";
-  for (let index = 0; index < 40; index++) {
+  const readDeadline = Date.now() + 15000;
+  // PSReadLine emits many tiny redraw chunks; count wall time, not chunks.
+  while (Date.now() < readDeadline) {
     const chunk = await request({ action: "read", id: terminal.id, cursor, waitMs: 300 });
     assert.equal(chunk.waitSupported, true);
     cursor = chunk.cursor; output += chunk.output;
