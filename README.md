@@ -58,6 +58,8 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 
 完整边界见 [SECURITY.md](SECURITY.md)。
 
+## 界面预览
+
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX 浅色 Gem Smoke 欢迎页" /></td>
@@ -68,20 +70,28 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
     <td align="center"><strong>看见路径，随时回退</strong><br><sub>Route · Evidence · Anchor</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/assets/dialogue.png" alt="AporiaX Dialogue 对话与自检" /></td>
-    <td width="50%"><img src="docs/assets/route.png" alt="AporiaX Route 行动路径" /></td>
+    <td width="50%"><a href="docs/assets/dialogue.png"><img src="docs/assets/dialogue.png" width="100%" alt="AporiaX 1.0.0-preview 对话与 Witness 执行摘要" /></a></td>
+    <td width="50%"><a href="docs/assets/route.png"><img src="docs/assets/route.png" width="100%" alt="AporiaX 1.0.0-preview 执行记录、Agent 激活次数与 Builder 并发" /></a></td>
   </tr>
   <tr>
-    <td align="center"><strong>对话</strong><br><sub>任务、自检、产物与追问</sub></td>
-    <td align="center"><strong>执行记录</strong><br><sub>工具、文件、命令与具体修改</sub></td>
+    <td align="center"><strong>对话</strong><br><sub>任务回复、Witness 执行摘要与追问</sub></td>
+    <td align="center"><strong>执行记录</strong><br><sub>最新在前 · Agent 激活次数与 Builder 并发</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/assets/workspace.png" alt="AporiaX Workspace 文件树与 Anchor" /></td>
-    <td width="50%"><img src="docs/assets/understanding.png" alt="AporiaX Project Understanding 项目共享理解" /></td>
+    <td width="50%"><a href="docs/assets/workspace.png"><img src="docs/assets/workspace.png" width="100%" alt="AporiaX 1.0.0-preview 工作区文件树、代码高亮与侧栏打开入口" /></a></td>
+    <td width="50%"><a href="docs/assets/understanding.png"><img src="docs/assets/understanding.png" width="100%" alt="AporiaX 1.0.0-preview 项目知识切换、分类搜索与来源" /></a></td>
   </tr>
   <tr>
-    <td align="center"><strong>工作区</strong><br><sub>文件树、预览与可折叠 Anchor</sub></td>
-    <td align="center"><strong>项目知识</strong><br><sub>分类保存、按需读取的架构与约定</sub></td>
+    <td align="center"><strong>工作区</strong><br><sub>文件树、代码高亮与侧栏预览</sub></td>
+    <td align="center"><strong>项目知识</strong><br><sub>按项目分类保存，任务按需读取</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/assets/sidebar-documents.png"><img src="docs/assets/sidebar-documents.png" width="100%" alt="AporiaX 侧栏 Markdown 阅读、源码与编辑模式，和主对话同屏" /></a></td>
+    <td width="50%"><a href="docs/assets/sidebar-browser.png"><img src="docs/assets/sidebar-browser.png" width="100%" alt="AporiaX 侧栏内置浏览器，与主对话并排浏览网页" /></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>侧栏 · 文档阅读</strong><br><sub>Markdown 排版预览，阅读 / 源码 / 编辑切换</sub></td>
+    <td align="center"><strong>侧栏 · 浏览器</strong><br><sub>网页与任务同屏，保留对话上下文</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/settings-general.png" alt="AporiaX 通用设置" /></td>
@@ -93,7 +103,7 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
   </tr>
 </table>
 
-部分截图来自早期版本，当前界面以安装包为准。
+对话、执行记录、工作区、项目知识及两张侧栏截图已更新为 1.0.0-preview，可点击查看原图；欢迎页、关于和设置截图保留此前版本，当前界面以安装包为准。
 
 ## 1.0.0-preview
 
@@ -104,7 +114,9 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 - **更顺畅的首次使用与文件查看**：未登录的 Cloud 模型不可选择并提示添加自有 API；工作区复用侧栏文件预览，Anchor 默认收起。
 - **保留 0.9.9 的长任务基础**：有来源的决策与诊断保存、有序工具调度、进程事件等待和证据验收；不强制无关测试，不伪称验证通过。
 
-验证：**67/67** 个回归脚本、15 个自动暂停/恢复场景、浏览器状态展示及真实安装包内恢复/终端测试通过。尚无真实模型 A/B 提速或成本结论。
+本地验证：**67/67** 个回归脚本、15 个自动暂停/恢复场景、浏览器状态展示及真实安装包内恢复/终端测试通过。尚无真实模型 A/B 提速或成本结论。
+
+预览版已知问题：[发布提交的 GitHub 检查](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832)中，Windows 知识项目、Curator 启动统计及执行记录 UI 检查未全部通过，仍待修复；上述本地结果不代表所有 CI 环境通过。
 
 > 自动恢复要求应用进程仍存活；断电、退出或崩溃后仍需手动恢复。保留的是应用已接收且可保存的任务状态，不包括模型尚未返回的内部计算。未知结果的命令/上传等不会盲目重放，重连也可能重复计费。真实硬件断网、睡眠/唤醒仍待进一步实测。
 

@@ -58,6 +58,8 @@ AporiaX is a local-first Windows desktop agent. It edits code, runs commands, an
 
 See [SECURITY.md](SECURITY.md) for boundaries.
 
+## Interface preview
+
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/welcome.png" alt="AporiaX light Gem Smoke welcome screen" /></td>
@@ -68,20 +70,28 @@ See [SECURITY.md](SECURITY.md) for boundaries.
     <td align="center"><strong>See the route, roll back</strong><br><sub>Route · Evidence · Anchor</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/assets/dialogue.png" alt="AporiaX Dialogue and self-check" /></td>
-    <td width="50%"><img src="docs/assets/route.png" alt="AporiaX Route action trace" /></td>
+    <td width="50%"><a href="docs/assets/dialogue.png"><img src="docs/assets/dialogue.png" width="100%" alt="AporiaX 1.0.0-preview dialogue and Witness execution summary" /></a></td>
+    <td width="50%"><a href="docs/assets/route.png"><img src="docs/assets/route.png" width="100%" alt="AporiaX 1.0.0-preview execution records, agent activations and Builder concurrency" /></a></td>
   </tr>
   <tr>
-    <td align="center"><strong>Dialogue</strong><br><sub>Tasks, checks, deliverables, follow-ups</sub></td>
-    <td align="center"><strong>Route</strong><br><sub>Tools, files, commands, concrete edits</sub></td>
+    <td align="center"><strong>Dialogue</strong><br><sub>Task replies, Witness summaries and follow-ups</sub></td>
+    <td align="center"><strong>Execution records</strong><br><sub>Newest first · Agent activations and Builder concurrency</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/assets/workspace.png" alt="AporiaX Workspace file tree and Anchors" /></td>
-    <td width="50%"><img src="docs/assets/understanding.png" alt="AporiaX shared Project Understanding" /></td>
+    <td width="50%"><a href="docs/assets/workspace.png"><img src="docs/assets/workspace.png" width="100%" alt="AporiaX 1.0.0-preview workspace file tree, syntax highlighting and sidebar preview entry" /></a></td>
+    <td width="50%"><a href="docs/assets/understanding.png"><img src="docs/assets/understanding.png" width="100%" alt="AporiaX 1.0.0-preview project knowledge selector, categories, search and sources" /></a></td>
   </tr>
   <tr>
-    <td align="center"><strong>Workspace</strong><br><sub>Tree, preview, Anchors</sub></td>
-    <td align="center"><strong>Understanding</strong><br><sub>Shared architecture and conventions</sub></td>
+    <td align="center"><strong>Workspace</strong><br><sub>File tree, syntax highlighting and sidebar previews</sub></td>
+    <td align="center"><strong>Project knowledge</strong><br><sub>Organized by project, retrieved on demand</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/assets/sidebar-documents.png"><img src="docs/assets/sidebar-documents.png" width="100%" alt="AporiaX sidebar Markdown reading, source and editing modes beside the main conversation" /></a></td>
+    <td width="50%"><a href="docs/assets/sidebar-browser.png"><img src="docs/assets/sidebar-browser.png" width="100%" alt="AporiaX embedded sidebar browser beside the main conversation" /></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Sidebar · Documents</strong><br><sub>Formatted Markdown with reading, source and editing modes</sub></td>
+    <td align="center"><strong>Sidebar · Browser</strong><br><sub>Browse alongside your task without leaving the conversation</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/assets/settings-general.png" alt="AporiaX General settings" /></td>
@@ -93,7 +103,7 @@ See [SECURITY.md](SECURITY.md) for boundaries.
   </tr>
 </table>
 
-Some screenshots show earlier versions; the current package is authoritative.
+The dialogue, execution records, workspace, project knowledge and two sidebar screenshots now show 1.0.0-preview; click them to view the originals. Welcome, About and settings screenshots are retained from earlier versions; the current package is authoritative.
 
 ## 1.0.0-preview
 
@@ -104,7 +114,9 @@ Some screenshots show earlier versions; the current package is authoritative.
 - **Easier setup and previews:** signed-out Cloud models are disabled with a prompt to add your API; workspace files reuse sidebar previews, with Anchors collapsed by default.
 - **Retain the 0.9.9 foundations:** source-backed decisions, diagnostic retention, ordered tools, process-event waiting, and evidence-based acceptance without unrelated forced tests or false verification claims.
 
-Validation: **67/67** regression scripts, 15 suspension/recovery scenarios, browser state checks, and actual packaged recovery/terminal tests passed. No live-model A/B speed or cost claim is made.
+Local validation: **67/67** regression scripts, 15 suspension/recovery scenarios, browser state checks, and actual packaged recovery/terminal tests passed. No live-model A/B speed or cost claim is made.
+
+Known preview issues: the [release commit's GitHub checks](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832) include failures in Windows knowledge projects, Curator activation tracking and the execution-record UI. These remain unresolved; the local results above do not mean all CI environments passed.
 
 > Automatic continuation requires the app process to remain alive. Power loss, exit, or crashes still require manual recovery. Preserved memory means received, saveable task state, not provider-side computation that never returned. Unknown command/upload outcomes are not blindly replayed, and reconnecting may incur duplicate charges. Real hardware network-loss and sleep/wake checks remain outstanding.
 
