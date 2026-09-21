@@ -26,6 +26,7 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 
 > [!IMPORTANT]
 > 当前源码与 Windows 预览版为 **`v1.0.0-preview`**，不是 1.0.0 正式版。
+> 本版已作为普通 GitHub Release 设为 **Latest**，应用默认更新检测可发现；版本名仍保留 preview，已知问题见下文。
 > 本版新增断网等待与睡眠唤醒续跑，完善主/子 Agent 协作、执行记录、按需项目知识与首次使用引导。
 > Aporia Account、Aporia Cloud、自己的 API 与本地模型相互独立，额度用尽不会偷偷切到另一条路径。
 > 安装包未代码签名。请先退出旧版再更新。
@@ -124,7 +125,9 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 
 ## 下载
 
-`main` 当前是 **v1.0.0-preview**。本版以 GitHub **Pre-release** 发布，不替换稳定版 Latest；请从下面的预览版链接下载。
+`main` 当前是 **v1.0.0-preview**。本版作为普通 GitHub Release 设为 **Latest**，进入默认更新通道；preview 名称和已知问题保留，不表示已完成 1.0.0 正式版验收。[打开 Latest 下载页](https://github.com/CaptainLand/AporiaX/releases/latest)。
+
+旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版检测到更新后打开下载页，下载新便携版替换。自动检查间隔为 12 小时。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |

@@ -1,6 +1,8 @@
 # AporiaX 1.0.0-preview
 
-Windows x64 预览版，版本标签 `v1.0.0-preview`，不是 1.0.0 正式版。以 GitHub Pre-release 发布，不替换稳定版 Latest。
+Windows x64 预览版，版本标签 `v1.0.0-preview`，不是 1.0.0 正式版。现作为普通 GitHub Release 设为 Latest，进入 AporiaX 默认更新通道；版本名称仍保留 preview。
+
+> 已知问题：本地回归通过，但[发布提交的 GitHub 检查](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832)中 Windows 知识项目、Curator 启动统计及执行记录 UI 检查仍有失败。切换发布通道没有修复这些问题，也没有重新构建或替换安装包。
 
 ## 本版重点
 
@@ -44,10 +46,14 @@ Windows x64 预览版，版本标签 `v1.0.0-preview`，不是 1.0.0 正式版�
 - [安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview/AporiaX-Setup-1.0.0-preview-x64.exe)（148,419,462 字节）
 - [SHA-256 校验文件](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview/SHA256SUMS-1.0.0-preview.txt)
 
-安装包未经代码签名，请先退出旧版后更新。旧包保留；本地构建的 latest.yml 仅作为本次 Pre-release 的附件，不替换稳定版 Release 或 Latest 指针。
+安装包未经代码签名，请先退出旧版后更新。旧包保留；本版 latest.yml 通过 Latest 下载入口提供给应用更新检测，指向同一份已校验安装包。
+
+旧版可在「设置 → 关于 → 检查更新」刷新：安装版支持应用内下载和重启安装，便携版会打开 Latest 下载页供手动替换。自动检查间隔为 12 小时。
 
 ## English summary
 
 This preview adds automatic waiting for temporary connection loss and continuation after sleep/wake, with shared pause gates for Main, subagents and Builder queues. Manual pauses remain manual; stopped tasks stay stopped. Received task context and receipts are retained, incomplete tool calls are never executed, and uncertain external effects are not replayed automatically.
 
-The package also includes clearer execution records and agent counters, explicit child-result review, on-demand multi-project knowledge, shared workspace/sidebar previews, and first-use model configuration guidance. All 67 regression scripts and packaged recovery/terminal checks passed. Hardware sleep/network testing is still outstanding; app exit, crash, or power-loss recovery remains manual. Reconnecting may incur additional provider charges.
+The package also includes clearer execution records and agent counters, explicit child-result review, on-demand multi-project knowledge, shared workspace/sidebar previews, and first-use model configuration guidance. All 67 local regression scripts and packaged recovery/terminal checks passed, but the release commit still has Windows CI failures in knowledge projects, Curator activation tracking and the execution-record UI. Hardware sleep/network testing is still outstanding; app exit, crash, or power-loss recovery remains manual. Reconnecting may incur additional provider charges.
+
+This preview is now a regular GitHub Release marked Latest, discoverable by the default app updater. Its version remains 1.0.0-preview. This channel change does not fix the known issues or replace the binaries; installed builds can download in-app, while portable builds open the Latest page for manual replacement.

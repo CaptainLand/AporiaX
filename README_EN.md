@@ -26,6 +26,7 @@ AporiaX is a local-first Windows desktop agent. It edits code, runs commands, an
 
 > [!IMPORTANT]
 > Current source and Windows preview: **`v1.0.0-preview`**, not the final 1.0.0 release.
+> Published as a regular GitHub Release marked **Latest**, so the default app update channel can discover it. The preview name and known issues remain.
 > This build adds network waiting and sleep/wake continuation, clearer main/subagent collaboration, execution records, on-demand project knowledge, and first-use model setup.
 > Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.
 > Binaries are unsigned. Quit the previous build before updating.
@@ -124,7 +125,9 @@ Known preview issues: the [release commit's GitHub checks](https://github.com/Ca
 
 ## Download
 
-`main` is **v1.0.0-preview**. This GitHub **Pre-release** does not replace stable Latest; download the preview explicitly below.
+`main` is **v1.0.0-preview**, published as a regular GitHub Release marked **Latest** on the default update channel. The preview name and known issues remain; this does not mean final 1.0.0 acceptance is complete. [Open the Latest download page](https://github.com/CaptainLand/AporiaX/releases/latest).
+
+In an older build, use Settings → About → Check for updates to refresh manually. Installed builds can download and restart to install; portable builds open the download page so you can replace the executable manually. Automatic checks are spaced 12 hours apart.
 
 | Windows x64 | Current package |
 | --- | --- |

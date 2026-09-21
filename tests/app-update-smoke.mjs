@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import {
   AUTO_CHECK_INTERVAL_MS,
   LATEST_YML_URL,
@@ -21,6 +22,8 @@ assert.equal(compareVersions("v0.9.0", "0.8.4"), 1);
 assert.equal(isNewerVersion("0.8.5", "0.8.4"), true);
 assert.equal(isNewerVersion("0.8.4", "0.8.4"), false);
 assert.equal(isNewerVersion("0.8.3", "0.8.4"), false);
+assert.equal(isNewerVersion("1.0.0-preview", "0.9.9"), true);
+assert.equal(isNewerVersion("1.0.0-preview", "1.0.0-preview"), false);
 
 assert.equal(isPortableBuild({}), false);
 assert.equal(isPortableBuild({ PORTABLE_EXECUTABLE_FILE: "D:\\AporiaX.exe" }), true);
@@ -40,6 +43,10 @@ path: AporiaX-Setup-0.8.5-x64.exe
 assert.equal(parsed.version, "0.8.5");
 assert.equal(parsed.path, "AporiaX-Setup-0.8.5-x64.exe");
 assert.deepEqual(parseLatestYml(""), { version: "", path: "" });
+assert.deepEqual(
+  parseLatestYml("version: 1.0.0-preview\npath: AporiaX-Setup-1.0.0-preview-x64.exe\n"),
+  { version: "1.0.0-preview", path: "AporiaX-Setup-1.0.0-preview-x64.exe" },
+);
 
 assert.equal(shouldSkipAutoCheck(0, 1_000), false);
 assert.equal(shouldSkipAutoCheck(1_000, 1_000 + AUTO_CHECK_INTERVAL_MS - 1), true);
@@ -80,7 +87,20 @@ assert.match(updater, /autoDownload = false/);
 assert.match(updater, /autoInstallOnAppQuit = false/);
 assert.match(updater, /quitAndInstall\(false, true\)/);
 assert.match(mainV2, /installAppUpdate\(/);
-assert.match(mainV2, /getActiveRunCount: \(\) => desktopBackground\.snapshot\(\)\.activeRuns/);
+// The kernel is the authoritative source, including paused and starting tasks.
+// Exercise the real wiring rather than matching the removed tray snapshot API.
+const updateWiring = mainV2.match(/installAppUpdate\(\{[\s\S]*?\}\);/)?.[0];
+assert(updateWiring, "Missing updater wiring");
+for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) {
+  let options;
+  const kernel = states === null ? null : { taskRuntime: { listActiveRuns: () => states.map((status) => ({ status })) } };
+  runInNewContext(updateWiring, { kernel, installAppUpdate: (value) => { options = value; } });
+  const count = options.getActiveRunCount();
+  assert.equal(count, states?.length || 0);
+  const decision = installUpdateDecision({ channel: "nsis", downloaded: true, activeRuns: count });
+  assert.equal(decision.ok, count === 0);
+  if (count > 0) assert.equal(decision.code, "TASK_RUNNING");
+}
 assert.match(preload, /update:status/);
 assert.match(preload, /update:install/);
 assert.match(about, /检查更新/);
