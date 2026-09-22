@@ -128,9 +128,63 @@ await test('Cloud finish_reason without DONE cannot release a successful respons
 });
 await test('an explicit rejected retry has a new attempt key and a stable logical request ID',async()=>{
  const seen=[],parent='11111111-1111-4111-8111-111111111111';
- const provider={...cloud,authenticatedFetch:async(_p,init)=>{seen.push(new Headers(init.headers));return seen.length===1?new Response(JSON.stringify({error:{message:'APORIA_MODEL_BUSY'}}),{status:429,headers:{'x-aporia-request-id':parent}}):sse();}};
+ const provider={...cloud,authenticatedFetch:async(_p,init)=>{seen.push(new Headers(init.headers));return seen.length===1?new Response(JSON.stringify({error:{message:'APORIA_MODEL_BUSY'},request:{requestId:parent,usageState:'not-dispatched',billing:'released',chargedMicros:0}}),{status:429,headers:{'x-aporia-request-id':parent}}):sse();}};
  await callModelProvider({provider,body:requestBody});assert.equal(seen.length,2);
  assert.notEqual(seen[0].get('idempotency-key'),seen[1].get('idempotency-key'));assert.equal(seen[0].get('x-aporia-logical-request-id'),seen[1].get('x-aporia-logical-request-id'));assert.equal(seen[1].get('x-aporia-retry-of'),parent);
 });
+
+await test('proxy 502/504 retries retain identity and cannot dispatch a second inference', async()=>{
+ for(const status of [502,504]) {
+  const seen=[], accepted=new Set();
+  const provider={...cloud,authenticatedFetch:async(_p,init)=>{
+   const headers=new Headers(init.headers),key=headers.get('idempotency-key');seen.push(headers);
+   if(accepted.has(key))return new Response(JSON.stringify({error:{message:'REQUEST_ALREADY_EXISTS'}}),{status:409});
+   accepted.add(key);
+   if(seen.length===1)return new Response('<html>proxy lost the response</html>',{status});
+   return sse();
+  }};
+  await assert.rejects(callModelProvider({provider,body:requestBody}),/REQUEST_ALREADY_EXISTS/);
+  assert.equal(accepted.size,1);assert.equal(seen.length,2);
+  assert.equal(seen[0].get('idempotency-key'),seen[1].get('idempotency-key'));
+  assert.equal(seen[0].get('x-aporia-logical-request-id'),seen[1].get('x-aporia-logical-request-id'));
+  assert.equal(seen[1].get('x-aporia-retry-of'),null);
+ }
+});
+await test('heartbeat SSE rejection preserves retry delay and links only a released request',async()=>{
+ const seen=[],events=[],parent='22222222-2222-4222-8222-222222222222';
+ const payload={error:{message:'APORIA_MODEL_BUSY',type:'rate_limit_error'},status:429,requestId:parent,retryAfterMs:2000,
+  request:{requestId:parent,usageState:'not-dispatched',billing:'released',chargedMicros:0}};
+ const provider={...cloud,authenticatedFetch:async(_p,init)=>{
+  seen.push(new Headers(init.headers));
+  return seen.length===1?new Response(': aporia-waiting\n\nevent: aporia_error\ndata: '+JSON.stringify(payload)+'\n\n',
+   {headers:{'content-type':'text/event-stream','x-aporia-request-id':parent}}):sse();
+ }};
+ await callModelProvider({provider,body:requestBody,onEvent:event=>events.push(event)});
+ assert.equal(seen.length,2);assert.notEqual(seen[0].get('idempotency-key'),seen[1].get('idempotency-key'));
+ assert.equal(seen[0].get('x-aporia-logical-request-id'),seen[1].get('x-aporia-logical-request-id'));
+ assert.equal(seen[1].get('x-aporia-retry-of'),parent);
+ assert(events.find(e=>e.type==='response.retry').delayMs>=2000);
+});
+await test('HTTP and SSE never regenerate pending, unsettled, settled or unconfirmed accounting',async()=>{
+ const id='33333333-3333-4333-8333-333333333333';
+ for(const streaming of [false,true]) for(const usageState of ['pending','unsettled','provider','dispatching']) {
+  let calls=0;
+  const payload={error:{message:'APORIA_PROVIDER_UNAVAILABLE'},status:503,requestId:id,
+   request:{requestId:id,usageState,billing:usageState==='provider'?'settled':'unresolved',chargedMicros:usageState==='provider'?12:null}};
+  const provider={...cloud,authenticatedFetch:async()=>{calls++;return streaming
+   ?new Response(': aporia-waiting\n\nevent: aporia_error\ndata: '+JSON.stringify(payload)+'\n\n')
+   :new Response(JSON.stringify(payload),{status:503,headers:{'x-aporia-request-id':id}});}};
+  await assert.rejects(callModelProvider({provider,body:requestBody}),e=>!e.retryable&&e.cloudRequestId===id&&e.cloudUsageState===usageState);
+  assert.equal(calls,1);
+ }
+ for(const extra of [{accountingPending:true},{request:{requestId:id,usageState:'not-dispatched',billing:'unresolved',chargedMicros:null}},
+  {request:{requestId:'other',usageState:'not-dispatched',billing:'released',chargedMicros:0}}]) {
+  let calls=0;
+  const provider={...cloud,authenticatedFetch:async()=>{calls++;return new Response(JSON.stringify({
+   error:{message:'APORIA_MODEL_BUSY'},requestId:id,...extra}),{status:429,headers:{'x-aporia-request-id':id}});}};
+  await assert.rejects(callModelProvider({provider,body:requestBody}),e=>!e.retryable);assert.equal(calls,1);
+ }
+});
+
 await mkdir('.tmp/audit-results',{recursive:true});await writeFile('.tmp/audit-results/cloud-compatibility.json',JSON.stringify({results},null,2));
 await rm(temp,{recursive:true,force:true});console.log(`Cloud compatibility: ${results.filter(r=>r.passed).length}/${results.length}`);assert(results.every(r=>r.passed));

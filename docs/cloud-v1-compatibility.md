@@ -57,8 +57,13 @@ are included and byte-verified by the Windows package check.
 ## Requests, streaming and billing
 
 Cloud requests send bounded task/run/agent attribution and separate logical/attempt
-IDs. Inner transport retries before an HTTP outcome reuse the idempotency key;
-explicit HTTP rejections may start a linked new attempt. A known duplicate is not
+IDs. Ambiguous transport and proxy HTTP 502/504 retries reuse the idempotency key.
+A linked new attempt requires a matching server receipt with usageState
+`not-dispatched`, billing `released`, and chargedMicros `0`; an HTTP status alone
+never proves inference was rejected. JSON and heartbeat-era SSE errors share status,
+request identity, retry delay and accounting fields. Pending, unsettled or already
+settled requests stop regeneration; a confirmed unbilled rejection can retry within
+the existing attempt/wait limits. A known duplicate is not
 retried and a returned pending-accounting outcome stops automatic regeneration.
 Refreshing auth preserves the original request key. A status endpoint is available
 on the supporting server, but this patch does not implement cached-response or

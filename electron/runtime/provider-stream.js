@@ -105,6 +105,31 @@ function createProviderError(provider, code, status = 0) {
   return error;
 }
 
+function responseError(provider, payload, status, headers, streaming = false) {
+  const detail = payload?.error?.message || payload?.error || payload?.message ||
+    `${provider.name} API returned HTTP ${status}.`;
+  const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), status);
+  error.providerCode = payload?.error?.code || payload?.code || null;
+  error.retryAfterMs = retryAfterMilliseconds(headers);
+  if (Number.isSafeInteger(payload?.retryAfterMs) && payload.retryAfterMs >= 0)
+    error.retryAfterMs = Math.max(error.retryAfterMs || 0, payload.retryAfterMs);
+  error.category = providerErrorCategory(error);
+  if (["context", "quota", "authorization"].includes(error.category)) error.retryable = false;
+  if (provider.kind === "aporia-cloud") {
+    const request = payload?.request;
+    error.cloudRequestId = headers?.get("x-aporia-request-id") || payload?.requestId || request?.requestId || null;
+    error.cloudUsageState = request?.usageState || (payload?.accountingPending ? "pending" : null);
+    // HTTP errors can originate in a proxy after inference was accepted. A new
+    // key is safe only with a matching, durably released no-dispatch receipt.
+    error.retryWithNewCloudRequest = Boolean(!payload?.accountingPending && error.cloudRequestId &&
+      request?.requestId === error.cloudRequestId && request.usageState === "not-dispatched" &&
+      request.billing === "released" && request.chargedMicros === 0);
+    if (payload?.accountingPending || ((request || streaming) && !error.retryWithNewCloudRequest))
+      error.retryable = false;
+  }
+  return error;
+}
+
 async function fetchProviderResponse(provider, init, wire) {
   if (provider.kind === "aporia-cloud") {
     if (typeof provider.authenticatedFetch !== "function") {
@@ -164,7 +189,7 @@ export async function callModelProvider({
         error.message += " Retry-After exceeds the automatic wait budget; retry later rather than ignoring the server delay.";
         throw error;
       }
-      if (provider.kind === "aporia-cloud" && error.status > 0) {
+      if (provider.kind === "aporia-cloud" && error.retryWithNewCloudRequest) {
         cloudTrace.clientRequestId = randomUUID();
         if (error.cloudRequestId) cloudTrace.retryOf = error.cloudRequestId;
       }
@@ -270,23 +295,7 @@ export async function callModelProviderOnce({
 
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
-      const detail =
-        payload?.error?.message ||
-        payload?.error ||
-        payload?.message ||
-        `${provider.name} API returned HTTP ${response.status}.`;
-      const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), response.status);
-      error.cloudRequestId = response.headers.get("x-aporia-request-id");
-      error.providerCode = payload?.error?.code || payload?.code || null;
-      error.retryAfterMs = retryAfterMilliseconds(response.headers);
-      error.category = providerErrorCategory(error);
-      if (["context", "quota", "authorization"].includes(error.category)) error.retryable = false;
-      if (provider.kind === "aporia-cloud" && (payload?.accountingPending || ["pending", "unsettled"].includes(payload?.request?.usageState))) {
-        // An HTTP failure does not prove upstream inference was never executed.
-        error.retryable = false;
-        error.cloudUsageState = payload.request?.usageState || "pending";
-      }
-      throw error;
+      throw responseError(provider, payload, response.status, response.headers);
     }
     if (!response.body) {
       throw new Error(
@@ -312,7 +321,11 @@ export async function callModelProviderOnce({
       if (data === "[DONE]") { sawDone = true; return; }
       const payload = JSON.parse(data);
       const streamError = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
-      if (streamError) throw createProviderError(provider, streamError, 0);
+      if (streamError) {
+        const status = provider.kind === "aporia-cloud" && Number.isInteger(payload.status) && payload.status >= 400 && payload.status <= 599
+          ? payload.status : 0;
+        throw responseError(provider, payload, status, response.headers, true);
+      }
       if (payload.aporia_native_state && ["responses", "anthropic-messages"].includes(wire.protocol)) nativeState = payload.aporia_native_state;
       if (provider.kind === "aporia-cloud" && typeof payload.requestId === "string" && typeof payload.usageState === "string") {
         onEvent?.({ type: "response.cloud.billing", requestId: payload.requestId, usageState: payload.usageState,
