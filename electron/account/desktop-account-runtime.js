@@ -1,4 +1,4 @@
-import { cloudModelAvailability, remoteServiceSupported } from "../../shared/cloud-availability.js";
+import { cloudModelAvailability, cloudVisionAvailability, remoteServiceSupported } from "../../shared/cloud-availability.js";
 import { loadCloudEndpoints, sessionMatchesEndpoints } from "./cloud-endpoints.js";
 import { app, dialog, safeStorage, shell } from "electron";
 import { randomUUID } from "node:crypto";
@@ -245,7 +245,8 @@ export function createDesktopAccountRuntime(options = {}) {
       await bootstrap();
       if (Date.now() - (currentSnapshot.availabilityCheckedAt || 0) > 30_000) await refreshAvailability();
       const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
-      const state = cloudModelAvailability(currentSnapshot, body.model);
+      const state = body.model === "aporia-cloud-vision"
+        ? cloudVisionAvailability(currentSnapshot) : cloudModelAvailability(currentSnapshot, body.model);
       if (!state.available) throw Object.assign(new Error(state.reason), { code: state.reason, retryable: false });
       const headers = new Headers(init.headers);
       if (!headers.has("Idempotency-Key")) headers.set("Idempotency-Key", randomUUID());

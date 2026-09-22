@@ -34,7 +34,9 @@ assert.match(accountRuntime, /fetchModelGateway/);
 assert.match(accountRuntime, /Authorization/);
 assert.match(accountRuntime, /accessToken/);
 assert.match(accountRuntime, /modelGatewayBaseUrl/);
-assert.match(accountRuntime, /APORIAX_MODEL_GATEWAY_URL/);
+const endpointSource = await readFile(new URL("../electron/account/cloud-endpoints.js", import.meta.url), "utf8");
+assert.match(accountRuntime, /loadCloudEndpoints/);
+assert.match(endpointSource, /APORIAX_MODEL_GATEWAY_URL/);
 
 const desktopSources = [visionProxy, visionCore, mainV2, accountRuntime, providerConfig].join("\n");
 assert.doesNotMatch(desktopSources, /QWEN_VISION_API_KEY/);

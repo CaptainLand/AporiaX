@@ -19,6 +19,18 @@ export function cloudModelAvailability(account, modelId) {
   }
   return { available: true, verification: "legacy-catalog-only" };
 }
+// Vision is intentionally absent from the public model picker/catalog. Only
+// its explicit authenticated Gateway capability can authorize this internal route.
+export function cloudVisionAvailability(account) {
+  const unavailable = (reason) => ({ available: false, reason });
+  if (account?.status !== "authenticated") return unavailable("SIGN_IN_REQUIRED");
+  if (account.gatewayStatus === "unavailable" || account.gatewayCapabilities?.protocolVersion !== 1)
+    return unavailable("MODEL_SERVICE_UNVERIFIED");
+  const model = account.gatewayCapabilities.models?.find((m) => (m.slug || m.id) === "aporia-cloud-vision");
+  if (!model || model.available !== true || model.supportsImages !== true)
+    return unavailable(model?.reason || "MODEL_NOT_AVAILABLE");
+  return { available: true, verification: "configuration-not-live-health" };
+}
 const descriptions = {
   SIGN_IN_REQUIRED: ["登录 Aporia Cloud 后可用", "Sign in to Aporia Cloud"],
   MODEL_NOT_AVAILABLE: ["服务端未启用此模型", "Model is not enabled by the server"],

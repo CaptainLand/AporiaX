@@ -16,7 +16,10 @@ catalog with local quota checks; an unavailable modern Gateway fails closed.
 This is configuration/entitlement validation, not a paid live model health probe.
 A refreshed account updates the actual main/side-chat model pickers. Gateway calls
 recheck stale availability before dispatch; the server remains authoritative for
-exact cost and concurrent quota admission. Cloud availability does not guarantee a
+exact cost and concurrent quota admission. The internal Vision model is intentionally
+absent from the ordinary catalog; only its explicit authenticated Gateway image
+capability permits that path, without making Flash/Pro selectable.
+Cloud availability does not guarantee a
 particular large request fits remaining quota.
 
 Remote controls and polling require an explicit `remote.supported:true` capability.
