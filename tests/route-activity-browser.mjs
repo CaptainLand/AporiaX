@@ -62,9 +62,12 @@ try {
     assert.equal(await page.locator('.ra-heading h2').innerText(), '上一轮：检查项目结构');
     await page.getByRole('button', { name: '回到最新一轮', exact: true }).click();
     await page.evaluate(() => window.routeFixture.emit({ type: 'subagent.tool.completed', agentId: 'builder-1', role: 'builder', callId: 'write', tool: 'write_file', success: true, path: 'src/account.jsx', detail: '已保存 4 行', exitCode: 0 }));
+    // emit() schedules a React render; wait for the completed action to leave the active list.
+    await active.getByText('写入文件', { exact: true }).waitFor({ state: 'hidden' });
     assert.equal(await active.getByText('写入文件', { exact: true }).count(), 0);
     await page.locator('.ra-event.completed').getByText('src/account.jsx', { exact: true }).waitFor();
     await page.evaluate(() => window.routeFixture.emit({ type: 'subagent.completed', agentId: 'builder-1', summary: '账户页面完成' }));
+    await active.locator('.ra-actor').filter({ hasText: '构建 Agent' }).waitFor({ state: 'hidden' });
     assert.equal(await active.locator('.ra-current-row').count(), 2);
     await page.evaluate(() => window.routeFixture.emit({ type: 'control.paused' }));
     await page.getByRole('heading', { name: '暂停中的动作', exact: true }).waitFor();
@@ -72,6 +75,7 @@ try {
     await page.evaluate(() => window.routeFixture.emit({ type: 'control.resumed' }));
     await page.evaluate(() => window.routeFixture.bulk());
     const timeline = page.locator('.ra-timeline');
+    await timeline.locator('.ra-event').first().locator('.ra-record-copy p').filter({ hasText: /^src\/file-84\.js$/ }).waitFor();
     assert.equal(await timeline.locator('.ra-event').count(), 40);
     assert.equal(await timeline.evaluate((el) => el.scrollTop), 0, 'Following latest stays at the top');
     assert.equal(await timeline.locator('.ra-event').first().locator('.ra-record-copy p').innerText(), 'src/file-84.js');
