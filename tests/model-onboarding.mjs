@@ -12,7 +12,7 @@ for (const status of [undefined, "booting", "anonymous", "error", "unavailable"]
   assert.equal(getDefaultTaskConfig([...records, own]).providerId, "own");
   assert.equal(getModel([...records, own], cloud.id, cloud.models[0].id).disabled, true, "No silent billing-route fallback");
 }
-const authenticated = [{ ...cloud, accountStatus: "authenticated" }, own];
+const authenticated = [{ ...cloud, accountStatus: "authenticated", cloudCatalogVerified: true }, own];
 assert.ok(getAvailableModels(authenticated).every((model) => !model.disabled));
 assert.equal(getDefaultTaskConfig(authenticated).providerId, cloud.id);
 assert.equal(getModel(authenticated, own.id, "own-model").providerId, own.id);

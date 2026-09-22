@@ -1,3 +1,4 @@
+import { projectCloudProvider } from "../shared/cloud-availability.js";
 import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ProjectUnderstandingPanel } from "./understanding/ProjectUnderstandingPanel.jsx";
@@ -2922,8 +2923,7 @@ function App() {
   const [completionNotice, setCompletionNotice] = useState(null);
   const [providerRecords, setProviders] = useState([]);
   const { account } = useAccount();
-  const providers = useMemo(() => providerRecords.map((provider) => provider.id === "aporia-cloud" || provider.source === "aporia-cloud" || provider.kind === "aporia-cloud"
-    ? { ...provider, accountStatus: account.status } : provider), [providerRecords, account.status]);
+  const providers = useMemo(() => providerRecords.map(provider => projectCloudProvider(provider, account)), [providerRecords, account]);
   const [startAddingProvider, setStartAddingProvider] = useState(false);
   const [providersReady, setProvidersReady] = useState(false);
   const [resumeNewTaskAfterProvider, setResumeNewTaskAfterProvider] =

@@ -104,6 +104,31 @@ try {
     assert.match(await page.locator(".model-choice.selected").innerText(), /own-model/, "Login must not change a custom selection");
     await choices.first().click();
     await page.keyboard.press("Escape");
+    // A successful login is independent from a usable server model catalog.
+    const refreshAccount = async () => {
+      await page.locator(".local-account-profile").click();
+      await page.getByRole("button", { name: "刷新", exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector(".local-account-actions button").disabled);
+      assert.equal(await page.locator(".local-account-remote").first().isDisabled(), true);
+      await page.locator(".local-account-profile").click();
+      await page.getByRole("button", { name: "选择模型", exact: true }).click();
+    };
+    await page.evaluate(() => { window.fixture.catalog = window.fixture.account.models; window.fixture.account = { ...window.fixture.account, models: [], capabilities: { remote: { supported: false } } }; });
+    await refreshAccount();
+    assert.equal(await choices.first().isDisabled(), true, "Empty server catalog cannot be enabled by login");
+    assert.equal(await page.locator(".local-account-profile").count(), 1, "Model unavailability must not log out the account");
+    assert.equal(await draft.inputValue(), "登录和配置之前保留这段草稿");
+    await mkdir(".tmp/model-onboarding", { recursive: true });
+    await page.locator(".model-menu").screenshot({ path: ".tmp/model-onboarding/cloud-empty-catalog.png" });
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.fixture.account = { ...window.fixture.account, models: window.fixture.catalog, gatewayCapabilities: { protocolVersion: 1, models: window.fixture.catalog.map(m => ({ id: m.id, available: false, reason: "QUOTA_UNAVAILABLE" })) } }; });
+    await refreshAccount();
+    assert.equal(await choices.first().isDisabled(), true, "Server quota denial remains disabled");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.fixture.account = { ...window.fixture.account, gatewayCapabilities: { protocolVersion: 1, models: window.fixture.catalog.map(m => ({ id: m.id, available: true })) } }; });
+    await refreshAccount();
+    assert.equal(await choices.first().isDisabled(), false);
+    await page.keyboard.press("Escape");
     await page.locator(".local-account-profile").click();
     await page.getByRole("button", { name: /退出登录/ }).click();
     await page.waitForFunction(() => document.querySelector(".composer-run-actions .send-button").disabled);

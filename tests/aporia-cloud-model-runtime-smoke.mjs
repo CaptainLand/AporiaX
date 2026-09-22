@@ -241,7 +241,9 @@ const mainSource = await readFile(
 );
 
 assert.match(accountRuntimeSource, /fetchModelGateway/);
-assert.match(accountRuntimeSource, /APORIAX_MODEL_GATEWAY_URL/);
+const endpointSource = await readFile(new URL("../electron/account/cloud-endpoints.js", import.meta.url), "utf8");
+assert.match(accountRuntimeSource, /loadCloudEndpoints/);
+assert.match(endpointSource, /APORIAX_MODEL_GATEWAY_URL/);
 assert.doesNotMatch(accountRuntimeSource, /getAccessToken\s*[:=(]/);
 assert.doesNotMatch(preloadSource, /getAccessToken|fetchModelGateway/);
 assert.match(mainSource, /APORIA_CLOUD_PROVIDER_ID/);

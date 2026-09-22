@@ -4,7 +4,8 @@ import { providerChatEndpoint } from "../provider-config.js";
 import { providerMessages } from "./task-conversation.js";
 import { providerErrorCategory, providerRetryDelay, retryAfterMilliseconds } from "./provider-errors.js";
 import { compileModelRequest } from "./request-compiler.js";
-import { runtimeRunControl } from "./durable-run.js";
+import { randomUUID } from "node:crypto";
+import { runtimeRequestTrace, runtimeRunControl } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
@@ -91,6 +92,8 @@ function createProviderError(provider, code, status = 0) {
   if (
     provider.kind === "aporia-cloud" &&
     [
+      "REQUEST_ALREADY_EXISTS", "IDEMPOTENCY_KEY_CONFLICT", "RETRY_PARENT_NOT_FOUND",
+      "PRICING_REVIEW_REQUIRED", "APORIA_USAGE_RECONCILIATION_REQUIRED", "INSUFFICIENT_CREDITS",
       "WEEKLY_QUOTA_EXHAUSTED",
       "DESKTOP_ACCOUNT_SIGNED_OUT",
       "APORIA_DEVICE_SESSION_REQUIRED",
@@ -98,6 +101,31 @@ function createProviderError(provider, code, status = 0) {
     ].includes(normalizedCode)
   ) {
     error.retryable = false;
+  }
+  return error;
+}
+
+function responseError(provider, payload, status, headers, streaming = false) {
+  const detail = payload?.error?.message || payload?.error || payload?.message ||
+    `${provider.name} API returned HTTP ${status}.`;
+  const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), status);
+  error.providerCode = payload?.error?.code || payload?.code || null;
+  error.retryAfterMs = retryAfterMilliseconds(headers);
+  if (Number.isSafeInteger(payload?.retryAfterMs) && payload.retryAfterMs >= 0)
+    error.retryAfterMs = Math.max(error.retryAfterMs || 0, payload.retryAfterMs);
+  error.category = providerErrorCategory(error);
+  if (["context", "quota", "authorization"].includes(error.category)) error.retryable = false;
+  if (provider.kind === "aporia-cloud") {
+    const request = payload?.request;
+    error.cloudRequestId = headers?.get("x-aporia-request-id") || payload?.requestId || request?.requestId || null;
+    error.cloudUsageState = request?.usageState || (payload?.accountingPending ? "pending" : null);
+    // HTTP errors can originate in a proxy after inference was accepted. A new
+    // key is safe only with a matching, durably released no-dispatch receipt.
+    error.retryWithNewCloudRequest = Boolean(!payload?.accountingPending && error.cloudRequestId &&
+      request?.requestId === error.cloudRequestId && request.usageState === "not-dispatched" &&
+      request.billing === "released" && request.chargedMicros === 0);
+    if (payload?.accountingPending || ((request || streaming) && !error.retryWithNewCloudRequest))
+      error.retryable = false;
   }
   return error;
 }
@@ -117,8 +145,10 @@ export async function callModelProvider({
   body,
   signal,
   onEvent,
+  requestTrace = {},
 }) {
   body = compileModelRequest(body);
+  const cloudTrace = { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
   let attemptUsage = null;
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
     const started = performance.now();
@@ -129,6 +159,7 @@ export async function callModelProvider({
         body,
         signal,
         onEvent,
+        cloudTrace,
       });
       onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
         status: "completed", usage: result.usage, finishReason: result.finishReason });
@@ -157,6 +188,10 @@ export async function callModelProvider({
         error.retryDeferred = true;
         error.message += " Retry-After exceeds the automatic wait budget; retry later rather than ignoring the server delay.";
         throw error;
+      }
+      if (provider.kind === "aporia-cloud" && error.retryWithNewCloudRequest) {
+        cloudTrace.clientRequestId = randomUUID();
+        if (error.cloudRequestId) cloudTrace.retryOf = error.cloudRequestId;
       }
       onEvent?.({
         type: "response.retry",
@@ -189,11 +224,12 @@ export function createOpenAICompatibleProvider({
     supportsThinking: Boolean(model.supportsThinking),
     thinkingMode: model.thinkingMode || "none",
     supportsModel: (modelId) => model.id === modelId,
-    complete: ({ body, signal, onStreamEvent }) =>
+    complete: ({ body, signal, onStreamEvent, requestTrace = {} }) =>
       callModelProvider({
         provider: { ...config, nativeModel: model },
         body,
         signal,
+        requestTrace,
         onEvent:
           typeof onStreamEvent === "function"
             ? onStreamEvent
@@ -222,6 +258,7 @@ export async function callModelProviderOnce({
   body,
   signal,
   onEvent,
+  cloudTrace,
 }) {
   throwIfAborted(signal);
   // All callers, including subagents and side chat, share this last boundary.
@@ -250,6 +287,7 @@ export async function callModelProviderOnce({
       headers: {
         "Content-Type": "application/json",
         ...wire.headers,
+        ...(provider.kind === "aporia-cloud" ? cloudTraceHeaders(cloudTrace || { ...runtimeRequestTrace(), logicalRequestId: randomUUID(), clientRequestId: randomUUID() }) : {}),
       },
       body: JSON.stringify(wire.body),
       signal: controller.signal,
@@ -257,17 +295,7 @@ export async function callModelProviderOnce({
 
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
-      const detail =
-        payload?.error?.message ||
-        payload?.error ||
-        payload?.message ||
-        `${provider.name} API returned HTTP ${response.status}.`;
-      const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), response.status);
-      error.providerCode = payload?.error?.code || payload?.code || null;
-      error.retryAfterMs = retryAfterMilliseconds(response.headers);
-      error.category = providerErrorCategory(error);
-      if (["context", "quota", "authorization"].includes(error.category)) error.retryable = false;
-      throw error;
+      throw responseError(provider, payload, response.status, response.headers);
     }
     if (!response.body) {
       throw new Error(
@@ -293,8 +321,17 @@ export async function callModelProviderOnce({
       if (data === "[DONE]") { sawDone = true; return; }
       const payload = JSON.parse(data);
       const streamError = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
-      if (streamError) throw createProviderError(provider, streamError, 0);
+      if (streamError) {
+        const status = provider.kind === "aporia-cloud" && Number.isInteger(payload.status) && payload.status >= 400 && payload.status <= 599
+          ? payload.status : 0;
+        throw responseError(provider, payload, status, response.headers, true);
+      }
       if (payload.aporia_native_state && ["responses", "anthropic-messages"].includes(wire.protocol)) nativeState = payload.aporia_native_state;
+      if (provider.kind === "aporia-cloud" && typeof payload.requestId === "string" && typeof payload.usageState === "string") {
+        onEvent?.({ type: "response.cloud.billing", requestId: payload.requestId, usageState: payload.usageState,
+          chargedMicros: Number.isSafeInteger(payload.chargedMicros) ? payload.chargedMicros : null });
+        return; // Billing uses a different usage schema; never overwrite model usage.
+      }
       if (payload.usage) { usage = payload.usage; observedUsage = payload.usage; }
       const choice = payload?.choices?.[0];
       if (choice?.finish_reason != null) finishReason = choice.finish_reason;
@@ -338,7 +375,7 @@ export async function callModelProviderOnce({
       onEvent?.({ type: "response.incomplete", code, finishReason, usage });
       throw error;
     };
-    if (!sawDone && !finishReason) failIncomplete("PROVIDER_STREAM_INCOMPLETE");
+    if ((!sawDone && provider.kind === "aporia-cloud") || (!sawDone && !finishReason)) failIncomplete("PROVIDER_STREAM_INCOMPLETE");
     if (finishReason && !["stop", "tool_calls"].includes(finishReason)) failIncomplete(`PROVIDER_FINISH_${String(finishReason).toUpperCase()}`);
     const callIds = new Set();
     for (const call of toolCalls.filter(Boolean)) {
@@ -401,4 +438,10 @@ export async function callModelProviderOnce({
     clearTimeout(idleTimeout);
     signal?.removeEventListener("abort", handleAbort);
   }
+}
+
+export function cloudTraceHeaders(trace) {
+  const entries = { "idempotency-key": trace.clientRequestId, "x-aporia-logical-request-id": trace.logicalRequestId,
+    "x-aporia-task-id": trace.taskId, "x-aporia-run-id": trace.runId, "x-aporia-agent-id": trace.agentId || "main", "x-aporia-retry-of": trace.retryOf };
+  return Object.fromEntries(Object.entries(entries).filter(([, value]) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/.test(value)));
 }

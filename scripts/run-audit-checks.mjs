@@ -7,7 +7,7 @@ const files = [
   'agent-activity.mjs', 'subagent-contract.mjs', 'subagent-lifecycle-regression.mjs',
   'subagent-model-smoke.mjs', 'subagent-loop-smoke.mjs', 'native-tool-catalog-smoke.mjs',
   'self-check-coordinator-smoke.mjs', 'runtime-background-integration.mjs', 'route-activity-model.mjs', 'harness-event-reducer-smoke.mjs',
-  'model-onboarding.mjs', 'desktop-account-auth-smoke.mjs',
+  'cloud-compatibility.mjs', 'aporia-cloud-model-runtime-smoke.mjs', 'aporia-cloud-vision-smoke.mjs', 'model-onboarding.mjs', 'desktop-account-auth-smoke.mjs',
   'goal-brief-acceptance.mjs', 'goal-process-strategy.mjs', 'goal-native-provider.mjs', 'goal-loop-integration.mjs',
   'agent-led-workflow-regression.mjs',
   'harness-loop-unit.mjs', 'harness-loop-provider.mjs', 'harness-loop-integration.mjs',
