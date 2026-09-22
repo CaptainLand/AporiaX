@@ -22,10 +22,19 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test -f .cloud-review.diff || exit 0
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.cloud-review.diff')
+          s=p.read_text()
+          needle="@@ -57,7 +66,7 @@ await test('actual account runtime stays signed in with models empty and never d\n"
+          assert s.count(needle)==1
+          s=s.replace(needle,needle+' const original=globalThis.fetch;\n')
+          p.write_text(s)
+          PY
           echo '3c66d43acfa99a733b57e5d8ca9ae39afb7a63a0ade3db0f8b26e6fbb55be0ac  .cloud-review.diff' | sha256sum --check --strict
           git apply --check .cloud-review.diff
           git apply --index .cloud-review.diff
-          git rm .cloud-review.diff
+          git rm -f .cloud-review.diff
           git diff --cached --check
           git config user.name 'AporiaX Cloud Maintenance'
           git config user.email 'cloud-maintenance@users.noreply.github.com'
