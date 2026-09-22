@@ -1,3 +1,4 @@
+import { remoteServiceSupported } from "../../shared/cloud-availability.js";
 import React, { useMemo, useState } from "react";
 import {
   Check,
@@ -36,7 +37,8 @@ export function LocalAccountPanel() {
   const remaining = quotaPercent(account?.quota);
   const modelName = useMemo(() => primaryModel(account?.models), [account?.models]);
   const signedIn = account?.status === "authenticated" && profile;
-  const remoteEnabled = Boolean(account?.device?.remoteEnabled);
+  const remoteSupported = remoteServiceSupported(account);
+  const remoteEnabled = remoteSupported && Boolean(account?.device?.remoteEnabled);
   const remoteFilesEnabled = Boolean(account?.remoteFiles?.enabled);
 
   const signIn = async () => {
@@ -113,6 +115,7 @@ export function LocalAccountPanel() {
               </span>
             </div>
 
+            {account?.usage?.unresolvedRequestCount > 0 && <p role="status" className="local-account-local-note">{tr("有用量待核算，尚未计入已确认消费。", "Some usage is pending reconciliation and excluded from confirmed totals.")}</p>}
             <div className="local-account-meta">
               <div><Cloud size={13} /><span>{modelName}</span></div>
               <div><Laptop size={13} /><span>{account?.device?.name || tr("当前电脑", "This PC")}</span></div>
@@ -122,14 +125,14 @@ export function LocalAccountPanel() {
             <button
               aria-pressed={remoteEnabled}
               className={`local-account-remote ${remoteEnabled ? "is-enabled" : ""}`}
-              disabled={busy}
+              disabled={busy || !remoteSupported}
               onClick={toggleRemoteSync}
               type="button"
             >
               <Smartphone size={14} />
               <span>
                 <strong>{tr("手机远程同步", "Mobile remote sync")}</strong>
-                <small>{remoteEnabled ? tr("已连接任务状态与远程指令", "Task status and remote commands enabled") : tr("点击后允许同账号手机访问", "Allow phones on this account to connect")}</small>
+                <small>{!remoteSupported ? tr("当前服务端不支持远程任务", "Remote tasks are not supported by this server") : remoteEnabled ? tr("已连接任务状态与远程指令", "Task status and remote commands enabled") : tr("点击后允许同账号手机访问", "Allow phones on this account to connect")}</small>
               </span>
               <i aria-hidden="true" />
             </button>

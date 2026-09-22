@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
+export const runtimeRequestTrace = () => storage.getStore()?.requestTrace || {};
 export const runtimeRunControl = () => storage.getStore()?.control || null;
 export async function waitForRuntimeResume(signal = storage.getStore()?.signal) {
   await runtimeRunControl()?.waitIfPaused(signal);

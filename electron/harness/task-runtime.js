@@ -405,6 +405,7 @@ export class HarnessTaskRuntime {
           await durableWrite(() => markRunRecoveryStarted(this.#directory(), recoveryContext.runId, safeRunId));
         }
         const result = await withDurableRun({
+          requestTrace: { taskId: record.taskId, runId: safeRunId },
           control,
           recoveryDirectory: join(this.#directory(), "workspace-recovery"),
           workspacePath: metadata?.workspacePath || recoveryContext?.workspacePath,

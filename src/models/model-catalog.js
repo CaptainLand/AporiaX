@@ -92,7 +92,7 @@ export function getAvailableModels(providers) {
       source,
       billing,
       managed: Boolean(provider.managed),
-      disabled: Boolean(model.disabled || provider.disabled || (source === "aporia-cloud" && provider.accountStatus !== "authenticated")),
+      disabled: Boolean(model.disabled || provider.disabled || (source === "aporia-cloud" && (provider.accountStatus !== "authenticated" || provider.cloudCatalogVerified !== true))),
       disabledReasonZh: source === "aporia-cloud" && provider.accountStatus !== "authenticated"
         ? provider.accountStatus === "booting" ? "正在检查登录状态…" : "登录 Aporia Cloud 后可用"
         : model.disabledReasonZh || provider.disabledReasonZh,
