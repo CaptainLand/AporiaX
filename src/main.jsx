@@ -3,7 +3,7 @@ import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ProjectUnderstandingPanel } from "./understanding/ProjectUnderstandingPanel.jsx";
 import { TaskKnowledgeControls } from "./understanding/TaskKnowledgeControls.jsx";
-import { AppUpdateControls, AppUpdateToast, updateToastKey } from "./settings/AppUpdateControls.jsx";
+import { AppUpdateControls, AppUpdateToast, AppUpdateSidebar, updateToastKey } from "./settings/AppUpdateControls.jsx";
 import { buildAnchorRestoreNotice } from "../electron/anchor-restore-notice.js";
 import { taskApprovalMode } from "./state/approval-mode.js";
 import { taskExecutionMode } from "./state/execution-mode.js";
@@ -96,7 +96,6 @@ import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
 import { AccountProvider, useAccount } from "./account/AccountContext.jsx";
 import { ModelSetupActions } from "./models/ModelSetupActions.jsx";
 import { TutorialLink } from "./help/TutorialLink.jsx";
-import { buildRemoteTaskSyncPayload } from "./account/remote-sync.js";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
   getAvailableModels,
@@ -192,6 +191,7 @@ function mergeRecoverableRuns(tasks, records, tr) {
           sourceUserId:
             messages[existingIndex].sourceUserId || record.sourceUserId,
           recoverable: recovery,
+          clarifications: record.clarifications?.length ? record.clarifications : messages[existingIndex].clarifications,
         };
         continue;
       }
@@ -207,6 +207,7 @@ function mergeRecoverableRuns(tasks, records, tr) {
         steps: [],
         changes: [],
         recoverable: recovery,
+        clarifications: record.clarifications || [],
         createdAt: record.startedAt || new Date().toISOString(),
       });
     }
@@ -628,6 +629,7 @@ function Sidebar({
           </div>
         )}
       </div>
+      <AppUpdateSidebar />
       <LocalAccountPanel />
       {contextTask && contextMenu && (
         <div
@@ -1389,6 +1391,7 @@ function AnchorHistory({
 
 function TaskWorkspace({
   task,
+  clarificationFocus,
   providers,
   sidebarCollapsed,
   onToggleSidebar,
@@ -1685,6 +1688,17 @@ function TaskWorkspace({
     try { localStorage.setItem(WORKSPACE_ANCHOR_VISIBLE_KEY, String(next)); }
     catch { onNotice(tr("显示设置未能保存，重启后会恢复默认。", "Display preference could not be saved; it will reset after restart.")); }
   };
+
+  useEffect(() => {
+    if (clarificationFocus?.taskId !== task.id) return;
+    setActiveView("dialogue");
+    const frame = requestAnimationFrame(() => {
+      const card = document.getElementById("clarification-" + clarificationFocus.questionId);
+      card?.scrollIntoView({ block: "center" });
+      card?.querySelector("input, textarea, button")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [clarificationFocus, task.id]);
   const anchorToggle = <button className="workspace-anchor-toggle" type="button" aria-pressed={anchorVisible} aria-label={anchorVisible ? tr("隐藏 Anchor 快照", "Hide Anchor snapshots") : tr("显示 Anchor 快照", "Show Anchor snapshots")} title={anchorVisible ? tr("隐藏 Anchor 快照", "Hide Anchor snapshots") : tr("显示 Anchor 快照", "Show Anchor snapshots")} onClick={toggleAnchor}><History size={14} /><span>Anchor</span></button>;
 
   const workbenchBuiltins = {
@@ -2911,6 +2925,7 @@ function App() {
   const { language, tr } = useI18n();
   const [tasks, setTasks] = useTaskStore(readSavedTasks);
   const [sessionUi] = useState(readSessionUi);
+  const [clarificationFocus, setClarificationFocus] = useState(null);
   const [activeTaskId, setActiveTaskId] = useState(
     () => chooseRestoredTaskId(tasks, sessionUi?.taskId),
   );
@@ -2953,7 +2968,6 @@ function App() {
   const dismissedUpdateKeyRef = useRef("");
   const runsRef = useRef(new Map());
   const tasksRef = useRef(tasks);
-  const remoteSyncSignatureRef = useRef("");
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
   const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
@@ -3054,29 +3068,6 @@ function App() {
   }, [tasks]);
 
 
-  useEffect(() => {
-    if (!storageReady || !window.desktop?.account?.syncTasks) return undefined;
-    let disposed = false;
-    let interval = null;
-    const sync = async (force = false) => {
-      const payload = buildRemoteTaskSyncPayload(tasks, { runningTaskIds, pausedTaskIds });
-      const signature = JSON.stringify(payload);
-      if (!force && signature === remoteSyncSignatureRef.current) return;
-      try {
-        const result = await window.desktop.account.syncTasks(payload);
-        if (!disposed && result?.enabled) remoteSyncSignatureRef.current = signature;
-      } catch {
-        // Account, network, and opt-in errors remain non-blocking for local tasks.
-      }
-    };
-    const timeout = window.setTimeout(() => void sync(false), 1_400);
-    interval = window.setInterval(() => void sync(true), 20_000);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timeout);
-      if (interval) window.clearInterval(interval);
-    };
-  }, [storageReady, tasks, runningTaskIds, pausedTaskIds]);
   useEffect(() => {
     // localStorage is only a startup cache. Serializing the entire task history
     // synchronously for every streamed token can block the renderer. Keep the
@@ -3265,9 +3256,10 @@ function App() {
     if (!window.desktop?.notifications?.onTaskRequested) {
       return undefined;
     }
-    return window.desktop.notifications.onTaskRequested(({ taskId }) => {
+    return window.desktop.notifications.onTaskRequested(({ taskId, clarificationId }) => {
       if (!tasksRef.current.some((task) => task.id === taskId)) return;
       setActiveTaskId(taskId);
+      if (clarificationId) setClarificationFocus({ taskId, questionId: clarificationId, at: Date.now() });
       writeSessionUi({ welcomeDismissed: true, taskId });
       setWelcomeOpen(false);
     });
@@ -3280,17 +3272,22 @@ function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (welcomeOpen || !window.desktop?.update?.check) return undefined;
-    const timeout = window.setTimeout(() => {
-      void window.desktop.update.check({ force: false });
-    }, 8_000);
-    return () => window.clearTimeout(timeout);
-  }, [welcomeOpen]);
+    if (!window.desktop?.update?.check) return undefined;
+    const check = () => { void window.desktop.update.check({ force: false }).catch(() => {}); };
+    const timeout = window.setTimeout(check, 2_000);
+    const interval = window.setInterval(check, 30 * 60_000);
+    window.addEventListener("online", check);
+    window.addEventListener("focus", check);
+    return () => {
+      window.clearTimeout(timeout); window.clearInterval(interval);
+      window.removeEventListener("online", check); window.removeEventListener("focus", check);
+    };
+  }, []);
 
   useEffect(() => {
     if (!window.desktop?.update?.subscribe) return undefined;
     return window.desktop.update.subscribe((next) => {
-      if (next?.phase !== "available" && next?.phase !== "downloaded") return;
+      if (next?.phase !== "available" && next?.phase !== "downloaded") { setUpdateNotice(null); return; }
       const key = updateToastKey(next);
       if (!key || dismissedUpdateKeyRef.current === key) return;
       setUpdateNotice(next);
@@ -3878,70 +3875,6 @@ function App() {
     return true;
   };
 
-
-  useEffect(() => {
-    if (!storageReady || !window.desktop?.account?.claimRemoteCommand) return undefined;
-    let disposed = false;
-    let timer = null;
-    const poll = async () => {
-      try {
-        const commands = await window.desktop.account.remoteCommands();
-        for (const candidate of Array.isArray(commands) ? commands : []) {
-          if (disposed) break;
-          if (!candidate?.id) continue;
-          const command = await window.desktop.account.claimRemoteCommand(candidate.id);
-          if (!command) continue;
-          const acknowledge = (id, status, result = "") =>
-            window.desktop.account.acknowledgeRemoteCommand(id, status, result, command.claim);
-          if (disposed) {
-            await acknowledge(command.id, "failed", "Desktop view changed before dispatch; this command was not executed.");
-            break;
-          }
-          try {
-            if (["files_roots", "files_list", "file_preview", "file_download"].includes(command.type)) {
-              if (!window.desktop.account.executeRemoteFileCommand) {
-                throw new Error("Desktop file access is unavailable in this build.");
-              }
-              const result = await window.desktop.account.executeRemoteFileCommand(command);
-              await acknowledge(command.id, "completed", JSON.stringify(result));
-              continue;
-            }
-            const task = tasksRef.current.find((candidate) => candidate.id === command.localTaskId);
-            if (!task) {
-              await acknowledge(command.id, "failed", "Task is no longer available on Desktop.");
-              continue;
-            }
-            if (command.type === "prompt") {
-              const prompt = String(command.payload?.prompt || "").trim();
-              if (!prompt || !sendMessage(prompt, [], { taskId: task.id })) {
-                throw new Error("Remote prompt could not be queued.");
-              }
-              await acknowledge(command.id, "accepted", "Prompt queued on Desktop.");
-              continue;
-            }
-            const runId = activeRunIdsByTask[task.id];
-            if (!runId) throw new Error("Task is not currently running.");
-            if (command.type === "pause") await window.desktop.harness.pause(runId);
-            else if (command.type === "resume") await window.desktop.harness.resume(runId);
-            else if (command.type === "stop") await window.desktop.harness.interrupt(runId);
-            else throw new Error("Unsupported remote command.");
-            await acknowledge(command.id, "completed", `${command.type} applied on Desktop.`);
-          } catch (error) {
-            await acknowledge(command.id, "failed", String(error?.message || "Remote command failed."));
-          }
-        }
-      } catch {
-        // Remote control is optional and must never block the local Harness.
-      } finally {
-        if (!disposed) timer = window.setTimeout(poll, 2_500);
-      }
-    };
-    timer = window.setTimeout(poll, 800);
-    return () => {
-      disposed = true;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, [storageReady, activeRunIdsByTask]);
 
   const stopActiveRun = async () => {
     if (!activeRunId || !window.desktop?.harness?.interrupt) return;
@@ -4559,6 +4492,7 @@ function App() {
                 )
               }
               restoredSession={sessionUi}
+              clarificationFocus={clarificationFocus}
               onPersistSession={writeSessionUi}
               storageReady={storageReady}
             />

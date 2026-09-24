@@ -6,10 +6,10 @@ import { extractFile, listPackage } from "@electron/asar";
 
 // Anonymous/read-only release QA: no production fixture account, OTP or inference.
 const older = process.argv.includes("--check-older");
-const output = resolve(process.argv[2] || "release/v1.0.0-preview.3");
+const output = resolve(process.argv[2] || "release/v1.0.0-preview.4");
 const archive = join(output, "win-unpacked/resources/app.asar");
 const pkg = JSON.parse(extractFile(archive, "package.json"));
-const targetVersion = "1.0.0-preview.3";
+const targetVersion = "1.0.0-preview.4";
 if (!older) {
   assert.equal(pkg.version, targetVersion);
   assert.equal(pkg.main, "electron/main-v2.js");

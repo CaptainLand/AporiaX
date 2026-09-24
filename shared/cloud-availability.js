@@ -57,4 +57,3 @@ export function projectCloudProvider(provider, account) {
   });
   return { ...provider, accountStatus: account?.status, cloudCatalogVerified: Array.isArray(account?.models), models };
 }
-export const remoteServiceSupported = (account) => account?.capabilities?.remote?.supported === true;

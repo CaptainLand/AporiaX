@@ -8,7 +8,7 @@ registerBlobScheme();
 import "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
 import { installAppUpdate } from "./app-update.js";
-import { showApprovalToast } from "./approval-toast.js";
+import { showApprovalToast, showClarificationToast, closeClarificationToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
 import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
@@ -269,6 +269,35 @@ kernel = createHarnessKernel({
 setDefaultHarnessEventBus(kernel.events);
 desktopBackground.setRunSource(() => desktopMain.harnessTaskRuntime.listActiveRuns());
 desktopMain.harnessTaskRuntime.subscribeActiveRuns(() => desktopBackground.refresh());
+const notifiedQuestions = new Set();
+const remindClarification = (event) => {
+  const question = event.questions?.find(item => item.status === "pending");
+  if (!question) { closeClarificationToast(event.runId); return; }
+  const key = event.runId + ":" + question.id;
+  if (notifiedQuestions.has(key)) return;
+  notifiedQuestions.add(key);
+  if (notifiedQuestions.size > 200) notifiedQuestions.delete(notifiedQuestions.values().next().value);
+  showClarificationToast({ question, theme: desktopMain.getDesktopWindowTheme?.() || "light",
+    onOpen: () => {
+      const window = desktopMain.getDesktopMainWindow?.();
+      if (!window || window.isDestroyed()) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      window.webContents.send("desktop:task-requested", { taskId: question.taskId, clarificationId: question.id });
+    },
+  });
+};
+kernel.events.on("clarification.required", remindClarification);
+kernel.events.on("clarification.updated", remindClarification);
+let clarificationActiveRuns = new Set();
+desktopMain.harnessTaskRuntime.subscribeActiveRuns(() => {
+  const runs = desktopMain.harnessTaskRuntime.listActiveRuns();
+  const next = new Set(runs.map(run => run.runId));
+  for (const runId of clarificationActiveRuns) if (!next.has(runId)) closeClarificationToast(runId);
+  clarificationActiveRuns = next;
+  if (!runs.some(run => run.clarifications?.some(q => q.status === "pending"))) closeClarificationToast();
+});
 kernel.events.on("approval.required", (event) => {
   const approval = event.approval || {};
   showApprovalToast({

@@ -1,5 +1,6 @@
 // Show actionable, non-sensitive messages instead of raw SSH stderr or URLs.
 const errors = [
+  ["DESKTOP_UPDATE_REQUIRED", "此版本已停止 Cloud 服务，请点击左下角更新到最新版后重试。", "This version no longer supports Cloud. Update using the bottom-left entry, then retry."],
   ["BETA_CAPACITY_FULL", "20 个内测名额已满，已有内测账户仍可登录。", "All 20 beta places are taken. Existing members can still sign in."],
   ["BETA_ACCESS_DENIED", "此账户暂无内测访问权，请联系维护者。", "This account has no active beta access. Contact the operator."],
   ["APORIAX_ACCOUNT_CENTER_FAILED", "暂时无法打开账户中心，请检查默认浏览器后重试。", "Could not open the account center. Check your default browser and retry."],

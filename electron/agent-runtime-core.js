@@ -1021,6 +1021,7 @@ function mainToolCanRunInParallel(toolCall) {
 
 import { acquireWorkbenchResources } from "./workbench/runtime-provider.js";
 import { createKnowledgeSession } from "./knowledge-projects.js";
+import { CLARIFICATION_TOOL, CLARIFICATION_POLICY, clarificationHumanMessage, clarificationResult, restoreClarificationConversation } from "./runtime/user-clarification.js";
 
 export async function runHarness({
   runId = "",
@@ -1038,6 +1039,7 @@ export async function runHarness({
   onEvent,
   onContextCheckpoint = null,
   control = null,
+  clarification = null,
   requestApproval = async () => ({ approved: false }),
   sandboxExecutor = runCommandWithFallback,
   sandboxStatusResolver = getSandboxStatus,
@@ -1068,6 +1070,8 @@ export async function runHarness({
     throw new Error("A valid model Provider is required.");
   }
   const effectiveLoopPolicy = normalizeLoopPolicy(loopPolicy);
+  // Orchestrator planners and workers inherit options, but never this capability.
+  if (clarification?.ownerRunId !== runId || permission === "builder-write" || acceptanceScope !== "task") clarification = null;
   const completionPolicy = new CompletionPolicy(effectiveLoopPolicy);
   const loopMetrics = new LoopMetrics();
   const forwardEvent = createEventEmitter(onEvent);
@@ -1201,6 +1205,7 @@ export async function runHarness({
     ? createLspManager({ workspaceRoot, emit, signal })
     : null;
   witness = createWitnessMonitor({ emit: forwardEvent, control, initialAgentActivity: recoveryContext?.contexts?.[recoveryContext.runId]?.agentActivity });
+  const unsubscribeClarification = clarification?.subscribe(event => witness.observe(event));
   const sandboxRecoveries = [];
   const safeDependencySession = createSafeDependencySession();
   const commandSandboxExecutor = async (request = {}) => {
@@ -1267,19 +1272,20 @@ export async function runHarness({
         catalog: TOOL_REGISTRY.catalog(permissionPolicy),
         approvalMode: effectiveApprovalMode,
         sandboxStatus,
-      }).filter((tool) => (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
+      }).filter((tool) => (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
         (tool.name !== "project_knowledge" || knowledgeSession.enabled) && (tool.name !== "remember_project_fact" || canCurateKnowledge()))
     : [];
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
   const resolveToolDefinitions = () => hasWorkspace
     ? TOOL_REGISTRY.definitions(permissionPolicy).filter((definition) => {
         const name = definition.function.name;
+        if (name === "request_user_input" && !clarification) return false;
         if (name === "project_knowledge" && !knowledgeSession.enabled) return false;
         if (name === "remember_project_fact" && !canCurateKnowledge()) return false;
         if (!browserEnabled && String(name || "").startsWith("browser_")) return false;
         return name !== "run_command" || commandToolAvailable;
       })
-    : [HISTORY_TOOL, TASK_BRIEF_TOOL, REPLAN_TOOL].filter((tool) => getToolPermission(permissionPolicy, tool.function.name) !== "deny");
+    : [HISTORY_TOOL, TASK_BRIEF_TOOL, REPLAN_TOOL, ...(clarification ? [CLARIFICATION_TOOL] : [])].filter((tool) => getToolPermission(permissionPolicy, tool.function.name) !== "deny");
   let enabledToolDefinitions = provider.supportsTools
     ? [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)]
     : [];
@@ -1445,6 +1451,8 @@ export async function runHarness({
   ];
 
   const savedCandidate = recoveryContext?.contexts?.[recoveryContext.runId];
+  if (clarification) conversation[0].content += "\n" + CLARIFICATION_POLICY;
+  const restoredClarifications = clarification ? await clarification.restore() : [];
   const savedMain = savedCandidate?.kind === "main" ? savedCandidate : null;
   if (savedMain) {
     const canonicalRoot = (root) => process.platform === "win32" ? resolve(root).toLowerCase() : resolve(root);
@@ -1455,7 +1463,7 @@ export async function runHarness({
   }
   restoreAgentBudget(savedMain?.agentBudget);
   if (Array.isArray(savedMain?.conversation)) {
-    const restored = recoverConversation(savedMain.conversation);
+    const restored = recoverConversation(restoreClarificationConversation(savedMain.conversation, restoredClarifications));
     const stableInstructions = conversation[0];
     conversation.splice(0, conversation.length, stableInstructions, ...restored.slice(restored[0]?.role === "system" ? 1 : 0),
       activeRequestBoundary, ...sanitizedHistory.slice(latestUserIndex).map(taskRequest));
@@ -1469,6 +1477,11 @@ export async function runHarness({
     ? [...(savedMain.inputHistory || savedMain.conversation || []).filter((message) => ["user", "assistant"].includes(message.role)),
       ...sanitizedHistory.slice(Math.max(0, latestUserIndex))]
     : [...sanitizedHistory];
+  for (const question of restoredClarifications.filter(item => item.status === "answered")) {
+    const human = clarificationHumanMessage(question);
+    if (!conversation.some(item => item.role === "user" && item.content === human.content)) conversation.push(human);
+    if (!inputHistory.some(item => item.role === "user" && item.content === human.content)) inputHistory.push(human);
+  }
   let constraintLedger = reconcileHumanConstraints(conversation, inputHistory, savedMain?.constraintLedger, { pinActive: true });
   const briefOwner = createHash("sha256").update(JSON.stringify([taskId, workspaceRoot])).digest("hex");
   const inheritedBrief = savedMain ? null : [...(messages || [])].reverse().find((message) => message.role === "assistant" && message.taskBrief?.ownerKey === briefOwner)?.taskBrief;
@@ -1523,10 +1536,12 @@ export async function runHarness({
   let anchorBaselinePromise = null;
   let anchorDirty = false;
   const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: effectiveLoopPolicy.maxRepeatedEvidence });
+  let clarificationFailures = 0;
   const observeToolProgress = (toolCall, modelResult, changes = []) => {
     let input;
     try { input = parseToolArguments(toolCall); } catch { input = toolCall.function.arguments; }
     const observation = { callId: toolCall.id, tool: toolCall.function.name, input, result: modelResult, version: verificationVersion(changeMap), changes };
+    clarification?.observeProgress(toolCall.function.name, input, modelResult);
     if (['read', 'write', 'execute'].includes(TOOL_REGISTRY.get(toolCall.function.name)?.risk)) {
       parentWorkerEvidence.set(`main:${toolCall.id}`, { tool: toolCall.function.name, error: modelResult?.error, timedOut: modelResult?.timedOut,
         skipped: modelResult?.skipped, exitCode: modelResult?.exitCode, observedVersion: observation.version });
@@ -1618,6 +1633,7 @@ export async function runHarness({
     await saveRuntimeCheckpoint({ scopeId: runId, phase: "guidance-applied", latestGuidance: steeringMessages });
     conversation.push(...sanitizedSteering.map(taskRequest));
     inputHistory.push(...sanitizedSteering);
+    clarification?.observeHumanGuidance(sanitizedSteering);
     constraintLedger = reconcileHumanConstraints(conversation, inputHistory, constraintLedger, { pinActive: true });
     taskBrief.syncSources(inputHistory);
     latestUserPrompt = steeringMessages.map((message) => String(message.content || "")).join("\n").slice(-24_000);
@@ -2686,6 +2702,46 @@ export async function runHarness({
       conversation.push(assistantToolMessage);
       await persistMainContext();
 
+      if (message.tool_calls.some(call => call.function.name === "request_user_input")) {
+        let rejected = false;
+        // Never start adjacent writes while waiting for a user-only decision.
+        const alone = message.tool_calls.length === 1;
+        for (const call of message.tool_calls) {
+          let result;
+          try {
+            if (!alone) throw new Error("CLARIFICATION_MUST_BE_ALONE: No tools in this batch were executed.");
+            if (!clarification || getToolPermission(permissionPolicy, "request_user_input") === "deny") throw new Error("CLARIFICATION_MAIN_ONLY");
+            const question = await clarification.request(parseToolArguments(call), call.id);
+            result = clarificationResult(question);
+            clarificationFailures = 0;
+            const human = clarificationHumanMessage(question);
+            conversation.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) }, human);
+            inputHistory.push(human);
+            constraintLedger = reconcileHumanConstraints(conversation, inputHistory, constraintLedger, { pinActive: true });
+            taskBrief.syncSources(inputHistory);
+            taskAcceptance.invalidate();
+            completionPolicy.reset();
+            workerReviewContinuations = 0;
+            for (const worker of subagents.values()) if (!worker.systemOwned && worker.result) {
+              worker.result.acceptance = { status: "pending", reason: "User clarified the task; review against the updated requirements." };
+              emit({ type: "subagent.reviewed", agentId: worker.agentId, role: worker.role, acceptance: worker.result.acceptance });
+            }
+          } catch (error) {
+            // Storage failures and interruption are fatal; never continue without a durable answer.
+            if (error?.name === "AbortError" || !String(error?.message).startsWith("CLARIFICATION_") || error?.message === "CLARIFICATION_LEDGER_CONFLICT") throw error;
+            result = { error: error.message, guidance: "Do not repeat questions or bypass the limit. Inspect available evidence, make only safe reversible assumptions, or finish blocked." };
+            rejected = true;
+            conversation.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+          }
+          observeToolProgress(call, result);
+        }
+        await persistMainContext();
+        if (rejected && ++clarificationFailures >= 3) throw Object.assign(new Error(isEnglish
+          ? "The model repeatedly requested invalid or over-budget questions. Saved work is retained; the task is blocked."
+          : "模型反复请求无效或超额提问，已停止空转。已完成的工作仍保留，任务处于受阻状态。"), { code: "LOOP_NO_PROGRESS" });
+        continue;
+      }
+
       const retryAfterScopedInstructions =
         await loadScopedContextForToolCalls(message.tool_calls);
 
@@ -3361,6 +3417,7 @@ export async function runHarness({
     await mcpRuntime.close().catch(() => undefined);
     if (!workbenchResources) await browserRuntime.close().catch(() => undefined);
     witness?.dispose();
+    unsubscribeClarification?.();
   }
 }
 

@@ -1,5 +1,6 @@
 export function taskSuspensionLabel(reasons = [], language = "zh-CN") {
   const en = language === "en";
+  if (reasons.includes("clarification")) return en ? "Waiting for your answer" : "等待你的回答";
   if (reasons.includes("user")) return en ? "Task paused by you" : "任务已手动暂停";
   if (reasons.includes("sleep")) return en ? "System suspended · resumes after wake" : "系统暂停 · 唤醒后自动继续";
   if (reasons.includes("network")) return en ? "Waiting for network · reconnecting automatically" : "等待网络恢复 · 自动重连";

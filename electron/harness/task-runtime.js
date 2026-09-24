@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { validateApprovalResponse } from "./approval-response.js";
 import { withDurableRun } from "../runtime/durable-run.js";
 import { createRunControl } from "../runtime/run-control.js";
+import { clarificationScope, createClarificationSession } from "../runtime/user-clarification.js";
 import {
   acknowledgeRecoverableRun,
   appendRunJournalEvents,
@@ -18,6 +19,8 @@ import {
   findConfirmedRunOperation,
   putRunEvidence,
   readRunEvidence,
+  readClarificationLedger,
+  writeClarificationLedger,
 } from "../run-store.js";
 
 function createAbortError(message = "The task was interrupted.") {
@@ -200,6 +203,7 @@ export class HarnessTaskRuntime {
       phase: this.#startingRuns.has(record.runId) ? "preparing" : "running",
       paused: record.control.paused,
       pauseReasons: record.control.snapshot().pauseReasons,
+      clarifications: record.clarification?.snapshot() || [],
       startedAt: record.startedAt,
       pendingApprovals: [...this.#pendingApprovals.values()].filter(
         (approval) => approval.runId === record.runId,
@@ -214,7 +218,14 @@ export class HarnessTaskRuntime {
   }
 
   async listRecoverableRuns() {
-    return listRecoverableRuns(this.#directory());
+    const records = await listRecoverableRuns(this.#directory());
+    return Promise.all(records.map(async record => {
+      const key = clarificationScope({ taskId: record.taskId, sourceUserId: record.sourceUserId, runId: record.runId });
+      const ledger = await readClarificationLedger(this.#directory(), key);
+      return { ...record, clarifications: (ledger?.questions || []).map((question, index) => ({
+        ...question, runId: record.runId, taskId: record.taskId, ordinal: index + 1, limit: 2,
+      })) };
+    }));
   }
 
   async recoveryContext(runId) {
@@ -249,7 +260,14 @@ export class HarnessTaskRuntime {
 
     const controller = new AbortController();
     const control = createRunControl();
+    const clarificationKey = recoveryContext?.checkpoint?.agents?.clarification?.key || clarificationScope({
+      taskId, sourceUserId: recoveryContext?.sourceUserId || metadata?.sourceUserId, runId: recoveryContext?.runId || safeRunId,
+    });
+    if ([...this.#activeRuns.values(), ...this.#startingRuns.values()].some(item => item.clarificationKey === clarificationKey)) {
+      throw new Error("This user request is already running.");
+    }
     const record = {
+      clarificationKey,
       runId: safeRunId,
       taskId: String(taskId || ""),
       clientId: String(clientId || ""),
@@ -388,6 +406,12 @@ export class HarnessTaskRuntime {
         }
       };
       try {
+        record.clarification = createClarificationSession({
+          state: await readClarificationLedger(this.#directory(), clarificationKey),
+          runId: safeRunId, taskId: record.taskId, control, signal: controller.signal, emit,
+          persist: (state, revision) => durableWrite(() => writeClarificationLedger(this.#directory(), clarificationKey, state, revision)),
+          onFailure: (error) => this.#persistenceFailed(record, error),
+        });
         for (const [scopeId, checkpoint] of Object.entries(recoveryContext?.checkpoint?.agents || {})) {
           await durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, { ...checkpoint, scopeId: scopeId === recoveryContext.runId ? safeRunId : scopeId }));
         }
@@ -404,6 +428,7 @@ export class HarnessTaskRuntime {
         if (recoveryContext?.runId) {
           await durableWrite(() => markRunRecoveryStarted(this.#directory(), recoveryContext.runId, safeRunId));
         }
+        await durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, { scopeId: "clarification", key: clarificationKey }));
         const result = await withDurableRun({
           requestTrace: { taskId: record.taskId, runId: safeRunId },
           requestCheckpoints: { ...recoveryContext?.checkpoint?.agents },
@@ -428,15 +453,18 @@ export class HarnessTaskRuntime {
           },
           operation: (value) => durableWrite(() => saveRunOperation(this.#directory(), safeRunId, value)),
         }, async () => {
+          await record.clarification.restore();
           await control.waitIfPaused(controller.signal);
           return execute({
           signal: controller.signal,
           control,
           emit,
           requestApproval,
+          clarification: record.clarification,
           });
         });
         await control.flush();
+        await record.clarification.flush();
         await this.#flushJournal(record);
         if (record.persistenceError) return { ...result, status: "blocked", error: true, content: record.persistenceError.message,
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
@@ -452,6 +480,7 @@ export class HarnessTaskRuntime {
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         throw error;
       } finally {
+        await record.clarification?.flush();
         clearTimeout(record.journalTimer);
         unsubscribeControl();
         control.abort();
@@ -485,6 +514,7 @@ export class HarnessTaskRuntime {
   interrupt(runId, { clientId = "" } = {}) {
     const record = this.#activeRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
+    record.clarification?.cancel().catch((error) => this.#persistenceFailed(record, error));
     record.controller.abort();
     record.control.abort();
     return true;
@@ -554,6 +584,12 @@ export class HarnessTaskRuntime {
     }
     approval.resolve({ approved, remembered: shouldRemember });
     return true;
+  }
+
+  async respondClarification(runId, questionId, answer, { clientId = "" } = {}) {
+    const record = this.#activeRuns.get(String(runId || ""));
+    if (!record || !clientCanControl(record, clientId) || !record.clarification) throw new Error("CLARIFICATION_STALE");
+    return record.clarification.respond(questionId, answer);
   }
 
   async snapshot() {

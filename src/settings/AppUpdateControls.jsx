@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArrowRight, Download, RefreshCw, X } from "lucide-react";
 import { useI18n } from "../i18n";
+import "./app-update-sidebar.css";
 
 function updateErrorText(tr, code) {
   if (code === "TASK_RUNNING") {
@@ -26,6 +27,50 @@ function primaryAction(status) {
   if (status.phase === "downloaded") return "install";
   if (status.phase === "downloading" || status.phase === "checking") return "";
   return "check";
+}
+
+export function AppUpdateSidebar() {
+  const { tr } = useI18n();
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    const api = window.desktop?.update;
+    if (!api?.status) return;
+    let active = true, received = false;
+    const unsubscribe = api.subscribe?.(next => { received = true; if (active) setStatus(next); });
+    void api.status().then(next => { if (active && !received) setStatus(next); }).catch(() => {});
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+  if (!status || status.channel === "dev") return null;
+  const available = Boolean(status.availableVersion);
+  const ready = status.phase === "downloaded";
+  const label = ready ? tr("更新已就绪 · 重启安装", "Update ready · Restart")
+    : status.phase === "downloading" ? tr("正在下载更新", "Downloading update")
+    : status.phase === "checking" ? tr("正在检查更新", "Checking for updates")
+    : available ? tr("有新版本更新", "New version available")
+    : status.phase === "error" ? tr("更新检查失败 · 重试", "Update check failed · Retry")
+    : tr("检查更新", "Check for updates");
+  const act = async () => {
+    const api = window.desktop.update;
+    try {
+      const result = ready ? await api.install()
+        : available && status.channel === "portable" ? await api.openRelease()
+        : available && status.phase !== "error" ? await api.download()
+        : await api.check({ force: true });
+      if (result) setStatus(result);
+    } catch { setStatus(previous => ({ ...previous, phase: "error", busy: false, error: "UPDATE_ACTION_FAILED" })); }
+  };
+  return <div className="app-update-sidebar" aria-label={tr("应用更新", "App updates")}>
+    <button type="button" onClick={act} disabled={status.busy}>
+      {status.busy ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
+      <span><strong>{label}</strong><small>{available ? "v" + status.availableVersion : "v" + status.currentVersion}
+        {status.phase === "downloading" ? " · " + Math.round(status.downloadPercent || 0) + "%" : ""}</small></span>
+    </button>
+    {status.error && <p role="status">{status.error === "TASK_RUNNING" ? updateErrorText(tr, status.error) :
+      tr("暂时无法完成更新操作，可重试或打开下载页。", "Could not complete the update. Retry or open downloads.")}</p>}
+    {status.phase === "error" && <button type="button" className="update-release-link" onClick={() => void window.desktop.update.openRelease()}>
+      {tr("打开下载页", "Open downloads")}<ArrowRight size={12} />
+    </button>}
+  </div>;
 }
 
 export function AppUpdateControls() {

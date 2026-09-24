@@ -13,10 +13,11 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0-preview.3",
+  "version": "1.0.0-preview.4",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
+    "test:clarification": "node --experimental-sqlite tests/user-clarification.mjs && node --experimental-sqlite tests/user-clarification-runtime.mjs && node tests/user-clarification-browser.mjs && electron tests/user-clarification-toast.cjs",
     "test:suspension": "node --experimental-sqlite tests/automatic-task-suspension.mjs",
     "test:0.9.7": "node --experimental-sqlite tests/release097-git.mjs && node --experimental-sqlite tests/release097-builders.mjs && node --experimental-sqlite tests/release097-ocr.mjs && node --experimental-sqlite tests/release097-browser.mjs && electron tests/release097-electron.cjs && electron tests/release097-asar.cjs",
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
@@ -37,7 +38,7 @@
     "test:task-runtime-rpc": "node --experimental-sqlite tests/task-runtime-rpc-smoke.mjs",
     "test:critical-reliability": "node --experimental-sqlite tests/approval-response-regression.mjs && node --experimental-sqlite tests/builder-merge-regression.mjs && node --experimental-sqlite tests/builder-merge-crash.mjs",
     "test:context-reliability": "node --experimental-sqlite tests/context-continuation-regression.mjs && node --experimental-sqlite tests/mcp-deferred-catalog.mjs && node --experimental-sqlite tests/understanding-lock-recovery.mjs",
-    "test:reliability-batch3": "node --experimental-sqlite tests/reliability-storage.mjs && node --experimental-sqlite tests/remote-command-inbox.mjs && node --experimental-sqlite tests/project-script-trust.mjs && node --experimental-sqlite tests/human-constraints.mjs && node --experimental-sqlite tests/release-source.mjs",
+    "test:reliability-batch3": "node --experimental-sqlite tests/reliability-storage.mjs && node --experimental-sqlite tests/privacy-no-sync.mjs && node --experimental-sqlite tests/project-script-trust.mjs && node --experimental-sqlite tests/human-constraints.mjs && node --experimental-sqlite tests/release-source.mjs",
     "test:agent-runtime-broker": "node --experimental-sqlite tests/agent-runtime-broker-smoke.mjs",
     "test:p0": "node --experimental-sqlite tests/p0-model-smoke.mjs",
     "test:cache": "node --experimental-sqlite tests/deepseek-cache-smoke.mjs",

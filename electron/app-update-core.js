@@ -3,7 +3,7 @@ export const GITHUB_REPO = "AporiaX";
 export const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 export const LATEST_RELEASE_URL = `${RELEASES_URL}/latest`;
 export const LATEST_YML_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest/download/latest.yml`;
-export const AUTO_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+export const AUTO_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 export const UPDATE_STATE_FILE = "app-update-state.json";
 
 export function isPortableBuild(env = process.env) {
@@ -19,31 +19,32 @@ export function updateChannel({ packaged = false, portable = false } = {}) {
 }
 
 function versionParts(value) {
-  const match = String(value || "").trim().replace(/^v/i, "")
-    .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
-  return match ? { core: match.slice(1, 4).map(Number), pre: match[4]?.split(".") || [] } : null;
+  const match = String(value || "").trim().replace(/^v/i, "").match(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$/,
+  );
+  if (!match || match[4]?.split(".").some(part => /^\d+$/.test(part) && part.length > 1 && part[0] === "0")) return null;
+  return { core: match.slice(1, 4).map(Number), pre: match[4]?.split(".") || [] };
 }
 
 export function compareVersions(left, right) {
   const a = versionParts(left);
   const b = versionParts(right);
-  if (!a || !b) return 0;
+  if (!a || !b) throw new Error("INVALID_UPDATE_VERSION");
   for (let index = 0; index < 3; index += 1) {
     const delta = a.core[index] - b.core[index];
     if (delta > 0) return 1;
     if (delta < 0) return -1;
   }
-  // A final version is newer than its prereleases; build metadata is ignored.
   if (!a.pre.length || !b.pre.length) return a.pre.length ? -1 : b.pre.length ? 1 : 0;
   for (let index = 0; index < Math.max(a.pre.length, b.pre.length); index += 1) {
     const x = a.pre[index], y = b.pre[index];
     if (x === y) continue;
     if (x === undefined) return -1;
     if (y === undefined) return 1;
-    const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
-    if (nx && ny) return BigInt(x) > BigInt(y) ? 1 : BigInt(x) < BigInt(y) ? -1 : 0;
-    if (nx !== ny) return nx ? -1 : 1;
-    return x > y ? 1 : -1;
+    const xn = /^\d+$/.test(x), yn = /^\d+$/.test(y);
+    if (xn && yn) return Number(x) < Number(y) ? -1 : 1;
+    if (xn !== yn) return xn ? -1 : 1;
+    return x < y ? -1 : 1;
   }
   return 0;
 }
@@ -69,7 +70,7 @@ export function shouldSkipAutoCheck(
   intervalMs = AUTO_CHECK_INTERVAL_MS,
 ) {
   const last = Number(lastCheckedAt) || 0;
-  return last > 0 && Number(now) - last < Number(intervalMs);
+  return last > 0 && Number(now) >= last && Number(now) - last < Number(intervalMs);
 }
 
 export function installUpdateDecision({

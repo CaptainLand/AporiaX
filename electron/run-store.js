@@ -109,6 +109,11 @@ function initializeSchema(database) {
       payload BLOB NOT NULL,
       PRIMARY KEY (run_id, scope_id)
     );
+    CREATE TABLE IF NOT EXISTS user_clarifications (
+      scope_key TEXT PRIMARY KEY,
+      revision INTEGER NOT NULL,
+      payload_json TEXT NOT NULL
+    );
   `);
   initializeChunkSchema(database);
   if (!database.prepare("PRAGMA table_info(run_contexts)").all().some((column) => column.name === "format"))
@@ -666,4 +671,20 @@ export async function runJournalStats(dataDirectory) {
     runs: runCount,
     events: eventCount,
   };
+}
+
+// Local-only ledger. CAS prevents concurrent attempts from resetting/exceeding a budget.
+export async function readClarificationLedger(dataDirectory, key) {
+  const database = await getDatabase(dataDirectory);
+  const row = database.prepare("SELECT payload_json FROM user_clarifications WHERE scope_key=?").get(key);
+  return row ? JSON.parse(row.payload_json) : null;
+}
+export async function writeClarificationLedger(dataDirectory, key, state, revision) {
+  if (!/^[a-f0-9]{64}$/.test(key) || state.revision !== revision + 1) throw new Error("CLARIFICATION_LEDGER_INVALID");
+  const database = await getDatabase(dataDirectory);
+  const payload = JSON.stringify(state);
+  const result = revision === 0
+    ? database.prepare("INSERT OR IGNORE INTO user_clarifications(scope_key,revision,payload_json) VALUES(?,?,?)").run(key, state.revision, payload)
+    : database.prepare("UPDATE user_clarifications SET revision=?,payload_json=? WHERE scope_key=? AND revision=?").run(state.revision, payload, key, revision);
+  if (Number(result.changes) !== 1) throw new Error("CLARIFICATION_LEDGER_CONFLICT");
 }

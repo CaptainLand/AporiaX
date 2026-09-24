@@ -309,97 +309,27 @@
   background: rgba(43, 94, 123, 0.045);
 }
 
-.local-account-remote {
-  display: grid;
-  width: 100%;
-  min-height: 43px;
-  padding: 8px 9px;
-  border: 1px solid rgba(98, 202, 239, 0.12);
-  border-radius: 9px;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  color: #918b98;
-  background: rgba(62, 177, 229, 0.035);
-  text-align: left;
-}
-
-.local-account-remote > svg { color: #62caef; }
-
-.local-account-remote > span {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.local-account-remote strong { color: #d8d4de; font-size: 10.5px; }
-.local-account-remote small { color: #817a88; font-size: 9px; line-height: 1.35; }
-
-.local-account-remote > i {
-  position: relative;
-  width: 25px;
-  height: 14px;
-  border-radius: 999px;
-  background: rgba(126, 116, 139, 0.35);
-  transition: background 160ms ease;
-}
-
-.local-account-remote > i::after {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #aaa5b1;
-  content: "";
-  transition: transform 160ms ease, background 160ms ease;
-}
-
-.local-account-remote.is-enabled {
-  border-color: rgba(98, 202, 239, 0.28);
-  background: rgba(62, 177, 229, 0.08);
-}
-
-.local-account-remote.is-enabled > i { background: rgba(65, 188, 239, 0.45); }
-.local-account-remote.is-enabled > i::after { transform: translateX(11px); background: #8bdefc; }
-.local-account-remote:hover:not(:disabled) { border-color: rgba(98, 202, 239, 0.32); }
-.local-account-remote:disabled {
-  cursor: not-allowed;
-  opacity: 1;
-}
-.local-account-local-note--security {
-  border: 1px solid rgba(98, 202, 239, 0.08);
-}
-
 /* Preserve legible labels when actions are unavailable; only mute the controls. */
 :root[data-theme="light"] .local-account-panel {
   --account-ink: #25333d;
   --account-muted: #526477;
   --account-accent: #226d96;
 }
-.local-account-popover-head strong,
-.local-account-remote strong { color: var(--account-ink); font-size: 12px; }
+.local-account-popover-head strong { color: var(--account-ink); font-size: 12px; }
 .local-account-popover-head small,
 .local-account-signin small,
 .local-account-profile small,
 .local-account-quota-card > div,
 .local-account-meta > div,
-.local-account-local-note,
-.local-account-remote small { color: var(--account-muted); font-size: 11px; line-height: 1.5; }
+.local-account-local-note { color: var(--account-muted); font-size: 11px; line-height: 1.5; }
 .local-account-connected,
 .local-account-quota-card strong,
 .local-account-meta svg,
-.local-account-remote > svg,
 .local-account-avatar { color: var(--account-accent); }
 .local-account-connected { font-size: 11px; }
 .local-account-quota-card strong { font-size: 12px; }
 .local-account-actions button { color: var(--account-muted); font-size: 12px; min-height: 34px; }
 .local-account-actions .local-account-web { grid-column: 1 / -1; color: var(--account-accent); }
 .local-account-actions button:disabled { opacity: 1; cursor: not-allowed; }
-.local-account-remote:disabled > i,
-.local-account-remote:disabled > svg { opacity: .65; }
-.local-account-actions button:focus-visible,
-.local-account-remote:focus-visible { outline: 2px solid var(--account-accent); outline-offset: 2px; }
+.local-account-actions button:focus-visible { outline: 2px solid var(--account-accent); outline-offset: 2px; }
 :root[data-theme="light"] .local-account-actions button:hover:not(:disabled) { color: #153e58; background: #e4f2f8; }

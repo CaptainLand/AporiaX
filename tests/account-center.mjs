@@ -7,7 +7,7 @@ const temp = await mkdtemp(join(tmpdir(), 'aporia-account-center-'));
 let opens = [], readyCalls = 0, readyFailure = false, browserFailure = false;
 globalThis.__accountTestElectron = { app: { getPath: () => temp }, dialog: {}, safeStorage: {}, shell: { openExternal: async url => { if (browserFailure) throw Error('BROWSER_FAILED'); opens.push(url); } } };
 let source = await readFile('electron/account/desktop-account-runtime.js', 'utf8');
-source = source.replace('import { app, dialog, safeStorage, shell } from "electron";', 'const { app, dialog, safeStorage, shell } = globalThis.__accountTestElectron;');
+source = source.replace('import { app, safeStorage, shell } from "electron";', 'const { app, safeStorage, shell } = globalThis.__accountTestElectron;');
 source = source.replace(/from "(\.\.?\/[^\"]+)"/g, (_, p) => 'from ' + JSON.stringify(pathToFileURL(resolve('electron/account', p)).href));
 const { createDesktopAccountRuntime } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 const options = { webBaseUrl: 'https://web.example.invalid/AporiaX_web', apiBaseUrl: 'https://api.example.invalid', modelGatewayBaseUrl: 'https://model.example.invalid', endpointManifest: join(temp, 'missing'), ensureConnection: async () => { readyCalls++; if (readyFailure) throw Error('APORIAX_PRIVATE_CONNECTION_FAILED'); } };

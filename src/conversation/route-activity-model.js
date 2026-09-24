@@ -126,6 +126,7 @@ export function describeRouteRecord(record, language = 'zh-CN') {
   }
   if (record.kind === 'thinking') return { title: ACTIVE.has(record.status) ? t('等待模型响应', 'Waiting for model response') : t('模型响应阶段', 'Model response phase'), detail: t('仅显示响应活动，不推测模型的内部思考。', 'Only response activity is shown; internal reasoning is not inferred.') };
   const titles = {
+    'clarification.required': ['等待你的回答', 'Waiting for your answer'], 'clarification.updated': ['提问状态已更新', 'Question updated'],
     'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],
     'turn.failed': ['任务运行失败', 'Run failed'], 'turn.cancelled': ['任务已停止', 'Run stopped'],
     'response.retry': ['模型请求重试', 'Model request retry'],

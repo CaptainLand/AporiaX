@@ -31,6 +31,16 @@ for (const name of ["@xterm/addon-search", "docx-preview", "node-pty"]) {
   assert.equal(JSON.parse(packagedFile(`node_modules/${name}/package.json`)).version, installed.version);
 }
 const entries = listPackage(archive).map((path) => path.replaceAll("\\", "/").replace(/^\//, ""));
+for (const name of ["builder-util-runtime", "graceful-fs", "js-yaml", "lazy-val", "zod", "jszip"]) {
+  assert.ok(entries.includes("node_modules/" + name + "/package.json"), "Missing packaged runtime dependency: " + name);
+}
+for (const file of ["electron/account/remote-file-broker.js", "electron/account/remote-command-inbox.js", "src/account/remote-sync.js"]) {
+  assert.ok(!entries.includes(file), `Retired mobile channel must not ship: ${file}`);
+}
+const retiredChannel = /\/remote\/(?:desktop|mobile)|account:(?:sync-tasks|remote-commands|set-remote-enabled|set-remote-file-access|claim-remote-command|ack-remote-command|execute-remote-file-command)|buildRemoteTaskSyncPayload|uploadRemoteCommandFile|createRemoteCommandInbox|MOBILE_COMPANION_ENABLED|remoteServiceSupported/;
+for (const file of entries.filter((path) => /^(?:electron|dist|shared)\/.*\.(?:js|cjs|mjs)$/.test(path))) {
+  assert.doesNotMatch(packagedFile(file).toString("utf8"), retiredChannel, `Retired mobile channel in package: ${file}`);
+}
 assert.ok(entries.some((path) => /node-pty\/.*pty\.node$/.test(path)), "Missing native PTY module");
 const natives = entries.filter((path) => /node-pty\/.*\.(node|dll|exe)$/.test(path));
 for (const path of natives) {

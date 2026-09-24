@@ -109,8 +109,10 @@ try {
     const refreshAccount = async () => {
       await page.locator(".local-account-profile").click();
       await page.getByRole("button", { name: "刷新", exact: true }).click();
-      await page.waitForFunction(() => [...document.querySelectorAll(".local-account-actions button")].find(button => button.textContent.includes("刷新"))?.disabled === false);
-      assert.equal(await page.locator(".local-account-remote").first().isDisabled(), true);
+      // The separately configured Account center action can stay disabled.
+      // Wait for Refresh itself, not whichever action happens to be first.
+      await page.waitForFunction(() => !document.querySelector(".local-account-actions button:not(.local-account-web)").disabled);
+      assert.equal(await page.locator(".local-account-remote").count(), 0);
       await page.locator(".local-account-profile").click();
       await page.getByRole("button", { name: "选择模型", exact: true }).click();
     };

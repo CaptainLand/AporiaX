@@ -1,4 +1,5 @@
 import { REPLAN_TOOL } from "./strategy-history.js";
+import { CLARIFICATION_TOOL } from "./user-clarification.js";
 import { TASK_BRIEF_TOOL } from "./task-brief.js";
 import { ToolRegistry } from "../agent-core.js";
 import { SKILL_RESOURCE_TOOL } from "../skill-resources.js";
@@ -10,6 +11,7 @@ import { MAX_SUBAGENT_ROUNDS } from "./subagent-model.js";
 export const MAX_SEARCH_RESULTS = 200;
 
 export const TOOL_DEFINITIONS = [
+  CLARIFICATION_TOOL,
   TASK_BRIEF_TOOL,
   REPLAN_TOOL,
   { type: "function", function: {
@@ -923,6 +925,7 @@ export const TOOL_DEFINITIONS = [
 ];
 
 export const TOOL_RISKS = {
+  request_user_input: "control",
   read_conversation_history: "read",
   read_skill_resource: "read",
   finish_task: "control",

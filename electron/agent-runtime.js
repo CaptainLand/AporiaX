@@ -173,6 +173,7 @@ function plannerPrompt(request, builderLimit) {
   return [
     "AporiaX Harness orchestration preflight.",
     "Do not edit files. Inspect the repository only as much as necessary to decide whether the current implementation task can be split safely across Builder workers.",
+    "If essential user-only requirements are unclear, return parallelize=false and explain the missing decision. Main can request clarification before any Builder writes; do not invent a requirement just to parallelize.",
     `At most ${Math.min(MAX_BUILDERS, Math.max(1, builderLimit))} Builder workers may be proposed.`,
     "Builder workers must own explicit, non-overlapping workspace-relative write scopes. The workspace root '.' is forbidden. Two scopes conflict when either is the same as, an ancestor of, or a descendant of the other.",
     "Do not create a Builder merely to make the team larger. If one coherent implementation is safer or the task is not actually a write task, return parallelize=false.",
@@ -556,7 +557,10 @@ async function runOrchestratedHarness(options) {
     options.onEvent?.(event);
   };
 
-  const request = latestUserText(options.messages);
+  const priorAnswers = options.clarification?.ownerRunId === options.runId
+    ? options.clarification.snapshot().filter(question => question.status === "answered") : [];
+  const request = [latestUserText(options.messages), ...priorAnswers.map(question =>
+    "User clarification of this task: " + question.question + "\nAnswer: " + question.answer.text)].join("\n\n");
   const builderLimit = Math.min(
     MAX_BUILDERS,
     Math.max(0, Number(budget?.limits?.roles?.builder || 0)),

@@ -12,11 +12,12 @@ try {
   await page.addInitScript(() => {
     localStorage.setItem('aporiax.language.v1', 'zh-CN');
     localStorage.setItem('aporiax.session-ui.v1', JSON.stringify({ welcomeDismissed: true }));
-    const account = { status: 'authenticated', profile: { displayName: '测试账号', email: 'test@example.invalid' }, quota: { remainingRatio: .8 }, models: [{ displayName: 'DeepSeek V4.1 Flash' }], device: { name: '测试电脑', remoteEnabled: false }, capabilities: { remote: { supported: false } }, remoteFiles: { enabled: true } };
-    window.centerCalls = 0; window.centerFailure = false;
+    // Even a stale opt-in and a server advertising support must stay offline.
+    const account = { status: 'authenticated', profile: { displayName: '测试账号', email: 'test@example.invalid' }, quota: { remainingRatio: .8 }, models: [{ displayName: 'DeepSeek V4.1 Flash' }], device: { name: '测试电脑', remoteEnabled: true }, capabilities: { remote: { supported: true } }, remoteFiles: { enabled: true } };
+    window.centerCalls = 0; window.centerFailure = false; window.mobileCalls = 0;
     window.desktop = {
       theme: { set: async () => {} }, providers: { list: async () => [] },
-      account: { get: async () => account, refresh: async () => account, signOut: async () => ({ status: 'anonymous' }), openCenter: async () => { window.centerCalls++; if (window.centerFailure) throw Error('APORIAX_PRIVATE_CONNECTION_FAILED'); return { opened: true }; } },
+      account: { get: async () => account, refresh: async () => account, signOut: async () => ({ status: 'anonymous' }), openCenter: async () => { window.centerCalls++; if (window.centerFailure) throw Error('APORIAX_PRIVATE_CONNECTION_FAILED'); return { opened: true }; }, syncTasks: async () => { window.mobileCalls++; return {}; }, remoteCommands: async () => { window.mobileCalls++; return []; }, claimRemoteCommand: async () => { window.mobileCalls++; } },
       tasks: { load: async () => [], save: async () => {} }, harness: { onEvent: () => () => {}, recoverableRuns: async () => [] },
       sandbox: { status: async () => ({ localAvailable: true }) },
       workbench: { request: async ({ action }) => action === 'list' ? [] : true, subscribe: () => () => {} },
@@ -28,8 +29,11 @@ try {
   await page.locator('.local-account-profile').click();
   const center = page.getByRole('button', { name: '账户中心', exact: true });
   await center.waitFor();
-  assert.equal(await page.locator('.local-account-remote.is-enabled').count(), 0, 'Unavailable remote access must not look enabled');
-  assert.equal(await page.locator('.local-account-remote:disabled').count(), 2);
+  assert.equal(await page.locator('.local-account-remote').count(), 0, 'Offline mobile controls must not render');
+  assert.equal(await page.locator('.local-account-local-note--security').count(), 0);
+  assert.doesNotMatch(await page.locator('.local-account-popover').innerText(), /手机|Mobile|Read-only mobile/);
+  await page.waitForTimeout(2200); // Covers the initial sync and command timers.
+  assert.equal(await page.evaluate(() => window.mobileCalls), 0, 'Offline companion must not poll or prepare uploads');
   await mkdir('.tmp/qa', { recursive: true });
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
@@ -42,7 +46,7 @@ try {
       }
     }
     await page.screenshot({ path: `.tmp/qa/account-center-${theme}.png` });
-    console.log(`PASS: ${theme} account menu text contrast >= ${min.toFixed(2)}:1, disabled reasons remain readable.`);
+    console.log(`PASS: ${theme} account menu text contrast >= ${min.toFixed(2)}:1, mobile controls hidden.`);
   }
   await center.click(); assert.equal(await page.evaluate(() => window.centerCalls), 1);
   await page.evaluate(() => { window.centerFailure = true; });

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-preview.4 — 2026-09-24
+
+- Check updates on each app launch, on reconnect/focus (rate limited), and every 30 minutes.
+- Keep a bottom-left update entry; preserve active-task install protection and portable download behavior.
+- Validate SemVer and publish both latest.yml and preview.yml; use the trusted beta mirror if GitHub metadata is unavailable.
+- Require Preview 4 or later for desktop Cloud authorization, token refresh, device APIs and model requests. Web sessions and BYOK remain independent.
+- Add at most two explicit clarification requests per user task with options/free text and a bottom-right notification.
+- Remove mobile task, dialogue, project and file-sync paths. Normal model requests still send the required inference input.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-preview.4.md)
+
 ## 1.0.0-preview.3 — 2026-09-24
 
 Public Windows Preview 3 on the default GitHub Latest update channel.

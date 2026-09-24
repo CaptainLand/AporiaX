@@ -568,6 +568,17 @@ export function createWitnessMonitor({
       case "self_check.completed":
         finishRecord("self-check", event, true);
         break;
+      case "clarification.required":
+      case "clarification.updated":
+        for (const question of event.questions || []) {
+          const key = "clarification:" + question.id;
+          const state = question.status === "pending" ? "waiting" : question.status === "answered" ? "completed" : "interrupted";
+          const detail = question.question + (question.answer ? "\n" + question.answer.text : "");
+          const existing = recordIndex.get(key);
+          if (existing) Object.assign(existing, { eventType: event.type, status: state, detail: clipped(detail), completedAt: state === "waiting" ? null : isoTime(timestamp) });
+          else addRecord({ key, timestamp, kind: "checkpoint", eventType: event.type, status: state, detail });
+        }
+        break;
       case "approval.required":
         status = "waiting";
         addRecord({
@@ -588,7 +599,7 @@ export function createWitnessMonitor({
           timestamp,
           kind: "status",
           eventType: "control.paused",
-          detail: pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : "用户暂停",
+          detail: pauseReasons.includes("clarification") ? "等待你的回答：上下文已保留" : pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : "用户暂停",
           status: "completed",
         });
         break;

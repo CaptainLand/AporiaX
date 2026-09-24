@@ -1,0 +1,27 @@
+.clarification-card { margin: 18px 0; padding: 20px; border: 1px solid #d4e1e7; border-radius: 14px; background: #fff; color: #303438; font-size: 14px; overflow-wrap: anywhere; scroll-margin: 24px; }
+.clarification-card header { display:flex; justify-content:space-between; gap:16px; color:#38687d; font-size:12px; }
+.clarification-card h3 { margin:12px 0 8px; font-size:15px; line-height:1.6; }
+.clarification-reason, .clarification-note { color:#626c75; font-size:13px; line-height:1.6; }
+.clarification-card fieldset { border:0; padding:0; margin:16px 0; min-width:0; }
+.clarification-card .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.clarification-option { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; margin:6px 0; border:1px solid #dfe2e5; border-radius:8px; cursor:pointer; line-height:1.5; }
+.clarification-option:has(input:checked) { border-color:#247fa4; background:#eef7fa; }
+.clarification-option input { margin-top:4px; accent-color:#247fa4; flex-shrink:0; }
+.clarification-option small { display:block; color:#626c75; margin-top:3px; font-size:12px; }
+.clarification-option .clarification-recommended { display:inline; margin-left:8px; color:#247fa4; }
+.clarification-card textarea { box-sizing:border-box; display:block; width:100%; padding:10px 12px; border:1px solid #c7d1d8; border-radius:8px; font:inherit; color:inherit; background:transparent; resize:vertical; }
+.clarification-card footer { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+.clarification-card button { border:1px solid #c7d1d8; border-radius:8px; padding:8px 12px; color:inherit; background:transparent; font:inherit; cursor:pointer; }
+.clarification-card .clarification-submit { background:#247fa4; color:#fff; border-color:#247fa4; }
+.clarification-card button:disabled { opacity:.55; cursor:default; }
+.clarification-card :focus-visible { outline:2px solid #247fa4; outline-offset:3px; }
+.clarification-note { margin:12px 0 0; font-size:12px; }
+.clarification-answer { padding:12px; background:#eef7fa; border-radius:8px; white-space:pre-wrap; }
+.clarification-error { color:#af2637; font-size:13px; }
+:root[data-theme="dark"] .clarification-card { background:#1b232c; color:#e4eaf0; border-color:#364552; }
+:root[data-theme="dark"] .clarification-card header, :root[data-theme="dark"] .clarification-recommended { color:#81cae6; }
+:root[data-theme="dark"] .clarification-reason, :root[data-theme="dark"] .clarification-note, :root[data-theme="dark"] .clarification-option small { color:#aebcc8; }
+:root[data-theme="dark"] .clarification-option, :root[data-theme="dark"] .clarification-card textarea, :root[data-theme="dark"] .clarification-card button { border-color:#536779; }
+:root[data-theme="dark"] .clarification-option:has(input:checked), :root[data-theme="dark"] .clarification-answer { background:#213c4c; }
+:root[data-theme="dark"] .clarification-error { color:#ffa4aa; }
+@media (max-width:540px) { .clarification-card { padding:14px; } }

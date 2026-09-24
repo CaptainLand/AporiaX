@@ -8,6 +8,7 @@ output/
 electron.zip
 
 # Local runtime and test artifacts
+.tmp/
 .runtime-smoke-*/
 *.log
 npm-debug.log*

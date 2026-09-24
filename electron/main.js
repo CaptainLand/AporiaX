@@ -639,7 +639,7 @@ async function startHarnessTask(
       modelId: request?.modelId,
     },
     onEvent,
-    execute: ({ signal, control, emit, requestApproval }) =>
+    execute: ({ signal, control, emit, requestApproval, clarification }) =>
       runHarness({
         ...request,
         messages,
@@ -653,6 +653,7 @@ async function startHarnessTask(
         control,
         onEvent: emit,
         requestApproval,
+        clarification,
         onNativeVisionRejected: ({ providerId, modelId }) =>
           disableProviderNativeVision(providerId, modelId),
       }),
@@ -971,6 +972,11 @@ handleTrustedIpc(ipcMain,
 handleTrustedIpc(ipcMain, "harness:active-runs", (event) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.listActiveRuns();
+});
+
+handleTrustedIpc(ipcMain, "harness:clarification-response", (event, { runId, questionId, answer } = {}) => {
+  assertTrustedSender(event);
+  return harnessTaskRuntime.respondClarification(runId, questionId, answer, { clientId: String(event.sender.id) });
 });
 
 handleTrustedIpc(ipcMain, "harness:recoverable-runs", async (event) => {

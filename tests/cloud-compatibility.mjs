@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { cloudModelAvailability, cloudVisionAvailability, projectCloudProvider, remoteServiceSupported } from '../shared/cloud-availability.js';
+import { cloudModelAvailability, cloudVisionAvailability, projectCloudProvider } from '../shared/cloud-availability.js';
 import { getAvailableModels } from '../src/models/model-catalog.js';
 import { createAporiaCloudProvider } from '../electron/provider-config.js';
 import { loadCloudEndpoints, sessionMatchesEndpoints } from '../electron/account/cloud-endpoints.js';
@@ -45,11 +45,6 @@ await test('native Flash Vision requires both catalog and explicit image capabil
  assert.equal(cloudVisionAvailability({...state,gatewayStatus:'unavailable'}).available,false);
  assert.equal(cloudVisionAvailability({...state,gatewayCapabilities:null}).available,false);
 });
-await test('remote commands require explicit supported capability, not an old device flag', () => {
- assert.equal(remoteServiceSupported({device:{remoteEnabled:true}}),false);
- assert.equal(remoteServiceSupported({capabilities:{remote:{supported:false}}}),false);
- assert.equal(remoteServiceSupported({capabilities:{remote:{supported:true}}}),true);
-});
 await test('all three deployment URLs must be explicit; missing configuration is not silently promoted', async () => {
  assert.equal(loadCloudEndpoints({endpointManifest:join(temp,'none')},{}).configured,false);
  assert.throws(()=>loadCloudEndpoints({apiBaseUrl:'https://a.invalid',endpointManifest:join(temp,'none')},{}),/INCOMPLETE/);
@@ -64,16 +59,20 @@ await test('refresh credentials are bound to the configured deployment', () => {
 });
 await test('actual account runtime stays signed in with models empty and never dispatches inference', async () => {
  const original=globalThis.fetch;
- globalThis.__cloudTestElectron={app:{getPath:()=>temp},dialog:{},shell:{},safeStorage:{isEncryptionAvailable:()=>true,encryptString:v=>Buffer.from(v),decryptString:b=>b.toString()}};
+ globalThis.__cloudTestElectron={app:{getPath:()=>temp,getVersion:()=>"1.0.0-preview.4"},dialog:{},shell:{},safeStorage:{isEncryptionAvailable:()=>true,encryptString:v=>Buffer.from(v),decryptString:b=>b.toString()}};
  const p=loadCloudEndpoints(endpointOptions,{});await writeFile(join(temp,'aporiax-account-session.json'),JSON.stringify({endpointScope:p.sessionScope,encryptedRefreshToken:Buffer.from('fixture-refresh').toString('base64')}));
  let modelCalls=0;let enabled=false;let capabilityFailure=false;let visionEnabled=false;
+ const sent=[];
+ await writeFile(join(temp,'aporiax-tasks.json'),'PRIVATE_CONVERSATION_PROJECT_SENTINEL');
  globalThis.fetch=async(url,init={})=>{
   const u=new URL(url);
+  assert.equal(new Headers(init.headers).get("X-Aporia-Desktop-Version"),"1.0.0-preview.4");
+  sent.push({path:u.pathname,method:init.method||'GET',body:init.body});
   if(u.pathname==='/auth/refresh') return json({accessToken:'fixture-access',refreshToken:'fixture-refresh'});
   if(u.pathname==='/me')return json({user:{id:'fixture-user',displayName:'Fixture'},session:{deviceId:'device'},identities:[]});
   if(u.pathname==='/models')return json(enabled?catalog:[]);
   if(u.pathname==='/quota/weekly')return json({remainingRatio:1,availableRatio:1});
-  if(u.pathname==='/capabilities')return json({protocolVersion:1,remote:{supported:false}});
+  if(u.pathname==='/capabilities')return json({protocolVersion:1,remote:{supported:true}});
   if(u.pathname==='/v1/capabilities')return capabilityFailure?new Response('',{status:503}):json({protocolVersion:1,models:enabled?[{slug:model,available:true,supportsImages:visionEnabled}]:[]});
   if(u.pathname==='/devices')return json([{id:'device',remoteEnabled:true}]);
   if(u.pathname==='/usage/summary')return json({unresolvedRequestCount:2});
@@ -81,14 +80,18 @@ await test('actual account runtime stays signed in with models empty and never d
   throw Error('Unexpected fixture route '+u.pathname);
  };
  let source=await readFile(new URL('../electron/account/desktop-account-runtime.js',import.meta.url),'utf8');
- source=source.replace('import { app, dialog, safeStorage, shell } from "electron";','const { app, dialog, safeStorage, shell } = globalThis.__cloudTestElectron;');
+ source=source.replace('import { app, safeStorage, shell } from "electron";','const { app, safeStorage, shell } = globalThis.__cloudTestElectron;');
  source=source.replace(/from "(\.\.?\/[^\"]+)"/g,(_,p)=>'from '+JSON.stringify(pathToFileURL(resolve('electron/account',p)).href));
  const {createDesktopAccountRuntime}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
  const runtime=createDesktopAccountRuntime(endpointOptions);
  try {
   const snapshot=await runtime.getSnapshot();assert.equal(snapshot.status,'authenticated');assert.equal(snapshot.models.length,0);
+  assert(sent.every(call=>['/auth/refresh','/me','/models','/quota/weekly','/capabilities','/v1/capabilities','/devices','/usage/summary'].includes(call.path)));
+  assert(sent.every(call=>call.method==='GET'||(call.path==='/auth/refresh'&&call.method==='POST')));
+  assert.doesNotMatch(JSON.stringify(sent),/PRIVATE_CONVERSATION_PROJECT_SENTINEL/);
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,0);
-  assert.deepEqual(await runtime.pollRemoteCommands(),[]);await assert.rejects(runtime.setRemoteEnabled(true),/REMOTE_SERVICE_UNAVAILABLE/);
+  for (const name of ['setRemoteEnabled','setRemoteFileAccess','syncRemoteTasks','pollRemoteCommands','claimRemoteCommand','acknowledgeRemoteCommand','executeRemoteFileCommand']) assert.equal(name in runtime,false, name+' must not exist');
+  await assert.rejects(runtime.fetchModelGateway('/remote/desktop/tasks',{method:'PUT',body:'private fixture'}),/PATH_NOT_ALLOWED/);
   enabled=true;visionEnabled=true;await runtime.refresh();
   const imageBody={model,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,fixture'}}]}]};
   await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)});assert.equal(modelCalls,1);

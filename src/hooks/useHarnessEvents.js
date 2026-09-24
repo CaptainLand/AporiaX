@@ -111,6 +111,13 @@ export function useHarnessEvents({
     const unsubscribe = window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+      if (event.type === "clarification.required" || event.type === "clarification.updated") {
+        flushPendingDeltas();
+        setTasks(current => updateRunAssistant(current, run, message => ({ ...message, clarifications: event.questions || [] })));
+        const pending = event.questions?.find(item => item.status === "pending");
+        if (pending) setRunStatus({ title: tr("等待你的回答", "Waiting for your answer"), detail: pending.question });
+        return;
+      }
       if (event.type === "knowledge.project.selected") {
         setTasks((current) => current.map((task) => task.id === run.taskId && normalizeWorkspacePath(task.workspacePath) === normalizeWorkspacePath(event.workspaceRoot || run.workspacePath) && !task.knowledgeProjectId ? { ...task, knowledgeProjectId: event.knowledgeProjectId } : task));
         return;

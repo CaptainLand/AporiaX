@@ -47,17 +47,6 @@ contextBridge.exposeInMainWorld("desktop", {
     openCenter: () => ipcRenderer.invoke("account:open-center"),
     refresh: () => ipcRenderer.invoke("account:refresh"),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
-    setRemoteEnabled: (enabled) =>
-      ipcRenderer.invoke("account:set-remote-enabled", enabled),
-    setRemoteFileAccess: (enabled) =>
-      ipcRenderer.invoke("account:set-remote-file-access", enabled),
-    syncTasks: (payload) => ipcRenderer.invoke("account:sync-tasks", payload),
-    remoteCommands: () => ipcRenderer.invoke("account:remote-commands"),
-    claimRemoteCommand: (commandId) => ipcRenderer.invoke("account:claim-remote-command", commandId),
-    acknowledgeRemoteCommand: (commandId, status, result = "", claim) =>
-      ipcRenderer.invoke("account:ack-remote-command", commandId, status, result, claim),
-    executeRemoteFileCommand: (command) =>
-      ipcRenderer.invoke("account:execute-remote-file-command", command),
   },
   tasks: {
     load: async () => {
@@ -227,6 +216,8 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("harness:acknowledge-recovery", runId),
     respondToApproval: (response) =>
       ipcRenderer.invoke("harness:approval-response", response),
+    respondToClarification: (response) =>
+      ipcRenderer.invoke("harness:clarification-response", response),
     onEvent: (listener) => {
       const handler = (_event, payload) => listener(payload);
       ipcRenderer.on("harness:event", handler);

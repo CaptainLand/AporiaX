@@ -1,12 +1,10 @@
 import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
 import { BrowserWindow, app, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { loadCloudEndpoints } from "./account/cloud-endpoints.js";
 import {
   LATEST_RELEASE_URL,
   LATEST_YML_URL,
-  UPDATE_STATE_FILE,
   createUpdateStatus,
   installUpdateDecision,
   isNewerVersion,
@@ -25,35 +23,11 @@ function broadcast(status) {
   }
 }
 
-async function readLastCheckedAt(userDataDirectory) {
-  try {
-    const raw = await readFile(join(userDataDirectory, UPDATE_STATE_FILE), "utf8");
-    const parsed = JSON.parse(raw);
-    return Number(parsed?.lastCheckedAt) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-async function writeLastCheckedAt(userDataDirectory, lastCheckedAt) {
-  try {
-    await writeFile(
-      join(userDataDirectory, UPDATE_STATE_FILE),
-      JSON.stringify({ lastCheckedAt }, null, 2),
-      "utf8",
-    );
-  } catch {
-    // Persistence is optional; the next launch can check again.
-  }
-}
-
 export function installAppUpdate({ getActiveRunCount } = {}) {
-  const userDataDirectory = () => app.getPath("userData");
   const packaged = () => app.isPackaged;
   const portable = () => isPortableBuild(process.env);
   const channel = () => updateChannel({ packaged: packaged(), portable: portable() });
   const currentVersion = () => app.getVersion();
-  const betaOnly = () => process.env.APORIAX_FRIENDS_BETA === "1";
   const activeRuns = () => Number(getActiveRunCount?.() || 0) || 0;
 
   let status = createUpdateStatus({
@@ -64,6 +38,15 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   });
   let downloaded = false;
   let configured = false;
+  // Never persist this throttle: every new app process must check at least once.
+  let lastAttemptAt = 0;
+  let pendingCheck = null;
+  let selectedFeed = LATEST_YML_URL;
+  const metadataUrls = [LATEST_YML_URL];
+  const endpoints = loadCloudEndpoints();
+  if (endpoints.configured && new URL(endpoints.accountWebUrl).protocol === "https:") {
+    metadataUrls.push(endpoints.accountWebUrl + "/downloads/latest.yml");
+  }
 
   const setStatus = (next) => {
     status = createUpdateStatus({
@@ -82,7 +65,11 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     configured = true;
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.allowPrerelease = false;
+    // The operator publishes preview releases as GitHub Latest. Use that exact
+    // YAML channel, not electron-updater's inferred "preview.yml" channel.
+    autoUpdater.setFeedURL({ provider: "generic", url: LATEST_YML_URL.replace(/latest\.yml$/, ""), channel: "latest" });
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.allowDowngrade = false;
     autoUpdater.logger = null;
     autoUpdater.on("checking-for-update", () => {
       setStatus({ phase: "checking", availableVersion: status.availableVersion });
@@ -123,17 +110,27 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     });
   };
 
-  const checkPortable = async () => {
-    setStatus({ phase: "checking" });
-    const response = await fetch(LATEST_YML_URL, {
-      headers: { "User-Agent": "AporiaX-Desktop", Accept: "text/yaml,text/plain,*/*" },
-      redirect: "follow",
-    });
-    if (!response.ok) {
-      throw new Error(`GitHub latest.yml HTTP ${response.status}`);
+  const readPublishedUpdate = async () => {
+    let failure;
+    for (const url of metadataUrls) {
+      try {
+        const response = await fetch(url, {
+          headers: { "User-Agent": "AporiaX-Desktop", Accept: "text/yaml,text/plain,*/*" },
+          redirect: "follow", cache: "no-store", signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) throw new Error("Update metadata HTTP " + response.status);
+        const parsed = parseLatestYml(await response.text());
+        isNewerVersion(parsed.version, currentVersion());
+        if (!/^AporiaX-Setup-[0-9A-Za-z.+-]+-x64\.exe$/.test(parsed.path)) throw new Error("INVALID_UPDATE_ASSET");
+        selectedFeed = url;
+        return parsed;
+      } catch (error) { failure = error; }
     }
-    const parsed = parseLatestYml(await response.text());
-    if (!parsed.version) throw new Error("GitHub latest.yml is missing a version");
+    throw failure;
+  };
+  const checkPortable = async () => {
+    setStatus({ phase: "checking", availableVersion: status.availableVersion });
+    const parsed = await readPublishedUpdate();
     if (isNewerVersion(parsed.version, currentVersion())) {
       return setStatus({
         phase: "available",
@@ -144,7 +141,10 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const checkNsis = async () => {
+    setStatus({ phase: "checking", availableVersion: status.availableVersion });
+    await readPublishedUpdate();
     configureUpdater();
+    autoUpdater.setFeedURL({ provider: "generic", url: selectedFeed.replace(/latest\.yml$/, ""), channel: "latest" });
     const result = await autoUpdater.checkForUpdates();
     const remote = String(result?.updateInfo?.version || "").trim();
     if (remote && isNewerVersion(remote, currentVersion())) {
@@ -156,29 +156,26 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const check = async ({ force = false } = {}) => {
-    if (betaOnly()) return setStatus({ phase: "not-available", availableVersion: "" });
     if (!packaged()) {
       return setStatus({ phase: "dev" });
     }
-    if (status.busy) return status;
-    if (!force && shouldSkipAutoCheck(await readLastCheckedAt(userDataDirectory()))) {
-      return status;
-    }
-    try {
-      const next =
-        channel() === "portable" ? await checkPortable() : await checkNsis();
-      await writeLastCheckedAt(userDataDirectory(), Date.now());
-      return next;
-    } catch (failure) {
-      return setStatus({
-        phase: "error",
-        error: String(failure?.message || failure || "Update check failed"),
-      });
-    }
+    if (pendingCheck) return pendingCheck;
+    if (status.busy || downloaded) return status;
+    const retryMs = status.phase === "error" ? 60_000 : undefined;
+    if (!force && shouldSkipAutoCheck(lastAttemptAt, Date.now(), retryMs)) return status;
+    lastAttemptAt = Date.now();
+    pendingCheck = (async () => {
+      try {
+        return await (channel() === "portable" ? checkPortable() : checkNsis());
+      } catch (failure) {
+        return setStatus({ phase: "error", availableVersion: status.availableVersion,
+          error: String(failure?.message || failure || "Update check failed") });
+      }
+    })();
+    try { return await pendingCheck; } finally { pendingCheck = null; }
   };
 
   const download = async () => {
-    if (betaOnly()) return setStatus({ phase: "error", error: "内测版请从内测网页手动下载更新。" });
     if (channel() === "portable") {
       await shell.openExternal(LATEST_RELEASE_URL);
       return status;
@@ -207,7 +204,6 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const install = async () => {
-    if (betaOnly()) return setStatus({ phase: "error", error: "内测版不安装公开频道更新。" });
     const decision = installUpdateDecision({
       channel: channel(),
       downloaded: downloaded || status.phase === "downloaded",

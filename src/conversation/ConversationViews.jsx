@@ -1,4 +1,5 @@
 import { TaskGoalReport } from "./TaskGoalReport.jsx";
+import { ClarificationCard } from "./ClarificationCard.jsx";
 import { RouteActivityView } from "./RouteActivityView.jsx";
 import { activityActor, describeRouteRecord } from "./route-activity-model.js";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
@@ -1367,6 +1368,7 @@ export function Conversation({
               }
             />
             </LinkWorkspace.Provider>
+            {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={isRunning && message.status === "running"} onRetry={onRetry ? () => onRetry(message) : null} />)}
             {!restored && files.length > 0 && (
               <EditedFilesCard
                 files={files}
