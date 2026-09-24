@@ -6,14 +6,16 @@ import { chromium } from "playwright-core";
 import { USER_GUIDE_URL } from "../src/help/guide-url.js";
 
 const webRoot = resolve(process.env.GUIDE_WEB_ROOT || ".tmp/aporiax-web-guide");
-const web = await preview({ root: webRoot, base: "/AporiaX_web/", preview: { port: 0, host: "127.0.0.1", open: false } });
+const desktopOnly = process.env.GUIDE_DESKTOP_ONLY === "1";
+const web = desktopOnly ? null : await preview({ root: webRoot, base: "/AporiaX_web/", preview: { port: 0, host: "127.0.0.1", open: false } });
 const app = await preview({ preview: { port: 0, host: "127.0.0.1", open: false } });
 let browser;
 try {
   browser = await chromium.launch({ executablePath: process.env.TEST_BROWSER || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
   await mkdir(".tmp/user-guide", { recursive: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
+  if (!desktopOnly) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", (error) => errors.push(error.message));
   const website = web.resolvedUrls.local[0];
   // Home can initialize the pre-existing auth flow. Stub only the Cloud domain;
@@ -58,6 +60,7 @@ try {
   await page.locator(".site-shell").waitFor();
   // Footer remains an entry on layouts that collapse the top navigation.
   assert.equal(await page.locator('.footer a[href$="guide/"]').count(), 1);
+  }
 
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   desktop.on("pageerror", (error) => errors.push(error.message));
@@ -99,8 +102,8 @@ try {
   assert.ok(calls.every((call) => Object.keys(call).sort().join() === "action,href,language"), "Tutorial URLs contain no provider, key, task or workspace data");
   await desktop.screenshot({ path: ".tmp/user-guide/about-entry.png" });
   assert.deepEqual(errors, []);
-  console.log("PASS: real Aporia Web home/footer → static guide, 12 anchors, deep-link refresh, 5 images, exact Markdown download, 390px layout, no guide API calls; production desktop API/About entries, preserved draft, explicit open error, no sensitive link data.");
+  console.log(desktopOnly ? "PASS: production desktop API/About tutorial entries, preserved draft, explicit open error and no sensitive link data." : "PASS: Web static guide and production desktop tutorial entries.");
 } finally {
   await browser?.close();
-  await Promise.all([web, app].map((server) => new Promise((done) => server.httpServer.close(done))));
+  await Promise.all([web, app].filter(Boolean).map((server) => new Promise((done) => server.httpServer.close(done))));
 }

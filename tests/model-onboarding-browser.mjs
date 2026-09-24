@@ -109,7 +109,7 @@ try {
     const refreshAccount = async () => {
       await page.locator(".local-account-profile").click();
       await page.getByRole("button", { name: "刷新", exact: true }).click();
-      await page.waitForFunction(() => !document.querySelector(".local-account-actions button").disabled);
+      await page.waitForFunction(() => [...document.querySelectorAll(".local-account-actions button")].find(button => button.textContent.includes("刷新"))?.disabled === false);
       assert.equal(await page.locator(".local-account-remote").first().isDisabled(), true);
       await page.locator(".local-account-profile").click();
       await page.getByRole("button", { name: "选择模型", exact: true }).click();
