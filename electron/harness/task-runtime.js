@@ -406,6 +406,8 @@ export class HarnessTaskRuntime {
         }
         const result = await withDurableRun({
           requestTrace: { taskId: record.taskId, runId: safeRunId },
+          requestCheckpoints: { ...recoveryContext?.checkpoint?.agents },
+          recoveryContexts: recoveryContext?.contexts || {},
           control,
           recoveryDirectory: join(this.#directory(), "workspace-recovery"),
           workspacePath: metadata?.workspacePath || recoveryContext?.workspacePath,

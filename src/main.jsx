@@ -95,6 +95,7 @@ import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
 import { AccountProvider, useAccount } from "./account/AccountContext.jsx";
 import { ModelSetupActions } from "./models/ModelSetupActions.jsx";
+import { TutorialLink } from "./help/TutorialLink.jsx";
 import { buildRemoteTaskSyncPayload } from "./account/remote-sync.js";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
@@ -2892,6 +2893,7 @@ function ApplicationSettingsModal({
                     )}
                   </strong>
                 </div>
+                <TutorialLink />
                 <AppUpdateControls />
                 <span className="application-preview-label">
                   {tr("本地优先 · Preview", "Local-first · Preview")}

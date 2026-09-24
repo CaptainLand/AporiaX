@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0-preview.3 — 2026-09-24
+
+Public Windows Preview 3 on the default GitHub Latest update channel.
+
+- Bundle the public HTTPS beta endpoints for direct browser sign-in and account-center access.
+- Improve account-menu readability and include in-app tutorials.
+- Align Flash/native image availability with Cloud; retire the old Qwen vision proxy.
+- Preserve logical request identity and receipts across outer task recovery.
+- Prefer packaged public endpoints over stale local SSH-preview profiles.
+- Fix portable version ordering for numbered previews and the future final release.
+- Keep the ordinary app identity and MIT license. Independent AporiaX Beta builds require a one-time manual switch.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-preview.3.md)
+
+## 1.0.0-preview.2 — 2026-09-23
+
+Local build of **1.0.0 Preview v2**; not yet uploaded as a GitHub Release.
+
+- Integrate the Cloud v1 compatibility contract, explicit endpoint configuration,
+  endpoint-scoped login sessions, and request identity across outer task recovery.
+- Align Cloud Flash availability and native image support with server capabilities;
+  retain BYOK when public Cloud is not configured.
+- Include the in-app guide entry and existing 1.0 Preview task continuity/workspace improvements.
+- Update the companion Web account center for available/reserved quota, unresolved
+  usage, unsupported remote controls, retryable service outages, and opt-in demo isolation.
+- The companion Web is built separately; it is not bundled in the desktop installer.
+  ICP/HTTPS/public endpoint rollout remains pending.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-preview.2.md)
+
 ## 1.0.0-preview — 2026-09-22
 
 Preview of task continuity, clearer multi-agent collaboration, and a simpler workspace UI. This is a prerelease, not the final 1.0.0 release.

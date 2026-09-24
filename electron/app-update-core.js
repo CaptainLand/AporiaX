@@ -19,24 +19,31 @@ export function updateChannel({ packaged = false, portable = false } = {}) {
 }
 
 function versionParts(value) {
-  return String(value || "")
-    .trim()
-    .replace(/^v/i, "")
-    .split(/[.+-]/)
-    .map((part) => {
-      const number = Number.parseInt(part, 10);
-      return Number.isFinite(number) ? number : 0;
-    });
+  const match = String(value || "").trim().replace(/^v/i, "")
+    .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
+  return match ? { core: match.slice(1, 4).map(Number), pre: match[4]?.split(".") || [] } : null;
 }
 
 export function compareVersions(left, right) {
   const a = versionParts(left);
   const b = versionParts(right);
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const delta = (a[index] || 0) - (b[index] || 0);
+  if (!a || !b) return 0;
+  for (let index = 0; index < 3; index += 1) {
+    const delta = a.core[index] - b.core[index];
     if (delta > 0) return 1;
     if (delta < 0) return -1;
+  }
+  // A final version is newer than its prereleases; build metadata is ignored.
+  if (!a.pre.length || !b.pre.length) return a.pre.length ? -1 : b.pre.length ? 1 : 0;
+  for (let index = 0; index < Math.max(a.pre.length, b.pre.length); index += 1) {
+    const x = a.pre[index], y = b.pre[index];
+    if (x === y) continue;
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) return BigInt(x) > BigInt(y) ? 1 : BigInt(x) < BigInt(y) ? -1 : 0;
+    if (nx !== ny) return nx ? -1 : 1;
+    return x > y ? 1 : -1;
   }
   return 0;
 }

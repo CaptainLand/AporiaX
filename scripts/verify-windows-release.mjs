@@ -45,7 +45,7 @@ const channel = version.includes("-") ? version.split("-")[1].split(".")[0] : "l
 // Local --publish never builds can still emit latest.yml for a prerelease,
 // depending on the configured publisher. Validate its exact version below.
 const updateFile = (await readdir(output)).includes(channel + ".yml") ? channel + ".yml" : "latest.yml";
-const names = [setup, portable, setup + ".blockmap", updateFile];
+const names = [...new Set([setup, portable, setup + ".blockmap", updateFile, "latest.yml"])];
 const blobs = new Map();
 for (const name of names) blobs.set(name, await readFile(join(output, name)));
 for (const name of [setup, portable]) {
@@ -53,6 +53,7 @@ for (const name of [setup, portable]) {
   assert.ok(blobs.get(name).length > 50_000_000, `Suspiciously small package: ${name}`);
 }
 const metadata = yaml.load(blobs.get(updateFile).toString());
+assert.deepEqual(yaml.load(blobs.get("latest.yml").toString()), metadata, "Default update channel must match the release");
 assert.equal(metadata.version, version); assert.equal(metadata.path, setup);
 assert.equal(metadata.sha512, hash(blobs.get(setup), "sha512", "base64"));
 const installer = metadata.files.find((file) => file.url === setup);

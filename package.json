@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0-preview",
+  "version": "1.0.0-preview.3",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -26,6 +26,7 @@
     "dist:win": "npm run build && electron-builder --win --x64 --publish never",
     "preview": "vite preview",
     "start": "electron .",
+    "start:cloud-preview": "node scripts/start-private-cloud.mjs",
     "browser:install": "playwright-core install chromium",
     "test:runtime": "node --experimental-sqlite tests/runtime-smoke.mjs",
     "test:priority-one": "node --experimental-sqlite tests/priority-one-runtime-smoke.mjs",
@@ -108,7 +109,7 @@
     "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs",
     "test:goal-loop": "node --experimental-sqlite tests/goal-brief-acceptance.mjs && node --experimental-sqlite tests/goal-process-strategy.mjs && node --experimental-sqlite tests/goal-native-provider.mjs && node --experimental-sqlite tests/goal-loop-integration.mjs",
     "test:goal-ui": "node tests/goal-ui-browser.mjs",
-    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs"
+    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs && node --experimental-sqlite tests/cloud-outer-recovery.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

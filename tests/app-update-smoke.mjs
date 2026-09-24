@@ -24,6 +24,14 @@ assert.equal(isNewerVersion("0.8.4", "0.8.4"), false);
 assert.equal(isNewerVersion("0.8.3", "0.8.4"), false);
 assert.equal(isNewerVersion("1.0.0-preview", "0.9.9"), true);
 assert.equal(isNewerVersion("1.0.0-preview", "1.0.0-preview"), false);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0-preview"), true);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0-preview.2"), true);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0-preview.2.beta.1"), true);
+assert.equal(isNewerVersion("1.0.0", "1.0.0-preview.3"), true);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0"), false);
+assert.equal(compareVersions("1.0.0+build.4", "1.0.0+build.5"), 0);
+assert.equal(compareVersions("1.0.0-preview.10", "1.0.0-preview.3"), 1);
+assert.equal(compareVersions("invalid", "1.0.0-preview.3"), 0);
 
 assert.equal(isPortableBuild({}), false);
 assert.equal(isPortableBuild({ PORTABLE_EXECUTABLE_FILE: "D:\\AporiaX.exe" }), true);

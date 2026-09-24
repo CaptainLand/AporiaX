@@ -35,17 +35,13 @@ assert.equal(cloud.billing, "weekly-quota");
 assert.equal(cloud.managed, true);
 assert.equal(cloud.requiresAccount, true);
 assert.equal(cloud.hasApiKey, false);
-assert.equal(cloud.models.length, 2);
+assert.equal(cloud.models.length, 1);
 assert.equal(cloud.models[0].id, APORIA_CLOUD_MODEL_ID);
-assert.equal(cloud.models[0].name, "DeepSeek V4 Flash");
+assert.equal(cloud.models[0].name, "DeepSeek V4.1 Flash");
 assert.equal(cloud.models[0].contextWindow, 1_000_000);
-assert.equal(cloud.models[1].id, APORIA_CLOUD_PRO_MODEL_ID);
-assert.equal(cloud.models[1].name, "DeepSeek V4 Pro");
-assert.equal(cloud.models[1].shortName, "V4 Pro");
-assert.equal(cloud.models[1].supportsThinking, true);
-assert.equal(cloud.models[1].thinkingMode, "deepseek");
-assert.equal(cloud.models[1].supportsTools, true);
-assert.equal(cloud.models[1].contextWindow, 1_000_000);
+assert.equal(cloud.models[0].imageInput, "native");
+assert.equal(cloud.models[0].supportsImages, true);
+assert.ok(!cloud.models.some(model => model.id === APORIA_CLOUD_PRO_MODEL_ID || model.id === "aporia-cloud-vision"));
 
 const byok = publicProviderSummary(
   normalizeProviderInput({
@@ -75,10 +71,9 @@ assert.deepEqual(
   groups.map((group) => group.source),
   ["aporia-cloud", "user-provider", "local"],
 );
-assert.equal(groups[0].models.length, 2);
+assert.equal(groups[0].models.length, 1);
 assert.equal(groups[0].models[0].descriptionZh, "Aporia Cloud · 每周额度");
 assert.equal(groups[0].models[0].descriptionEn, "Aporia Cloud · Weekly quota");
-assert.equal(groups[0].models[1].name, "DeepSeek V4 Pro");
 assert.equal(groups[1].models[0].descriptionZh, "My DeepSeek · 你的 API");
 assert.equal(groups[1].models[0].descriptionEn, "My DeepSeek · Your API");
 assert.equal(groups[2].models[0].descriptionZh, "Local Model · 本地");
@@ -158,18 +153,8 @@ const observedBody = JSON.parse(observedRequests[0].init.body);
 assert.equal(observedBody.model, APORIA_CLOUD_MODEL_ID);
 assert.equal(observedBody.stream, true);
 
-const proStreamed = await callModelProviderOnce({
-  provider: cloudRuntimeProvider,
-  body: {
-    model: APORIA_CLOUD_PRO_MODEL_ID,
-    messages: [{ role: "user", content: "pro test" }],
-  },
-});
-assert.equal(proStreamed.message.content, "Cloud works");
-assert.equal(observedRequests.length, 2);
-const observedProBody = JSON.parse(observedRequests[1].init.body);
-assert.equal(observedProBody.model, APORIA_CLOUD_PRO_MODEL_ID);
-assert.equal(observedProBody.stream, true);
+// Historical Pro selections are not silently rerouted to a different model.
+assert.ok(!cloud.models.some(model => model.id === APORIA_CLOUD_PRO_MODEL_ID));
 
 await assert.rejects(
   () =>

@@ -6,13 +6,20 @@ const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
 export const runtimeRequestTrace = () => storage.getStore()?.requestTrace || {};
 export const runtimeRunControl = () => storage.getStore()?.control || null;
+export function runtimeRecoveryCheckpoint(scopeId) {
+  const checkpoints = storage.getStore()?.requestCheckpoints;
+  const value = checkpoints?.[scopeId];
+  if (checkpoints) delete checkpoints[scopeId]; // Restore once; new loop requests need new identities.
+  return value;
+}
+export const runtimeRecoveryContext = (scopeId) => storage.getStore()?.recoveryContexts?.[scopeId];
 export async function waitForRuntimeResume(signal = storage.getStore()?.signal) {
   await runtimeRunControl()?.waitIfPaused(signal);
 }
 export const runtimeRecoveryDirectory = () => storage.getStore()?.recoveryDirectory || null;
 export const runtimeEvidenceStore = () => storage.getStore()?.evidenceStore || null;
 export async function saveRuntimeCheckpoint(checkpoint) {
-  await storage.getStore()?.checkpoint(checkpoint);
+  await storage.getStore()?.checkpoint?.(checkpoint);
 }
 export async function saveRuntimeContext(scopeId, state) {
   const context = storage.getStore();

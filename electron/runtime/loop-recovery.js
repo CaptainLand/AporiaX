@@ -4,6 +4,7 @@ import { providerErrorCategory } from "./provider-errors.js";
 import { conversationTokenMaterial } from "./multimodal-budget.js";
 import { runtimeRunControl, saveRuntimeCheckpoint } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
+import { createLoopRequestIdentity, withLoopRequestIdentity } from "./cloud-request-identity.js";
 
 // Recover inference, never tool execution. A bounded repair must change the
 // request. Do not replay an already-executed/uncertain external operation.
@@ -11,6 +12,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
   contextWindowTokens, getBody, complete, persist = async () => {}, onEvent = () => {},
   onFailedUsage = () => {}, shouldYield = () => false, signal, plan = null, scopeId = "main" }) {
   const control = runtimeRunControl();
+  let requestIdentity = createLoopRequestIdentity(scopeId);
   let compactions = 0, corrections = 0;
   const partialAnswers = [];
   while (true) {
@@ -19,9 +21,9 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
     if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation: [...conversation] };
     const requestConversation = [...conversation];
     try {
-      const result = control
-        ? await control.runRequest((requestSignal) => complete(getBody(requestConversation), requestSignal), signal)
-        : await complete(getBody(requestConversation), signal);
+      const result = await withLoopRequestIdentity(requestIdentity, () => control
+        ? control.runRequest((requestSignal) => complete(getBody(requestConversation), requestSignal), signal)
+        : complete(getBody(requestConversation), signal));
       control?.networkSucceeded();
       await control?.waitIfPaused(signal);
       if (shouldYield()) return { ...result, interrupted: true, requestConversation, partialAnswers };
@@ -32,7 +34,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
           ? { ...result.message, aporiaNative: undefined, aporiaContinuation: result.message, content: [...partialAnswers, result.message?.content || ""].join("\n") }
           : result.message };
     } catch (error) {
-      if (error?.attemptUsage || error?.usage) await onFailedUsage(error.attemptUsage || error.usage);
+      if (!requestIdentity.result && (error?.attemptUsage || error?.usage)) await onFailedUsage(error.attemptUsage || error.usage);
       if (signal?.aborted) throw error;
       if (control && (error?.code === "TASK_SUSPENDED" || isTemporaryNetworkError(error))) {
         if (error.code !== "TASK_SUSPENDED") control.waitForNetwork();
@@ -42,7 +44,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         await persist();
         onEvent({ type: "response.suspended", incomplete: true, usageIncomplete: !error.usage });
         await control.waitIfPaused(signal);
-        // A fresh request uses the same confirmed history, not partial calls.
+        // Resume the same logical request/key using confirmed history, never partial calls.
         onEvent({ type: "response.reset", phase: "environment-recovery" });
         continue;
       }
@@ -74,6 +76,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         throw error;
       }
       await persist();
+      requestIdentity = createLoopRequestIdentity(scopeId); // Explicit bounded repair changes the request.
       onEvent({ type: "response.recovery", category, compactions, corrections });
       onEvent({ type: "response.reset", phase: "bounded-recovery" });
       // Steering gets another boundary before any subsequent network call.

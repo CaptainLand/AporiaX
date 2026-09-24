@@ -15,6 +15,7 @@ import {
 import { useI18n } from "../i18n";
 import { useAccount } from "./AccountContext.jsx";
 import "./local-account.css";
+import { accountErrorText } from "./account-errors.js";
 
 function quotaPercent(quota) {
   return Math.min(100, Math.max(0, Math.round(Number(quota?.remainingRatio || 0) * 100)));
@@ -39,7 +40,16 @@ export function LocalAccountPanel() {
   const signedIn = account?.status === "authenticated" && profile;
   const remoteSupported = remoteServiceSupported(account);
   const remoteEnabled = remoteSupported && Boolean(account?.device?.remoteEnabled);
-  const remoteFilesEnabled = Boolean(account?.remoteFiles?.enabled);
+  const remoteFilesEnabled = remoteEnabled && Boolean(account?.remoteFiles?.enabled);
+
+  const openAccountCenter = async () => {
+    if (busy || !api?.openCenter) return;
+    setBusy(true);
+    setError("");
+    try { await api.openCenter(); }
+    catch (failure) { setError(failure?.message?.startsWith("APORIAX_PRIVATE_") || failure?.message?.includes("APORIAX_CLOUD_ENDPOINTS_") ? failure.message : "APORIAX_ACCOUNT_CENTER_FAILED"); }
+    finally { setBusy(false); }
+  };
 
   const signIn = async () => {
     if (busy) return;
@@ -171,9 +181,11 @@ export function LocalAccountPanel() {
             </p>
 
             <div className="local-account-actions">
+              <button className="local-account-web" disabled={busy || !api?.openCenter} onClick={openAccountCenter} type="button"><ExternalLink size={14} />{tr("账户中心", "Account center")}</button>
               <button disabled={busy} onClick={refresh} type="button"><RefreshCw className={busy ? "spin" : ""} size={14} />{tr("刷新", "Refresh")}</button>
               <button disabled={busy} onClick={signOut} type="button"><LogOut size={14} />{tr("退出登录", "Sign out")}</button>
             </div>
+            {error && <p className="local-account-login-error" role="alert">{accountErrorText(error, tr)}</p>}
           </div>
         )}
 
@@ -215,7 +227,7 @@ export function LocalAccountPanel() {
             {booting
               ? tr("正在检查 Aporia Account", "Checking Aporia Account")
               : busy
-                ? tr("等待浏览器确认", "Waiting for browser")
+                ? tr("连接中 / 等待网页确认", "Connecting / awaiting browser")
                 : tr("登录 AporiaX", "Sign in to AporiaX")}
           </strong>
           <small>
@@ -226,6 +238,7 @@ export function LocalAccountPanel() {
         </span>
         {busy ? <RefreshCw className="spin" size={14} /> : <ExternalLink size={14} />}
       </button>
+      {!busy && (error || account?.error) && <p className="local-account-login-error" role="alert">{accountErrorText(error || account.error, tr)}</p>}
     </div>
   );
 }

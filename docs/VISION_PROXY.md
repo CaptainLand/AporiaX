@@ -2,12 +2,22 @@
 
 AporiaX can use a separate OpenAI-compatible vision model when the selected main model cannot read images.
 
+## Managed Aporia Cloud (2026-09-22)
+
+Cloud now exposes only DeepSeek V4.1 Flash (`aporia-cloud-default`, upstream
+`deepseek-flash`). It reads images natively after the gateway capability check;
+the old managed Qwen / `aporia-cloud-vision` observation request is retired.
+Original images remain in the conversation and can be included in subsequent
+model rounds; each round is accounted from its own upstream usage, not as a
+one-time cached text observation. Pro is no longer offered as a managed model.
+These changes do not remove users' own Qwen/BYOK providers described below.
+
 ## Behavior
 
 - If the selected main model supports image input natively, AporiaX keeps the existing native multimodal path and sends the image directly to that model.
 - If the selected main model is text-only, AporiaX looks for a configured Provider with an image-capable model.
 - When a usable Vision Provider is configured, the renderer treats image attachments as available even for a text-only main model. This prevents the Composer from rejecting the image before the Vision Proxy can see it.
-- The runtime still keeps the main model's native image capability unchanged. A text-only model such as DeepSeek V4 never receives the raw image.
+- The runtime still keeps the main model's native image capability unchanged. A model explicitly configured as text-only never receives the raw image.
 - The image-capable model receives only the image attachment(s) and the accompanying user text. It returns a compact visual observation.
 - The original image attachment is then removed from the text-only model request and the visual observation is appended to the user message.
 - Non-image attachments remain unchanged.

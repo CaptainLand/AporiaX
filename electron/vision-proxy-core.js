@@ -13,7 +13,6 @@ const PREFERRED_VISION_MODELS = [
 const MAX_VISION_IMAGES_PER_MESSAGE = 8;
 const MAX_VISION_DATA_URL_CHARS = 28_000_000;
 const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
-const APORIA_CLOUD_VISION_MODEL_ID = "aporia-cloud-vision";
 
 function preferredVisionCandidate(candidates) {
   for (const pattern of PREFERRED_VISION_MODELS) {
@@ -23,24 +22,6 @@ function preferredVisionCandidate(candidates) {
     if (match) return match;
   }
   return candidates[0] || null;
-}
-
-function aporiaCloudVisionCandidate(records) {
-  const provider = records.find(
-    (record) =>
-      record?.id === APORIA_CLOUD_PROVIDER_ID ||
-      record?.kind === "aporia-cloud" ||
-      record?.source === "aporia-cloud",
-  );
-  if (provider?.visionCapability?.status !== "ready" || provider.visionCapability.model?.id !== APORIA_CLOUD_VISION_MODEL_ID) return null;
-  return {
-    provider,
-    model: {
-      id: APORIA_CLOUD_VISION_MODEL_ID,
-      name: provider.visionCapability.model.name || "Aporia Cloud Vision",
-      supportsImages: true,
-    },
-  };
 }
 
 function publicVisionProxyMetadata(candidate) {
@@ -62,7 +43,7 @@ export function exposeVisionProxyCapabilities(providers) {
     models: (Array.isArray(provider?.models) ? provider.models : []).map(
       (model) => {
         const proxyCandidate = provider.id === APORIA_CLOUD_PROVIDER_ID
-          ? aporiaCloudVisionCandidate(records)
+          ? null
           : selectVisionCandidate(records, { mainProviderId: provider.id, mainModelId: model.id });
         const proxyMetadata = publicVisionProxyMetadata(proxyCandidate);
         const nativeSupportsImages = modelSupportsVision(model);

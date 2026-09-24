@@ -25,18 +25,18 @@ assert.equal(normalizeProviderModels([{ id: "qwen3.5-flash", capabilities: { vis
 assert.equal(normalizeProviderModels([{ id: "qwen3.5-flash", capabilities: { vision: false } }], "other")[0].supportsImages, true);
 assert.equal(normalizeProviderModels([{ id: "qwen3.5-flash", imageInput: "text" }], "other")[0].supportsImages, false);
 assert.equal(normalizeProviderModels([{ id: "qwen3.5-flash" }], "other")[0].imageInput, "native");
-assert.equal(publicProviderSummary(createAporiaCloudProvider()).models[0].imageInput, "text");
-assert.equal(publicProviderSummary(createAporiaCloudProvider()).models[0].supportsImages, false);
+assert.equal(publicProviderSummary(createAporiaCloudProvider()).models[0].imageInput, "native");
+assert.equal(publicProviderSummary(createAporiaCloudProvider()).models[0].supportsImages, true);
 
 const byok = { id: "ds", hasApiKey: true, models: [{ id, supportsImages: false }] };
 const cloud = { id: "aporia-cloud", kind: "aporia-cloud", hasApiKey: false, models: [{ id: "aporia-cloud-default", supportsImages: false }] };
 let exposed = exposeVisionProxyCapabilities([byok, cloud]);
 assert.equal(exposed[0].models[0].supportsImageProxy, false);
 assert.equal(exposed[1].models[0].supportsImageProxy, false, "Cloud presence alone must not imply readiness");
-const ready = { status: "ready", verification: "configuration", model: { id: "aporia-cloud-vision", name: "Actual configured model", supportsImages: true } };
+const ready = { status: "ready", verification: "configuration", model: { id: "aporia-cloud-default", name: "Actual configured model", supportsImages: true } };
 const readyCloud = { ...cloud, visionCapability: ready };
 assert.equal(exposeVisionProxyCapabilities([byok, readyCloud])[0].models[0].supportsImageProxy, false, "BYOK does not silently spend Cloud quota");
-assert.equal(exposeVisionProxyCapabilities([readyCloud])[0].models[0].visionProxy.modelName, ready.model.name);
+assert.equal(exposeVisionProxyCapabilities([readyCloud])[0].models[0].supportsImageProxy, false, "Cloud never routes to a secondary image model");
 const local = { id: "vision", hasApiKey: false, models: [{ id: "my-vision", imageInput: "native" }] };
 assert.equal(selectVisionCandidate([byok, local, readyCloud]), null, "unconfigured providers cannot be selected");
 const configured = { ...local, hasApiKey: true, encryptedKey: "test-not-a-key" };

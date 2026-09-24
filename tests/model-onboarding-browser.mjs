@@ -60,7 +60,8 @@ try {
     assert.equal(await page.locator(".model-menu .model-choice.selected").count(), 1);
     console.log("REPRODUCED 0.9.9 baseline: anonymous new task auto-selects Cloud and both Cloud models are enabled.");
   } else {
-    assert.equal(await choices.count(), 2);
+    assert.equal(await choices.count(), 1);
+    assert.match(await choices.first().innerText(), /V4\.1 Flash/);
     assert.equal(await choices.first().isDisabled(), true);
     assert.equal(await choices.last().isDisabled(), true);
     assert.equal(await page.locator(".model-menu .model-choice.selected").count(), 0);
@@ -150,7 +151,7 @@ try {
     await page.getByRole("button", { name: "侧聊模型", exact: true }).click();
     const sideMenu = page.getByRole("dialog", { name: "选择侧聊模型", exact: true });
     assert.equal(await sideMenu.getByRole("option").first().isDisabled(), true);
-    assert.equal(await sideMenu.getByRole("option").nth(1).isDisabled(), true);
+    assert.equal(await sideMenu.getByRole("option").nth(1).isDisabled(), false, "Own API stays available after Cloud logout");
     const search = sideMenu.getByRole("textbox", { name: "搜索模型", exact: true });
     await search.fill("DeepSeek");
     await search.press("Enter");

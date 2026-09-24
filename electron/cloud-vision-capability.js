@@ -14,10 +14,10 @@ export async function queryCloudVisionCapability(fetchGateway, { timeoutMs = 350
         const response = await fetchGateway("/v1/capabilities/vision", { method: "GET", signal: controller.signal });
         if (!response.ok) return { status: response.status === 401 || response.status === 403 ? "unavailable" : "unknown", reason: response.status === 404 ? "CAPABILITY_UNSUPPORTED" : `HTTP_${response.status}` };
         const data = await response.json();
-        if (data?.status !== "ready" || data?.verification !== "configuration" || data?.model?.id !== "aporia-cloud-vision" || data?.model?.supportsImages !== true) {
+        if (data?.status !== "ready" || data?.verification !== "configuration" || data?.model?.id !== "aporia-cloud-default" || data?.model?.supportsImages !== true) {
           return { status: data?.status === "unavailable" ? "unavailable" : "unknown", reason: "VISION_NOT_READY" };
         }
-        return { status: "ready", verification: "configuration", model: { id: data.model.id, name: String(data.model.name || "Aporia Cloud Vision").slice(0, 120), supportsImages: true } };
+        return { status: "ready", verification: "configuration", model: { id: data.model.id, name: String(data.model.name || "DeepSeek V4.1 Flash").slice(0, 120), supportsImages: true } };
       } catch { return { status: "unknown", reason: "CAPABILITY_UNAVAILABLE" }; }
     })()]);
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }

@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("desktop", {
   account: {
     get: () => ipcRenderer.invoke("account:get"),
     signIn: () => ipcRenderer.invoke("account:sign-in"),
+    openCenter: () => ipcRenderer.invoke("account:open-center"),
     refresh: () => ipcRenderer.invoke("account:refresh"),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
     setRemoteEnabled: (enabled) =>

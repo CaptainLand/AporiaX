@@ -53,6 +53,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   const portable = () => isPortableBuild(process.env);
   const channel = () => updateChannel({ packaged: packaged(), portable: portable() });
   const currentVersion = () => app.getVersion();
+  const betaOnly = () => process.env.APORIAX_FRIENDS_BETA === "1";
   const activeRuns = () => Number(getActiveRunCount?.() || 0) || 0;
 
   let status = createUpdateStatus({
@@ -155,6 +156,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const check = async ({ force = false } = {}) => {
+    if (betaOnly()) return setStatus({ phase: "not-available", availableVersion: "" });
     if (!packaged()) {
       return setStatus({ phase: "dev" });
     }
@@ -176,6 +178,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const download = async () => {
+    if (betaOnly()) return setStatus({ phase: "error", error: "内测版请从内测网页手动下载更新。" });
     if (channel() === "portable") {
       await shell.openExternal(LATEST_RELEASE_URL);
       return status;
@@ -204,6 +207,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const install = async () => {
+    if (betaOnly()) return setStatus({ phase: "error", error: "内测版不安装公开频道更新。" });
     const decision = installUpdateDecision({
       channel: channel(),
       downloaded: downloaded || status.phase === "downloaded",

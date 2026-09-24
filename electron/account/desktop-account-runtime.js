@@ -73,10 +73,12 @@ export function createDesktopAccountRuntime(options = {}) {
   let bootstrapPromise = null;
   let refreshPromise = null;
   let loginPromise = null;
+  let accountPagePromise = null;
   let activeServer = null;
   let installationIdPromise = null;
 
   async function request(path, { method = "GET", body, token = "", timeout = REQUEST_TIMEOUT_MS } = {}) {
+    await options.ensureConnection?.();
     const headers = new Headers({ Accept: "application/json" });
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -213,6 +215,7 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   async function authenticatedFetch(baseUrl, path, init = {}, retry = true) {
+    await options.ensureConnection?.();
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
       throw new Error("APORIAX_AUTHENTICATED_PATH_INVALID");
     }
@@ -245,7 +248,8 @@ export function createDesktopAccountRuntime(options = {}) {
       await bootstrap();
       if (Date.now() - (currentSnapshot.availabilityCheckedAt || 0) > 30_000) await refreshAvailability();
       const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
-      const state = body.model === "aporia-cloud-vision"
+      const imageInput = body.messages?.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url"));
+      const state = imageInput && body.model === "aporia-cloud-default"
         ? cloudVisionAvailability(currentSnapshot) : cloudModelAvailability(currentSnapshot, body.model);
       if (!state.available) throw Object.assign(new Error(state.reason), { code: state.reason, retryable: false });
       const headers = new Headers(init.headers);
@@ -531,6 +535,7 @@ export function createDesktopAccountRuntime(options = {}) {
     if (!endpoints.configured) throw new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED");
     if (loginPromise) return loginPromise;
     loginPromise = (async () => {
+      await options.ensureConnection?.();
       const installationId = await getOrCreateInstallationId();
       const { codeVerifier, codeChallenge, state } = createDesktopPkce();
       const callback = await waitForBrowserCallback({ state, codeChallenge });
@@ -566,6 +571,19 @@ export function createDesktopAccountRuntime(options = {}) {
     return loginPromise;
   }
 
+  function openAccountCenter() {
+    if (!endpoints.configured) return Promise.reject(new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED"));
+    if (accountPagePromise) return accountPagePromise;
+    accountPagePromise = (async () => {
+      await options.ensureConnection?.();
+      // Fixed trusted route; never accept renderer URLs or put credentials in links.
+      const url = new URL("account", `${webBaseUrl}/`);
+      await shell.openExternal(url.toString());
+      return { opened: true };
+    })().finally(() => { accountPagePromise = null; });
+    return accountPagePromise;
+  }
+
   async function refresh() {
     const refreshed = await rotateRefreshToken();
     if (!refreshed) {
@@ -597,6 +615,7 @@ export function createDesktopAccountRuntime(options = {}) {
     modelGatewayBaseUrl,
     getSnapshot: bootstrap,
     startBrowserLogin,
+    openAccountCenter,
     setRemoteEnabled,
     setRemoteFileAccess,
     syncRemoteTasks,
@@ -608,6 +627,6 @@ export function createDesktopAccountRuntime(options = {}) {
     fetchModelGateway,
     refresh,
     signOut,
-    close: () => { closeActiveServer(); inbox?.close(); inbox = null; },
+    close: () => { closeActiveServer(); inbox?.close(); inbox = null; return options.closeConnection?.(); },
   };
 }

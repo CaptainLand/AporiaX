@@ -28,7 +28,7 @@ export function loadCloudEndpoints(options = {}, env = process.env) {
   const configured = provided === 3 || env.APORIAX_ALLOW_LEGACY_CLOUD_ENDPOINTS === "true";
   const endpoints = Object.fromEntries(Object.entries(provided ? selected : legacy).map(([k,v]) => [k, normalize(v)]));
   return { ...endpoints, configured, source: provided ? "explicit" : "legacy-preview",
-    sessionScope: createHash("sha256").update(JSON.stringify(endpoints)).digest("hex"),
+    sessionScope: createHash("sha256").update(JSON.stringify(options.connectionIdentity ? { ...endpoints, connectionIdentity: options.connectionIdentity } : endpoints)).digest("hex"),
     legacy: Object.entries(legacy).every(([k,v]) => endpoints[k] === v) };
 }
 export function sessionMatchesEndpoints(record, endpoints) {

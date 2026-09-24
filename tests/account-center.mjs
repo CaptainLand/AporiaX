@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const temp = await mkdtemp(join(tmpdir(), 'aporia-account-center-'));
+let opens = [], readyCalls = 0, readyFailure = false, browserFailure = false;
+globalThis.__accountTestElectron = { app: { getPath: () => temp }, dialog: {}, safeStorage: {}, shell: { openExternal: async url => { if (browserFailure) throw Error('BROWSER_FAILED'); opens.push(url); } } };
+let source = await readFile('electron/account/desktop-account-runtime.js', 'utf8');
+source = source.replace('import { app, dialog, safeStorage, shell } from "electron";', 'const { app, dialog, safeStorage, shell } = globalThis.__accountTestElectron;');
+source = source.replace(/from "(\.\.?\/[^\"]+)"/g, (_, p) => 'from ' + JSON.stringify(pathToFileURL(resolve('electron/account', p)).href));
+const { createDesktopAccountRuntime } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+const options = { webBaseUrl: 'https://web.example.invalid/AporiaX_web', apiBaseUrl: 'https://api.example.invalid', modelGatewayBaseUrl: 'https://model.example.invalid', endpointManifest: join(temp, 'missing'), ensureConnection: async () => { readyCalls++; if (readyFailure) throw Error('APORIAX_PRIVATE_CONNECTION_FAILED'); } };
+try {
+  const runtime = createDesktopAccountRuntime(options);
+  await Promise.all([runtime.openAccountCenter(), runtime.openAccountCenter('https://attacker.invalid/?token=secret')]);
+  assert.equal(readyCalls, 1); assert.deepEqual(opens, ['https://web.example.invalid/AporiaX_web/account']);
+  assert.equal(new URL(opens[0]).search, '');
+  readyFailure = true;
+  await assert.rejects(runtime.openAccountCenter(), /CONNECTION_FAILED/); assert.equal(opens.length, 1);
+  readyFailure = false; browserFailure = true;
+  await assert.rejects(runtime.openAccountCenter(), /BROWSER_FAILED/);
+  browserFailure = false; await runtime.openAccountCenter(); assert.equal(opens.length, 2, 'Retry after failure is enabled');
+  const unconfigured = createDesktopAccountRuntime({ endpointManifest: join(temp, 'missing') });
+  await assert.rejects(unconfigured.openAccountCenter(), /ENDPOINTS_NOT_CONFIGURED/);
+  const ipc = await readFile('electron/account/register-desktop-account-ipc.js', 'utf8');
+  assert.match(ipc, /handleTrustedIpc\(ipcMain, "account:open-center", \(\) => getDesktopAccountRuntime\(\).openAccountCenter\(\)\)/);
+  const preload = await readFile('electron/preload.cjs', 'utf8');
+  assert.match(preload, /openCenter: \(\) => ipcRenderer.invoke\("account:open-center"\)/);
+  console.log('PASS: fixed account route with base path, no credentials/renderer URL, connection readiness, duplicate click, failure retry, configured endpoint gate and trusted IPC.');
+} finally { delete globalThis.__accountTestElectron; await rm(temp, { recursive: true, force: true }); }

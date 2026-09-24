@@ -19,14 +19,15 @@ export function cloudModelAvailability(account, modelId) {
   }
   return { available: true, verification: "legacy-catalog-only" };
 }
-// Vision is intentionally absent from the public model picker/catalog. Only
-// its explicit authenticated Gateway capability can authorize this internal route.
+// Managed vision is native Flash input, not a separate hidden Qwen route.
 export function cloudVisionAvailability(account) {
+  const availability = cloudModelAvailability(account, "aporia-cloud-default");
+  if (!availability.available) return availability;
   const unavailable = (reason) => ({ available: false, reason });
   if (account?.status !== "authenticated") return unavailable("SIGN_IN_REQUIRED");
   if (account.gatewayStatus === "unavailable" || account.gatewayCapabilities?.protocolVersion !== 1)
     return unavailable("MODEL_SERVICE_UNVERIFIED");
-  const model = account.gatewayCapabilities.models?.find((m) => (m.slug || m.id) === "aporia-cloud-vision");
+  const model = account.gatewayCapabilities.models?.find((m) => (m.slug || m.id) === "aporia-cloud-default");
   if (!model || model.available !== true || model.supportsImages !== true)
     return unavailable(model?.reason || "MODEL_NOT_AVAILABLE");
   return { available: true, verification: "configuration-not-live-health" };

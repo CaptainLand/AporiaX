@@ -1,0 +1,8 @@
+.tutorial-entry { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+.tutorial-link { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; border: 1px solid #dce2e7; border-radius: 8px; background: #fff; color: #376f89; font-size: 12px; line-height: 1.5; text-decoration: none; }
+.tutorial-link:hover { background: #edf5f8; }
+.tutorial-link:focus-visible { outline: 2px solid #5a9cba; outline-offset: 2px; }
+.tutorial-link-error { font-size: 12px; color: #a15a31; overflow-wrap: anywhere; user-select: text; }
+:root[data-theme="dark"] .tutorial-link { border-color: #3a3f47; background: #20242b; color: #8abbd0; }
+:root[data-theme="dark"] .tutorial-link:hover { background: #29323b; }
+:root[data-theme="dark"] .tutorial-link-error { color: #d5a477; }

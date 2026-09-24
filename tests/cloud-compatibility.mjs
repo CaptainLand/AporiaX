@@ -36,12 +36,12 @@ await test('confirmed legacy catalog works without pretending upstream health is
  const p=projectCloudProvider(cloud,signedIn); assert.equal(getAvailableModels([p])[0].disabled,false);
  const own={id:'local',models:[]}; assert.equal(projectCloudProvider(own,{}),own);
 });
-await test('hidden Vision requires explicit image capability, not public catalog presence', () => {
- const state={...signedIn,models:[],gatewayCapabilities:{protocolVersion:1,models:[{slug:'aporia-cloud-vision',supportsImages:true,available:true}]}};
+await test('native Flash Vision requires both catalog and explicit image capability', () => {
+ const state={...signedIn,gatewayCapabilities:{protocolVersion:1,models:[{slug:model,supportsImages:true,available:true}]}};
  assert.equal(cloudVisionAvailability(state).available,true);
- assert.equal(cloudModelAvailability(state,model).available,false);
+ assert.equal(cloudVisionAvailability({...state,models:[]}).available,false);
  assert.equal(cloudVisionAvailability({...state,status:'signed-out'}).available,false);
- assert.equal(cloudVisionAvailability({...state,gatewayCapabilities:{protocolVersion:1,models:[{slug:'aporia-cloud-vision',supportsImages:false,available:true}]}}).available,false);
+ assert.equal(cloudVisionAvailability({...state,gatewayCapabilities:{protocolVersion:1,models:[{slug:model,supportsImages:false,available:true}]}}).available,false);
  assert.equal(cloudVisionAvailability({...state,gatewayStatus:'unavailable'}).available,false);
  assert.equal(cloudVisionAvailability({...state,gatewayCapabilities:null}).available,false);
 });
@@ -74,7 +74,7 @@ await test('actual account runtime stays signed in with models empty and never d
   if(u.pathname==='/models')return json(enabled?catalog:[]);
   if(u.pathname==='/quota/weekly')return json({remainingRatio:1,availableRatio:1});
   if(u.pathname==='/capabilities')return json({protocolVersion:1,remote:{supported:false}});
-  if(u.pathname==='/v1/capabilities')return capabilityFailure?new Response('',{status:503}):json({protocolVersion:1,models:[...(enabled?[{slug:model,available:true}]:[]),...(visionEnabled?[{slug:'aporia-cloud-vision',available:true,supportsImages:true}]:[])]});
+  if(u.pathname==='/v1/capabilities')return capabilityFailure?new Response('',{status:503}):json({protocolVersion:1,models:enabled?[{slug:model,available:true,supportsImages:visionEnabled}]:[]});
   if(u.pathname==='/devices')return json([{id:'device',remoteEnabled:true}]);
   if(u.pathname==='/usage/summary')return json({unresolvedRequestCount:2});
   if(u.pathname==='/v1/chat/completions'){modelCalls++;assert(new Headers(init.headers).get('idempotency-key'));return sse();}
@@ -89,9 +89,12 @@ await test('actual account runtime stays signed in with models empty and never d
   const snapshot=await runtime.getSnapshot();assert.equal(snapshot.status,'authenticated');assert.equal(snapshot.models.length,0);
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,0);
   assert.deepEqual(await runtime.pollRemoteCommands(),[]);await assert.rejects(runtime.setRemoteEnabled(true),/REMOTE_SERVICE_UNAVAILABLE/);
-  visionEnabled=true;await runtime.refresh();await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model:'aporia-cloud-vision'})});assert.equal(modelCalls,1);
-  assert(getAvailableModels([projectCloudProvider(cloud,await runtime.getSnapshot())]).every(m=>m.disabled));
-  visionEnabled=false;await runtime.refresh();await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model:'aporia-cloud-vision'})}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,1);
+  enabled=true;visionEnabled=true;await runtime.refresh();
+  const imageBody={model,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,fixture'}}]}]};
+  await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)});assert.equal(modelCalls,1);
+  assert(getAvailableModels([projectCloudProvider(cloud,await runtime.getSnapshot())]).every(m=>!m.disabled));
+  visionEnabled=false;await runtime.refresh();await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,1);
+  await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model:'aporia-cloud-vision'})}),/MODEL_NOT_AVAILABLE/);
   enabled=true;await runtime.refresh();assert.equal((await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})})).status,200);assert.equal(modelCalls,2);
   capabilityFailure=true;assert.equal((await runtime.refresh()).status,'authenticated');
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})}),/MODEL_SERVICE_UNVERIFIED/);

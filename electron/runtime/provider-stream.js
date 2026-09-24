@@ -7,6 +7,7 @@ import { compileModelRequest } from "./request-compiler.js";
 import { randomUUID } from "node:crypto";
 import { runtimeRequestTrace, runtimeRunControl } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
+import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest } from "./cloud-request-identity.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -124,6 +125,7 @@ function responseError(provider, payload, status, headers, streaming = false) {
     error.retryWithNewCloudRequest = Boolean(!payload?.accountingPending && error.cloudRequestId &&
       request?.requestId === error.cloudRequestId && request.usageState === "not-dispatched" &&
       request.billing === "released" && request.chargedMicros === 0);
+    if (error.retryWithNewCloudRequest && error.code === "REQUEST_ALREADY_EXISTS") error.retryable = true;
     if (payload?.accountingPending || ((request || streaming) && !error.retryWithNewCloudRequest))
       error.retryable = false;
   }
@@ -148,7 +150,10 @@ export async function callModelProvider({
   requestTrace = {},
 }) {
   body = compileModelRequest(body);
-  const cloudTrace = { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
+  const identity = provider.kind === "aporia-cloud" ? currentLoopRequestIdentity() : null;
+  const prepared = identity ? await prepareCloudRequest(identity, provider, body, requestTrace, signal) : null;
+  if (prepared?.result) return prepared.result;
+  const cloudTrace = prepared?.trace || { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
   let attemptUsage = null;
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
     const started = performance.now();
@@ -164,7 +169,9 @@ export async function callModelProvider({
       onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
         status: "completed", usage: result.usage, finishReason: result.finishReason });
       attemptUsage = mergeTokenUsage(attemptUsage, result.usage);
-      return { ...result, attemptUsage };
+      const completed = { ...result, attemptUsage };
+      await rememberCloudResult(identity, completed);
+      return completed;
     } catch (error) {
       attemptUsage = mergeTokenUsage(attemptUsage, error.usage);
       error.attemptUsage = attemptUsage;
@@ -190,8 +197,7 @@ export async function callModelProvider({
         throw error;
       }
       if (provider.kind === "aporia-cloud" && error.retryWithNewCloudRequest) {
-        cloudTrace.clientRequestId = randomUUID();
-        if (error.cloudRequestId) cloudTrace.retryOf = error.cloudRequestId;
+        await rotateCloudRequest(cloudTrace, error.cloudRequestId, identity);
       }
       onEvent?.({
         type: "response.retry",
@@ -293,6 +299,10 @@ export async function callModelProviderOnce({
       signal: controller.signal,
     }, wire);
 
+    if (provider.kind === "aporia-cloud") {
+      try { await rememberCloudReceipt(currentLoopRequestIdentity(), response.headers.get("x-aporia-request-id")); }
+      catch (error) { await response.body?.cancel(); throw error; }
+    }
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       throw responseError(provider, payload, response.status, response.headers);
