@@ -1,4 +1,6 @@
 // Only public account/catalog data. Authentication is not model entitlement.
+const quotaManagedByGateway = (account, model) => ["affordable-output-v1", "actual-usage-v1"].includes(account.gatewayCapabilities?.modelGateway?.quotaAdmission) &&
+  ["QUOTA_UNAVAILABLE", "CREDITS_UNAVAILABLE"].includes(model?.reason);
 export function cloudModelAvailability(account, modelId) {
   const unavailable = (reason) => ({ available: false, reason });
   if (account?.status !== "authenticated") return unavailable("SIGN_IN_REQUIRED");
@@ -8,7 +10,7 @@ export function cloudModelAvailability(account, modelId) {
   if (account.gatewayStatus === "unavailable") return unavailable("MODEL_SERVICE_UNVERIFIED");
   if (account.gatewayCapabilities?.protocolVersion === 1) {
     const match = account.gatewayCapabilities.models?.find((m) => (m.slug || m.id) === modelId);
-    if (!match || match.available !== true) return unavailable(match?.reason || "MODEL_NOT_AVAILABLE");
+    if (!match || (match.available !== true && !quotaManagedByGateway(account, match))) return unavailable(match?.reason || "MODEL_NOT_AVAILABLE");
     return { available: true, verification: "configuration-not-live-health" };
   }
   // A legacy server has a confirmed catalog, but cannot prove live configuration.
@@ -28,7 +30,7 @@ export function cloudVisionAvailability(account) {
   if (account.gatewayStatus === "unavailable" || account.gatewayCapabilities?.protocolVersion !== 1)
     return unavailable("MODEL_SERVICE_UNVERIFIED");
   const model = account.gatewayCapabilities.models?.find((m) => (m.slug || m.id) === "aporia-cloud-default");
-  if (!model || model.available !== true || model.supportsImages !== true)
+  if (!model || (model.available !== true && !quotaManagedByGateway(account, model)) || model.supportsImages !== true)
     return unavailable(model?.reason || "MODEL_NOT_AVAILABLE");
   return { available: true, verification: "configuration-not-live-health" };
 }

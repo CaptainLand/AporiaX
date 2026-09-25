@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.5"><img alt="Source v1.0.0-preview.5" src="https://img.shields.io/badge/source-v1.0.0--preview.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.6"><img alt="Source v1.0.0-preview.6" src="https://img.shields.io/badge/source-v1.0.0--preview.6-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX is a local-first Windows desktop agent. It edits code, runs commands, and creates Word / PowerPoint / Excel files inside an authorized workspace. Conversation, files, browser, terminal, and Git share one screen. Steps, evidence, and rollback stay in the UI instead of collapsing into a chat reply.
 
 > [!IMPORTANT]
-> Current Windows preview: **`v1.0.0-preview.5`**, not the final 1.0.0 release.
-> Improves Cloud thinking/tool continuation, output budgets and concurrency queues. The sidebar hides after a successful no-update check. Upload an account avatar on the web and see it on desktop; background file, project and conversation sync remains removed. Cloud still supports Preview 4. See [Preview 5 notes](docs/releases/1.0.0-preview.5.md). Cloud is temporarily limited to 20 users and ¥5/day site-wide. Independent AporiaX Beta builds need a one-time manual download.
+> Current Windows preview: **`v1.0.0-preview.6`**, not the final 1.0.0 release.
+> Cloud settles actual usage without reserving user funds, winds down at 5% remaining weekly quota, and saves progress before pausing on exhaustion. Avatar UI is temporarily hidden while its source and stored data remain. Background file/project/conversation sync stays removed. Cloud still supports Preview 4. See [Preview 6 notes](docs/RELEASE_NOTES_v1.0.0-preview.6.md). Cloud is temporarily limited to 20 users and ¥5/day site-wide. Independent AporiaX Beta builds need a one-time manual download.
 > Published as a regular GitHub Release marked **Latest**, so the default app update channel can discover it. The preview name and known issues remain.
 > This build adds network waiting and sleep/wake continuation, clearer main/subagent collaboration, execution records, on-demand project knowledge, and first-use model setup.
 > Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.

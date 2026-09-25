@@ -30,6 +30,12 @@ try {
   await page.locator('.ra-state').filter({ hasText: '手动暂停' }).waitFor();
   await page.evaluate(() => window.routeFixture.emit({ type: 'control.paused', pauseReasons: ['sleep'] }));
   await page.locator('.ra-state').filter({ hasText: '系统暂停' }).waitFor();
+  for (const [reason, label] of [['quota-wait', '等待其他 Cloud 请求结算'], ['provider-budget-wait', '等待 Cloud 全站费用结算'], ['quota', 'Cloud 额度不足'], ['daily-budget', 'Cloud 今日额度已达上限']]) {
+    await page.evaluate(reason => window.routeFixture.emit({ type: 'control.paused', pauseReasons: [reason] }), reason);
+    await page.locator('.ra-state').filter({ hasText: label }).waitFor();
+    assert.equal(await count('builder').innerText(), '2', 'Quota pauses preserve worker counts');
+    assert.equal(await page.locator('.ra-state').filter({ hasText: '失败' }).count(), 0);
+  }
   await mkdir('.tmp/route-activity', { recursive: true });
   await page.screenshot({ path: '.tmp/route-activity/preview100-suspended.png', fullPage: true });
   await page.evaluate(() => window.routeFixture.emit({ type: 'control.resumed', pauseReasons: [] }));

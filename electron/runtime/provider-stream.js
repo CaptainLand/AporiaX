@@ -9,6 +9,7 @@ import { runtimeRequestTrace, runtimeRunControl } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
 import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest } from "./cloud-request-identity.js";
 import { modelOutputBudget } from "./output-budget.js";
+import { prepareCloudWindDown, observeCloudQuota } from "./cloud-wind-down.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -52,6 +53,8 @@ function appendToolCallDelta(toolCalls, incomingCall) {
 }
 
 function cloudErrorMessage(code) {
+  if (code === "PROVIDER_BUDGET_TEMPORARILY_HELD") return "Cloud 全站费用保护正在等待在途请求结算，当前任务进度会保留；这不是个人额度预占。";
+  if (code === "QUOTA_TEMPORARILY_HELD") return "Cloud 额度正在被其他请求使用，等待结算后继续；当前进度会保留。";
   if (code === "PROVIDER_FINISH_LENGTH") return "模型达到单次输出上限，本轮尚未完成。已保留确认过的工作；请缩小下一步或明确继续，不要反复重跑整轮。";
   if (code === "APORIA_CONTEXT_LENGTH_EXCEEDED") return "模型上下文过长，需要整理上下文后继续。";
   if (code === "QUOTA_RESERVATION_INSUFFICIENT") return "可用额度不足以预留本次模型请求的最大费用（不代表额度已经扣完）。请等待其他请求释放额度，或切换自己的 API。";
@@ -130,11 +133,21 @@ function responseError(provider, payload, status, headers, streaming = false) {
       request?.requestId === error.cloudRequestId && request.usageState === "not-dispatched" &&
       request.billing === "released" && request.chargedMicros === 0);
     error.safeToRepair = error.retryWithNewCloudRequest;
+    if (error.retryWithNewCloudRequest && ["PROVIDER_BUDGET_TEMPORARILY_HELD", "QUOTA_TEMPORARILY_HELD", "WEEKLY_QUOTA_EXHAUSTED", "INSUFFICIENT_CREDITS", "APORIA_PROVIDER_DAILY_BUDGET_EXHAUSTED"].includes(error.code)) {
+      error.cloudQuota = { temporary: ["QUOTA_TEMPORARILY_HELD", "PROVIDER_BUDGET_TEMPORARILY_HELD"].includes(error.code), reason: ["APORIA_PROVIDER_DAILY_BUDGET_EXHAUSTED", "PROVIDER_BUDGET_TEMPORARILY_HELD"].includes(error.code) ? "daily-budget" : "quota" };
+      error.retryable = false; // Durable task pause owns this, not the HTTP retry loop.
+    }
     if (error.retryWithNewCloudRequest && error.code === "REQUEST_ALREADY_EXISTS") error.retryable = true;
     if (payload?.accountingPending || ((request || streaming) && !error.retryWithNewCloudRequest))
       error.retryable = false;
   }
   return error;
+}
+
+function settledQuotaExhausted(receipt) {
+  return receipt?.billing === "settled" && ["provider", "reconciled"].includes(receipt.usageState) &&
+    receipt.quota?.policy === "actual-usage-v1" && receipt.quota.exhausted === true &&
+    Number.isSafeInteger(receipt.quota.remainingMicros) && receipt.quota.remainingMicros <= 0;
 }
 
 async function fetchProviderResponse(provider, init, wire) {
@@ -156,8 +169,12 @@ export async function callModelProvider({
 }) {
   body = compileModelRequest(body);
   const identity = provider.kind === "aporia-cloud" ? currentLoopRequestIdentity() : null;
+  body = await prepareCloudWindDown(provider, body, identity, onEvent, signal);
   const prepared = identity ? await prepareCloudRequest(identity, provider, body, requestTrace, signal) : null;
-  if (prepared?.result) return prepared.result;
+  if (prepared?.result) {
+    await observeCloudQuota(prepared.result.cloudQuotaSnapshot, onEvent);
+    return prepared.result;
+  }
   const cloudTrace = prepared?.trace || { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
   let attemptUsage = null;
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
@@ -176,8 +193,10 @@ export async function callModelProvider({
       attemptUsage = mergeTokenUsage(attemptUsage, result.usage);
       const completed = { ...result, attemptUsage };
       await rememberCloudResult(identity, completed);
+      if (provider.kind === "aporia-cloud") await observeCloudQuota(completed.cloudQuotaSnapshot, onEvent);
       return completed;
     } catch (error) {
+      if (provider.kind === "aporia-cloud") await observeCloudQuota(error.cloudQuotaSnapshot, onEvent);
       attemptUsage = mergeTokenUsage(attemptUsage, error.usage);
       error.attemptUsage = attemptUsage;
       error.category = providerErrorCategory(error);
@@ -228,6 +247,7 @@ export function createOpenAICompatibleProvider({
 }) {
   return Object.freeze({
     id: config.id,
+    kind: config.kind,
     name: config.name,
     vendor: config.vendor,
     supportsImages: Boolean(model.supportsImages),
@@ -331,6 +351,7 @@ export async function callModelProviderOnce({
     const decoder = new TextDecoder();
     let finishReason = null;
     let sawDone = false;
+    let cloudBilling = null;
     let lastActivityAt = 0;
     const processLine = (line) => {
       const trimmed = line.trim();
@@ -342,6 +363,7 @@ export async function callModelProviderOnce({
       if (provider.kind === "aporia-cloud" && ["queued", "admitted"].includes(payload.aporiaQueue?.state)) {
         const queue = payload.aporiaQueue;
         onEvent?.({ type: `response.cloud.${queue.state}`, state: queue.state, source: "gateway",
+          reason: ["quota", "provider-budget"].includes(queue.reason) ? queue.reason : "concurrency",
           limit: Math.min(...[queue.perUser, queue.perDevice, queue.global].filter(v => Number.isSafeInteger(v) && v > 0)),
           waitedMs: Number.isSafeInteger(queue.waitedMs) ? queue.waitedMs : null });
         return;
@@ -354,6 +376,7 @@ export async function callModelProviderOnce({
       }
       if (payload.aporia_native_state && ["responses", "anthropic-messages"].includes(wire.protocol)) nativeState = payload.aporia_native_state;
       if (provider.kind === "aporia-cloud" && typeof payload.requestId === "string" && typeof payload.usageState === "string") {
+        if (payload.requestId === response.headers.get("x-aporia-request-id")) cloudBilling = payload;
         onEvent?.({ type: "response.cloud.billing", requestId: payload.requestId, usageState: payload.usageState,
           chargedMicros: Number.isSafeInteger(payload.chargedMicros) ? payload.chargedMicros : null });
         return; // Billing uses a different usage schema; never overwrite model usage.
@@ -395,12 +418,21 @@ export async function callModelProviderOnce({
       const error = createProviderError(provider, code, 0);
       error.retryable = false;
       error.usage = usage;
+      if (sawDone && cloudBilling?.billing === "settled" && ["provider", "reconciled"].includes(cloudBilling.usageState))
+        error.cloudQuotaSnapshot = cloudBilling.quota;
       error.streamComplete = sawDone || Boolean(finishReason);
       const budget = modelOutputBudget(provider, body);
       error.outputTokenLimit = budget.limit;
       error.maxOutputTokens = budget.maximum;
       // Repairing a Cloud response requires the complete, settled stream.
-      error.safeToRepair = provider.kind !== "aporia-cloud" || sawDone;
+        error.safeToRepair = provider.kind !== "aporia-cloud" || sawDone;
+        if (sawDone && settledQuotaExhausted(cloudBilling)) {
+          error.cloudQuota = { temporary: false, reason: "quota", truncated: true };
+        } else if (code === "PROVIDER_FINISH_LENGTH" && sawDone && cloudBilling?.billing === "settled" &&
+            ["provider", "reconciled"].includes(cloudBilling.usageState) &&
+            ["quota", "daily-budget"].includes(cloudBilling.admission?.limitReason)) {
+          error.cloudQuota = { temporary: false, reason: cloudBilling.admission.limitReason, truncated: true };
+        }
       error.partialToolCalls = toolCalls.some(Boolean);
       error.partialMessage = { content, ...(reasoningContent ? { reasoning_content: reasoningContent } : {}), ...(nativeState ? { aporiaNative: nativeState } : {}) };
       onEvent?.({ type: "response.incomplete", code, finishReason, usage });
@@ -423,6 +455,9 @@ export async function callModelProviderOnce({
     return {
       finishReason: finishReason || (toolCalls.length ? "tool_calls" : "stop"),
       streamComplete: true,
+      ...(sawDone && cloudBilling?.billing === "settled" && ["provider", "reconciled"].includes(cloudBilling.usageState)
+        ? { cloudQuotaSnapshot: cloudBilling.quota } : {}),
+      ...(sawDone && settledQuotaExhausted(cloudBilling) ? { cloudQuota: { temporary: false, reason: "quota", afterResponse: true } } : {}),
       message: {
         content,
         ...(nativeState ? { aporiaNative: nativeState } : {}),

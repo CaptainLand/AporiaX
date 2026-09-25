@@ -1,0 +1,13 @@
+# Design
+
+The user has approved direct local implementation of the bounded scope; no additional planning gate is required.
+
+The user also approved the 5% wind-down plan. The gateway exposes the settled weekly remainder and base denominator in authenticated capabilities and final billing receipts. No reservation or output-limit change is introduced. A run-scoped latch is shared by Main and workers and durably stored separately from their conversations. A fixed instruction is overlaid once per request (not appended repeatedly to history), with its selection frozen in that request's durable identity. Only future requests change; ambiguous retries preserve the original wire prompt. Initial capabilities are read once without a paid generation, final receipts update the state thereafter. New/follow-up/queued worker starts are gated at the actual worker admission boundary, while already-running rounds can wind down. No frontend redesign, deployment, real-model call or release is authorized.
+
+The user's latest decision supersedes affordable user-output admission: no user funds are reserved and no output cap is derived from user balance. Admission requires only positive settled balance. Final actual charges can produce a negative wallet balance or weekly usage above the cycle grant. In-flight requests may overshoot; the stop boundary is the next dispatch, not speculative token counting.
+
+Zero-value accounting tickets reuse the existing reservation linkage for exactly-once settlement and recovery without holding user funds. A server-owned actual-usage-v1 snapshot selects overdraft settlement; legacy reservations keep their accounting semantics. A dispatch claim rechecks positive settled balance under the same provider-lock-first order as settlement. Provider-wide daily holds remain conservative, including unknown spend. Neither capacity checks nor retries may change request identity after dispatch.
+
+Desktop handles only verified Cloud quota outcomes as durable pauses. Exhaustion receipts preserve the completed response before pausing; on resume the saved response is used without regeneration. Incomplete output at exhaustion retains text but never executes incomplete tool JSON or doubles the repair output. Provider-wide capacity waits may retry safely; user exhaustion requires resume after replenishment. Interrupted or ambiguous paid calls retain reconciliation protections.
+
+Avatar retirement uses a default-off build-time UI switch. The existing editor/component source is retained and tested under explicit test-only opt-in. Normal builds show existing account identity fallbacks, not saved photos; nickname, quota and account-center navigation stay available.

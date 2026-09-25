@@ -6,6 +6,14 @@ const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
 export const runtimeRequestTrace = () => storage.getStore()?.requestTrace || {};
 export const runtimeRunControl = () => storage.getStore()?.control || null;
+// Shared by async child workers, never by unrelated runs or accounts.
+export function runtimeRunState(key, initialize) {
+  const context = storage.getStore();
+  if (!context) return null;
+  context.runState ||= new Map();
+  if (!context.runState.has(key)) context.runState.set(key, initialize());
+  return context.runState.get(key);
+}
 export function runtimeRecoveryCheckpoint(scopeId) {
   const checkpoints = storage.getStore()?.requestCheckpoints;
   const value = checkpoints?.[scopeId];

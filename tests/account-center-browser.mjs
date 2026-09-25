@@ -3,7 +3,8 @@ import { mkdir } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
 import { measureTextContrast } from './text-contrast.js';
-const server = await createServer({ server: { host: '127.0.0.1', port: 0, open: false, watch: null } });
+const avatarsEnabled = process.argv.includes('--avatars-enabled');
+const server = await createServer({ define: { 'import.meta.env.VITE_APORIAX_PROFILE_AVATARS': JSON.stringify(String(avatarsEnabled)) }, server: { host: '127.0.0.1', port: 0, open: false, watch: null } });
 await server.listen();
 const browser = await chromium.launch({ executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true });
 try {
@@ -33,7 +34,14 @@ try {
     window.avatarFixture.profile.avatarDataUrl = canvas.toDataURL('image/webp');
     window.dispatchEvent(new Event('focus'));
   });
-  await page.waitForFunction(() => document.querySelectorAll('.local-account-avatar img').length === 2 && [...document.querySelectorAll('.local-account-avatar img')].every(img => img.complete && img.naturalWidth > 0));
+  if (avatarsEnabled) {
+    await page.waitForFunction(() => document.querySelectorAll('.local-account-avatar img').length === 2 && [...document.querySelectorAll('.local-account-avatar img')].every(img => img.complete && img.naturalWidth > 0));
+  } else {
+    await page.getByRole('button', { name: '刷新', exact: true }).click();
+    assert.equal(await page.locator('.local-account-avatar img').count(), 0, 'Saved photos must stay hidden');
+    assert.equal(await page.locator('.local-account-avatar svg').count(), 2, 'Menu and sidebar retain default account icons');
+    assert.ok(await page.evaluate(() => window.avatarFixture.profile.avatarDataUrl), 'Stored photo stays intact');
+  }
   const center = page.getByRole('button', { name: '账户中心', exact: true });
   await center.waitFor();
   assert.equal(await page.locator('.local-account-remote').count(), 0, 'Offline mobile controls must not render');

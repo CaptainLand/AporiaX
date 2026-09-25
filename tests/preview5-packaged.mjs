@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { _electron } from "playwright-core";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
-const version = "1.0.0-preview.5";
+const version = JSON.parse(await readFile('package.json', 'utf8')).version;
 await mkdir(".tmp/packaged-preview5", { recursive: true });
 for (const portable of [false, true]) {
   const directory = await mkdtemp(resolve(".tmp/packaged-preview5/profile-"));

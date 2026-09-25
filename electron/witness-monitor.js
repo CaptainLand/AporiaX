@@ -270,7 +270,7 @@ export function createWitnessMonitor({
         if (!event.agentId) closeThinkingRecords(timestamp);
         addRecord({ key: `cloud-queue:${event.agentId || 'main'}`, timestamp, kind: "queue",
           eventType: "response.cloud.queued", status: "waiting", actor: event.agentId ? "subagent" : "main", agentId: event.agentId, role: event.role,
-          detail: Number.isSafeInteger(event.limit) ? `Cloud 模型并发上限 ${event.limit}；等待可用槽位，尚未开始本次生成。` : "等待 Cloud 可用槽位，尚未开始本次生成。" });
+          detail: event.reason === "provider-budget" ? "等待 Cloud 全站在途费用结算，尚未开始本次生成；不预占个人额度。" : event.reason === "quota" ? "等待其他 Cloud 请求结算并释放额度，尚未开始本次生成。" : Number.isSafeInteger(event.limit) ? `Cloud 模型并发上限 ${event.limit}；等待可用槽位，尚未开始本次生成。` : "等待 Cloud 可用槽位，尚未开始本次生成。" });
         break;
       }
       case "response.cloud.admitted":
@@ -619,7 +619,7 @@ export function createWitnessMonitor({
           timestamp,
           kind: "status",
           eventType: "control.paused",
-          detail: pauseReasons.includes("clarification") ? "等待你的回答：上下文已保留" : pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : "用户暂停",
+          detail: pauseReasons.includes("clarification") ? "等待你的回答：上下文已保留" : pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : pauseReasons.includes("provider-budget-wait") ? "等待 Cloud 全站费用结算：自动继续，不预占个人额度" : pauseReasons.includes("daily-budget") ? "Cloud 今日额度已达上限：进度已保存" : pauseReasons.includes("quota") ? "Cloud 额度不足：补充后可继续，进度已保存" : pauseReasons.includes("quota-wait") ? "等待其他 Cloud 请求结算：自动继续" : "用户暂停",
           status: "completed",
         });
         break;

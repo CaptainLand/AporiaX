@@ -4,7 +4,7 @@ import { providerErrorCategory } from "./provider-errors.js";
 import { conversationTokenMaterial } from "./multimodal-budget.js";
 import { runtimeRunControl, saveRuntimeCheckpoint } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
-import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity } from "./cloud-request-identity.js";
+import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity, rememberCloudQuotaPause } from "./cloud-request-identity.js";
 
 // Recover inference, never tool execution. A bounded repair must change the
 // request. Do not replay an already-executed/uncertain external operation.
@@ -23,6 +23,22 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
     return { ...body, max_tokens: repairMaxTokens };
   };
   const partialAnswers = [];
+  const waitForQuota = async (quota) => {
+    // Commit history and the pause intent before waiting. A process restart
+    // restores the same gate; it does not silently start another paid call.
+    await persist();
+    await rememberCloudQuotaPause(requestIdentity, quota);
+    const reason = quota.temporary ? quota.reason === "daily-budget" ? "provider-budget-wait" : "quota-wait" : quota.reason === "daily-budget" ? "daily-budget" : "quota";
+    control.pause(reason);
+    await control.flush();
+    onEvent({ type: "response.quota.paused", reason, temporary: quota.temporary });
+    const timer = quota.temporary ? setTimeout(() => control.resume(reason), 30_000) : null;
+    try { await control.waitIfPaused(signal); }
+    finally { if (timer) clearTimeout(timer); }
+    await rememberCloudQuotaPause(requestIdentity, null);
+    onEvent({ type: "response.reset", phase: "quota-resume" });
+  };
+  if (control && requestIdentity.identity.quotaPause) await waitForQuota(requestIdentity.identity.quotaPause);
   while (true) {
     signal?.throwIfAborted();
     await control?.waitIfPaused(signal);
@@ -33,6 +49,10 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         ? control.runRequest((requestSignal) => complete(requestBody(requestConversation), requestSignal), signal)
         : complete(requestBody(requestConversation), signal));
       control?.networkSucceeded();
+      // The completed response is already durable. Pause before returning any
+      // tools to execution; resuming consumes that response, never regenerates it.
+      if (control && result.cloudQuota?.afterResponse && !requestIdentity.identity.quotaResponseAcknowledged)
+        await waitForQuota(result.cloudQuota);
       await control?.waitIfPaused(signal);
       if (shouldYield()) return { ...result, interrupted: true, requestConversation, partialAnswers };
       return { ...result, requestConversation, partialAnswers,
@@ -44,6 +64,20 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
     } catch (error) {
       if (!requestIdentity.result && (error?.attemptUsage || error?.usage)) await onFailedUsage(error.attemptUsage || error.usage);
       if (signal?.aborted) throw error;
+      if (control && error.cloudQuota && error.safeToRepair) {
+        if (error.cloudQuota.truncated) {
+          await saveRuntimeCheckpoint({ scopeId: "incomplete-response:" + scopeId, phase: "quota-limited-response", incomplete: true,
+            content: error.partialMessage?.content || "", usage: error.attemptUsage || error.usage || null, toolCallsExecuted: false });
+          if (!error.partialToolCalls && error.partialMessage?.content?.trim()) conversation.push({ role: "assistant", ...error.partialMessage });
+          conversation.push(harnessFeedback("Cloud quota limited the previous response. No tool calls from that incomplete response were executed. After quota is restored, continue from confirmed work with complete, smaller actions. Do not replay completed tools."));
+          await persist();
+          // This is a confirmed settled truncation, not a transport retry. Do
+          // not consume or double the ordinary output-limit repair budget.
+          requestIdentity = await createRepairRequestIdentity(requestIdentity, { corrections, compactions, outputTokenLimit: repairMaxTokens });
+        }
+        await waitForQuota(error.cloudQuota);
+        continue;
+      }
       if (control && (error?.code === "TASK_SUSPENDED" || isTemporaryNetworkError(error))) {
         if (error.code !== "TASK_SUSPENDED") control.waitForNetwork();
         await saveRuntimeCheckpoint({ scopeId: "incomplete-response:" + scopeId, phase: "suspended-response",

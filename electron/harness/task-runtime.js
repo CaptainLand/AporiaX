@@ -532,6 +532,10 @@ export class HarnessTaskRuntime {
     const record = this.#activeRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
     record.control.resume();
+    record.control.resume("quota");
+    record.control.resume("quota-wait");
+    record.control.resume("provider-budget-wait");
+    record.control.resume("daily-budget");
     record.control.retryNetwork();
     await record.control.flush();
     return true;

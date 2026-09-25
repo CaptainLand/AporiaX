@@ -20,6 +20,10 @@ export async function waitForWorkers(records, { mode = "any", timeoutMs = 30000,
 // Keep the default handoff small; full evidence remains available by id.
 export function workerResultForModel(result, detail = "summary") {
   if (!result || result.status === 'running' || detail === "full") return result;
+  if (result.executed === false && result.reason === 'CLOUD_QUOTA_WIND_DOWN') {
+    return { agentId: result.agentId, role: result.role, status: result.status,
+      executed: false, reason: result.reason, summary: String(result.summary || '').slice(0, 4000) };
+  }
   const summary = String(result.summary || "").slice(0, 4000);
   const evidence = (result.evidence || []).slice(-8).map((item) => ({ ...item, preview: String(item.preview || "").slice(0, 300) }));
   return {

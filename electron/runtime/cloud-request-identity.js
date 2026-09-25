@@ -29,6 +29,14 @@ export async function createRepairRequestIdentity(previous, { corrections, compa
 async function persist(state) {
   if (state) await saveRuntimeCheckpoint({ scopeId: state.checkpointScope, phase: "cloud-request", identity: { ...state.identity } });
 }
+export async function rememberCloudQuotaPause(state, quota) {
+  if (quota) state.identity.quotaPause = quota;
+  else {
+    if (state.identity.quotaPause?.afterResponse) state.identity.quotaResponseAcknowledged = true;
+    delete state.identity.quotaPause;
+  }
+  await persist(state);
+}
 function reconcileError(state, reason) {
   const error = new Error(`Aporia Cloud 原请求结果需要核对（${state.identity.serverRequestId || state.identity.clientRequestId}）：${reason}。已保留请求身份，未自动发起第二次付费生成。`);
   return Object.assign(error, { code: "CLOUD_REQUEST_RECONCILIATION_REQUIRED", retryable: false,
@@ -41,7 +49,7 @@ export async function prepareCloudRequest(state, provider, body, requestTrace, s
     // A durable complete result plus changed confirmed history is a NEW inference.
     // An uncertain request may never be silently replaced after restart/steering.
     if (!state.result) throw reconcileError(state, "恢复后的模型、端点或请求内容已变化");
-    state.identity = fresh(); state.result = null;
+    state.identity = { ...fresh(), quotaWindDown: state.identity.quotaWindDown }; state.result = null;
   }
   const identity = state.identity;
   if (!identity.fingerprint) Object.assign(identity, runtimeRequestTrace(), requestTrace, { fingerprint });

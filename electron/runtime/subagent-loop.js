@@ -1,4 +1,5 @@
 import { TaskBrief } from "./task-brief.js";
+import { cloudWorkerDeferral } from "./cloud-wind-down.js";
 import { StrategyHistory } from "./strategy-history.js";
 import { normalizeLoopPolicy } from "./completion-policy.js";
 import { assistantHistoryMessage } from "./task-conversation.js";
@@ -50,6 +51,8 @@ function throwIfAborted(signal) {
 
 export async function runSubagentTask(options = {}) {
   await waitForRuntimeResume(options.signal);
+  const deferred = cloudWorkerDeferral(options.provider);
+  if (deferred) return { ...deferred, agentId: options.agentId, role: options.input?.role, evidence: [], steps: [], usage: null };
   if (!options.__budgetAdmitted) return withAgentBudgetAdmission({ role: options.input?.role, signal: options.signal, systemOwned: options.systemOwned },
     () => runSubagentTask({ ...options, __budgetAdmitted: true }));
   const broker = getDefaultAgentRuntimeBroker();

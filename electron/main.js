@@ -282,6 +282,15 @@ async function resolveProvider(providerId) {
       ...publicAporiaCloudProvider(),
       authenticatedFetch: (path, init) =>
         account.fetchModelGateway(path, init),
+      getCloudQuota: async (modelId, signal) => {
+        const response = await account.fetchModelGateway('/v1/capabilities', {
+          signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(5_000)]),
+        });
+        if (!response.ok) { await response.body?.cancel(); return null; }
+        const capabilities = await response.json();
+        if (capabilities?.protocolVersion !== 1 || capabilities.modelGateway?.quotaAdmission !== 'actual-usage-v1') return null;
+        return capabilities.models?.find(model => model.id === modelId)?.quota || null;
+      },
     };
   }
 

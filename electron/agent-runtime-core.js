@@ -114,6 +114,7 @@ import { createFullAutoApproval } from "./runtime/full-auto-approval.js";
 import { verificationDirective, onlyStandaloneDeliverables } from "./runtime/delivery-policy.js";
 import { assessDelivery, deliveryNotice, normalizeVerificationSelection } from "./runtime/workflow-policy.js";
 import { isReadOnlyNativeTool } from "./runtime/durable-run.js";
+import { cloudWorkerDeferral, cloudWindDownActive } from "./runtime/cloud-wind-down.js";
 import { ToolProgressGuard } from "./runtime/tool-progress-guard.js";
 import { saveRuntimeCheckpoint, saveRuntimeContext, executeDurableTool } from "./runtime/durable-run.js";
 import {
@@ -1798,6 +1799,8 @@ export async function runHarness({
     { systemOwned = false, resumeRecord = null, onStarted = null } = {},
   ) => {
     if (!systemOwned && !resumeRecord) await authorizeSubagentControl("delegate_subagent", rawInput);
+    const deferred = cloudWorkerDeferral(provider);
+    if (deferred) return deferred;
     const input = normalizeSubagentInput(rawInput);
     if (input.role === "builder") {
       if (permission !== "workspace-write" || !canWriteWorkspace) throw new Error("Builder requires parent workspace-write permission.");
@@ -2346,7 +2349,7 @@ export async function runHarness({
       taskBrief.inject(conversation, { version: verificationVersion(changeMap), acceptance: taskAcceptance.briefing(), strategy: strategyHistory.briefing() });
       if (step === 0) await persistMainContext(); // Save initial originals before any compaction; later boundaries already persist new input.
       const summaryThreshold = contextWindowTokens - Math.min(Math.floor(contextWindowTokens * .4), Math.max(12000, Math.floor(contextWindowTokens * .14)));
-      if (briefSummaryAttempts < effectiveLoopPolicy.maxBriefSummaries && conversation.length > 20 &&
+      if (!cloudWindDownActive(provider) && briefSummaryAttempts < effectiveLoopPolicy.maxBriefSummaries && conversation.length > 20 &&
           estimateManagedConversationTokens(conversation, tokenAccounting) > summaryThreshold && briefSummarySources(conversation).length) {
         await summarizeTaskBrief({ brief: taskBrief, conversation, provider, modelId, signal,
           shouldYield: () => Boolean(control?.hasSteering?.()), onRequest: (body) => loopMetrics.request(body), onEvent: emit,
@@ -2988,6 +2991,8 @@ export async function runHarness({
               record.controller?.abort();
               result = { modelResult: { agentId: record.agentId, status: record.status === "running" ? "cancellation_requested" : record.status } };
             } else {
+              const deferred = cloudWorkerDeferral(provider);
+              if (deferred) throw Object.assign(new Error(deferred.summary), { code: deferred.reason });
               const task = String(input.task || "").trim();
               if (!task || task.length > 4000) throw new Error("Follow-up task must contain 1–4000 characters.");
               (record.session.pendingGuidance ||= []).push(task);
