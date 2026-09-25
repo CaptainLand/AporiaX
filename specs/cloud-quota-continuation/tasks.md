@@ -5,7 +5,7 @@ Latest approved revision: actual-use settlement, negative user balances, no user
 - [x] Expose settled weekly denominator and add durable, idempotent 5% wind-down instruction (8, 10).
 - [x] Gate new, queued, system-owned and follow-up worker activations without blocking collection or BYOK (9).
 - [x] Verify thresholds, parallel notification deduplication, recovery, truncation, and unchanged zero-quota pause locally (8–10).
-- [ ] Package Preview 6, verify artifacts, deploy with rollback and publish GitHub Latest.
+- [x] Package Preview 6, verify artifacts, deploy with rollback and publish GitHub Latest. See docs/releases/1.0.0-preview.6-deployment.md.
 
 - [x] Remove user hold/output reduction and recheck positive balance immediately before dispatch (1, 2, 7).
 - [x] Settle actual-use requests below zero exactly once; retain signed remaining amounts and legacy recovery (2, 5).
