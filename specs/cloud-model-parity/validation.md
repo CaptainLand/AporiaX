@@ -2,7 +2,7 @@
 
 ## Result and boundaries
 
-Implemented, locally verified and packaged as Preview.5. Deployment and release are approved; activation is pending final remote checks. Preview.4 remains the minimum supported desktop version.
+Implemented, verified, deployed and published as Preview.5 on 2026-09-25. GitHub Latest is v1.0.0-preview.5. Cloud and Web are live at https://101.43.44.160; Preview.4 remains the minimum supported desktop version.
 
 Desktop implementation was developed in `.tmp/cloud-parity-preview5` on `codex/cloud-model-parity`, based on published Preview.4 (`e77644aa72d082d74463cbec217ade009be6bc9f`). Only these verified changes are mirrored to the main desktop workspace; unrelated edits are retained.
 
@@ -44,7 +44,18 @@ DeepSeek contract checked against https://api-docs.deepseek.com/api/create-chat-
 - Avatar API integration passed ownership, authentication, revocation, raster/size/pixel validation, metadata stripping and removal checks against an isolated test database.
 - Web avatar select/preview/save/remove/error/reload/narrow-layout browser checks passed. Desktop avatar focus refresh, logout cleanup and account-menu contrast checks passed.
 
-All inference in these checks was mocked. No paid model call, production account creation/deletion, or production data migration occurred. Tests used a separately initialized PostgreSQL cluster listening only on 127.0.0.1:65439, not the user's existing PostgreSQL service. The temporary cluster is stopped after verification; fixture data can be retained for inspection.
+All inference in the local checks was mocked. No paid model call or production account creation/deletion occurred. Tests used a separately initialized PostgreSQL cluster listening only on 127.0.0.1:65439, not the user's existing PostgreSQL service. The temporary cluster is stopped after verification; fixture data is retained for inspection. The approved production rollout subsequently applied the guarded additive migrations after private backup and request draining; historical balances and charges were unchanged.
+
+## Deployment verification
+
+- API, gateway and worker use the same Preview.5 runtime image; API/gateway are healthy.
+- Exact source commit for the public binaries: df09dbafbc662c07fd02739ddd0493110e0d183e. Six GitHub asset digests match local files; both download URLs and default-channel metadata are publicly reachable.
+- Actual Preview.4 packaged startup detects Preview.5 and displays the update entry. Actual Preview.5 installer/portable-mode startups hide the entry after no-update checks. Tests used fresh isolated profiles and did not install over the user's app.
+- Public HTTPS checks passed for homepage, account direct refresh, login dialog and guide; no new browser page errors or stale/off-origin API requests.
+- Avatar requests reject anonymous callers and foreign origins. Retired remote routes remain 404; admin user data remains authenticated.
+- Live limits remain 20 beta users, CNY 5/day site-wide, model concurrency 4 global / 2 user / 2 device. Weekly quota and authentication remain unchanged. Only managed Flash is enabled; obsolete Qwen/Pro/mock rows remain disabled.
+- Rollback was exercised during preflight failures: the initially omitted compiled migrator was added to the image, and the post-reload check now waits for Nginx's new workers rather than treating a transient old-route 404 as readiness. Final activation succeeded. Previous images, static release, update metadata and private database/config backups are retained.
+- Real-account avatar upload and paid upstream inference were not automated on production; their isolated API/browser regression tests passed.
 
 ## Preserved protections and rollout checklist
 

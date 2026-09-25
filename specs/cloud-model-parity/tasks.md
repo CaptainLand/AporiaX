@@ -5,6 +5,6 @@
 - [x] Bounded length recovery and durable request identity tests (requirements 3, 7).
 - [x] Capability-aware local scheduling, server queue events, Route display (requirement 4).
 - [x] Cloud gateway/database integration plus desktop protocol, privacy/update and UI regression tests (requirements 1–8). Live paid inference is deliberately not claimed.
-- [ ] Approved deployment, packaged Preview.5 release and rollback verification (requirement 8).
+- [x] Approved deployment, packaged Preview.5 release and rollback verification (requirement 8).
 
-Implementation and Preview.5 packages verified 2026-09-25. Production rollout and public release are approved and pending final remote checks. See validation.md.
+Preview.5 deployed and published as GitHub Latest on 2026-09-25. Public HTTPS, live limits, actual Preview.4 update discovery, Preview.5 no-update UI and rollback were verified. See validation.md.
