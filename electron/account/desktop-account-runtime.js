@@ -8,6 +8,7 @@ import { hostname } from "node:os";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { cleanupLegacyMobileData } from "./legacy-mobile-cleanup.js";
+import { createCloudModelQueue } from "./cloud-model-queue.js";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
   buildDesktopAuthorizationUrl,
@@ -67,6 +68,7 @@ export function createDesktopAccountRuntime(options = {}) {
   let accountPagePromise = null;
   let activeServer = null;
   let installationIdPromise = null;
+  const modelQueue = createCloudModelQueue();
 
   async function request(path, { method = "GET", body, token = "", timeout = REQUEST_TIMEOUT_MS } = {}) {
     await options.ensureConnection?.();
@@ -254,6 +256,13 @@ export function createDesktopAccountRuntime(options = {}) {
       const headers = new Headers(init.headers);
       if (!headers.has("Idempotency-Key")) headers.set("Idempotency-Key", randomUUID());
       init = { ...init, headers };
+      const { onCloudQueue, ...wireInit } = init;
+      const owner = currentSnapshot.profile?.id;
+      return modelQueue.run(() => {
+        if (owner !== currentSnapshot.profile?.id) throw new Error("DESKTOP_ACCOUNT_CHANGED");
+        return authenticatedFetch(modelGatewayBaseUrl, path, wireInit, true);
+      }, { signal: init.signal, onQueue: onCloudQueue,
+        getLimits: () => currentSnapshot.gatewayCapabilities?.modelGateway?.concurrency });
     }
     return authenticatedFetch(modelGatewayBaseUrl, path, init, true);
   }

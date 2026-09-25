@@ -103,6 +103,17 @@ try {
     await page.setViewportSize({ width: 430, height: 900 });
     assert.equal(await page.locator('.route-view').evaluate((el) => el.scrollWidth <= el.clientWidth), true, 'No horizontal overflow on narrow layouts');
     await page.screenshot({ path: '.tmp/route-activity/after-dark-narrow.png', fullPage: true });
+    await page.evaluate(() => window.routeFixture.emit({ type: 'response.cloud.queued', limit: 2, source: 'desktop' }));
+    await active.getByText('等待 Cloud 模型槽位', { exact: true }).waitFor();
+    await active.locator('small').filter({ hasText: /^排队中/ }).waitFor();
+    assert.equal(await active.getByText('等待确认', { exact: true }).count(), 0);
+    await page.screenshot({ path: '.tmp/route-activity/cloud-queue-dark-narrow.png', fullPage: true });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.setViewportSize({ width: 1200, height: 950 });
+    await page.screenshot({ path: '.tmp/route-activity/cloud-queue-light.png', fullPage: true });
+    await page.evaluate(() => window.routeFixture.emit({ type: 'response.cloud.admitted', source: 'desktop' }));
+    await active.getByText('等待 Cloud 模型槽位', { exact: true }).waitFor({ state: 'hidden' });
+    await active.getByText('等待模型响应', { exact: true }).waitFor();
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; window.routeFixture.emit({ type: 'turn.completed', status: 'partial', summary: '部分修改已保存，验证尚未完成' }); });
     await page.locator('.ra-state').filter({ hasText: '部分完成' }).waitFor();
     assert.equal(await page.locator('.ra-current-row').count(), 0);

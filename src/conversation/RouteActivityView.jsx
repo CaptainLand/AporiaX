@@ -137,7 +137,7 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
           const activityAt = record.lastActivityAt || record.startedAt;
           return <div className={`ra-current-row ${record.status}`} key={record.id} data-record-id={record.id}>
             <span className="ra-record-icon"><RecordIcon record={record} /></span>
-            <div className="ra-record-copy"><div className="ra-actor">{activityActor(record, language)}{record.agentId && <span title={record.agentId}>{record.agentId}</span>}</div><strong>{description.title}</strong>{description.detail && <p>{description.detail}</p>}<small>{activityStatus(record.status, language)} · {activityAt ? tr('最近信号 {time}', 'Last signal {time}', { time: timeLabel(activityAt, language) }) : tr('等待活动信号', 'Waiting for activity')}</small></div>
+            <div className="ra-record-copy"><div className="ra-actor">{activityActor(record, language)}{record.agentId && <span title={record.agentId}>{record.agentId}</span>}</div><strong>{description.title}</strong>{description.detail && <p>{description.detail}</p>}<small>{activityRecordStatus(record, language)} · {activityAt ? tr('最近信号 {time}', 'Last signal {time}', { time: timeLabel(activityAt, language) }) : tr('等待活动信号', 'Waiting for activity')}</small></div>
             <time className="ra-duration">{formatActivityElapsed(activityElapsed(record, now))}</time>{detailButton(record)}
           </div>;
         })}

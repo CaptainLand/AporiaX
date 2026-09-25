@@ -265,6 +265,26 @@ export function createWitnessMonitor({
     let meaningful = true;
 
     switch (event.type) {
+      case "response.cloud.queued":
+      case "subagent.response.cloud.queued": {
+        if (!event.agentId) closeThinkingRecords(timestamp);
+        addRecord({ key: `cloud-queue:${event.agentId || 'main'}`, timestamp, kind: "queue",
+          eventType: "response.cloud.queued", status: "waiting", actor: event.agentId ? "subagent" : "main", agentId: event.agentId, role: event.role,
+          detail: Number.isSafeInteger(event.limit) ? `Cloud 模型并发上限 ${event.limit}；等待可用槽位，尚未开始本次生成。` : "等待 Cloud 可用槽位，尚未开始本次生成。" });
+        break;
+      }
+      case "response.cloud.admitted":
+      case "subagent.response.cloud.admitted": {
+        finishRecord(`cloud-queue:${event.agentId || 'main'}`, { ...event, type: "response.cloud.admitted" });
+        if (!event.agentId) addRecord({ key: `thinking:${recordCounter + 1}`, timestamp, kind: "thinking", eventType: "response.reset", status: "running" });
+        break;
+      }
+      case "response.attempt.completed":
+      case "subagent.response.attempt.completed": {
+        const record = recordIndex.get(`cloud-queue:${event.agentId || 'main'}`);
+        if (record?.status === "waiting") finishRecord(record.key, { ...event, type: "response.cloud.queue-ended" }, event.status === "completed");
+        break;
+      }
       case "response.activity":
       case "response.delta":
       case "subagent.activity": {

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.4"><img alt="Source v1.0.0-preview.4" src="https://img.shields.io/badge/source-v1.0.0--preview.4-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.5"><img alt="Source v1.0.0-preview.5" src="https://img.shields.io/badge/source-v1.0.0--preview.5-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,8 +25,8 @@
 AporiaX is a local-first Windows desktop agent. It edits code, runs commands, and creates Word / PowerPoint / Excel files inside an authorized workspace. Conversation, files, browser, terminal, and Git share one screen. Steps, evidence, and rollback stay in the UI instead of collapsing into a chat reply.
 
 > [!IMPORTANT]
-> Current Windows preview: **`v1.0.0-preview.4`**, not the final 1.0.0 release.
-> Check updates at every launch with a persistent sidebar entry. Adds bounded task clarification and removes mobile sync/file-upload channels. Cloud requires Preview 4 or later; web accounts and BYOK remain independent. See [Preview 4 notes](docs/RELEASE_NOTES_v1.0.0-preview.4.md). Cloud is temporarily limited to 20 users and ¥5/day site-wide. Independent AporiaX Beta builds need a one-time manual download.
+> Current Windows preview: **`v1.0.0-preview.5`**, not the final 1.0.0 release.
+> Improves Cloud thinking/tool continuation, output budgets and concurrency queues. The sidebar hides after a successful no-update check. Upload an account avatar on the web and see it on desktop; background file, project and conversation sync remains removed. Cloud still supports Preview 4. See [Preview 5 notes](docs/releases/1.0.0-preview.5.md). Cloud is temporarily limited to 20 users and ¥5/day site-wide. Independent AporiaX Beta builds need a one-time manual download.
 > Published as a regular GitHub Release marked **Latest**, so the default app update channel can discover it. The preview name and known issues remain.
 > This build adds network waiting and sleep/wake continuation, clearer main/subagent collaboration, execution records, on-demand project knowledge, and first-use model setup.
 > Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.
@@ -126,16 +126,16 @@ Known preview issues: the [release commit's GitHub checks](https://github.com/Ca
 
 ## Download
 
-The current public version is **v1.0.0-preview.4**, published as a regular GitHub Release marked **Latest** on the default update channel. The preview name and known issues remain; this does not mean final 1.0.0 acceptance is complete. [Open the Latest download page](https://github.com/CaptainLand/AporiaX/releases/latest).
+The current public version is **v1.0.0-preview.5**, published as a regular GitHub Release marked **Latest** on the default update channel. The preview name and known issues remain; this does not mean final 1.0.0 acceptance is complete. [Open the Latest download page](https://github.com/CaptainLand/AporiaX/releases/latest).
 
-In an older build, use Settings → About → Check for updates to refresh manually. Installed builds can download and restart to install; portable builds open the download page so you can replace the executable manually. Automatic checks are spaced 12 hours apart.
+In an older build, use Settings → About → Check for updates to refresh manually. Installed builds can download and restart to install; portable builds open the download page so you can replace the executable manually. Updates are checked on every launch and again every 12 hours while the app is running.
 
 | Windows x64 | Current package |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | History and notes |
-| [Preview 4 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.4/AporiaX-Setup-1.0.0-preview.4-x64.exe) | Recommended, in-app updates |
-| [Preview 4 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.4/AporiaX-Portable-1.0.0-preview.4-x64.exe) | No install; download each update |
-| [SHA-256 checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.4/SHA256SUMS-1.0.0-preview.4.txt) | Verify your download |
+| [Preview 5 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.5/AporiaX-Setup-1.0.0-preview.5-x64.exe) | Recommended, in-app updates |
+| [Preview 5 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.5/AporiaX-Portable-1.0.0-preview.5-x64.exe) | No install; download each update |
+| [SHA-256 checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.5/SHA256SUMS-1.0.0-preview.5.txt) | Verify your download |
 
 First launch:
 

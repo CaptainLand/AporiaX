@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0-preview.4",
+  "version": "1.0.0-preview.5",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {

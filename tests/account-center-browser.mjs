@@ -14,7 +14,7 @@ try {
     localStorage.setItem('aporiax.session-ui.v1', JSON.stringify({ welcomeDismissed: true }));
     // Even a stale opt-in and a server advertising support must stay offline.
     const account = { status: 'authenticated', profile: { displayName: '测试账号', email: 'test@example.invalid' }, quota: { remainingRatio: .8 }, models: [{ displayName: 'DeepSeek V4.1 Flash' }], device: { name: '测试电脑', remoteEnabled: true }, capabilities: { remote: { supported: true } }, remoteFiles: { enabled: true } };
-    window.centerCalls = 0; window.centerFailure = false; window.mobileCalls = 0;
+    window.centerCalls = 0; window.centerFailure = false; window.mobileCalls = 0; window.avatarFixture = account;
     window.desktop = {
       theme: { set: async () => {} }, providers: { list: async () => [] },
       account: { get: async () => account, refresh: async () => account, signOut: async () => ({ status: 'anonymous' }), openCenter: async () => { window.centerCalls++; if (window.centerFailure) throw Error('APORIAX_PRIVATE_CONNECTION_FAILED'); return { opened: true }; }, syncTasks: async () => { window.mobileCalls++; return {}; }, remoteCommands: async () => { window.mobileCalls++; return []; }, claimRemoteCommand: async () => { window.mobileCalls++; } },
@@ -27,6 +27,13 @@ try {
   await page.goto(server.resolvedUrls.local[0]);
   if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
   await page.locator('.local-account-profile').click();
+  await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#226d96'; ctx.fillRect(0,0,64,64);
+    window.avatarFixture.profile.avatarDataUrl = canvas.toDataURL('image/webp');
+    window.dispatchEvent(new Event('focus'));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.local-account-avatar img').length === 2 && [...document.querySelectorAll('.local-account-avatar img')].every(img => img.complete && img.naturalWidth > 0));
   const center = page.getByRole('button', { name: '账户中心', exact: true });
   await center.waitFor();
   assert.equal(await page.locator('.local-account-remote').count(), 0, 'Offline mobile controls must not render');
@@ -58,6 +65,7 @@ try {
   await center.scrollIntoViewIfNeeded();
   const bounds = await page.locator('.local-account-popover').boundingBox(); assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 600);
   await page.getByRole('button', { name: '退出登录', exact: true }).click();
+  assert.equal(await page.locator('.local-account-avatar img').count(), 0, 'Avatar cleared on logout');
   assert.equal(await page.locator('.local-account-web').count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS: account center click, failure feedback and retry, compact-window scrolling, signed-out state; zero uncaught browser errors.');

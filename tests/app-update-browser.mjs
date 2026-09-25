@@ -34,6 +34,11 @@ try {
   if(await page.locator(".ax-welcome__enter").isVisible()) await page.locator(".ax-welcome__enter").click();
   const sidebar = page.locator(".app-update-sidebar");
   await sidebar.getByRole("button",{name:/有新版本更新/}).waitFor();
+  await page.evaluate(()=>window.updateFixture.emit({phase:"not-available",availableVersion:"",busy:false}));
+  await sidebar.waitFor({state:"detached"});
+  await page.evaluate(()=>window.updateFixture.emit({phase:"checking",busy:true}));
+  await sidebar.getByRole("button",{name:/正在检查更新/}).waitFor();
+  await page.evaluate(()=>window.updateFixture.emit({phase:"available",availableVersion:"1.0.0-preview.4",busy:false}));
   if(await page.locator(".app-update-toast").isVisible()) await page.locator(".app-update-toast").getByRole("button",{name:"稍后"}).click();
   assert.equal(await sidebar.isVisible(),true);
   await sidebar.getByRole("button",{name:/有新版本更新/}).click();

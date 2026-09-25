@@ -18,6 +18,14 @@ export function createLoopRequestIdentity(scopeId) {
 }
 export const withLoopRequestIdentity = (state, fn) => storage.run(state, fn);
 export const currentLoopRequestIdentity = () => storage.getStore();
+export async function createRepairRequestIdentity(previous, { corrections, compactions, outputTokenLimit }) {
+  const state = { scopeId: previous.scopeId, checkpointScope: previous.checkpointScope, result: null,
+    identity: { ...fresh(), repairCount: corrections, compactions, repairMaxTokens: outputTokenLimit,
+      ...(previous.identity.serverRequestId ? { retryOf: previous.identity.serverRequestId } : {}) } };
+  // Persist the consumed repair budget before another paid inference can start.
+  await persist(state);
+  return state;
+}
 async function persist(state) {
   if (state) await saveRuntimeCheckpoint({ scopeId: state.checkpointScope, phase: "cloud-request", identity: { ...state.identity } });
 }

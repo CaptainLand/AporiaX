@@ -17,7 +17,7 @@ await build({
 const channel = pkg.version.includes("-") ? pkg.version.split("-")[1].split(".")[0] : "latest";
 if (channel !== "latest") {
   try { await access(join(output, channel + ".yml")); await copyFile(join(output, channel + ".yml"), join(output, "latest.yml")); }
-  catch (error) { if (error.code !== "ENOENT") throw error; }
+  catch (error) { if (error.code !== "ENOENT") throw error; await copyFile(join(output, "latest.yml"), join(output, channel + ".yml")); }
 }
 await access(join(output, "latest.yml"));
 const result = spawnSync(process.execPath, ["scripts/verify-windows-release.mjs", output], { stdio: "inherit", windowsHide: true });

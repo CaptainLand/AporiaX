@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from "react";
 import {
   Check,
-  CircleUserRound,
   Cloud,
   ExternalLink,
   Laptop,
@@ -13,6 +12,7 @@ import { useI18n } from "../i18n";
 import { useAccount } from "./AccountContext.jsx";
 import "./local-account.css";
 import { accountErrorText } from "./account-errors.js";
+import { AccountAvatar } from "./AccountAvatar.jsx";
 
 function quotaPercent(quota) {
   return Math.min(100, Math.max(0, Math.round(Number(quota?.remainingRatio || 0) * 100)));
@@ -68,7 +68,7 @@ export function LocalAccountPanel() {
         {menuOpen && (
           <div className="local-account-popover">
             <div className="local-account-popover-head">
-              <span className="local-account-avatar"><CircleUserRound size={18} /></span>
+              <AccountAvatar profile={profile} />
               <div>
                 <strong>{visibleName}</strong>
                 <small>{profile.email || tr("Aporia Account", "Aporia Account")}</small>
@@ -115,7 +115,7 @@ export function LocalAccountPanel() {
           title={tr("Aporia Account 与周额度", "Aporia Account and weekly quota")}
           type="button"
         >
-          <span className="local-account-avatar local-account-avatar--compact"><CircleUserRound size={16} /></span>
+          <AccountAvatar profile={profile} compact />
           <span className="local-account-profile-copy">
             <strong>{visibleName}</strong>
             <span className="local-account-quota-row">

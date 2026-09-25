@@ -78,10 +78,10 @@ try {
     const result = await loop([taskRequest({ role: "user", content: "answer" })], { onFailedUsage: (usage) => failures.push(usage) });
     assert.equal(result.message.content, "FIRST_PART\nSECOND_PART"); assert.equal(requests, 2); assert.equal(failures[0].prompt_tokens, 10);
   });
-  await test("truncated tool calls are never automatically continued or executed", async () => {
+  await test("truncated tool calls are discarded and inference repair is bounded once", async () => {
     let requests = 0;
     globalThis.fetch = async () => { requests++; return sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a",' } }] }, "length"); };
-    await assert.rejects(loop([taskRequest({ role: "user", content: "write" })]), /PROVIDER_FINISH_LENGTH/); assert.equal(requests, 1);
+    await assert.rejects(loop([taskRequest({ role: "user", content: "write" })]), /PROVIDER_FINISH_LENGTH/); assert.equal(requests, 2);
   });
   await test("fully terminated invalid tool arguments get one inference repair with no execution", async () => {
     let requests = 0;

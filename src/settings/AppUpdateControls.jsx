@@ -40,7 +40,7 @@ export function AppUpdateSidebar() {
     void api.status().then(next => { if (active && !received) setStatus(next); }).catch(() => {});
     return () => { active = false; unsubscribe?.(); };
   }, []);
-  if (!status || status.channel === "dev") return null;
+  if (!status || status.channel === "dev" || (status.phase === "not-available" && !status.availableVersion)) return null;
   const available = Boolean(status.availableVersion);
   const ready = status.phase === "downloaded";
   const label = ready ? tr("更新已就绪 · 重启安装", "Update ready · Restart")

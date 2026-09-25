@@ -47,6 +47,7 @@ export function routeAgentActivity(run) {
 }
 
 export function activityRecordStatus(record, language = 'zh-CN') {
+  if (record?.kind === 'queue' && record.status === 'waiting') return text(language, '排队中', 'Queued');
   if (record?.kind === 'agent' && record.status === 'completed') {
     const labels = { pending: ['待验收', 'Awaiting review'], accepted: ['已接受', 'Accepted'], needs_changes: ['需返工', 'Changes needed'], consumer_review: ['已返回', 'Returned'] };
     return text(language, ...(labels[record.acceptance?.status] || ['已返回', 'Returned']));
@@ -113,12 +114,13 @@ export function routeActivityRecords(run) {
 export function activeRouteRecords(records) {
   const active = records.filter((record) => ACTIVE.has(record.status) || record.status === 'paused');
   // An agent's lifetime is a container, not a second action alongside its tool.
-  return active.filter((record) => record.kind !== 'agent' || !active.some((other) => other.kind === 'tool' && other.agentId === record.agentId));
+  return active.filter((record) => record.kind !== 'agent' || !active.some((other) => ['tool', 'queue'].includes(other.kind) && other.agentId === record.agentId));
 }
 
 export function describeRouteRecord(record, language = 'zh-CN') {
   const t = (zh, en) => text(language, zh, en);
   if (!record) return { title: t('等待执行记录', 'Waiting for activity'), detail: '' };
+  if (record.kind === 'queue') return { title: record.status === 'waiting' ? t('等待 Cloud 模型槽位', 'Waiting for a Cloud model slot') : t('Cloud 排队记录', 'Cloud queue'), detail: record.detail || '' };
   if (record.kind === 'tool' || record.tool) {
     const meta = getRouteToolMeta(record.tool, record.phase, language, record.capability);
     const title = record.tool === 'run_command' && !record.capability ? t('运行命令', 'Run command') : meta.title;

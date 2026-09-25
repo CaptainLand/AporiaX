@@ -94,11 +94,11 @@ await test('actual account runtime stays signed in with models empty and never d
   await assert.rejects(runtime.fetchModelGateway('/remote/desktop/tasks',{method:'PUT',body:'private fixture'}),/PATH_NOT_ALLOWED/);
   enabled=true;visionEnabled=true;await runtime.refresh();
   const imageBody={model,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,fixture'}}]}]};
-  await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)});assert.equal(modelCalls,1);
+  await (await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)})).text();assert.equal(modelCalls,1);
   assert(getAvailableModels([projectCloudProvider(cloud,await runtime.getSnapshot())]).every(m=>!m.disabled));
   visionEnabled=false;await runtime.refresh();await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,1);
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model:'aporia-cloud-vision'})}),/MODEL_NOT_AVAILABLE/);
-  enabled=true;await runtime.refresh();assert.equal((await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})})).status,200);assert.equal(modelCalls,2);
+  enabled=true;await runtime.refresh();const modelResponse=await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})});assert.equal(modelResponse.status,200);await modelResponse.text();assert.equal(modelCalls,2);
   capabilityFailure=true;assert.equal((await runtime.refresh()).status,'authenticated');
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})}),/MODEL_SERVICE_UNVERIFIED/);
  } finally {runtime.close();globalThis.fetch=original;delete globalThis.__cloudTestElectron;}

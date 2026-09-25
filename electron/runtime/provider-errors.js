@@ -1,10 +1,10 @@
 // Keep transport failure, context pressure and uncertain tool effects separate.
 export function providerErrorCategory(error) {
   const code = [error?.providerCode, error?.code, error?.message].filter(Boolean).join(" ");
-  if (/insufficient_quota|billing_hard_limit|quota_exhausted|budget_exhausted|account.*(?:balance|credit)/i.test(code)) return "quota";
+  if (/insufficient_quota|insufficient_credits|quota_reservation_insufficient|billing_hard_limit|quota_exhausted|budget_exhausted|account.*(?:balance|credit)/i.test(code)) return "quota";
   if (/context_length_exceeded|context_window_exceeded|maximum context length|prompt.{0,30}too long|too many (?:input )?tokens|context.{0,30}(?:exceed|overflow)/i.test(code)) return "context";
   if (error?.code === "PROVIDER_FINISH_LENGTH") return "output-limit";
-  if (["PROVIDER_TOOL_CALL_INVALID", "PROVIDER_TOOL_CALL_INCOMPLETE"].includes(error?.code)) return "tool-protocol";
+  if (["PROVIDER_TOOL_CALL_INVALID", "PROVIDER_TOOL_CALL_INCOMPLETE", "APORIA_TOOL_PROTOCOL_INVALID"].includes(error?.code)) return "tool-protocol";
   if (error?.name === "AbortError") return "cancelled";
   if ([401, 403].includes(Number(error?.status))) return "authorization";
   if (Number(error?.status) === 429) return "rate-limit";

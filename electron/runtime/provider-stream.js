@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { runtimeRequestTrace, runtimeRunControl } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
 import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest } from "./cloud-request-identity.js";
+import { modelOutputBudget } from "./output-budget.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -51,6 +52,9 @@ function appendToolCallDelta(toolCalls, incomingCall) {
 }
 
 function cloudErrorMessage(code) {
+  if (code === "PROVIDER_FINISH_LENGTH") return "模型达到单次输出上限，本轮尚未完成。已保留确认过的工作；请缩小下一步或明确继续，不要反复重跑整轮。";
+  if (code === "APORIA_CONTEXT_LENGTH_EXCEEDED") return "模型上下文过长，需要整理上下文后继续。";
+  if (code === "QUOTA_RESERVATION_INSUFFICIENT") return "可用额度不足以预留本次模型请求的最大费用（不代表额度已经扣完）。请等待其他请求释放额度，或切换自己的 API。";
   if (code === "WEEKLY_QUOTA_EXHAUSTED") {
     return "Aporia Cloud 本周额度已用完。请切换到 Your Providers 或 Local 模型继续使用。";
   }
@@ -125,6 +129,7 @@ function responseError(provider, payload, status, headers, streaming = false) {
     error.retryWithNewCloudRequest = Boolean(!payload?.accountingPending && error.cloudRequestId &&
       request?.requestId === error.cloudRequestId && request.usageState === "not-dispatched" &&
       request.billing === "released" && request.chargedMicros === 0);
+    error.safeToRepair = error.retryWithNewCloudRequest;
     if (error.retryWithNewCloudRequest && error.code === "REQUEST_ALREADY_EXISTS") error.retryable = true;
     if (payload?.accountingPending || ((request || streaming) && !error.retryWithNewCloudRequest))
       error.retryable = false;
@@ -297,6 +302,10 @@ export async function callModelProviderOnce({
       },
       body: JSON.stringify(wire.body),
       signal: controller.signal,
+      ...(provider.kind === "aporia-cloud" ? { onCloudQueue: (queue) => {
+        if (queue.state === "queued") clearTimeout(idleTimeout); else resetIdleTimeout();
+        onEvent?.({ type: `response.cloud.${queue.state}`, ...queue });
+      } } : {}),
     }, wire);
 
     if (provider.kind === "aporia-cloud") {
@@ -330,6 +339,13 @@ export async function callModelProviderOnce({
       if (!data) return;
       if (data === "[DONE]") { sawDone = true; return; }
       const payload = JSON.parse(data);
+      if (provider.kind === "aporia-cloud" && ["queued", "admitted"].includes(payload.aporiaQueue?.state)) {
+        const queue = payload.aporiaQueue;
+        onEvent?.({ type: `response.cloud.${queue.state}`, state: queue.state, source: "gateway",
+          limit: Math.min(...[queue.perUser, queue.perDevice, queue.global].filter(v => Number.isSafeInteger(v) && v > 0)),
+          waitedMs: Number.isSafeInteger(queue.waitedMs) ? queue.waitedMs : null });
+        return;
+      }
       const streamError = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
       if (streamError) {
         const status = provider.kind === "aporia-cloud" && Number.isInteger(payload.status) && payload.status >= 400 && payload.status <= 599
@@ -380,6 +396,11 @@ export async function callModelProviderOnce({
       error.retryable = false;
       error.usage = usage;
       error.streamComplete = sawDone || Boolean(finishReason);
+      const budget = modelOutputBudget(provider, body);
+      error.outputTokenLimit = budget.limit;
+      error.maxOutputTokens = budget.maximum;
+      // Repairing a Cloud response requires the complete, settled stream.
+      error.safeToRepair = provider.kind !== "aporia-cloud" || sawDone;
       error.partialToolCalls = toolCalls.some(Boolean);
       error.partialMessage = { content, ...(reasoningContent ? { reasoning_content: reasoningContent } : {}), ...(nativeState ? { aporiaNative: nativeState } : {}) };
       onEvent?.({ type: "response.incomplete", code, finishReason, usage });

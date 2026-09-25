@@ -296,6 +296,7 @@ export async function runSubagentTask(options = {}) {
           return provider.complete({ signal: requestSignal, body, requestTrace: { agentId }, onStreamEvent: (event) => {
             loopMetrics.observe(event);
             if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
+            if (["response.cloud.queued", "response.cloud.admitted"].includes(event.type)) emit({ ...event, type: `subagent.${event.type}`, agentId, role: input.role });
             if (event.type === "response.attempt.completed") emit({ ...event, type: "subagent.response.attempt.completed", agentId });
           } });
         },

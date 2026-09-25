@@ -96,6 +96,8 @@ export function projectAccountSnapshot({ me, quota, models, usage, devices }) {
       ? {
           id: user.id,
           displayName: user.displayName || "",
+          avatarDataUrl: typeof user.avatarDataUrl === "string" && user.avatarDataUrl.length <= 87406 &&
+            /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(user.avatarDataUrl) ? user.avatarDataUrl : null,
           email,
         }
       : null,

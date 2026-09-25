@@ -38,6 +38,17 @@ export function AccountProvider({ children }) {
       return null;
     } finally { pending.current = false; setBusy(false); }
   };
+  const refreshOnFocus = useRef(() => {}), lastFocusRefresh = useRef(0);
+  refreshOnFocus.current = () => {
+    if (account.status !== "authenticated" || pending.current || Date.now() - lastFocusRefresh.current < 30000) return;
+    lastFocusRefresh.current = Date.now();
+    void perform("refresh");
+  };
+  useEffect(() => {
+    const focus = () => refreshOnFocus.current();
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, []);
   return <AccountContext.Provider value={{ account, busy, error, api, setAccount, setError, signIn: () => perform("signIn"), refresh: () => perform("refresh"), signOut: () => perform("signOut") }}>{children}</AccountContext.Provider>;
 }
 

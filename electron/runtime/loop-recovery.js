@@ -4,7 +4,7 @@ import { providerErrorCategory } from "./provider-errors.js";
 import { conversationTokenMaterial } from "./multimodal-budget.js";
 import { runtimeRunControl, saveRuntimeCheckpoint } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
-import { createLoopRequestIdentity, withLoopRequestIdentity } from "./cloud-request-identity.js";
+import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity } from "./cloud-request-identity.js";
 
 // Recover inference, never tool execution. A bounded repair must change the
 // request. Do not replay an already-executed/uncertain external operation.
@@ -13,7 +13,15 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
   onFailedUsage = () => {}, shouldYield = () => false, signal, plan = null, scopeId = "main" }) {
   const control = runtimeRunControl();
   let requestIdentity = createLoopRequestIdentity(scopeId);
-  let compactions = 0, corrections = 0;
+  let compactions = requestIdentity.identity.compactions || 0, corrections = requestIdentity.identity.repairCount || 0;
+  let repairMaxTokens = requestIdentity.identity.repairMaxTokens || null;
+  const requestBody = (messages) => {
+    const body = getBody(messages);
+    if (!repairMaxTokens) return body;
+    if (body.max_completion_tokens !== undefined) return { ...body, max_completion_tokens: repairMaxTokens };
+    if (body.max_output_tokens !== undefined) return { ...body, max_output_tokens: repairMaxTokens };
+    return { ...body, max_tokens: repairMaxTokens };
+  };
   const partialAnswers = [];
   while (true) {
     signal?.throwIfAborted();
@@ -22,8 +30,8 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
     const requestConversation = [...conversation];
     try {
       const result = await withLoopRequestIdentity(requestIdentity, () => control
-        ? control.runRequest((requestSignal) => complete(getBody(requestConversation), requestSignal), signal)
-        : complete(getBody(requestConversation), signal));
+        ? control.runRequest((requestSignal) => complete(requestBody(requestConversation), requestSignal), signal)
+        : complete(requestBody(requestConversation), signal));
       control?.networkSucceeded();
       await control?.waitIfPaused(signal);
       if (shouldYield()) return { ...result, interrupted: true, requestConversation, partialAnswers };
@@ -50,7 +58,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
       }
       if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation };
       const category = providerErrorCategory(error);
-      if (category === "context" && compactions < 2) {
+      if (category === "context" && compactions < 2 && error.safeToRepair !== false) {
         const before = conversationTokenMaterial(conversation);
         const inputBudgetTokens = Math.max(1, Math.floor(estimateConversationTokens(conversation, accounting) * 0.70));
         const checkpoint = compactConversationForRequest({ conversation, contextCheckpoints,
@@ -59,13 +67,21 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         if (!checkpoint || after.serialized.length >= before.serialized.length ||
             estimateConversationTokens(conversation, accounting) > inputBudgetTokens) throw error;
         compactions++;
-      } else if (category === "output-limit" && corrections < 1 && error.streamComplete &&
-                 !error.partialToolCalls && error.partialMessage?.content?.trim()) {
-        partialAnswers.push(error.partialMessage.content);
-        conversation.push({ role: "assistant", ...error.partialMessage });
-        conversation.push(harnessFeedback("The previous answer reached the output limit. Continue from that partial text without repeating it. No tool call from the truncated response was executed. Do not claim an unfinished task is complete."));
+      } else if (category === "output-limit" && corrections < 1 && error.streamComplete && error.safeToRepair !== false) {
+        if (!error.partialToolCalls && error.partialMessage?.content?.trim()) {
+          partialAnswers.push(error.partialMessage.content);
+          conversation.push({ role: "assistant", ...error.partialMessage });
+          conversation.push(harnessFeedback("The previous answer reached the output limit. Continue from that partial text without repeating it. No tool call from the truncated response was executed. Do not claim an unfinished task is complete."));
+        } else {
+          // Never insert an incomplete tool JSON or an opaque reasoning-only
+          // assistant turn. Previously confirmed tools/history remain intact.
+          conversation.push(harnessFeedback("The previous model generation reached its output limit before producing a complete answer/tool call. NONE of the calls from that truncated response were executed. This is the one bounded repair. Use the confirmed history, keep reasoning concise, and produce smaller complete tool actions one at a time; do not repeat tools that already completed."));
+        }
+        const limit = Number(error.outputTokenLimit), maximum = Number(error.maxOutputTokens);
+        if (Number.isSafeInteger(limit) && limit > 0 && Number.isSafeInteger(maximum) && maximum >= limit)
+          repairMaxTokens = Math.min(maximum, limit * 2);
         corrections++;
-      } else if (category === "tool-protocol" && corrections < 1 && error.streamComplete) {
+      } else if (category === "tool-protocol" && corrections < 1 && (error.streamComplete || error.safeToRepair)) {
         conversation.push(harnessFeedback("The previous model response contained an invalid tool-call argument object or identifier. NONE of its tool calls were executed. Replan and produce complete, valid tool calls, or explain the blocker. Do not assume a side effect occurred."));
         corrections++;
       } else {
@@ -76,8 +92,8 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         throw error;
       }
       await persist();
-      requestIdentity = createLoopRequestIdentity(scopeId); // Explicit bounded repair changes the request.
-      onEvent({ type: "response.recovery", category, compactions, corrections });
+      requestIdentity = await createRepairRequestIdentity(requestIdentity, { corrections, compactions, outputTokenLimit: repairMaxTokens });
+      onEvent({ type: "response.recovery", category, compactions, corrections, outputTokenLimit: repairMaxTokens });
       onEvent({ type: "response.reset", phase: "bounded-recovery" });
       // Steering gets another boundary before any subsequent network call.
       if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation };

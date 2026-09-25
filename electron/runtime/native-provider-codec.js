@@ -55,7 +55,10 @@ export function compileProviderWire(provider, body) {
   const messages = body.messages || [];
   if (["chat-completions", "deepseek-chat"].includes(protocol)) {
     for (const message of messages) if (message.aporiaNative) nativeState(message, binding, protocol);
-    const deepseek = protocol === "deepseek-chat" || provider.vendor === "deepseek";
+    // Cloud is an auth transport, not a different model protocol. Bind the
+    // exception to managed DeepSeek, never an unrelated Cloud model/vendor.
+    const deepseek = protocol === "deepseek-chat" || provider.vendor === "deepseek" ||
+      (provider.kind === "aporia-cloud" && body.model === "aporia-cloud-default");
     return { protocol, binding, url: `${endpoint}/chat/completions`,
       headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
       body: { ...body, messages: messages.map((m) => removePrivate(m, { deepseek })), stream: true,
