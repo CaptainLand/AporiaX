@@ -9,13 +9,10 @@ try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
   const errors = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/context-extensions.html");
-  const recall = page.getByRole("checkbox", { name: "参与任务上下文" });
-  const curate = page.getByRole("checkbox", { name: "自动整理知识（消耗模型额度）" });
-  await recall.waitFor(); assert.equal(await recall.isChecked(), false); assert.equal(await curate.isChecked(), false);
-  assert(await page.getByText("仅查看", { exact: true }).isVisible());
-  await recall.check(); await page.getByText("按需参考", { exact: true }).waitFor();
-  assert.equal(await curate.isChecked(), false);
-  await curate.check(); await recall.uncheck();
+  const curate = page.getByRole("switch", { name: "自动记录", exact: true });
+  await curate.waitFor(); assert.equal(await curate.isChecked(), false);
+  assert.equal(await page.getByRole("checkbox", { name: "参与任务上下文" }).count(), 0, "removed recall preference must stay removed");
+  await curate.check();
   assert.equal(await curate.isChecked(), true); assert(await page.getByText("Saved database knowledge").isVisible());
   await page.evaluate(() => { window.fixture.fail = true; });
   await curate.click(); await page.getByRole("alert").waitFor(); assert.equal(await curate.isChecked(), true, "failed persistence does not falsely change UI state");
@@ -29,9 +26,9 @@ try {
   for (const lang of ["zh-CN", "en"]) for (const theme of ["light", "dark"]) {
     await page.setViewportSize({ width: 360, height: 780 });
     await page.goto(server.resolvedUrls.local[0] + `tests/fixtures/context-extensions.html?lang=${lang}&theme=${theme}`);
-    await page.getByRole("checkbox").first().waitFor();
+    await page.getByRole("switch").first().waitFor();
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "controls must fit narrow panels");
   }
   assert.deepEqual(errors, []);
-  console.log("Browser: independent opt-in toggles, viewable saved facts, persistence failure, MCP failure/recovery and missing Skills visible after completion; Chinese/English light/dark at 360px: PASS");
+  console.log("Browser: current auto-recording toggle, viewable saved facts, persistence failure, MCP failure/recovery and missing Skills visible after completion; Chinese/English light/dark at 360px: PASS");
 } finally { await browser?.close(); await server.close(); }

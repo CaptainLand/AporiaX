@@ -3638,6 +3638,7 @@ function App() {
       .then(() => window.desktop.harness.run({
         runId,
         recoveryRunId: recoveryRunId || undefined,
+        retry: Boolean(retryAssistantId || recoveryRunId),
         taskId: targetTask.id,
         assistantId,
         sourceUserId: userMessage.id,

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.7"><img alt="Source v1.0.0-preview.7" src="https://img.shields.io/badge/source-v1.0.0--preview.7-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.1"><img alt="Release v1.0.0-rc.1" src="https://img.shields.io/badge/release-v1.0.0--rc.1-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,10 +25,11 @@
 AporiaX is a local-first Windows desktop agent. It edits code, runs commands, and creates Word / PowerPoint / Excel files inside an authorized workspace. Conversation, files, browser, terminal, and Git share one screen. Steps, evidence, and rollback stay in the UI instead of collapsing into a chat reply.
 
 > [!IMPORTANT]
-> Current Windows preview: **`v1.0.0-preview.7`**, not the final 1.0.0 release.
-> Cloud settles actual usage without reserving user funds, winds down at 5% remaining weekly quota, and saves progress before pausing on exhaustion. Avatar UI is temporarily hidden while its source and stored data remain. Background file/project/conversation sync stays removed. Cloud still supports Preview 4. See [Preview 7 notes](docs/RELEASE_NOTES_v1.0.0-preview.7.md). Cloud is temporarily limited to 20 users and ¥5/day site-wide. Independent AporiaX Beta builds need a one-time manual download.
-> Published as a regular GitHub Release marked **Latest**, so the default app update channel can discover it. The preview name and known issues remain.
-> This build adds network waiting and sleep/wake continuation, clearer main/subagent collaboration, execution records, on-demand project knowledge, and first-use model setup.
+> Current version: **`1.0.0-rc.1` release candidate**, not final 1.0.0.
+> [Download RC1](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.1). Installers use the default update channel; portable users replace the package manually. The Cloud minimum client version is unchanged.
+> Focus: Skill / MCP / mention loops, task recovery and context headroom. Features are frozen for candidate testing.
+> See [RC1 notes](docs/RELEASE_NOTES_v1.0.0-rc.1.md) and the [validation checklist](docs/releases/1.0.0-rc.1-validation.md).
+> MIT remains in effect for this RC; the proposed license is reserved for final stable review. Cloud remains a separate beta.
 > Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.
 > Binaries are unsigned. Quit the previous build before updating.
 
@@ -42,8 +43,8 @@ AporiaX is a local-first Windows desktop agent. It edits code, runs commands, an
 | Git / GitHub | Init, stage/commit/branch, remotes, pull/push, repository creation; sidebar editing of ordinary UTF-8 merge conflicts; read-only PR and CI for the current branch |
 | Permissions and execution | Smart Permission plus Direct / Safe / Isolated; Safe does not write the host `node_modules`; Isolated refuses to run without Docker |
 | Aporia Account | Browser authorization, PKCE, Main-only Access Token, safeStorage Refresh Token, account/quota/device state |
-| Aporia Cloud | Managed DeepSeek V4.1 Flash, server-reported availability, rolling weekly quota, isolated from BYOK / Local |
-| Cloud images | Flash native image input when supported by the server; the old Qwen proxy is retired |
+| Aporia Cloud | Managed DeepSeek V4 Flash / Pro, rolling weekly quota, Main-process Gateway, isolated from BYOK / Local |
+| Cloud Vision | Explicit image attachments are analyzed once by Qwen3.5 Flash and passed to the DeepSeek Agent as compact text observations |
 | Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
 | Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents when complexity needs them |
 | Builder orchestration | Concurrency 0 / 1 / 2 / 3 / 4 / 6, default 2, with Task Graph, Scope Leases, isolated Git worktrees, and conflict-safe merge |
@@ -59,6 +60,12 @@ AporiaX is a local-first Windows desktop agent. It edits code, runs commands, an
 | Local OCR | Chinese/English engine remains; language data downloads on first use; composer, attachment, and sidebar entries are hidden for now |
 
 See [SECURITY.md](SECURITY.md) for boundaries.
+
+### Privacy and data flow
+
+The current source removes the mobile companion channel: no background synchronization of local projects, full conversations, task snapshots or computer files to Cloud for mobile access. Remote-command polling and file-transfer IPC are removed as well. Signing in still exchanges the necessary account, quota and device information. A new desktop build is required; already installed older versions do not remove their own code.
+
+Local-first does **not** mean offline. When you choose Aporia Cloud or another online model, inference still sends the prompt, relevant conversation and tool/file excerpts, and explicitly attached content needed for that request. Authorized network tools, MCP calls and Git pushes remain separate network operations. See [SECURITY.md](SECURITY.md) for the full boundary.
 
 ## Interface preview
 
@@ -107,7 +114,13 @@ See [SECURITY.md](SECURITY.md) for boundaries.
 
 The dialogue, execution records, workspace, project knowledge and two sidebar screenshots now show 1.0.0-preview; click them to view the originals. Welcome, About and settings screenshots are retained from earlier versions; the current package is authoritative.
 
-## 1.0.0-preview
+## 1.0.0-rc.1
+
+- **Extension loop completion:** MCP steering, durable selection recovery and explicit reconnect; complete Skill instructions and referenced resources.
+- **Safer references:** browser snapshots are frozen per user message, not recaptured after navigation on retry; mention sources load independently.
+- **Context headroom:** correct excessive fixed reservation on 32K models without dropping constraints or hard limits.
+
+Retained Preview capabilities:
 
 - **Wait instead of failing immediately:** temporary connection loss uses backoff; sleep pauses new work and wake resumes it. Automatic recovery never clears a manual pause or resurrects a stopped task.
 - **Clearer collaboration:** child contexts retain user constraints and return structured results for review. Pause gates cover children and the Builder queue without changing the selected concurrency cap.
@@ -116,26 +129,23 @@ The dialogue, execution records, workspace, project knowledge and two sidebar sc
 - **Easier setup and previews:** signed-out Cloud models are disabled with a prompt to add your API; workspace files reuse sidebar previews, with Anchors collapsed by default.
 - **Retain the 0.9.9 foundations:** source-backed decisions, diagnostic retention, ordered tools, process-event waiting, and evidence-based acceptance without unrelated forced tests or false verification claims.
 
-Local validation: **67/67** regression scripts, 15 suspension/recovery scenarios, browser state checks, and actual packaged recovery/terminal tests passed. No live-model A/B speed or cost claim is made.
-
-Known preview issues: the [release commit's GitHub checks](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832) include failures in Windows knowledge projects, Curator activation tracking and the execution-record UI. These remain unresolved; the local results above do not mean all CI environments passed.
+Current candidate results and remaining gates are tracked in the [validation checklist](docs/releases/1.0.0-rc.1-validation.md). The preceding repair passed 81/81 local scripts; that is not proof of this package, remote CI, every real model or clean-machine acceptance.
 
 > Automatic continuation requires the app process to remain alive. Power loss, exit, or crashes still require manual recovery. Preserved memory means received, saveable task state, not provider-side computation that never returned. Unknown command/upload outcomes are not blindly replayed, and reconnecting may incur duplicate charges. Real hardware network-loss and sleep/wake checks remain outstanding.
 
-[Full 1.0.0-preview notes](docs/RELEASE_NOTES_v1.0.0-preview.md) · [0.9.9 notes](docs/RELEASE_NOTES_v0.9.9.md) · [Changelog](CHANGELOG.md)
+[RC1 notes](docs/RELEASE_NOTES_v1.0.0-rc.1.md) · [Historical Preview notes](docs/RELEASE_NOTES_v1.0.0-preview.md) · [Changelog](CHANGELOG.md)
 
 ## Download
 
-The current public version is **v1.0.0-preview.7**, published as a regular GitHub Release marked **Latest** on the default update channel. The preview name and known issues remain; this does not mean final 1.0.0 acceptance is complete. [Open the Latest download page](https://github.com/CaptainLand/AporiaX/releases/latest).
+**RC1 release candidate**: download from [GitHub Latest](https://github.com/CaptainLand/AporiaX/releases/latest), or use the installer build's sidebar update entry. This is not final 1.0.0.
 
-In an older build, use Settings → About → Check for updates to refresh manually. Installed builds can download and restart to install; portable builds open the download page so you can replace the executable manually. Updates are checked on every launch and again every 12 hours while the app is running.
+Use Settings → About → Check for updates to refresh manually. Current source checks on every launch and every 30 minutes while running; the sidebar entry hides when no update is available. Installed builds download and restart to install; portable builds open the download page for manual replacement. This local RC will not notify existing users of an update.
 
-| Windows x64 | Current package |
+| Windows x64 | Source |
 | --- | --- |
 | [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | History and notes |
-| [Preview 7 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/AporiaX-Setup-1.0.0-preview.7-x64.exe) | Recommended, in-app updates |
-| [Preview 7 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/AporiaX-Portable-1.0.0-preview.7-x64.exe) | No install; download each update |
-| [SHA-256 checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/SHA256SUMS-1.0.0-preview.7.txt) | Verify your download |
+| [Public Latest](https://github.com/CaptainLand/AporiaX/releases/latest) | Select Setup / Portable and matching SHA256SUMS from the same release |
+| RC1 download | [Installer](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.1/AporiaX-Setup-1.0.0-rc.1-x64.exe) · [Portable](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.1/AporiaX-Portable-1.0.0-rc.1-x64.exe) |
 
 First launch:
 

@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0-preview.7",
+  "version": "1.0.0-rc.1",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -187,6 +187,8 @@
       "build/icon.ico",
       "build/icon-dark.ico",
       "package.json",
+      "LICENSE",
+      "docs/RELEASE_NOTES_v1.0.0-rc.1.md",
       "config/cloud-endpoints.json",
       "shared/**/*"
     ],

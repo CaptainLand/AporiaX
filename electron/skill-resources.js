@@ -4,6 +4,29 @@ import { fileURLToPath } from "node:url";
 import { createSkillRegistry } from "./harness/skills/registry.js";
 
 export const CURATED_SKILLS_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "library", "curated");
+export const SKILL_SEARCH_TOOL = {
+  type: "function", function: {
+    name: "search_skills",
+    description: "Discover installed Skills by name, title, description or triggers before specialized work. Search with concise task keywords, or empty query to page the catalog. Then read the selected SKILL.md fully using read_skill_resource before following it. No scripts, hooks, installs or extra model calls are run by discovery.",
+    parameters: { type: "object", properties: { query: { type: "string", maxLength: 300 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 20 } }, additionalProperties: false },
+  },
+};
+
+export async function searchSkills({ workspaceRoot = "", userSkillsDirectory = "", builtinDirectory = CURATED_SKILLS_DIRECTORY } = {}, input = {}) {
+  const catalog = await createSkillRegistry().catalog({ workspacePath: workspaceRoot || "", userSkillsDirectory, builtinDirectory });
+  const query = String(input.query || "").trim().toLowerCase().slice(0, 300);
+  const words = [...new Intl.Segmenter(undefined, { granularity: "word" }).segment(query)].filter(item => item.isWordLike).map(item => item.segment).filter(item => item.length > 1);
+  const matches = catalog.map(skill => {
+    const text = [skill.name, skill.title, skill.description, ...skill.triggers].join(" ").toLowerCase();
+    return { skill, score: !query ? 1 : (text.includes(query) ? 10 : 0) + words.reduce((sum, word) => sum + Number(text.includes(word)), 0) };
+  }).filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name));
+  const offset = Math.max(0, Math.trunc(Number(input.offset) || 0));
+  const limit = Math.max(1, Math.min(20, Math.trunc(Number(input.limit) || 10)));
+  return { source: "installed-skill-catalog", skills: matches.slice(offset, offset + limit).map(({ skill }) => ({
+    name: skill.name, title: skill.title, description: skill.description, source: skill.source, instructions: "SKILL.md", compatibilityWarnings: skill.compatibilityWarnings,
+  })), total: matches.length, nextOffset: offset + limit < matches.length ? offset + limit : null,
+    diagnostics: catalog.diagnostics || [], note: "Discovery is not activation. Read the complete SKILL.md before use; metadata never grants permissions or executes hooks." };
+}
 export const SKILL_RESOURCE_TOOL = {
   type: "function",
   function: {

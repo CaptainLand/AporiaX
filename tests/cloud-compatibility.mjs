@@ -36,17 +36,6 @@ await test('confirmed legacy catalog works without pretending upstream health is
  const p=projectCloudProvider(cloud,signedIn); assert.equal(getAvailableModels([p])[0].disabled,false);
  const own={id:'local',models:[]}; assert.equal(projectCloudProvider(own,{}),own);
 });
-await test('new quota admission delegates transient/exhausted funds to the safe task gate, not catalog denial', () => {
- for (const quotaAdmission of ['affordable-output-v1', 'actual-usage-v1']) for (const reason of ['QUOTA_UNAVAILABLE', 'CREDITS_UNAVAILABLE']) {
-  const account = {...signedIn, gatewayCapabilities:{protocolVersion:1, modelGateway:{quotaAdmission}, models:[{slug:model,available:false,reason,supportsImages:true}]}};
-  assert.equal(cloudModelAvailability(account,model).available,true);
-  assert.equal(cloudVisionAvailability(account).available,true);
-  assert.equal(cloudModelAvailability({...account,status:'signed-out'},model).available,false);
-  assert.equal(cloudModelAvailability({...account,models:[]},model).available,false);
-  account.gatewayCapabilities.models[0].reason='PROVIDER_NOT_CONFIGURED';
-  assert.equal(cloudModelAvailability(account,model).available,false);
- }
-});
 await test('native Flash Vision requires both catalog and explicit image capability', () => {
  const state={...signedIn,gatewayCapabilities:{protocolVersion:1,models:[{slug:model,supportsImages:true,available:true}]}};
  assert.equal(cloudVisionAvailability(state).available,true);

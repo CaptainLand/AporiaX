@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.7"><img alt="Source v1.0.0-preview.7" src="https://img.shields.io/badge/source-v1.0.0--preview.7-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.1"><img alt="Release v1.0.0-rc.1" src="https://img.shields.io/badge/release-v1.0.0--rc.1-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,11 +25,11 @@
 AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区里改代码、跑命令、生成 Word / PPT / Excel；对话和文件、浏览器、终端、Git 在同一屏，步骤、依据和回退都留在界面里，而不是只给一段聊天回复。
 
 > [!IMPORTANT]
-> 当前 Windows 预览版为 **1.0.0 Preview 7（`v1.0.0-preview.7`）**，不是 1.0.0 正式版。
-> Cloud 按实际用量结算，不再预占个人额度；周额度剩余 5% 时进入收尾，耗尽后保存进度并暂停。头像展示及上传入口暂时关闭，源码和已有数据保留；文件、项目与对话后台同步保持关闭。Cloud 最低版本暂保留 Preview 4。
-> 参见 [Preview 7 说明](docs/RELEASE_NOTES_v1.0.0-preview.7.md)。Cloud 暂限 20 人、全站每日 ¥5；独立 AporiaX Beta 需手动换包一次。
-> 本版已作为普通 GitHub Release 设为 **Latest**，应用默认更新检测可发现；版本名仍保留 preview，已知问题见下文。
-> 本版新增断网等待与睡眠唤醒续跑，完善主/子 Agent 协作、执行记录、按需项目知识与首次使用引导。
+> 当前版本为 **`1.0.0-rc.1` 候选发布版**，不是 1.0.0 正式版。
+> [下载 RC1](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.1)：安装版进入默认更新通道，便携版手动换包；Cloud 最低客户端版本不提高。
+> 重点收尾 Skill / MCP / `@` 调用闭环、任务恢复与上下文预算；功能进入冻结测试阶段。
+> 参见 [RC1 说明](docs/RELEASE_NOTES_v1.0.0-rc.1.md) 与 [验证清单](docs/releases/1.0.0-rc.1-validation.md)。
+> RC 继续使用 MIT；新许可留到正式版审核启用。Cloud 仍为独立 Beta。
 > Aporia Account、Aporia Cloud、自己的 API 与本地模型相互独立，额度用尽不会偷偷切到另一条路径。
 > 安装包未代码签名。请先退出旧版再更新。
 
@@ -46,7 +46,7 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 | 权限与执行 | Smart Permission + Direct / Safe / Isolated；Safe 不写宿主 `node_modules`；Isolated 无 Docker 时拒绝，不静默降级 |
 | Aporia Account | 系统浏览器授权、PKCE、Main-only Access Token、safeStorage Refresh Token、账号/额度/设备状态 |
 | Aporia Cloud | 单一托管 DeepSeek V4.1 Flash、原生图片、按高峰/非高峰价格折算滚动周额度，与 BYOK / Local 独立 |
-| Cloud 图片 | 根据服务端能力使用 Flash 原生图片输入；旧 Qwen 图片代理已关闭，不偷偷切换模型 |
+| Cloud Vision | 显式图片附件经 Qwen3.5 Flash 一次性理解，再把文本观察交给 DeepSeek 主 Agent |
 | 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
 | 自适应多 Agent | Adaptive Agent Budget 按任务复杂度分配额外 Agent；简单任务保持 Main-only |
 | Builder 编排 | 并发可选 0 / 1 / 2 / 3 / 4 / 6，默认 2；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
@@ -62,6 +62,12 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 | 本地 OCR | 中英文引擎仍在，首次下载语言模型；输入栏、附件和侧栏入口暂时隐藏 |
 
 完整边界见 [SECURITY.md](SECURITY.md)。
+
+### 隐私与数据流向
+
+当前源码已移除手机伴侣的项目/对话同步、远程文件浏览与上传、远程任务控制，不再提供这些后台同步通道。登录账号不会自动同步你的本地项目、文件或对话。
+
+使用云模型时，完成任务所需的提示词、相关对话、文件片段或附件仍会发送到所选模型服务；使用本地模型才可避免这部分模型请求外发。授权的 Git 推送、联网工具和 MCP 另受各自权限控制。上述移除需使用包含本次变更的新构建；旧安装包不会自行删除代码。
 
 ## 界面预览
 
@@ -110,7 +116,13 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 
 对话、执行记录、工作区、项目知识及两张侧栏截图已更新为 1.0.0-preview，可点击查看原图；欢迎页、关于和设置截图保留此前版本，当前界面以安装包为准。
 
-## 1.0.0-preview
+## 1.0.0-rc.1
+
+- **扩展闭环收尾**：MCP 运行中接入、恢复选中服务、显式重连；Skill 说明与引用资源可完整读取。
+- **引用更稳妥**：网页引用随用户消息冻结，重试不抓取已切换页面；文件与扩展候选独立加载。
+- **上下文修复**：32K 模型不再因过大的固定预留挤占初始请求空间，保留约束和超限保护。
+
+继续保留 Preview 的核心能力：
 
 - **中断不再直接等于失败**：临时连接故障进入等待并退避重连；系统睡眠暂停新工作，唤醒后继续。手动暂停不会被自动解除，停止后不会被唤醒事件复活。
 - **主/子 Agent 协作更明确**：独立上下文保留用户约束，结构化结果等待验收；暂停门控覆盖子任务与 Builder 队列，保留用户设置的并发上限。
@@ -119,26 +131,23 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 - **更顺畅的首次使用与文件查看**：未登录的 Cloud 模型不可选择并提示添加自有 API；工作区复用侧栏文件预览，Anchor 默认收起。
 - **保留 0.9.9 的长任务基础**：有来源的决策与诊断保存、有序工具调度、进程事件等待和证据验收；不强制无关测试，不伪称验证通过。
 
-本地验证：**67/67** 个回归脚本、15 个自动暂停/恢复场景、浏览器状态展示及真实安装包内恢复/终端测试通过。尚无真实模型 A/B 提速或成本结论。
-
-预览版已知问题：[发布提交的 GitHub 检查](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832)中，Windows 知识项目、Curator 启动统计及执行记录 UI 检查未全部通过，仍待修复；上述本地结果不代表所有 CI 环境通过。
+RC 本次验证及剩余门槛统一记录于 [验证清单](docs/releases/1.0.0-rc.1-validation.md)。上一轮整体修复已有 81/81 本地脚本通过，但不代表这次打包、远端 CI、所有真实模型或异机验收已经通过。
 
 > 自动恢复要求应用进程仍存活；断电、退出或崩溃后仍需手动恢复。保留的是应用已接收且可保存的任务状态，不包括模型尚未返回的内部计算。未知结果的命令/上传等不会盲目重放，重连也可能重复计费。真实硬件断网、睡眠/唤醒仍待进一步实测。
 
-[完整 1.0.0-preview 说明](docs/RELEASE_NOTES_v1.0.0-preview.md) · [0.9.9 说明](docs/RELEASE_NOTES_v0.9.9.md) · [更新历史](CHANGELOG.md)
+[RC1 说明](docs/RELEASE_NOTES_v1.0.0-rc.1.md) · [历史 Preview 说明](docs/RELEASE_NOTES_v1.0.0-preview.md) · [更新历史](CHANGELOG.md)
 
 ## 下载
 
-当前公开版本为 **v1.0.0-preview.7**。本版作为普通 GitHub Release 设为 **Latest**，进入默认更新通道；preview 名称和已知问题保留，不表示已完成 1.0.0 正式版验收。[打开 Latest 下载页](https://github.com/CaptainLand/AporiaX/releases/latest)。
+**RC1 候选发布版**：从 [GitHub Latest](https://github.com/CaptainLand/AporiaX/releases/latest) 下载，安装版也可使用左下角更新入口。RC 不等于最终 1.0.0。
 
-旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版检测到更新后打开下载页，下载新便携版替换。每次启动都会检查，运行期间每 12 小时再检查一次。
+可在「设置 → 关于 → 检查更新」手动刷新。当前源码每次启动检查更新，运行中检查间隔为 30 分钟；没有新版本时隐藏左下角更新入口。安装版可在应用内下载并重启安装；便携版打开下载页后手动替换。RC 本轮不会向旧用户推送更新。
 
-| Windows x64 | 当前公开包 |
+| Windows x64 | 下载来源 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 历史版本与发行说明 |
-| [Preview 7 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/AporiaX-Setup-1.0.0-preview.7-x64.exe) | 推荐，可在应用内更新 |
-| [Preview 7 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/AporiaX-Portable-1.0.0-preview.7-x64.exe) | 无需安装，更新时手动换包 |
-| [SHA-256 校验值](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/SHA256SUMS-1.0.0-preview.7.txt) | 下载后核对 |
+| [公开 Latest](https://github.com/CaptainLand/AporiaX/releases/latest) | 在同一 Release 中选择 Setup / Portable 及对应 SHA256SUMS |
+| RC1 下载 | [安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.1/AporiaX-Setup-1.0.0-rc.1-x64.exe) · [便携版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.1/AporiaX-Portable-1.0.0-rc.1-x64.exe) |
 
 第一次使用：
 

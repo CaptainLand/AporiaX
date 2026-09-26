@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-rc.1 — 2026-09-26
+
+Windows release candidate on the default update channel; not final 1.0.0. MIT remains in effect for this RC; the proposed new license is reserved for the final stable release after review.
+
+- Freeze the current desktop feature set for release-candidate testing; Cloud remains an independently operated beta.
+- Complete the Skill / MCP / mention loop, including explicit MCP steering, durable selection recovery, bounded reconnect and uncertain-operation replay protection.
+- Freeze browser references per user message; retries cannot silently capture a subsequently navigated page. Load mention catalogs independently so slow files or MCP cannot block explicit Skill selection.
+- Correct 32K context headroom without dropping user constraints or removing hard context limits.
+- Include the existing clarification, quota wind-down, startup updater and privacy-channel-removal work in the current local source.
+- Add Preview → RC → Stable update-order checks and package the current license and RC notes.
+- Keep clean-machine installation, upgrade, live-model soak and external-user acceptance as release gates, not implied by local regression results.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-rc.1.md)
+
+
 ## 1.0.0-preview.7 — 2026-09-26
 
 - Show authenticated shared daily Cloud allowance and actual-use personal quota in Web.

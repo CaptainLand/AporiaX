@@ -1,3 +1,4 @@
+import { isComposingKey } from "../../shared/mention-tokens.js";
 import React, {
   useCallback,
   useEffect,
@@ -24,9 +25,8 @@ const EMPTY_STATE = Object.freeze({
 
 async function buildWorkspaceFileIndex(workspacePath) {
   if (!workspacePath || !window.desktop?.workspace?.listTree) return [];
-  if (workspaceFileIndexes.has(workspacePath)) {
-    return workspaceFileIndexes.get(workspacePath);
-  }
+  const cached = workspaceFileIndexes.get(workspacePath);
+  if (cached && (!cached.settled || Date.now() - cached.createdAt < 1500)) return cached.promise;
 
   const promise = (async () => {
     const files = [];
@@ -50,45 +50,54 @@ async function buildWorkspaceFileIndex(workspacePath) {
           files.push(String(entry.path || "").replace(/\\/g, "/"));
           if (files.length >= 4_000) break;
         } else if (entry?.type === "directory" && entry.path) {
+          files.push(String(entry.path).replace(/\\/g, "/") + "/");
           queue.push(entry.path);
         }
       }
     }
-    return [...new Set(files)].filter(Boolean);
+    const paths = [...new Set(files)].filter(Boolean);
+    paths.truncated = queue.length > 0 || files.length >= 4_000;
+    return paths;
   })();
 
-  workspaceFileIndexes.set(workspacePath, promise);
+  const entry = { createdAt: Date.now(), promise, settled: false };
+  workspaceFileIndexes.set(workspacePath, entry);
+  if (workspaceFileIndexes.size > 20) workspaceFileIndexes.delete(workspaceFileIndexes.keys().next().value);
   try {
-    return await promise;
+    const paths = await promise;
+    entry.settled = true; entry.createdAt = Date.now();
+    return paths;
   } catch (error) {
     workspaceFileIndexes.delete(workspacePath);
     throw error;
   }
 }
 
-async function buildExtensionMentionIndex(workspacePath) {
-  const cached = extensionMentionIndexes.get(workspacePath);
+function invalidateExtensionIndex(workspacePath) {
+  for (const kind of ["skill", "mcp"]) extensionMentionIndexes.delete(`${workspacePath}\0${kind}`);
+}
+
+async function buildExtensionMentionIndex(workspacePath, kind) {
+  const key = `${workspacePath}\0${kind}`;
+  const cached = extensionMentionIndexes.get(key);
   if (cached && Date.now() - cached.createdAt < 10_000) return cached.promise;
-  const promise = Promise.all([
-    window.desktop?.core?.skills?.({ workspacePath }) || Promise.resolve({ skills: [] }),
-    window.desktop?.core?.mcp?.({ workspacePath }) || Promise.resolve({ servers: [] }),
-  ]).then(([skills, mcp]) => [
-    ...(skills?.skills || []).map((skill) => ({
+  const promise = Promise.resolve().then(() => kind === "skill"
+    ? window.desktop?.core?.skills?.({ workspacePath }) : window.desktop?.core?.mcp?.({ workspacePath }))
+    .then(result => kind === "skill" ? (result?.enabled === false ? [] : result?.skills || []).map((skill) => ({
       key: `skill:${skill.name}`,
       kind: "skill",
       label: skill.title || skill.name,
       token: `skill:${skill.name}`,
       description: skill.description || skill.source || "Skill",
-    })),
-    ...(mcp?.servers || []).map((server) => ({
+    })) : (result?.enabled === false ? [] : result?.servers || []).filter(server => server.enabled !== false).map((server) => ({
       key: `mcp:${server.id}`,
       kind: "mcp",
       label: server.name || server.id,
       token: `mcp:${server.id}`,
       description: `${server.id} · ${server.transport}`,
-    })),
-  ]);
-  extensionMentionIndexes.set(workspacePath, { createdAt: Date.now(), promise });
+    }))).catch(error => { extensionMentionIndexes.delete(key); throw error; });
+  extensionMentionIndexes.set(key, { createdAt: Date.now(), promise });
+  if (extensionMentionIndexes.size > 40) extensionMentionIndexes.delete(extensionMentionIndexes.keys().next().value);
   return promise;
 }
 
@@ -96,7 +105,7 @@ function rankMentionSuggestions(paths, extensions, query, limit = 12) {
   const source = String(query || "").toLowerCase();
   const explicitKind = source.startsWith("skill:")
     ? "skill"
-    : source.startsWith("mcp:") ? "mcp" : "";
+    : source.startsWith("mcp:") ? "mcp" : ["browser", "terminal", "git"].find((kind) => source.startsWith(kind + ":")) || "";
   const needle = explicitKind ? source.slice(explicitKind.length + 1) : source;
   const extensionMatches = extensions
     .filter((item) => !explicitKind || item.kind === explicitKind)
@@ -122,10 +131,10 @@ function WorkspaceMentionMenu({ state, onSelect }) {
         <div className="aporiax-workspace-mention-title">
           <span>
             <FileText size={13} />
-            {tr("引用文件、Skill 或 MCP", "Mention a file, Skill, or MCP")}
+            {tr("引用文件、目录或扩展", "Mention files, folders, or extensions")}
           </span>
           <small>
-            {tr("输入 @skill: 或 @mcp: 可直接筛选", "Type @skill: or @mcp: to filter")}
+            {"@skill: / @mcp: / @git: / @browser: / @terminal:"}
           </small>
         </div>
         {state.loading ? (
@@ -155,6 +164,7 @@ function WorkspaceMentionMenu({ state, onSelect }) {
             {tr("没有匹配的文件或扩展", "No matching files or extensions")}
           </div>
         )}
+        {state.truncated && <div className="aporiax-workspace-mention-empty">{tr("结果已截断；可缩小路径或直接输入完整引用。", "Results truncated; narrow the path or type an exact reference.")}</div>}
         <div className="aporiax-workspace-mention-footer">
           <span>↑↓ {tr("选择", "Select")}</span>
           <span>Enter / Tab {tr("引用", "Mention")}</span>
@@ -170,6 +180,7 @@ export function useWorkspaceMentionAutocomplete({
   setValue,
   textareaRef,
   workspacePath,
+  taskId,
 }) {
   const [state, setState] = useState(EMPTY_STATE);
   const [cursorRevision, setCursorRevision] = useState(0);
@@ -179,8 +190,9 @@ export function useWorkspaceMentionAutocomplete({
 
   const close = useCallback(() => {
     requestRevision.current += 1;
+    workspaceFileIndexes.delete(workspacePath);
     setState(EMPTY_STATE);
-  }, []);
+  }, [workspacePath]);
 
   const refreshCursor = useCallback(() => {
     setCursorRevision((revision) => revision + 1);
@@ -190,7 +202,7 @@ export function useWorkspaceMentionAutocomplete({
     const textarea = textareaRef.current;
     const cursor = textarea?.selectionStart ?? value.length;
     const query = extractWorkspaceMentionQuery(value, cursor);
-    if (!query || !workspacePath) {
+    if (!query) {
       close();
       return;
     }
@@ -204,11 +216,12 @@ export function useWorkspaceMentionAutocomplete({
       loading: true,
     });
 
-    void Promise.all([
-      buildWorkspaceFileIndex(workspacePath),
-      buildExtensionMentionIndex(workspacePath),
-    ])
-      .then(([paths, extensions]) => {
+    const timer = setTimeout(() => {
+      const explicitKind = /^(skill|mcp|git|terminal|browser):/i.exec(query.query)?.[1].toLowerCase();
+      let paths = [], pending = 0;
+      const catalogs = new Map();
+      if (workspacePath && (!explicitKind || explicitKind === "git")) catalogs.set("git", [{ key: "git:changes", kind: "git", label: "Git changes", token: "git:changes", description: "只读摘要 / read-only summary" }]);
+      const publish = () => {
         if (requestRevision.current !== revision) return;
         const liveValue = valueRef.current;
         const liveCursor = textareaRef.current?.selectionStart ?? liveValue.length;
@@ -221,27 +234,54 @@ export function useWorkspaceMentionAutocomplete({
           close();
           return;
         }
-        setState({
-          query: liveQuery,
-          suggestions: rankMentionSuggestions(paths, extensions, liveQuery.query, 12),
-          selectedIndex: 0,
-          loading: false,
-        });
-      })
-      .catch(() => {
-        if (requestRevision.current !== revision) return;
-        setState({
-          query,
-          suggestions: [],
-          selectedIndex: 0,
-          loading: false,
-        });
-      });
-  }, [value, workspacePath, cursorRevision, textareaRef, close]);
+        const suggestions = rankMentionSuggestions(paths, [...catalogs.values()].flat(), liveQuery.query, 12);
+        setState(previous => ({ query: liveQuery, suggestions,
+          selectedIndex: Math.max(0, suggestions.findIndex(item => item.key === previous.suggestions[previous.selectedIndex]?.key)),
+          loading: pending > 0 && !suggestions.length, truncated: Boolean(paths.truncated) }));
+      };
+      const load = (get, apply) => {
+        pending++;
+        void Promise.resolve().then(get).then(apply, () => {}).finally(() => { pending--; publish(); });
+      };
+      // Each source publishes independently. Explicit extension references
+      // never scan files or wait for unrelated catalogs/workbench resources.
+      for (const kind of ["skill", "mcp"]) if (!explicitKind || explicitKind === kind)
+        load(() => buildExtensionMentionIndex(workspacePath, kind), items => catalogs.set(kind, items));
+      if (!explicitKind) load(async () => {
+        if (taskId && workspacePath && query.query && window.desktop?.workbench?.request) {
+          const search = await window.desktop.workbench.request({ action: "search", taskId, workspacePath, query: query.query.replace(/:\d+(?:-\d+)?$/, "") }).catch(() => null);
+          if (search?.entries) { const found = search.entries.map(entry => entry.path + (entry.type === "directory" ? "/" : "")); found.truncated = search.truncated; return found; }
+        }
+        const indexed = await buildWorkspaceFileIndex(workspacePath);
+        if (query.query && !rankWorkspaceFiles(indexed, query.query).length) {
+          workspaceFileIndexes.delete(workspacePath);
+          return buildWorkspaceFileIndex(workspacePath);
+        }
+        return indexed;
+      }, items => { paths = items; });
+      if ((!explicitKind || ["browser", "terminal"].includes(explicitKind)) && taskId && window.desktop?.workbench?.request)
+        load(() => window.desktop.workbench.request({ action: "list", taskId, workspacePath }), resources => catalogs.set("workbench",
+          (resources || []).filter(item => ["browser", "terminal", "process"].includes(item.kind)).map(item => {
+            const kind = item.kind === "browser" ? "browser" : "terminal";
+            return { key: kind + ":" + item.id, kind, label: item.title || item.id, token: kind + ":" + item.id, description: "显式发送只读快照 / explicitly send read-only snapshot" };
+          })));
+      publish();
+    }, 120);
+    return () => { clearTimeout(timer); requestRevision.current += 1; };
+  }, [value, workspacePath, taskId, cursorRevision, textareaRef, close]);
 
   useEffect(() => {
     close();
   }, [workspacePath, close]);
+
+  useEffect(() => {
+    const invalidate = () => { workspaceFileIndexes.delete(workspacePath); invalidateExtensionIndex(workspacePath); refreshCursor(); };
+    window.addEventListener("focus", invalidate);
+    const unsubscribe = window.desktop?.harness?.onEvent?.((event) => {
+      if (["tool.completed", "run.completed", "skill.activated"].includes(event.type)) invalidate();
+    });
+    return () => { window.removeEventListener("focus", invalidate); unsubscribe?.(); };
+  }, [workspacePath, refreshCursor]);
 
   const select = useCallback(
     (suggestion) => {
@@ -270,6 +310,7 @@ export function useWorkspaceMentionAutocomplete({
 
   const handleKeyDown = useCallback(
     (event) => {
+      if (isComposingKey(event)) return false;
       if (!state.query) return false;
       if (event.key === "Escape") {
         event.preventDefault();

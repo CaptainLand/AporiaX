@@ -19,7 +19,14 @@ import {
 } from "node:path";
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
-const MIN_CONTEXT_RESERVE_TOKENS = 12_000;
+const MIN_CONTEXT_RESERVE_TOKENS = 8192;
+// Keep an 8K response allowance on small models without consuming 12K of a
+// 32K window before the first request. Larger windows retain the 14% margin.
+export function contextReserveTokens(contextWindowTokens) {
+  return Math.min(Math.floor(contextWindowTokens * 0.4), Math.max(
+    MIN_CONTEXT_RESERVE_TOKENS, Math.floor(contextWindowTokens * 0.14),
+  ));
+}
 const MAX_MEMORY_FACTS = 240;
 const MAX_MEMORY_FACT_CHARS = 1_200;
 const MAX_RULE_FILES = 120;
@@ -302,9 +309,7 @@ export function compactConversationForRequest({
   if (inputBudgetTokens !== null && (!Number.isSafeInteger(inputBudgetTokens) || inputBudgetTokens <= 0)) {
     throw new TypeError("inputBudgetTokens must be a positive integer.");
   }
-  const reserveTokens = Math.min(Math.floor(contextWindowTokens * 0.4), Math.max(
-    MIN_CONTEXT_RESERVE_TOKENS, Math.floor(contextWindowTokens * 0.14),
-  ));
+  const reserveTokens = contextReserveTokens(contextWindowTokens);
   const compactAtTokens = Math.max(1, Math.min(contextWindowTokens - reserveTokens, inputBudgetTokens ?? Infinity));
   const estimatedTokensBefore = estimateConversationTokens(
     conversation,

@@ -18,6 +18,7 @@ import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.js
 import { getModel, getModelGroups } from "../models/model-catalog.js";
 import { ModelSetupActions } from "../models/ModelSetupActions.jsx";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
+import { isComposingKey } from "../../shared/mention-tokens.js";
 import {
   attachmentImageSrc,
   beginComposerAttachmentDrag,
@@ -297,6 +298,7 @@ export function Composer({
   const builderLimit = normalizeBuilderCount(task.builderLimit, DEFAULT_BUILDER_LIMIT);
   const modelReady = Boolean(model.id && !model.disabled);
   const mentionAutocomplete = useWorkspaceMentionAutocomplete({
+    taskId: task.id,
     value: message,
     setValue: setMessage,
     textareaRef,
@@ -419,7 +421,8 @@ export function Composer({
   };
 
   const handleKeyDown = (event) => {
-    if (mentionAutocomplete.handleKeyDown(event)) return;
+              if (isComposingKey(event)) return;
+              if (mentionAutocomplete.handleKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();

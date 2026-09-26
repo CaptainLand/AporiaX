@@ -38,7 +38,7 @@ export async function saveRuntimeContext(scopeId, state) {
   await context.contextGate;
 }
 // Unknown tools, MCP calls and process tools are conservatively effectful.
-const READ_ONLY = new Set(["read_skill_resource", "read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "wait_process", "present_to_user", "read_conversation_history", "mcp_search_tools", "mcp_read_result", "task_brief", "replan_strategy"]);
+const READ_ONLY = new Set(["search_skills", "read_skill_resource", "read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "wait_process", "present_to_user", "read_conversation_history", "mcp_search_tools", "mcp_read_result", "task_brief", "replan_strategy"]);
 export const isReadOnlyNativeTool = (name) => READ_ONLY.has(name);
 function stableInput(value) {
   if (Array.isArray(value)) return value.map(stableInput);
@@ -142,8 +142,8 @@ export async function executeDurableTool(tool, input, execute, requestApproval, 
   }
   const value = result?.modelResult ?? result;
   const receipt = { ...intent,
-    state: value?.error || value?.timedOut ? (REPLAY_SAFE.has(tool) ? "failed" : "uncertain") : "confirmed",
-    outcome: { path: value?.path, exitCode: value?.exitCode, error: value?.error, sha256: value?.sha256,
+    state: value?.error || value?.timedOut || value?.isError === true ? (REPLAY_SAFE.has(tool) ? "failed" : "uncertain") : "confirmed",
+    outcome: { path: value?.path, exitCode: value?.exitCode, error: value?.error || (value?.isError === true ? "MCP_TOOL_ERROR" : undefined), sha256: value?.sha256,
       processId: value?.processId, sessionId: value?.sessionId,
       summary: String(value?.summary || value?.message || value?.stdout || "").slice(0, 1000) },
   };

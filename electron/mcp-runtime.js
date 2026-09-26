@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { createMcpResultStore } from "./mcp-result-store.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { ToolListChangedNotificationSchema, ResourceListChangedNotificationSchema, PromptListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import {
   StdioClientTransport,
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const { version: appVersion } = createRequire(import.meta.url)("../package.json");
 
 const MAX_DYNAMIC_TOOLS = 32; // Active schemas, not the tool catalog.
 const MAX_CATALOG_TOOLS_PER_SERVER = 2000;
@@ -28,21 +32,6 @@ const CORE_NAMES = new Set([
   CORE_RESULT_READ,
   CORE_TOOL_SEARCH,
 ]);
-
-function timeout(promise, timeoutMs, label) {
-  let timer = null;
-  return Promise.race([
-    Promise.resolve(promise),
-    new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${label} timed out after ${timeoutMs} ms.`)),
-        timeoutMs,
-      );
-    }),
-  ]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
 
 // Local timeout/cancellation does not prove the remote action was undone.
 // Always pass the combined signal into the SDK AND bound our own wait for
@@ -190,7 +179,7 @@ export function compactMcpResult(result) {
 }
 
 function clientIdentity() {
-  return { name: "AporiaX", version: "0.6.0" };
+  return { name: "AporiaX", version: appVersion };
 }
 
 function defaultTransport(server) {
@@ -333,6 +322,8 @@ export class AporiaXMcpRuntime {
   #permissionMode = "read-only";
   #resultStore = createMcpResultStore();
   #nativeResultRefs = new Map();
+  #retries = new Map();
+  #catalogDirty = new Set();
 
   constructor({
     servers = [],
@@ -474,21 +465,102 @@ export class AporiaXMcpRuntime {
     return this.#tools.has(String(name || "")) || CORE_NAMES.has(String(name || ""));
   }
 
-  async discover({ permissionMode = "read-only" } = {}) {
+  async setServers(servers, { retryServerIds = [] } = {}) {
+    if (this.#closed) return;
+    const next = (Array.isArray(servers) ? servers : []).filter((server) => server?.enabled !== false);
+    const byId = new Map(next.map((server) => [server.id, server]));
+    for (const [id, connection] of this.#connections) {
+      if (JSON.stringify(byId.get(id)) === JSON.stringify(connection.server)) continue;
+      this.#dropConnection(id, connection);
+      await connection.client.close?.().catch(() => {});
+      await connection.transport.close?.().catch(() => {});
+    }
+    for (const old of this.#servers) if (!byId.has(old.id) || JSON.stringify(byId.get(old.id)) !== JSON.stringify(old)) {
+      this.#errors.delete(old.id); this.#retries.delete(old.id);
+    }
+    this.#servers = [...byId.values()];
+    // A fresh explicit user mention grants a new bounded connection attempt,
+    // not permission to replay any tool. Ordinary refresh retains its backoff.
+    for (const id of retryServerIds) if (byId.has(id) && !this.#connections.has(id)) {
+      this.#retries.delete(id); this.#errors.delete(id);
+    }
+  }
+
+  #dropConnection(id, connection) {
+    this.#connections.delete(id);
+    this.#catalogDirty.delete(id);
+    for (const [name, record] of this.#tools) if (record.connection === connection) this.#tools.delete(name);
+    for (const capability of this.#capabilities?.list({ source: "mcp", scopeId: this.#scopeId }) || []) {
+      if (capability.serverId === id) this.#capabilities.unregister(capability.id);
+    }
+  }
+
+  async refresh({ permissionMode = this.#permissionMode, signal } = {}) {
+    if (signal?.aborted || this.#closed) return;
+    // Refresh schemas only. A transport reconnect never replays a tool call.
+    for (const id of [...this.#catalogDirty]) {
+      const connection = this.#connections.get(id);
+      if (!connection) continue;
+      this.#catalogDirty.delete(id);
+      try {
+        const { client, server, capabilities } = connection;
+        const pages = (method, key, limit) => collectPages((cursor) => cancellableMcpRequest(options => client[method](cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${id} ${method}`), key, limit);
+        const tools = capabilities.tools ? await pages("listTools", "tools", MAX_CATALOG_TOOLS_PER_SERVER) : [];
+        const resources = capabilities.resources ? await pages("listResources", "resources", MAX_RESOURCE_ITEMS) : [];
+        const resourceTemplates = capabilities.resources && client.listResourceTemplates
+          ? await pages("listResourceTemplates", "resourceTemplates", MAX_RESOURCE_ITEMS).catch(error => { if (error?.code === -32601) return []; throw error; }) : [];
+        const prompts = capabilities.prompts ? await pages("listPrompts", "prompts", MAX_PROMPT_ITEMS) : [];
+        const names = new Set();
+        for (const tool of tools) {
+          if (typeof tool?.name !== "string" || !tool.name.trim() || names.has(tool.name)) throw new Error("Invalid or duplicate MCP tool name in catalog.");
+          names.add(tool.name);
+        }
+        if (this.#closed || signal?.aborted || this.#connections.get(id) !== connection) continue;
+        this.#dropConnection(id, connection);
+        Object.assign(connection, { tools, resources, resourceTemplates, prompts });
+        this.#connections.set(id, connection);
+        for (const tool of tools) {
+          let localName = mcpToolName(id, tool.name);
+          if (this.#tools.has(localName)) localName = mcpToolName(id, `${tool.name}_${this.#tools.size}`);
+          this.#tools.set(localName, { connection, tool, public: publicToolRecord(connection, tool, localName) });
+        }
+        this.#registerConnectionCapabilities(connection);
+        this.#emit({ type: "mcp.catalog.updated", serverId: id, tools: tools.length });
+      } catch (error) {
+        this.#dropConnection(id, connection);
+        await connection.client.close?.().catch(() => {});
+        await connection.transport.close?.().catch(() => {});
+        this.#errors.set(id, safeMcpError(error, connection.server));
+        this.#retries.set(id, { attempts: 1, after: Date.now() + 1000 });
+        this.#emit({ type: "mcp.server.failed", serverId: id, error: safeMcpError(error, connection.server) });
+      }
+    }
+    return this.discover({ permissionMode, automatic: true, signal });
+  }
+
+  async discover({ permissionMode = "read-only", automatic = false, signal } = {}) {
     if (this.#closed) throw new Error("MCP runtime is closed.");
+    if (signal?.aborted) throw Object.assign(new Error("MCP discovery cancelled."), { name: "AbortError" });
     this.#permissionMode = normalizePermissionMode(permissionMode);
     for (const server of this.#servers.slice(32)) this.#errors.set(server.id, "MCP server limit (32) exceeded; this server was not connected.");
     if (!this.#discoveryPromise) {
       this.#discoveryPromise = Promise.allSettled(
-        this.#servers.slice(0, 32).filter((server) => !this.#connections.has(server.id))
+        this.#servers.slice(0, 32).filter((server) => {
+          const retry = this.#retries.get(server.id);
+          return !this.#connections.has(server.id) && (!automatic || !retry || (retry.attempts < 3 && Date.now() >= retry.after));
+        })
           .map(async (server) => {
-            try { await this.#connectServer(server); this.#errors.delete(server.id); }
-catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
+            try { await this.#connectServer(server, signal); this.#errors.delete(server.id); this.#retries.delete(server.id); }
+            catch (error) {
+              const attempts = (this.#retries.get(server.id)?.attempts || 0) + 1;
+              this.#retries.set(server.id, { attempts, after: Date.now() + Math.min(30_000, 1000 * 2 ** (attempts - 1)) });
+              this.#errors.set(server.id, safeMcpError(error, server));
+            }
           }),
       );
     }
     const pending = this.#discoveryPromise;
-    try { await pending; }
+    try { await pending; signal?.throwIfAborted(); }
     finally { if (this.#discoveryPromise === pending) this.#discoveryPromise = null; }
     return {
       servers: this.serverSummaries(),
@@ -497,7 +569,7 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
     };
   }
 
-  async #connectServer(server) {
+  async #connectServer(server, signal) {
     if (server.missingEnvironment?.length) throw new Error("MCP_ENV_MISSING: " + server.missingEnvironment.join(", "));
     this.#emit({ type: "mcp.server.connecting", serverId: server.id, transport: server.transport });
     const client = this.#clientFactory(server);
@@ -506,31 +578,31 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
     // cannot deadlock discovery; do not forward potentially secret-bearing logs.
     transport.stderr?.resume?.();
     try {
-      await timeout(client.connect(transport), server.timeoutMs, `MCP ${server.id} connect`);
+      await cancellableMcpRequest(() => client.connect(transport), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} connect`);
       const capabilities = client.getServerCapabilities?.() || {};
       const serverVersion = client.getServerVersion?.() || null;
       const tools = capabilities.tools ? await collectPages(
-        (cursor) => timeout(client.listTools(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listTools`),
+        (cursor) => cancellableMcpRequest(options => client.listTools(cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} listTools`),
         "tools",
         MAX_CATALOG_TOOLS_PER_SERVER,
       ) : [];
       const resources = capabilities.resources
         ? await collectPages(
-            (cursor) => timeout(client.listResources(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listResources`),
+            (cursor) => cancellableMcpRequest(options => client.listResources(cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} listResources`),
             "resources",
             MAX_RESOURCE_ITEMS,
           )
         : [];
       const resourceTemplates = capabilities.resources && client.listResourceTemplates
         ? await collectPages(
-            (cursor) => timeout(client.listResourceTemplates(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listResourceTemplates`),
+            (cursor) => cancellableMcpRequest(options => client.listResourceTemplates(cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} listResourceTemplates`),
             "resourceTemplates",
             MAX_RESOURCE_ITEMS,
           ).catch((error) => { if (error?.code === -32601) return []; throw error; })
         : [];
       const prompts = capabilities.prompts
         ? await collectPages(
-            (cursor) => timeout(client.listPrompts(cursor ? { cursor } : {}), server.timeoutMs, `MCP ${server.id} listPrompts`),
+            (cursor) => cancellableMcpRequest(options => client.listPrompts(cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} listPrompts`),
             "prompts",
             MAX_PROMPT_ITEMS,
           )
@@ -555,16 +627,16 @@ catch (error) { this.#errors.set(server.id, safeMcpError(error, server)); }
       this.#connections.set(server.id, connection);
       client.onclose = () => {
         if (this.#closed || this.#connections.get(server.id) !== connection) return;
-        this.#connections.delete(server.id);
-        for (const [name, record] of this.#tools) {
-          if (record.connection === connection) this.#tools.delete(name);
-        }
-        for (const capability of this.#capabilities?.list({ source: "mcp", scopeId: this.#scopeId }) || []) {
-          if (capability.serverId === server.id) this.#capabilities.unregister(capability.id);
-        }
+        this.#dropConnection(server.id, connection);
+        this.#retries.set(server.id, { attempts: 0, after: Date.now() + 1000 });
         this.#errors.set(server.id, "MCP_DISCONNECTED: the service connection closed; reconnect before calling tools.");
         this.#emit({ type: "mcp.server.failed", serverId: server.id, error: "MCP_DISCONNECTED" });
       };
+      for (const schema of [ToolListChangedNotificationSchema, ResourceListChangedNotificationSchema, PromptListChangedNotificationSchema]) {
+        client.setNotificationHandler?.(schema, () => {
+          if (!this.#closed && this.#connections.get(server.id) === connection) this.#catalogDirty.add(server.id);
+        });
+      }
       for (const tool of tools) {
         if (!tool?.name) continue;
         let localName = mcpToolName(server.id, tool.name);

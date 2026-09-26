@@ -3,14 +3,17 @@ import { _electron } from "playwright-core";
 import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 const version = JSON.parse(await readFile('package.json', 'utf8')).version;
-await mkdir(".tmp/packaged-preview5", { recursive: true });
+const output = resolve(process.argv[2] || "release");
+const evidence = resolve(".tmp", "packaged-" + version);
+await mkdir(evidence, { recursive: true });
 for (const portable of [false, true]) {
-  const directory = await mkdtemp(resolve(".tmp/packaged-preview5/profile-"));
+  const directory = await mkdtemp(join(evidence, "profile-"));
   const env = { ...process.env, APPDATA: directory, LOCALAPPDATA: directory };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.PORTABLE_EXECUTABLE_FILE; delete env.PORTABLE_EXECUTABLE_DIR;
-  if (portable) { env.PORTABLE_EXECUTABLE_FILE = resolve(`release/AporiaX-Portable-${version}-x64.exe`); env.PORTABLE_EXECUTABLE_DIR = resolve("release"); }
-  const app = await _electron.launch({ executablePath: resolve("release/win-unpacked/AporiaX.exe"), args: ["--user-data-dir=" + directory, "--disable-gpu"], env, timeout: 30000 });
+  for (const key of ["APORIAX_ACCOUNT_WEB_URL", "APORIAX_CLOUD_API_URL", "APORIAX_MODEL_GATEWAY_URL", "NODE_OPTIONS", "DEEPSEEK_API_KEY"]) delete env[key];
+  if (portable) { env.PORTABLE_EXECUTABLE_FILE = join(output, `AporiaX-Portable-${version}-x64.exe`); env.PORTABLE_EXECUTABLE_DIR = output; }
+  const app = await _electron.launch({ executablePath: join(output, "win-unpacked/AporiaX.exe"), args: ["--user-data-dir=" + directory, "--disable-gpu"], env, timeout: 30000 });
   try {
     const info = await app.evaluate(({ app, shell }) => {
       globalThis.openedUrls = [];

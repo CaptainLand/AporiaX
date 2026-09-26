@@ -1,3 +1,4 @@
+import { parseMentionTokens } from "../shared/mention-tokens.js";
 import { buildWitnessRouteBlocks } from "./p0-model.js";
 
 function normalizedLanguage(language) {
@@ -179,14 +180,14 @@ export function extractWorkspaceMentionQuery(text, cursor) {
     ? Math.max(0, Math.min(source.length, cursor))
     : source.length;
   const before = source.slice(0, caret);
-  const match = before.match(/(^|\s)@([^\s@{}"]*)$/u);
+  const match = before.match(/(^|[\s（(【\[,，。!?！？;；])@(?:\{([^}\r\n]*)|([^\s@{}"，。！？；,!?;）)【】\[\]]*))$/u);
   if (!match) return null;
   const prefixLength = match[1]?.length || 0;
   const start = caret - match[0].length + prefixLength;
   return {
     start,
     end: caret,
-    query: match[2] || "",
+    query: match[2] ?? match[3] ?? "",
   };
 }
 
@@ -195,10 +196,10 @@ export function formatWorkspaceMentionToken(path) {
     .trim()
     .replace(/\\/g, "/");
   if (!normalized) return "@";
-  if (/^(?:skill|mcp):[a-z][a-z0-9_-]{1,63}$/u.test(normalized)) {
+  if (/^(?:(?:skill|mcp):[a-z0-9][a-z0-9_-]{0,63}|(?:browser|terminal|git):[a-zA-Z0-9_-]+)$/u.test(normalized)) {
     return `@${normalized}`;
   }
-  return /^[A-Za-z0-9_.\-/]+$/u.test(normalized)
+  return /^[A-Za-z0-9_.\-/]+(?::\d+(?:-\d+)?)?$/u.test(normalized)
     ? `@${normalized}`
     : `@{${normalized}}`;
 }
@@ -238,25 +239,18 @@ export function rankWorkspaceFiles(paths, query, limit = 12) {
     .map((item) => item.path);
 }
 
-const DISPLAY_MENTION_PATTERN = /(^|[\s（(【[])(@(?:(?:skill|mcp):[a-z][a-z0-9_-]{1,63}|\{[^}\r\n]{1,260}\}|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./@()-]+)+|[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,12}))(?=$|[\s,，。!?！？;；:：)）\]】])/giu;
-
 export function tokenizeDisplayMentions(content) {
   const source = String(content || "");
   const parts = [];
   let cursor = 0;
 
-  for (const match of source.matchAll(DISPLAY_MENTION_PATTERN)) {
-    const boundary = match[1] || "";
-    const token = match[2] || "";
-    const tokenStart = (match.index || 0) + boundary.length;
+  for (const mention of parseMentionTokens(source)) {
+    const token = mention.raw;
+    const tokenStart = mention.start;
     if (tokenStart > cursor) {
       parts.push({ type: "text", value: source.slice(cursor, tokenStart) });
     }
-    const kind = token.toLowerCase().startsWith("@skill:")
-      ? "skill"
-      : token.toLowerCase().startsWith("@mcp:")
-        ? "mcp"
-        : "file";
+    const kind = mention.kind;
     parts.push({ type: "mention", kind, value: token });
     cursor = tokenStart + token.length;
   }

@@ -1,6 +1,6 @@
 import { readTextPage } from "./text-reader.js";
 import { mutateWorkspaceFiles } from "./workspace-mutations.js";
-import { readSkillResource } from "../skill-resources.js";
+import { readSkillResource, searchSkills } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -182,6 +182,9 @@ export function createNativeToolExecutor({
 
     if (toolName === "read_skill_resource") {
       return { modelResult: await readSkillResource({ workspaceRoot, userSkillsDirectory }, input) };
+    }
+    if (toolName === "search_skills") {
+      return { modelResult: await searchSkills({ workspaceRoot, userSkillsDirectory }, input) };
     }
 
     if (isBrowserToolName(toolName)) {

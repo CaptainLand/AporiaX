@@ -31,6 +31,11 @@ assert.equal(isNewerVersion("1.0.0", "1.0.0-preview.3"), true);
 assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0"), false);
 assert.equal(compareVersions("1.0.0+build.4", "1.0.0+build.5"), 0);
 assert.equal(compareVersions("1.0.0-preview.10", "1.0.0-preview.3"), 1);
+assert.equal(compareVersions("1.0.0-rc.1", "1.0.0-preview.7"), 1);
+assert.equal(compareVersions("1.0.0-rc.2", "1.0.0-rc.1"), 1);
+assert.equal(compareVersions("1.0.0", "1.0.0-rc.1"), 1);
+assert.equal(isNewerVersion("1.0.0-preview.7", "1.0.0-rc.1"), false);
+assert.equal(isNewerVersion("1.0.0-rc.1", "1.0.0"), false);
 assert.throws(() => compareVersions("invalid", "1.0.0-preview.3"), /INVALID_UPDATE_VERSION/);
 
 assert.equal(isPortableBuild({}), false);

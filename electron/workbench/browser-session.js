@@ -62,6 +62,7 @@ function inspectPage(input = {}, operation = "snapshot") {
 export class WorkbenchBrowserSession {
   constructor({ taskId, workspacePath, owner = "user", publish = () => {} }) {
     this.id = `browser_${randomUUID()}`;
+    this.kind = "browser";
     this.taskId = taskId; this.workspacePath = workspacePath; this.owner = owner;
     this.publish = publish; this.entries = []; this.problems = [];
     this.status = "ready"; this.pending = Promise.resolve(); this.action = ""; this.closed = false; this.agentUsed = owner === "agent";
@@ -179,6 +180,12 @@ export class WorkbenchBrowserSession {
     if (this.owner === "user" || this.owner === "handoff") throw new Error("BROWSER_USER_CONTROL: User is operating privately. Wait for control to be returned, then take a fresh snapshot.");
     return { active: true, browser: "AporiaX Workbench", browserSessionId: this.id,
       ...(await this.evaluate({}, "snapshot")), consoleErrors: this.entries.slice(-20), networkProblems: this.problems.slice(-20) };
+  }
+  async mentionSnapshot() {
+    // A one-shot user-selected reference does not transfer browser control.
+    await this.ready;
+    const page = await this.evaluate({}, "snapshot");
+    return { source: "explicit-browser-mention", browserSessionId: this.id, ...page };
   }
   async actionRun(name, fn) {
     if (this.owner !== "agent") throw new Error("BROWSER_USER_CONTROL: User has this browser. Do other work until control returns; do not retry this action repeatedly.");

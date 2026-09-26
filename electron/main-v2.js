@@ -2,6 +2,8 @@ import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc
 import "./gpu-guard.js";
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
+import { readWorkbenchMention } from "./workbench/runtime-provider.js";
+import { createFrozenBrowserMentionReader } from "./workbench/mention-snapshots.js";
 import { registerBlobScheme } from "./blob-protocol.js";
 
 registerBlobScheme();
@@ -41,7 +43,7 @@ import {
   loadMcpConfiguration,
   publicMcpServerSummary,
 } from "./mcp-config.js";
-import { selectMentionedMcpServers } from "./mcp-mentions.js";
+import { selectMentionedMcpServers, installMcpSteeringProvider, selectConfiguredMcpServers } from "./mcp-mentions.js";
 import {
   extensionLibrarySnapshot,
   importMcpConfiguration,
@@ -143,7 +145,13 @@ async function prepareHarnessRunRequest(event, request = {}) {
   const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const seededRequest = seedSkillOriginalContent(request);
   const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest);
-  const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest);
+  const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest, {
+    readContext: createFrozenBrowserMentionReader({
+      directory: join(app.getPath("userData"), "browser-mention-snapshots"),
+      taskId: request.taskId, workspacePath, retry: Boolean(request.retry || request.recoveryRunId),
+      readContext: (token) => readWorkbenchMention({ taskId: request.taskId, workspacePath }, token),
+    }),
+  });
   const skillPreparedRequest = extensionSourceEnabled(policy, "skill")
     ? await prepareSkillRequest(
         mentionPreparedRequest,
@@ -180,6 +188,14 @@ async function prepareHarnessRunRequest(event, request = {}) {
   };
 }
 
+installMcpSteeringProvider(async (request, currentServers) => {
+  const workspacePath = String(request.workspacePath || "");
+  const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
+  if (!extensionSourceEnabled(policy, "mcp")) return { servers: [], unresolved: [], retryServerIds: [] };
+  const configuration = await loadMcpConfiguration(mcpConfigurationOptions(workspacePath));
+  return selectConfiguredMcpServers(request, currentServers, configuration.servers);
+});
+
 const nativeHandle = ipcMain.handle.bind(ipcMain);
 const originalHandle = ipcMain.handle;
 ipcMain.handle = function budgetAwareHandle(channel, listener) {
@@ -198,13 +214,18 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       const runId = String(request?.runId || "").trim();
       const metadata = activeRunMetadata.get(runId);
       const workspacePath = metadata?.workspacePath || kernel?.taskRuntime?.getActiveRun(runId)?.workspacePath || "";
-      if (!workspacePath || !request?.message) {
+      if (!request?.message) {
         return listener(event, request);
       }
       const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
       const mentionedMessage = await prepareWorkspaceMentionMessage(
         request.message,
         workspacePath,
+        { readContext: createFrozenBrowserMentionReader({
+          directory: join(app.getPath("userData"), "browser-mention-snapshots"),
+          taskId: metadata?.taskId, workspacePath,
+          readContext: (token) => readWorkbenchMention({ taskId: metadata?.taskId, workspacePath }, token),
+        }) },
       );
       const message = extensionSourceEnabled(policy, "skill")
         ? await prepareSkillMessage(

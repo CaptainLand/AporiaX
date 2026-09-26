@@ -14,5 +14,10 @@ try {
     assert.match(await readFile(join(directory, 'latest.yml'), 'utf8'), /preview\.6/);
   }
   await assert.rejects(synchronizeReleaseChannels(directory, '1.0.0-preview.7'), /No update metadata matches/);
+  await write('rc.yml', '1.0.0-rc.1');
+  await synchronizeReleaseChannels(directory, '1.0.0-rc.1');
+  assert.equal(await readFile(join(directory, 'latest.yml'), 'utf8'), await readFile(join(directory, 'rc.yml'), 'utf8'));
+  assert.match(await readFile(join(directory, 'latest.yml'), 'utf8'), /1\.0\.0-rc\.1/);
+  await assert.rejects(synchronizeReleaseChannels(directory, '1.0.0-rc.2'), /No update metadata matches/);
   console.log('PASS release channels: either generated channel wins over stale files; unmatched version is rejected');
 } finally { await rm(directory, { recursive: true, force: true }); }

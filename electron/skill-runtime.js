@@ -23,6 +23,7 @@ function publicSkill(skill) {
     packageRoot: skill.packageRoot || "",
     license: skill.license || "",
     runtime: skill.runtime || null,
+    compatibilityWarnings: [...(skill.compatibilityWarnings || [])],
     tools: [...(skill.tools || [])],
     reason: skill.reason || "auto",
   };
@@ -39,6 +40,7 @@ function buildSkillContext(skills) {
       [
         `\n## Skill: ${skill.title} (${skill.name})`,
         `Source: ${skill.source}`,
+        skill.compatibilityWarnings?.length ? `Compatibility limits: ${skill.compatibilityWarnings.join("; ")}` : "",
         skill.runtime?.executable ? `Configured Python interpreter: ${skill.runtime.executable}. File detected only; verify imports before use. It is outside the versioned package so updates do not replace it.` : "",
         skill.packageRoot ? `Package root: ${skill.packageRoot}\nRead package resources with read_skill_resource(skill="${skill.name}", path="relative/path"). This root is read-only; write outputs to the task workspace. Upstream Bash/terminal commands must use AporiaX run_command and current task permissions, never setup scripts during discovery.` : "",
         skill.tools?.length

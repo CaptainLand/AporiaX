@@ -2,6 +2,7 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { fileURLToPath } from "node:url";
+import { parseMentionTokens } from "../../../shared/mention-tokens.js";
 
 export const SKILL_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const MAX_SKILL_FILE_BYTES = 128_000;
@@ -197,10 +198,9 @@ function mergeSkill(catalog, skill) {
 
 function explicitSkillNames(prompt) {
   const text = String(prompt || "");
-  const names = [];
+  const names = parseMentionTokens(text).filter((token) => token.kind === "skill").map((token) => token.value);
   const patterns = [
-    /(?:^|\s)\/skill(?::|\s+)([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/gi,
-    /(?:^|\s)@skill(?::|\s+)([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/gi,
+    /(?:^|[\s（(【\[])\/skill(?::|\s+)([a-z0-9][a-z0-9_-]{0,63})(?=$|[\s,，。.!?！？;；)）\]】])/gi,
   ];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {

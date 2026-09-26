@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'extensions-repair.mjs', 'extension-real-loop.mjs', 'overall-repair.mjs',
   'user-clarification.mjs', 'user-clarification-runtime.mjs',
   'automatic-task-suspension.mjs',
   'agent-activity.mjs', 'subagent-contract.mjs', 'subagent-lifecycle-regression.mjs',

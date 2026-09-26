@@ -23,7 +23,7 @@ async function files(root) {
   }
   return result;
 }
-const sources = [...await files("electron"), ...await files("shared"), ...await files("dist"), "build/icon.ico", "build/icon-dark.ico"];
+const sources = [...await files("electron"), ...await files("shared"), ...await files("dist"), "build/icon.ico", "build/icon-dark.ico", "LICENSE", `docs/RELEASE_NOTES_v${version}.md`];
 try { await stat("config/cloud-endpoints.json"); sources.push("config/cloud-endpoints.json"); } catch (error) { if (error.code !== "ENOENT") throw error; }
 for (const file of sources) assert.equal(hash(packagedFile(file)), hash(await readFile(file)), `Stale/missing packaged source: ${file}`);
 for (const name of ["@xterm/addon-search", "docx-preview", "node-pty"]) {

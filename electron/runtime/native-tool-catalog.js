@@ -2,7 +2,7 @@ import { REPLAN_TOOL } from "./strategy-history.js";
 import { CLARIFICATION_TOOL } from "./user-clarification.js";
 import { TASK_BRIEF_TOOL } from "./task-brief.js";
 import { ToolRegistry } from "../agent-core.js";
-import { SKILL_RESOURCE_TOOL } from "../skill-resources.js";
+import { SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL } from "../skill-resources.js";
 import { HISTORY_TOOL } from "./conversation-history.js";
 import { OFFICE_TOOL_DEFINITIONS } from "../office-tools.js";
 import { BROWSER_TOOL_DEFINITIONS, BROWSER_TOOL_RISKS } from "../browser-runtime.js";
@@ -25,6 +25,7 @@ export const TOOL_DEFINITIONS = [
     }, required: ["process_id"], additionalProperties: false },
   } },
   SKILL_RESOURCE_TOOL,
+  SKILL_SEARCH_TOOL,
   {
     type: "function",
     function: {
@@ -928,6 +929,7 @@ export const TOOL_RISKS = {
   request_user_input: "control",
   read_conversation_history: "read",
   read_skill_resource: "read",
+  search_skills: "read",
   finish_task: "control",
   followup_subagent: "control",
   cancel_subagent: "control",
