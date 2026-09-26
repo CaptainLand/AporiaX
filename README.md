@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.6"><img alt="Source v1.0.0-preview.6" src="https://img.shields.io/badge/source-v1.0.0--preview.6-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.7"><img alt="Source v1.0.0-preview.7" src="https://img.shields.io/badge/source-v1.0.0--preview.7-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
@@ -25,9 +25,9 @@
 AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区里改代码、跑命令、生成 Word / PPT / Excel；对话和文件、浏览器、终端、Git 在同一屏，步骤、依据和回退都留在界面里，而不是只给一段聊天回复。
 
 > [!IMPORTANT]
-> 当前 Windows 预览版为 **1.0.0 Preview 6（`v1.0.0-preview.6`）**，不是 1.0.0 正式版。
+> 当前 Windows 预览版为 **1.0.0 Preview 7（`v1.0.0-preview.7`）**，不是 1.0.0 正式版。
 > Cloud 按实际用量结算，不再预占个人额度；周额度剩余 5% 时进入收尾，耗尽后保存进度并暂停。头像展示及上传入口暂时关闭，源码和已有数据保留；文件、项目与对话后台同步保持关闭。Cloud 最低版本暂保留 Preview 4。
-> 参见 [Preview 6 说明](docs/RELEASE_NOTES_v1.0.0-preview.6.md)。Cloud 暂限 20 人、全站每日 ¥5；独立 AporiaX Beta 需手动换包一次。
+> 参见 [Preview 7 说明](docs/RELEASE_NOTES_v1.0.0-preview.7.md)。Cloud 暂限 20 人、全站每日 ¥5；独立 AporiaX Beta 需手动换包一次。
 > 本版已作为普通 GitHub Release 设为 **Latest**，应用默认更新检测可发现；版本名仍保留 preview，已知问题见下文。
 > 本版新增断网等待与睡眠唤醒续跑，完善主/子 Agent 协作、执行记录、按需项目知识与首次使用引导。
 > Aporia Account、Aporia Cloud、自己的 API 与本地模型相互独立，额度用尽不会偷偷切到另一条路径。
@@ -129,16 +129,16 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
 
 ## 下载
 
-当前公开版本为 **v1.0.0-preview.5**。本版作为普通 GitHub Release 设为 **Latest**，进入默认更新通道；preview 名称和已知问题保留，不表示已完成 1.0.0 正式版验收。[打开 Latest 下载页](https://github.com/CaptainLand/AporiaX/releases/latest)。
+当前公开版本为 **v1.0.0-preview.7**。本版作为普通 GitHub Release 设为 **Latest**，进入默认更新通道；preview 名称和已知问题保留，不表示已完成 1.0.0 正式版验收。[打开 Latest 下载页](https://github.com/CaptainLand/AporiaX/releases/latest)。
 
 旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版检测到更新后打开下载页，下载新便携版替换。每次启动都会检查，运行期间每 12 小时再检查一次。
 
 | Windows x64 | 当前公开包 |
 | --- | --- |
 | [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 历史版本与发行说明 |
-| [Preview 5 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.5/AporiaX-Setup-1.0.0-preview.5-x64.exe) | 推荐，可在应用内更新 |
-| [Preview 5 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.5/AporiaX-Portable-1.0.0-preview.5-x64.exe) | 无需安装，更新时手动换包 |
-| [SHA-256 校验值](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.5/SHA256SUMS-1.0.0-preview.5.txt) | 下载后核对 |
+| [Preview 7 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/AporiaX-Setup-1.0.0-preview.7-x64.exe) | 推荐，可在应用内更新 |
+| [Preview 7 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/AporiaX-Portable-1.0.0-preview.7-x64.exe) | 无需安装，更新时手动换包 |
+| [SHA-256 校验值](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.7/SHA256SUMS-1.0.0-preview.7.txt) | 下载后核对 |
 
 第一次使用：
 

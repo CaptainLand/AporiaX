@@ -24,7 +24,7 @@ try {
         check:async options=>{calls.push(["check",options]);return emit({phase:"available",availableVersion:"1.0.0-preview.4",busy:false,error:""});},
         download:async()=>{calls.push(["download"]);return emit({phase:"downloaded",downloadPercent:100});},
         install:async()=>{calls.push(["install"]);return emit({error:"TASK_RUNNING"});},
-        openRelease:async()=>{calls.push(["open"]);return status;},
+        openRelease:async(options)=>{calls.push(["open",options]);return status;},
       },
     };
   });
@@ -44,9 +44,11 @@ try {
   await sidebar.getByRole("button",{name:/有新版本更新/}).click();
   await sidebar.getByRole("button",{name:/重启安装/}).click();
   await sidebar.getByText(/有任务正在运行/).waitFor();
-  await page.evaluate(()=>window.updateFixture.emit({channel:"portable",phase:"available",error:""}));
+  await page.evaluate(()=>window.updateFixture.emit({channel:"portable",phase:"available",error:"",mirrorAvailable:true}));
   await sidebar.getByRole("button",{name:/有新版本更新/}).click();
   assert.equal(await page.evaluate(()=>window.updateFixture.calls.at(-1)[0]),"open");
+  await sidebar.getByRole('button',{name:/备用下载/}).click();
+  assert.equal(await page.evaluate(()=>window.updateFixture.calls.at(-1)[1].source),'mirror');
   await page.evaluate(()=>window.updateFixture.emit({phase:"error",availableVersion:"",error:"offline"}));
   await sidebar.getByRole("button",{name:/重试/}).click();
   assert.equal(await page.evaluate(()=>window.updateFixture.calls.at(-1)[1].force),true);

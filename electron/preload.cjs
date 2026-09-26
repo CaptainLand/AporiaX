@@ -161,7 +161,7 @@ contextBridge.exposeInMainWorld("desktop", {
     check: (request = {}) => ipcRenderer.invoke("update:check", request),
     download: () => ipcRenderer.invoke("update:download"),
     install: () => ipcRenderer.invoke("update:install"),
-    openRelease: () => ipcRenderer.invoke("update:open-release"),
+    openRelease: (request) => ipcRenderer.invoke("update:open-release", { source: request?.source || "github" }),
     subscribe: (callback) => {
       const listener = (_event, data) => callback(data);
       ipcRenderer.on("update:event", listener);

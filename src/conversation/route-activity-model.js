@@ -132,6 +132,8 @@ export function describeRouteRecord(record, language = 'zh-CN') {
     'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],
     'turn.failed': ['任务运行失败', 'Run failed'], 'turn.cancelled': ['任务已停止', 'Run stopped'],
     'response.retry': ['模型请求重试', 'Model request retry'],
+    'response.quota.low.daily': ['全站额度 ≤5% · 正在收尾', 'Shared daily allowance ≤5% · Winding down'],
+    'response.quota.low.weekly': ['周额度 ≤5% · 正在收尾', 'Weekly allowance ≤5% · Winding down'],
     'plan.updated': ['计划已更新', 'Plan updated'], 'parallel_batch.started': ['并行动作已开始', 'Parallel actions started'],
     'subagent.started': ['执行子任务', 'Working on subtask'], 'subagent.completed': ['子任务已返回', 'Subtask returned'], 'subagent.failed': ['子任务失败', 'Subtask failed'],
     'subagent.cancelled': ['子任务已停止', 'Subtask stopped'], 'subagent.reviewed': ['子任务验收记录', 'Subtask acceptance review'],

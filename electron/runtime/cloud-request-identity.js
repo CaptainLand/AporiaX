@@ -49,7 +49,8 @@ export async function prepareCloudRequest(state, provider, body, requestTrace, s
     // A durable complete result plus changed confirmed history is a NEW inference.
     // An uncertain request may never be silently replaced after restart/steering.
     if (!state.result) throw reconcileError(state, "恢复后的模型、端点或请求内容已变化");
-    state.identity = { ...fresh(), quotaWindDown: state.identity.quotaWindDown }; state.result = null;
+    state.identity = { ...fresh(), quotaWindDown: state.identity.quotaWindDown,
+      quotaWindDownReason: state.identity.quotaWindDownReason }; state.result = null;
   }
   const identity = state.identity;
   if (!identity.fingerprint) Object.assign(identity, runtimeRequestTrace(), requestTrace, { fingerprint });

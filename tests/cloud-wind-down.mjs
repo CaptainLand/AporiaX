@@ -5,18 +5,23 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runHarness } from '../electron/agent-runtime-core.js';
+import { createWitnessMonitor } from '../electron/witness-monitor.js';
+import { describeRouteRecord } from '../src/conversation/route-activity-model.js';
 import { TOOL_REGISTRY } from '../electron/runtime/native-tool-catalog.js';
 import { createPermissionPolicy } from '../electron/agent-core.js';
 import { withDurableRun } from '../electron/runtime/durable-run.js';
 import { callModelProvider } from '../electron/runtime/provider-stream.js';
 import { completeLoopRequest } from '../electron/runtime/loop-recovery.js';
+import { createLoopRequestIdentity, withLoopRequestIdentity } from '../electron/runtime/cloud-request-identity.js';
 import { createAporiaCloudProvider } from '../electron/provider-config.js';
-import { lowCloudQuota, observeCloudQuota, prepareCloudWindDown, cloudWindDownActive, cloudWorkerDeferral, CLOUD_WIND_DOWN_PROMPT } from '../electron/runtime/cloud-wind-down.js';
+import { lowCloudQuota, lowCloudDailyBudget, observeCloudQuota, prepareCloudWindDown, cloudWindDownActive, cloudWorkerDeferral, CLOUD_WIND_DOWN_PROMPT, CLOUD_DAILY_WIND_DOWN_PROMPT } from '../electron/runtime/cloud-wind-down.js';
 import { runSubagentTask } from '../electron/runtime/subagent-loop.js';
 import { planAgentBudget, runWithAgentBudget, withAgentBudgetAdmission } from '../electron/harness/agent-budget.js';
 
 const cloud = createAporiaCloudProvider('https://fixture.invalid');
 const quota = (remaining = 50, extra = {}) => ({ policy: 'actual-usage-v1', source: 'weekly', remainingMicros: remaining, limitMicros: 1000, exhausted: remaining <= 0, ...extra });
+const daily = (extra = {}) => ({ policy: 'provider-daily-v1', currency: 'CNY', remainingMicros: 250_000, limitMicros: 5_000_000,
+  sampledAt: new Date().toISOString(), resetsAt: new Date(Date.now() + 3600_000).toISOString(), ...extra });
 const body = () => ({ model: 'aporia-cloud-default', messages: [{ role: 'system', content: 'Normal task rules.' }, { role: 'user', content: 'Save existing work' }] });
 const clone = v => JSON.parse(JSON.stringify(v));
 const frame = v => 'data: ' + JSON.stringify(v) + '\n\n';
@@ -57,6 +62,47 @@ test('parallel settlements latch once and stay active even after quota improves'
   await withDurableRun({}, () => assert.equal(cloudWindDownActive(cloud), false));
 });
 
+test('shared daily wind-down uses fresh settled money, never temporary holds or stale days', () => {
+  assert(lowCloudDailyBudget(daily()));
+  for (const extra of [{remainingMicros:250001}, {remainingMicros:0}, {remainingMicros:1000000,availableMicros:1},
+    {sampledAt:new Date(Date.now()-91_000).toISOString()}, {resetsAt:new Date(Date.now()-1).toISOString()},
+    {sampledAt:new Date(Date.now()+31_000).toISOString()}, {remainingMicros:'1'}, {currency:'USD'}])
+    assert.equal(Boolean(lowCloudDailyBudget(daily(extra))), false);
+});
+
+test('shared daily allowance warns even with a full personal balance and survives restart', async () => {
+  const f = fixture();
+  await withDurableRun(f.context, async () => {
+    await observeCloudQuota(quota(1000, {dailyBudget:daily()}), e => f.events.push(e));
+    const identity = {identity:{}};
+    const sent = await prepareCloudWindDown(cloud, body(), identity);
+    assert(sent.messages[0].content.includes(CLOUD_DAILY_WIND_DOWN_PROMPT));
+    assert.equal(identity.identity.quotaWindDownReason,'daily');
+    assert.equal(cloudWorkerDeferral(cloud).executed,false);
+    assert.equal(f.events[0].source,'daily');
+    // A paid weekly request retains its exact original warning after a global alert.
+    const legacy = await prepareCloudWindDown(cloud, body(), {identity:{fingerprint:'sent',quotaWindDown:true}});
+    assert(legacy.messages[0].content.includes(CLOUD_WIND_DOWN_PROMPT));
+  });
+  await withDurableRun({recoveryContexts:f.contexts}, async () => {
+    const restored = await prepareCloudWindDown(cloud, body(), {identity:{}});
+    assert(restored.messages[0].content.includes(CLOUD_DAILY_WIND_DOWN_PROMPT));
+  });
+});
+
+test('Witness exposes a single visible global wind-down record without claiming task completion', () => {
+  const witness = createWitnessMonitor({heartbeatMs:0});
+  try {
+    witness.observe({type:'turn.started'});
+    witness.observe({type:'response.quota.low',source:'daily'});
+    witness.observe({type:'subagent.response.quota.low',source:'daily'});
+    const snapshot=witness.snapshot(),records=snapshot.records.filter(r=>r.eventType==='response.quota.low.daily');
+    assert.equal(records.length,1); assert.equal(snapshot.status,'running');
+    assert.match(describeRouteRecord(records[0],'zh-CN').title,/全站额度/);
+    assert.match(describeRouteRecord(records[0],'en').title,/Shared daily/);
+  } finally {witness.dispose();}
+});
+
 test('settled receipt warns the next existing call without adding a paid request or modifying history', async () => {
   const f = fixture(), p = provider(f), messages = body().messages;
   await withDurableRun(f.context, async () => {
@@ -74,6 +120,26 @@ test('initial authenticated quota is read once and applies before the first call
   const p = { ...provider(f), getCloudQuota: async () => { reads++; return quota(); } };
   await withDurableRun(f.context, async () => { await infer(p); await infer(p); });
   assert.equal(reads, 1); assert.equal(f.sent.length, 2); assert(f.sent.every(hasPrompt));
+});
+
+test('daily receipt reaches the next model request even with full personal quota', async () => {
+  const f=fixture(),p=provider(f,quota(1000,{dailyBudget:daily()}));
+  await withDurableRun(f.context,async()=>{await infer(p);await infer(p);});
+  assert.equal(hasPrompt(f.sent[0]),false);
+  assert(f.sent[1].messages[0].content.includes(CLOUD_DAILY_WIND_DOWN_PROMPT));
+});
+
+test('new inference after a saved complete response keeps the daily reason and reuses its result', async () => {
+  const f=fixture(),p={...provider(f,quota(1000,{dailyBudget:daily()})),getCloudQuota:async()=>quota(1000,{dailyBudget:daily()})};
+  await withDurableRun(f.context,async()=>{
+    const identity=createLoopRequestIdentity('main');
+    const call=request=>withLoopRequestIdentity(identity,()=>callModelProvider({provider:p,body:request}));
+    await call(body());
+    const changed={...body(),messages:[{role:'user',content:'Confirmed history has advanced'}]};
+    await call(changed);assert.equal(identity.identity.quotaWindDownReason,'daily');
+    await call(changed);assert.equal(f.sent.length,2,'same durable response must not cause a third paid generation');
+    assert(f.sent.every(request=>JSON.stringify(request.messages).includes('shared daily provider budget')));
+  });
 });
 
 test('failed or legacy initial metadata does not block work or invent a low-quota warning', async () => {

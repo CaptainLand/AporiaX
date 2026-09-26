@@ -1,0 +1,146 @@
+{
+  "date": "2026-09-26",
+  "scope": "Preview 7 release source baseline; deployment results are recorded separately",
+  "hashFormat": "sha256-utf8-normalized-lf",
+  "projects": {
+    "desktop": {
+      "root": ".",
+      "files": [
+        {
+          "path": "package.json",
+          "sha256": "3d75b03b53b9d82b02f6224d20b4238621350bee74e38ac0498965b3be5bdfb6"
+        },
+        {
+          "path": "electron/runtime/cloud-wind-down.js",
+          "sha256": "f1c4daf0c187c9bb19eed4a81d293c8afe9079e0f2eeabccfc5c8c36d97e142c"
+        },
+        {
+          "path": "electron/runtime/cloud-request-identity.js",
+          "sha256": "ca39a14ead16a704715fb182a1b8bde07a0ef6fbb9033e5cebe357015ae586fd"
+        },
+        {
+          "path": "electron/runtime/provider-stream.js",
+          "sha256": "dd94f7c6fce6c85744a654967b4c8f5dc1997968d9d303213d8bc09ce22ba09e"
+        },
+        {
+          "path": "electron/witness-monitor.js",
+          "sha256": "3d4910388e4edc4685ac2e604228ce133af794d7239e3e27b5e4259ab029ee6e"
+        },
+        {
+          "path": "electron/app-update-core.js",
+          "sha256": "950b3eefa7c385483a3ff6263de346232c15cf0ef0fa4f9014c6490d1902f1c6"
+        },
+        {
+          "path": "electron/app-update.js",
+          "sha256": "2bc682ac04e4ea33acf72c75feab5676503167c6c8263f0308891744072e9084"
+        },
+        {
+          "path": "electron/preload.cjs",
+          "sha256": "dbc4fbab81eea40da8cdb4ceba861ed076d330497803e611c40fa6000cbbf801"
+        },
+        {
+          "path": "src/conversation/route-activity-model.js",
+          "sha256": "de64e593e6e09b47b06b41dab1b0f0346ec70da4183ad2bd548ec2077b217c76"
+        },
+        {
+          "path": "src/settings/AppUpdateControls.jsx",
+          "sha256": "e0ce0c29f14f8513474cc772002d9f3f7c829e36657d23e7d38540cb30349a6f"
+        },
+        {
+          "path": "scripts/run-audit-checks.mjs",
+          "sha256": "946f106dc87ffd92f4ce517a471e1f919af9ff1704cb83a9144d595b245d3f1f"
+        },
+        {
+          "path": "scripts/verify-usage-source.mjs",
+          "sha256": "138fdd51ea7f9afcea6c028901da35269c1cbaccdf574d7a525cdd9fc449e3b4"
+        },
+        {
+          "path": "tests/cloud-wind-down.mjs",
+          "sha256": "768351b8c27b0e056093a928477136f61c371be279773e71ef07e544083fd058"
+        },
+        {
+          "path": "tests/app-update-runtime.mjs",
+          "sha256": "07ec03faae3bb4cc7b32d4a3fea019d7e1e1774698defd469e6d43c28549e0e3"
+        },
+        {
+          "path": "tests/app-update-browser.mjs",
+          "sha256": "2021810c4c14a3c60d60c97848c998326a35ef92b90be652222e90cc53a6e921"
+        }
+      ]
+    },
+    "cloud": {
+      "root": ".tmp/aporiax-cloud-server-preview",
+      "files": [
+        {
+          "path": "package.json",
+          "sha256": "bcf16c421cd786b0f8aea00bdc95669c1ff1b64081c0a44787634a776c4965fa"
+        },
+        {
+          "path": "packages/provider-budget/src/summary.ts",
+          "sha256": "85987c36ec0bd1b7c3bd0d72e615a9ab0652c0cc197dfc09340b69818a933a92"
+        },
+        {
+          "path": "packages/provider-budget/src/index.ts",
+          "sha256": "55ed806e7c8220975f643f1855dcbb74ab516f58d4f3a45687caf572abc1a4f5"
+        },
+        {
+          "path": "packages/gateway-runtime/src/capabilities.ts",
+          "sha256": "a4fe932805c0420664d05df0028f832f0ddbda9af62ffcb0f04c2fd60d6544ab"
+        },
+        {
+          "path": "packages/gateway-runtime/src/settlement.ts",
+          "sha256": "292f3034f7e8d8cee71388f1133eb4cf29e9b5ede974edffc10ee62d20e042ae"
+        },
+        {
+          "path": "packages/quota/src/index.ts",
+          "sha256": "606336cb86cba8e719b87006004af8a0afebede7fb26939113621c7200e6d58e"
+        },
+        {
+          "path": "apps/api/src/main.ts",
+          "sha256": "401adc1d7d2a9127e72184f1887b5a86d6621b359fc7e72941e335d8ce86cc20"
+        },
+        {
+          "path": "tests/daily-budget.ts",
+          "sha256": "8ee7e596ebf3d354f6827677b9681584a9656d98c30ff7d068175b0f6475978f"
+        },
+        {
+          "path": "tests/cloud-compat-integration.ts",
+          "sha256": "cb226a3783eb04f55f4d9a43cdef1ee1dc3a18e2e31ce96fab8259baf583c3de"
+        }
+      ]
+    },
+    "web": {
+      "root": ".tmp/aporiax-web-guide",
+      "files": [
+        {
+          "path": "package.json",
+          "sha256": "effbcd8e9fff043416c637a12315c3e142f6e5f85dc7c29974df6c32ad987bb5"
+        },
+        {
+          "path": "src/account/DailyBudget.jsx",
+          "sha256": "e4091fd2b77590bd2cbfc2ad2a1c28e6541dbe774196ec9d4b22feaf9b283ef0"
+        },
+        {
+          "path": "src/account/daily-budget.css",
+          "sha256": "7bdd812305dd283ace2073cf0d160db3858647ec43effd6c159d1720e5bf9fed"
+        },
+        {
+          "path": "src/account/AccountPage.jsx",
+          "sha256": "91b7dfab2ae2a42c0a0acb0ad8d2e7ed9531bc52996145ef811c0c82400f491d"
+        },
+        {
+          "path": "tests/daily-budget-browser.mjs",
+          "sha256": "ce1afe5f8e04a48bb77f2365cb6fb404c433eff2b879d18971c3c67e238b35f0"
+        },
+        {
+          "path": "tests/browser.mjs",
+          "sha256": "2825206841f19996e42daf15f0e24a38b35159643baf0c7ba18e5150a9258301"
+        },
+        {
+          "path": "tests/web-regressions.mjs",
+          "sha256": "3efbcdffe96ef89449889faa23304c8a31dd78464bef6cdab557fae38442bf41"
+        }
+      ]
+    }
+  }
+}

@@ -14,8 +14,10 @@ function updateErrorText(tr, code) {
     return tr("请先下载更新。", "Download the update first.");
   }
   if (code === "UNSUPPORTED_CHANNEL") {
-    return tr("便携版请打开 GitHub 下载页。", "Portable builds open the GitHub download page.");
+    return tr("便携版请打开下载页获取新包。", "Portable builds use the download page for a new package.");
   }
+  if (/UPDATE_.*MISMATCH/.test(code)) return tr("下载源的版本或校验信息不一致，已停止更新。请稍后重新检查。", "Update sources disagree on the version or checksum. Update stopped; check again later.");
+  if (code === "UPDATE_CHECK_REQUIRED") return tr("请先检查更新。", "Check for updates first.");
   return code;
 }
 
@@ -70,6 +72,10 @@ export function AppUpdateSidebar() {
     {status.phase === "error" && <button type="button" className="update-release-link" onClick={() => void window.desktop.update.openRelease()}>
       {tr("打开下载页", "Open downloads")}<ArrowRight size={12} />
     </button>}
+    {status.mirrorAvailable && available && !ready && !status.busy && (status.channel === "portable" || status.phase === "error") &&
+      <button type="button" className="update-release-link" onClick={() => void window.desktop.update.openRelease({ source: "mirror" })}>
+        {tr("备用下载（腾讯云）", "Alternate download (Tencent Cloud)")}<ArrowRight size={12} />
+      </button>}
   </div>;
 }
 
@@ -119,7 +125,7 @@ export function AppUpdateControls() {
               : status.phase === "checking"
                 ? tr("正在检查更新…", "Checking for updates…")
                 : status.channel === "portable"
-                  ? tr("便携版检测到更新后会打开 GitHub 下载页。", "Portable builds open GitHub when an update is found.")
+                  ? tr("便携版可选 GitHub 或备用下载源获取新包。", "Portable builds can use GitHub or the alternate download source.")
                   : tr("安装版可在应用内下载并重启安装。", "Installed builds can download and restart to install.");
 
   return (
@@ -132,6 +138,11 @@ export function AppUpdateControls() {
         ) : null}
       </div>
       <div className="application-about-update-actions">
+        {status.mirrorAvailable && status.availableVersion && !busy && status.phase !== "downloaded" && (
+          <button type="button" className="secondary-button" onClick={() => void window.desktop.update.openRelease({ source: "mirror" })}>
+            {tr("备用下载（腾讯云）", "Alternate download (Tencent Cloud)")}
+          </button>
+        )}
         {action === "check" ? (
           <button
             type="button"
@@ -205,8 +216,8 @@ export function AppUpdateToast({ status, onAction, onClose }) {
               )
             : portable
               ? tr(
-                  "便携版请到 GitHub 下载新包。当前包不会被自动替换。",
-                  "Portable builds open GitHub for a new package. This copy is not replaced in place.",
+                  "便携版请下载新包，备用入口在左下角及设置中。当前包不会被自动替换。",
+                  "Download a new portable package; alternate downloads are in the sidebar and settings. This copy is not replaced in place.",
                 )
               : tr(
                   "安装版可以在应用内下载，下载完成后重启安装。",

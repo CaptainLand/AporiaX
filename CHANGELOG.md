@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-preview.7 — 2026-09-26
+
+- Show authenticated shared daily Cloud allowance and actual-use personal quota in Web.
+- Wind down at confirmed global allowance ≤5%; preserve the reason across request recovery and expose it in Witness.
+- Retry installer downloads once through a version/hash/size-matched trusted mirror; add portable alternate downloads.
+- Preserve existing account, cost, concurrency, privacy and update-install protections.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-preview.7.md)
+
 ## 1.0.0-preview.4 — 2026-09-24
 
 - Check updates on each app launch, on reconnect/focus (rate limited), and every 30 minutes.

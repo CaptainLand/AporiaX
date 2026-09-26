@@ -61,7 +61,31 @@ export function parseLatestYml(text) {
     source.match(/^\s*path:\s*["']?([^\s"']+)/m)?.[1] ||
     source.match(/^\s*-\s*url:\s*["']?([^\s"']+)/m)?.[1] ||
     "";
-  return { version, path };
+  const result = { version, path };
+  const block = source.split(/^\s*-\s*url:\s*/m).slice(1).find(value =>
+    value.match(/^["']?([^\s"']+)/)?.[1] === path);
+  const sha512 = block?.match(/^\s+sha512:\s*["']?([A-Za-z0-9+/=]+)/m)?.[1];
+  const size = Number(block?.match(/^\s+size:\s*(\d+)/m)?.[1]);
+  const rootHash = source.match(/^sha512:\s*["']?([A-Za-z0-9+/=]+)/m)?.[1];
+  if (sha512 && (!rootHash || sha512 === rootHash)) result.sha512 = sha512;
+  if (Number.isSafeInteger(size) && size > 0) result.size = size;
+  return result;
+}
+
+export function sameUpdateAsset(left, right) {
+  return Boolean(left && right && /^[A-Za-z0-9+/]{86}==$/.test(left.sha512 || '') &&
+    Number.isSafeInteger(left.size) && left.size > 0 && left.version === right.version &&
+    left.path === right.path && left.sha512 === right.sha512 && left.size === right.size);
+}
+export function matchesUpdateInfo(asset, info) {
+  return sameUpdateAsset(asset, { version: info?.version, path: asset?.path,
+    ...info?.files?.find(file => file.url === asset?.path) });
+}
+export function retryableUpdateFailure(error) {
+  const code = String(error?.code || ''), message = String(error?.message || error || '');
+  if (/checksum|sha512|signature|signing|certificate|cert_|cancel|mismatch|invalid_update/i.test(code + ' ' + message)) return false;
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ERR_NETWORK|ERR_INTERNET|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED/i.test(code + ' ' + message) ||
+    /network|timed?\s*out|fetch failed|HTTP\s*(?:403|404|408|429|5\d\d)/i.test(message);
 }
 
 export function shouldSkipAutoCheck(
@@ -95,6 +119,8 @@ export function createUpdateStatus({
   downloadPercent = 0,
   error = "",
   releaseUrl = LATEST_RELEASE_URL,
+  mirrorAvailable = false,
+  downloadSource = 'github',
 } = {}) {
   return {
     phase,
@@ -105,6 +131,8 @@ export function createUpdateStatus({
     downloadPercent: Math.max(0, Math.min(100, Number(downloadPercent) || 0)),
     error: String(error || ""),
     releaseUrl: String(releaseUrl || LATEST_RELEASE_URL),
+    mirrorAvailable: Boolean(mirrorAvailable),
+    downloadSource: downloadSource === 'mirror' ? 'mirror' : 'github',
     busy: ["checking", "downloading"].includes(phase),
   };
 }

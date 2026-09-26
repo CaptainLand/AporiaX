@@ -265,6 +265,16 @@ export function createWitnessMonitor({
     let meaningful = true;
 
     switch (event.type) {
+      case 'response.quota.low':
+      case 'subagent.response.quota.low': {
+        const daily = event.source === 'daily';
+        const key = daily ? 'quota-low:daily' : 'quota-low:weekly';
+        if (!recordIndex.has(key)) addRecord({ key, timestamp, kind: 'warning', status: 'completed',
+          eventType: daily ? 'response.quota.low.daily' : 'response.quota.low.weekly',
+          detail: daily ? '全站今日已结算剩余额度不超过 5%，本轮开始收尾：保存已有进度，不再启动新子任务。'
+            : '个人周额度不超过 5%，本轮开始收尾：保存已有进度，不再启动新子任务。' });
+        break;
+      }
       case "response.cloud.queued":
       case "subagent.response.cloud.queued": {
         if (!event.agentId) closeThinkingRecords(timestamp);

@@ -10,6 +10,9 @@ import {
   isNewerVersion,
   isPortableBuild,
   parseLatestYml,
+  sameUpdateAsset,
+  matchesUpdateInfo,
+  retryableUpdateFailure,
   shouldSkipAutoCheck,
   updateChannel,
 } from "./app-update-core.js";
@@ -42,6 +45,9 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   let lastAttemptAt = 0;
   let pendingCheck = null;
   let selectedFeed = LATEST_YML_URL;
+  let selectedAsset = null;
+  let pendingDownload = false;
+  let installerReady = false;
   const metadataUrls = [LATEST_YML_URL];
   const endpoints = loadCloudEndpoints();
   if (endpoints.configured && new URL(endpoints.accountWebUrl).protocol === "https:") {
@@ -54,6 +60,8 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       channel: channel(),
       packaged: packaged(),
       releaseUrl: LATEST_RELEASE_URL,
+      mirrorAvailable: metadataUrls.length > 1,
+      downloadSource: selectedFeed === LATEST_YML_URL ? 'github' : 'mirror',
       ...next,
     });
     broadcast(status);
@@ -72,9 +80,11 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     autoUpdater.allowDowngrade = false;
     autoUpdater.logger = null;
     autoUpdater.on("checking-for-update", () => {
+      if (pendingDownload) return;
       setStatus({ phase: "checking", availableVersion: status.availableVersion });
     });
     autoUpdater.on("update-available", (info) => {
+      if (pendingDownload) return;
       downloaded = false;
       setStatus({
         phase: "available",
@@ -82,6 +92,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       });
     });
     autoUpdater.on("update-not-available", () => {
+      if (pendingDownload) return;
       downloaded = false;
       setStatus({ phase: "not-available", availableVersion: "" });
     });
@@ -101,6 +112,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       });
     });
     autoUpdater.on("error", (failure) => {
+      if (pendingDownload) return; // One final status after the bounded fallback attempt.
       setStatus({
         phase: "error",
         availableVersion: status.availableVersion,
@@ -110,19 +122,33 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     });
   };
 
+  const readMetadata = async (url) => {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "AporiaX-Desktop", Accept: "text/yaml,text/plain,*/*" },
+      redirect: "follow", cache: "no-store", signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error("Update metadata HTTP " + response.status);
+    const parsed = parseLatestYml(await response.text());
+    isNewerVersion(parsed.version, currentVersion());
+    if (parsed.path !== `AporiaX-Setup-${parsed.version}-x64.exe`) throw new Error("INVALID_UPDATE_ASSET");
+    return parsed;
+  };
+  const selectInstaller = async (url, asset) => {
+    installerReady = false;
+    autoUpdater.setFeedURL({ provider: "generic", url: url.replace(/latest\.yml$/, ""), channel: "latest" });
+    const result = await autoUpdater.checkForUpdates();
+    if (!matchesUpdateInfo(asset, result?.updateInfo)) throw new Error("UPDATE_ASSET_MISMATCH");
+    selectedFeed = url; selectedAsset = asset;
+    installerReady = true;
+    return result;
+  };
   const readPublishedUpdate = async () => {
     let failure;
     for (const url of metadataUrls) {
       try {
-        const response = await fetch(url, {
-          headers: { "User-Agent": "AporiaX-Desktop", Accept: "text/yaml,text/plain,*/*" },
-          redirect: "follow", cache: "no-store", signal: AbortSignal.timeout(15_000),
-        });
-        if (!response.ok) throw new Error("Update metadata HTTP " + response.status);
-        const parsed = parseLatestYml(await response.text());
-        isNewerVersion(parsed.version, currentVersion());
-        if (!/^AporiaX-Setup-[0-9A-Za-z.+-]+-x64\.exe$/.test(parsed.path)) throw new Error("INVALID_UPDATE_ASSET");
+        const parsed = await readMetadata(url);
         selectedFeed = url;
+        selectedAsset = parsed;
         return parsed;
       } catch (error) { failure = error; }
     }
@@ -142,10 +168,9 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
 
   const checkNsis = async () => {
     setStatus({ phase: "checking", availableVersion: status.availableVersion });
-    await readPublishedUpdate();
+    const parsed = await readPublishedUpdate();
     configureUpdater();
-    autoUpdater.setFeedURL({ provider: "generic", url: selectedFeed.replace(/latest\.yml$/, ""), channel: "latest" });
-    const result = await autoUpdater.checkForUpdates();
+    const result = await selectInstaller(selectedFeed, parsed);
     const remote = String(result?.updateInfo?.version || "").trim();
     if (remote && isNewerVersion(remote, currentVersion())) {
       downloaded = false;
@@ -184,6 +209,9 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       return setStatus({ phase: "dev" });
     }
     if (status.phase !== "available" && status.phase !== "error") return status;
+    if (pendingCheck || pendingDownload || !selectedAsset || !status.availableVersion) return status;
+    if (!installerReady) return check({ force: true });
+    pendingDownload = true;
     configureUpdater();
     downloaded = false;
     setStatus({
@@ -192,7 +220,16 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       downloadPercent: 0,
     });
     try {
-      await autoUpdater.downloadUpdate();
+      try { await autoUpdater.downloadUpdate(); }
+      catch (failure) {
+        const fallback = metadataUrls.find(url => url !== selectedFeed);
+        if (!fallback || !retryableUpdateFailure(failure)) throw failure;
+        const asset = await readMetadata(fallback);
+        if (!sameUpdateAsset(selectedAsset, asset)) throw new Error("UPDATE_MIRROR_ASSET_MISMATCH");
+        await selectInstaller(fallback, asset);
+        setStatus({ phase: "downloading", availableVersion: asset.version, downloadPercent: 0 });
+        await autoUpdater.downloadUpdate();
+      }
       return status;
     } catch (failure) {
       return setStatus({
@@ -200,7 +237,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
         availableVersion: status.availableVersion,
         error: String(failure?.message || failure || "Download failed"),
       });
-    }
+    } finally { pendingDownload = false; }
   };
 
   const install = async () => {
@@ -226,9 +263,22 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     return status;
   };
 
-  const openRelease = async () => {
-    await shell.openExternal(LATEST_RELEASE_URL);
-    return status;
+  const openRelease = async ({ source = 'github' } = {}) => {
+    try {
+      if (source === 'mirror') {
+        if (pendingDownload || pendingCheck || !selectedAsset) throw new Error('UPDATE_CHECK_REQUIRED');
+        const mirror = metadataUrls.find(url => url !== LATEST_YML_URL);
+        if (!mirror) throw new Error('UPDATE_MIRROR_UNAVAILABLE');
+        const asset = await readMetadata(mirror);
+        if (!sameUpdateAsset(selectedAsset, asset)) throw new Error('UPDATE_MIRROR_ASSET_MISMATCH');
+        const name = channel() === 'portable' ? `AporiaX-Portable-${asset.version}-x64.exe` : asset.path;
+        await shell.openExternal(new URL(name, mirror).href);
+      } else if (source === 'github') await shell.openExternal(LATEST_RELEASE_URL);
+      else throw new Error('INVALID_UPDATE_SOURCE');
+      return status;
+    } catch (failure) {
+      return setStatus({ phase: 'error', availableVersion: status.availableVersion, error: String(failure?.message || failure) });
+    }
   };
 
   handleTrustedIpc(ipcMain, "update:status", () => status);
@@ -237,7 +287,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   );
   handleTrustedIpc(ipcMain, "update:download", () => download());
   handleTrustedIpc(ipcMain, "update:install", () => install());
-  handleTrustedIpc(ipcMain, "update:open-release", () => openRelease());
+  handleTrustedIpc(ipcMain, "update:open-release", (_event, request = {}) => openRelease({ source: request?.source || 'github' }));
 
   return {
     snapshot: () => status,

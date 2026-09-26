@@ -8,10 +8,14 @@ export const CLOUD_WIND_DOWN_PROMPT = '[Aporia Cloud low-quota wind-down]\n'
   + 'unverified changes, unfinished items and next steps. Avoid expensive optional checks. '
   + 'Do not claim completion or successful verification without evidence; report partial work honestly. '
   + 'Existing permissions and required safety checks still apply. The runtime will preserve progress and pause if quota is exhausted.';
+// Keep the original weekly prompt byte-for-byte stable for restored requests.
+export const CLOUD_DAILY_WIND_DOWN_PROMPT = CLOUD_WIND_DOWN_PROMPT.replace(
+  'remaining weekly quota', 'remaining shared daily provider budget');
 
 function state() {
   return runtimeRunState(SCOPE, () => ({
     active: runtimeRecoveryContext(SCOPE)?.active === true,
+    reason: runtimeRecoveryContext(SCOPE)?.reason || 'weekly',
     initialization: null, committed: Promise.resolve(),
   }));
 }
@@ -24,17 +28,29 @@ export function lowCloudQuota(quota) {
     quota.remainingMicros <= Math.floor(quota.limitMicros / 20);
 }
 export const cloudWindDownActive = provider => provider?.kind === 'aporia-cloud' && state()?.active === true;
+export function lowCloudDailyBudget(budget, now = Date.now()) {
+  const sampledAt = Date.parse(budget?.sampledAt), resetsAt = Date.parse(budget?.resetsAt);
+  return budget?.policy === 'provider-daily-v1' && budget.currency === 'CNY' &&
+    Number.isSafeInteger(budget.remainingMicros) && budget.remainingMicros > 0 &&
+    Number.isSafeInteger(budget.limitMicros) && budget.limitMicros > 0 &&
+    budget.remainingMicros <= Math.floor(budget.limitMicros / 20) &&
+    Number.isFinite(sampledAt) && sampledAt <= now + 30_000 && now - sampledAt <= 90_000 &&
+    Number.isFinite(resetsAt) && resetsAt > now;
+}
 export async function observeCloudQuota(quota, onEvent) {
   const current = state();
   if (!current) return;
   if (current.active) { await current.committed; return; }
-  if (!lowCloudQuota(quota)) return;
+  const reason = lowCloudQuota(quota) ? 'weekly' : lowCloudDailyBudget(quota?.dailyBudget) ? 'daily' : null;
+  if (!reason) return;
+  const balance = reason === 'daily' ? quota.dailyBudget : quota;
   // Latch before yielding: parallel completions can only trigger this once.
   current.active = true;
-  current.committed = saveRuntimeContext(SCOPE, { active: true,
-    remainingMicros: quota.remainingMicros, limitMicros: quota.limitMicros });
+  current.reason = reason;
+  current.committed = saveRuntimeContext(SCOPE, { active: true, reason,
+    remainingMicros: balance.remainingMicros, limitMicros: balance.limitMicros });
   await current.committed;
-  onEvent?.({ type: 'response.quota.low', thresholdPercent: 5, mode: 'wind-down' });
+  onEvent?.({ type: 'response.quota.low', thresholdPercent: 5, mode: 'wind-down', source: reason });
 }
 export async function prepareCloudWindDown(provider, body, identity, onEvent, signal) {
   if (provider.kind !== 'aporia-cloud') return body;
@@ -55,14 +71,18 @@ export async function prepareCloudWindDown(provider, body, identity, onEvent, si
   signal?.throwIfAborted();
   await current.committed;
   const saved = identity?.identity;
-  if (saved && saved.quotaWindDown === undefined)
+  if (saved && saved.quotaWindDown === undefined) {
     saved.quotaWindDown = saved.fingerprint ? false : current.active;
+    if (saved.quotaWindDown) saved.quotaWindDownReason = current.reason;
+  }
   const active = saved ? saved.quotaWindDown : current.active;
   if (!active) return body;
+  const reason = saved ? saved.quotaWindDownReason || 'weekly' : current.reason;
+  const prompt = reason === 'daily' ? CLOUD_DAILY_WIND_DOWN_PROMPT : CLOUD_WIND_DOWN_PROMPT;
   const messages = [...body.messages];
   if (messages[0]?.role === 'system' && typeof messages[0].content === 'string')
-    messages[0] = { ...messages[0], content: messages[0].content + '\n\n' + CLOUD_WIND_DOWN_PROMPT };
-  else messages.unshift({ role: 'system', content: CLOUD_WIND_DOWN_PROMPT });
+    messages[0] = { ...messages[0], content: messages[0].content + '\n\n' + prompt };
+  else messages.unshift({ role: 'system', content: prompt });
   return { ...body, messages };
 }
 export function cloudWorkerDeferral(provider) {
