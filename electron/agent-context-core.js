@@ -4,6 +4,7 @@ export { mergeTokenUsage } from "./runtime/token-usage.js";
 import { isHumanMessage } from "./runtime/task-conversation.js";
 import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
 import { conversationTokenMaterial } from "./runtime/multimodal-budget.js";
+import { assertLocalControlTool } from "./control/policy.js";
 import {
   lstat,
   mkdir,
@@ -654,6 +655,9 @@ function globToRegExp(pattern) {
 async function readInstructionFile(path) {
   const stats = await lstat(path);
   if (!stats.isFile() || stats.size > MAX_RULE_FILE_CHARS * 4) return "";
+  // Instruction loading happens before the first model/tool call. A regular
+  // file beneath a linked parent must obey the same external workspace grant.
+  await assertLocalControlTool({ toolName: "read_file", input: { path }, count: false });
   return (await readFile(path, "utf8")).slice(0, MAX_RULE_FILE_CHARS);
 }
 
@@ -664,6 +668,9 @@ async function scanRuleDirectory(workspaceRoot) {
     if (output.length >= MAX_RULE_FILES) return;
     let entries;
     try {
+      // readdir follows a symlink/junction at either .aporiax or rules even
+      // though child Dirents omit symlinks. Check the real root before reading.
+      await assertLocalControlTool({ toolName: "list_directory", input: { path: directory }, workspaceRoot, count: false });
       entries = await readdir(directory, { withFileTypes: true });
     } catch (error) {
       if (error?.code === "ENOENT") return;

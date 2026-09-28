@@ -11,6 +11,95 @@ const RUN_ID_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
 const LEGACY_MIGRATION_KEY = "legacy-jsonl-v1";
 const databases = new Map();
 const openingDatabases = new Map();
+export const RUN_RESULT_MAX_BYTES = 2_000_000;
+const RESULT_PRIORITY_FIELDS = ["status", "error", "usage", "cumulativeUsage", "usageHistoryComplete", "content", "summary", "workspace", "risks", "artifacts", "workspaceChanges", "selfCheck", "verification", "persistence", "anchor", "changes", "steps"];
+const SECRET_FIELDS = /^(?:api.?key|.*apiKey|password|passphrase|authorization|proxyAuthorization|cookie|setCookie|credentials?|secrets?|clientSecret|accessKey(?:Id)?|secretAccessKey|sessionToken|accessToken|refreshToken|idToken|privateKey|cloudToken|bearerToken|authToken|token)$/i;
+
+// Public task results are data, never live provider/configuration objects. Bound
+// traversal before serialization, do not invoke getters/toJSON, and redact
+// recognizable credentials while retaining usage token counts and artifacts.
+export function sanitizeRunResult(input, { maxBytes = RUN_RESULT_MAX_BYTES } = {}) {
+  const byteLimit = Math.max(1024, Math.min(RUN_RESULT_MAX_BYTES, Number(maxBytes) || RUN_RESULT_MAX_BYTES));
+  let remaining = byteLimit - 512;
+  let nodes = 0, truncated = false, redacted = false;
+  const ancestors = new WeakSet();
+  const takeString = (source) => {
+    let value = source.slice(0, Math.min(source.length, 512_000, Math.max(0, remaining)));
+    if (value.length !== source.length) truncated = true;
+    value = value.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/=._~-]{8,}/gi, (_, scheme) => { redacted = true; return `${scheme} [REDACTED]`; })
+      .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})\b/g, () => { redacted = true; return "[REDACTED]"; })
+      .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*([=:])\s*(["']?)[^\s"',;}]{4,}/gi,
+        (_, key, separator, quote) => { redacted = true; return `${key}${separator}${quote}[REDACTED]`; });
+    let encodedBytes = Buffer.byteLength(JSON.stringify(value));
+    if (encodedBytes > remaining) {
+      let low = 0, high = value.length;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (Buffer.byteLength(JSON.stringify(value.slice(0, mid))) <= remaining) low = mid;
+        else high = mid - 1;
+      }
+      value = value.slice(0, low);
+      if (/[\uD800-\uDBFF]$/.test(value)) value = value.slice(0, -1);
+      encodedBytes = Buffer.byteLength(JSON.stringify(value));
+      truncated = true;
+    }
+    remaining -= encodedBytes;
+    return value;
+  };
+  const visit = (value, depth = 0) => {
+    if (remaining < 32 || ++nodes > 40_000 || depth > 24) { truncated = true; return undefined; }
+    if (value == null) { remaining -= 4; return null; }
+    if (typeof value === "string") return takeString(value);
+    if (typeof value === "number") {
+      const output = Number.isFinite(value) ? value : null;
+      remaining -= String(output).length;
+      return output;
+    }
+    if (typeof value === "boolean") { remaining -= 5; return value; }
+    if (typeof value === "bigint") return takeString(String(value));
+    if (typeof value !== "object") return undefined;
+    if (ancestors.has(value)) { truncated = true; return takeString("[Circular]"); }
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) { truncated = true; return takeString("[Binary data omitted]"); }
+    if (value instanceof Date) return takeString(Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString());
+    if (value instanceof Error) return visit({ name: value.name, message: value.message, ...(value.code ? { code: value.code } : {}) }, depth + 1);
+    ancestors.add(value);
+    try {
+      remaining -= 2;
+      const output = Array.isArray(value) ? [] : Object.create(null);
+      let keys = Object.keys(value);
+      if (depth === 0) keys = [...RESULT_PRIORITY_FIELDS.filter(key => keys.includes(key)), ...keys.filter(key => !RESULT_PRIORITY_FIELDS.includes(key))];
+      if (keys.length > 10_000) { keys = keys.slice(0, 10_000); truncated = true; }
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor) { truncated = true; continue; }
+        if (!("value" in descriptor) || ["__proto__", "constructor", "prototype"].includes(key)) { truncated = true; continue; }
+        const keyBytes = Array.isArray(value) ? 1 : Buffer.byteLength(JSON.stringify(key)) + 2;
+        if (key.length > 200 || keyBytes + 32 > remaining) { truncated = true; break; }
+        remaining -= keyBytes;
+        const secret = SECRET_FIELDS.test(key.replace(/[-_\s]/g, ""));
+        if (secret) redacted = true;
+        const item = visit(secret ? "[REDACTED]" : descriptor.value, depth + 1);
+        if (item === undefined) { if (Array.isArray(value)) break; else continue; }
+        if (Array.isArray(value)) output.push(item); else output[key] = item;
+      }
+      return output;
+    } catch {
+      truncated = true;
+      return remaining >= 32 ? takeString("[Unserializable]") : undefined;
+    } finally { ancestors.delete(value); }
+  };
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : { status: "failed", content: typeof input === "string" ? input : "" };
+  const candidate = visit(source);
+  const result = candidate && typeof candidate === "object" && !Array.isArray(candidate) ? candidate : {};
+  if (truncated || redacted) result.resultStorage = { version: 1, truncated, redacted, maxBytes: byteLimit };
+  return result;
+}
+
+function pageInteger(value, fallback, maximum, { allowZero = false } = {}) {
+  if (value == null) return fallback;
+  if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1)) throw new Error("Invalid run store pagination.");
+  return Math.min(value, maximum);
+}
 
 function assertRunId(runId) {
   if (!RUN_ID_PATTERN.test(String(runId || ""))) {
@@ -112,6 +201,11 @@ function initializeSchema(database) {
     CREATE TABLE IF NOT EXISTS user_clarifications (
       scope_key TEXT PRIMARY KEY,
       revision INTEGER NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS run_results (
+      run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+      completed_at TEXT NOT NULL,
       payload_json TEXT NOT NULL
     );
   `);
@@ -519,18 +613,82 @@ export async function updateRunJournalMetadata(dataDirectory, runId, patch) {
 }
 
 export async function finishRunJournal(dataDirectory, runId, result) {
+  const safeRunId = assertRunId(runId);
+  const database = await getDatabase(dataDirectory);
   const now = new Date().toISOString();
-  await appendRunJournalEvent(dataDirectory, runId, {
-    type: "run.finished",
-    status: result?.status || "failed",
-    changedFiles: result?.changes?.length || 0,
-    at: now,
-  });
-  return updateRunJournalMetadata(dataDirectory, runId, {
-    status: result?.status || "failed",
-    completedAt: now,
-    lastEventType: "run.finished",
-  });
+  const stored = sanitizeRunResult(result);
+  const status = asString(stored.status || "failed", 100);
+  stored.status = status;
+  // The terminal event, metadata and complete result commit together. A retry
+  // cannot replace an earlier result or append a second terminal event.
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const current = database.prepare("SELECT * FROM runs WHERE run_id = ?").get(safeRunId);
+    if (!current) throw new Error(`Unknown run journal: ${safeRunId}`);
+    if (!database.prepare("SELECT 1 FROM run_results WHERE run_id = ?").get(safeRunId)) {
+      database.prepare("INSERT INTO run_results (run_id, completed_at, payload_json) VALUES (?, ?, ?)")
+        .run(safeRunId, now, JSON.stringify(stored));
+      insertEvent(database, safeRunId, { type: "run.finished", status, changedFiles: stored.changes?.length || 0, at: now });
+      database.prepare("UPDATE runs SET status = ?, updated_at = ?, completed_at = ?, last_event_type = 'run.finished' WHERE run_id = ?")
+        .run(status, now, now, safeRunId);
+    }
+    const metadata = rowToMetadata(database.prepare("SELECT * FROM runs WHERE run_id = ?").get(safeRunId));
+    database.exec("COMMIT");
+    return metadata;
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
+}
+
+// Public control reads deliberately do not load private recovery contexts or
+// perform the unresolved-operation inference used by the recovery UI.
+export async function listRunRecords(dataDirectory, { runIds, taskId, status, workspacePath, limit = 100, offset = 0 } = {}) {
+  const database = await getDatabase(dataDirectory);
+  const conditions = [], values = [];
+  if (runIds !== undefined) {
+    if (!Array.isArray(runIds) || runIds.length > 500) throw new Error("Invalid run id filter.");
+    if (!runIds.length) return [];
+    conditions.push(`run_id IN (${runIds.map(() => "?").join(",")})`);
+    values.push(...runIds.map(assertRunId));
+  }
+  for (const [column, value] of [["task_id", taskId], ["workspace_path", workspacePath]]) {
+    if (value !== undefined) { conditions.push(`${column} = ?`); values.push(String(value)); }
+  }
+  if (status !== undefined) {
+    const statuses = Array.isArray(status) ? status : [status];
+    if (!statuses.length) return [];
+    if (statuses.length > 20) throw new Error("Invalid run status filter.");
+    conditions.push(`status IN (${statuses.map(() => "?").join(",")})`);
+    values.push(...statuses.map(value => asString(value, 100)));
+  }
+  values.push(pageInteger(limit, 100, 500), pageInteger(offset, 0, 1_000_000, { allowZero: true }));
+  return database.prepare(`SELECT * FROM runs ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY started_at DESC, run_id ASC LIMIT ? OFFSET ?`)
+    .all(...values).map(rowToMetadata);
+}
+
+export async function readRunResult(dataDirectory, runId) {
+  const database = await getDatabase(dataDirectory);
+  const row = database.prepare("SELECT payload_json FROM run_results WHERE run_id = ?").get(assertRunId(runId));
+  return row ? safeJsonParse(row.payload_json) : null;
+}
+
+export async function readRunEvents(dataDirectory, runId, { afterSequence = 0, limit = 200, offset = 0 } = {}) {
+  const safeRunId = assertRunId(runId);
+  const after = pageInteger(afterSequence, 0, Number.MAX_SAFE_INTEGER, { allowZero: true });
+  const count = pageInteger(limit, 200, 1000);
+  const skip = pageInteger(offset, 0, 1_000_000, { allowZero: true });
+  const database = await getDatabase(dataDirectory);
+  const rows = database.prepare("SELECT sequence, at, type, payload_json FROM run_events WHERE run_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ? OFFSET ?")
+    .all(safeRunId, after, count + 1, skip);
+  const events = [];
+  let bytes = 0;
+  for (const row of rows.slice(0, count)) {
+    const payload = sanitizeRunResult(safeJsonParse(row.payload_json, {}), { maxBytes: 256_000 });
+    const event = { ...payload, sequence: Number(row.sequence), runId: safeRunId, at: row.at, type: row.type };
+    const size = Buffer.byteLength(JSON.stringify(event));
+    if (events.length && bytes + size > RUN_RESULT_MAX_BYTES) break;
+    events.push(event);
+    bytes += size;
+  }
+  return { runId: safeRunId, events, nextSequence: events.at(-1)?.sequence || after, hasMore: rows.length > events.length };
 }
 
 export async function listRecoverableRuns(dataDirectory) {

@@ -8,6 +8,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { assertLocalControlMcp, consumeLocalControlToolCall } from "./control/policy.js";
 
 const { version: appVersion } = createRequire(import.meta.url)("../package.json");
 
@@ -504,6 +505,7 @@ export class AporiaXMcpRuntime {
       this.#catalogDirty.delete(id);
       try {
         const { client, server, capabilities } = connection;
+        assertLocalControlMcp({ server, serverVersion: connection.serverVersion, operation: "refresh" });
         const pages = (method, key, limit) => collectPages((cursor) => cancellableMcpRequest(options => client[method](cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${id} ${method}`), key, limit);
         const tools = capabilities.tools ? await pages("listTools", "tools", MAX_CATALOG_TOOLS_PER_SERVER) : [];
         const resources = capabilities.resources ? await pages("listResources", "resources", MAX_RESOURCE_ITEMS) : [];
@@ -570,6 +572,7 @@ export class AporiaXMcpRuntime {
   }
 
   async #connectServer(server, signal) {
+    assertLocalControlMcp({ server, operation: "connect" });
     if (server.missingEnvironment?.length) throw new Error("MCP_ENV_MISSING: " + server.missingEnvironment.join(", "));
     this.#emit({ type: "mcp.server.connecting", serverId: server.id, transport: server.transport });
     const client = this.#clientFactory(server);
@@ -581,6 +584,7 @@ export class AporiaXMcpRuntime {
       await cancellableMcpRequest(() => client.connect(transport), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} connect`);
       const capabilities = client.getServerCapabilities?.() || {};
       const serverVersion = client.getServerVersion?.() || null;
+      assertLocalControlMcp({ server, serverVersion, operation: "connect" });
       const tools = capabilities.tools ? await collectPages(
         (cursor) => cancellableMcpRequest(options => client.listTools(cursor ? { cursor } : {}, options), server.timeoutMs, [signal, this.#lifetime.signal], `MCP ${server.id} listTools`),
         "tools",
@@ -740,6 +744,7 @@ export class AporiaXMcpRuntime {
   #connection(serverId) {
     const connection = this.#connections.get(String(serverId || "").trim().toLowerCase());
     if (!connection) throw new Error(`MCP server is not connected: ${serverId}`);
+    assertLocalControlMcp({ server: connection.server, serverVersion: connection.serverVersion });
     return connection;
   }
 
@@ -770,6 +775,10 @@ export class AporiaXMcpRuntime {
   async call(name, args = {}, { requestApproval, signal } = {}) {
     signal?.throwIfAborted();
     const localName = String(name || "");
+    consumeLocalControlToolCall();
+    // The task-owned pager also retains native results and needs no external
+    // MCP permission. Every other helper is subject to the external grant.
+    if (localName !== CORE_RESULT_READ) assertLocalControlMcp({ operation: "call" });
     if (this.#closed) throw new Error("MCP runtime is closed.");
     if (this.#permissionMode === "builder-write") throw new Error("MCP tools are disabled for isolated Builders.");
     if (localName === CORE_TOOL_SEARCH) return this.#searchTools(args);
@@ -824,8 +833,10 @@ export class AporiaXMcpRuntime {
 
     const record = this.#tools.get(localName);
     if (!record) throw new Error(`Unknown MCP tool: ${localName}`);
+    assertLocalControlMcp({ server: record.connection.server, serverVersion: record.connection.serverVersion, toolName: record.public.remoteName });
     if (this.#permissionMode === "read-only" && !record.public.readOnly) throw new Error("MCP tool is not available in read-only mode.");
     await this.#approve(record, requestApproval);
+    assertLocalControlMcp({ server: record.connection.server, serverVersion: record.connection.serverVersion, toolName: record.public.remoteName });
     signal?.throwIfAborted();
     this.#lifetime.signal.throwIfAborted();
     this.#emit({

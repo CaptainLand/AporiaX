@@ -23,7 +23,7 @@
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
     "dev:electron": "wait-on http://127.0.0.1:5173 && electron . --dev",
-    "build": "vite build",
+    "build": "vite build && npm run build:control-bridge",
     "dist:win": "npm run build && node scripts/build-public-release.mjs",
     "preview": "vite preview",
     "start": "electron .",
@@ -110,7 +110,11 @@
     "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs",
     "test:goal-loop": "node --experimental-sqlite tests/goal-brief-acceptance.mjs && node --experimental-sqlite tests/goal-process-strategy.mjs && node --experimental-sqlite tests/goal-native-provider.mjs && node --experimental-sqlite tests/goal-loop-integration.mjs",
     "test:goal-ui": "node tests/goal-ui-browser.mjs",
-    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs && node --experimental-sqlite tests/cloud-outer-recovery.mjs"
+    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs && node --experimental-sqlite tests/cloud-outer-recovery.mjs",
+    "build:control-bridge": "node scripts/build-control-bridge.mjs",
+    "control": "node electron/control/bridge/entry.js",
+    "test:local-control": "node --experimental-sqlite tests/control-runtime-storage.mjs && node --experimental-sqlite tests/local-control-workspaces.mjs && node --experimental-sqlite tests/local-control-policy.mjs && node --experimental-sqlite tests/local-control-service.mjs && node --experimental-sqlite tests/local-control-http.mjs && node --experimental-sqlite tests/local-control-desktop.mjs && node --experimental-sqlite tests/local-control-mcp.mjs",
+    "test:local-control-ui": "node tests/local-control-ui-browser.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -149,6 +153,7 @@
     "concurrently": "^9.2.1",
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3",
+    "esbuild": "0.25.12",
     "typescript": "^5.9.3",
     "vite": "^6.1.0",
     "wait-on": "^8.0.3"
@@ -190,7 +195,8 @@
       "LICENSE",
       "docs/RELEASE_NOTES_v1.0.0-rc.1.md",
       "config/cloud-endpoints.json",
-      "shared/**/*"
+      "shared/**/*",
+      "docs/LOCAL_CONTROL.md"
     ],
     "win": {
       "icon": "icon-dark.ico",
@@ -224,7 +230,13 @@
       "provider": "github",
       "owner": "CaptainLand",
       "repo": "AporiaX"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/control-bridge.cjs",
+        "to": "control-bridge.cjs"
+      }
+    ]
   },
   "engines": {
     "node": ">=22.12.0"

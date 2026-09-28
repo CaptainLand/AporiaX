@@ -23,6 +23,7 @@ import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume } from 
 import { providerMessages } from "./task-conversation.js";
 import { runIsolatedBuilder } from "./delegated-builder.js";
 import { withAgentBudgetAdmission } from "../harness/agent-budget.js";
+import { currentLocalControlPolicy, acquireLocalControlWorker, assertLocalControlTool, isLocalControlToolAvailable } from "../control/policy.js";
 import { FINISH_SUBAGENT_TOOL, readWorkerOutcome, syncDelegationContext } from './subagent-contract.js';
 import {
   MAX_SUBAGENT_RESULT_CHARS,
@@ -50,6 +51,11 @@ function throwIfAborted(signal) {
 }
 
 export async function runSubagentTask(options = {}) {
+  if (currentLocalControlPolicy() && !options.__localControlAdmitted) {
+    const release = acquireLocalControlWorker({ agentId: options.agentId, role: options.input?.role });
+    try { return await runSubagentTask({ ...options, __localControlAdmitted: true }); }
+    finally { release(); }
+  }
   await waitForRuntimeResume(options.signal);
   const deferred = cloudWorkerDeferral(options.provider);
   if (deferred) return { ...deferred, agentId: options.agentId, role: options.input?.role, evidence: [], steps: [], usage: null };
@@ -150,6 +156,7 @@ export async function runSubagentTask(options = {}) {
     .filter(
       (definition) =>
         roleConfig.tools.has(definition.function.name) &&
+        isLocalControlToolAvailable(definition.function.name) &&
         (!definitionTools || definitionTools.has(definition.function.name)),
     );
   enabledTools.push(FINISH_SUBAGENT_TOOL);
@@ -321,6 +328,7 @@ export async function runSubagentTask(options = {}) {
         continue;
       }
       if (outcome) {
+        await assertLocalControlTool({ toolName: "finish_subagent", input: outcome, workspaceRoot });
         conversation.push(assistantHistoryMessage(message));
         conversation.push({ role: 'tool', tool_call_id: outcome.call.id, content: JSON.stringify({ recorded: true, accepted: false }) });
         message = { role: 'assistant', content: outcome.summary };

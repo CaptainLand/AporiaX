@@ -10,6 +10,7 @@ import { isTemporaryNetworkError } from "./run-control.js";
 import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest } from "./cloud-request-identity.js";
 import { modelOutputBudget } from "./output-budget.js";
 import { prepareCloudWindDown, observeCloudQuota } from "./cloud-wind-down.js";
+import { assertLocalControlActive, consumeLocalControlModelCall } from "../control/policy.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -167,6 +168,7 @@ export async function callModelProvider({
   onEvent,
   requestTrace = {},
 }) {
+  assertLocalControlActive();
   body = compileModelRequest(body);
   const identity = provider.kind === "aporia-cloud" ? currentLoopRequestIdentity() : null;
   body = await prepareCloudWindDown(provider, body, identity, onEvent, signal);
@@ -295,6 +297,9 @@ export async function callModelProviderOnce({
   // All callers, including subagents and side chat, share this last boundary.
   if (Array.isArray(body.messages)) body = { ...body, messages: providerMessages(body.messages) };
   const wire = compileProviderWire(provider, body);
+  // Count actual dispatch attempts (including retries), never a replayed
+  // durable result. Parallel children inherit the same AsyncLocalStorage state.
+  consumeLocalControlModelCall({ provider, body });
   const controller = new AbortController();
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });

@@ -14,6 +14,7 @@ import {
   sep,
 } from "node:path";
 import { normalizeLocalPath } from "../link-target.js";
+import { localControlGitOptions } from "../control/policy.js";
 
 export const MAX_COMMAND_OUTPUT_CHARS = 80_000;
 export const MAX_SEARCH_FILE_BYTES = 2_000_000;
@@ -358,16 +359,18 @@ export async function runGitCommand({
   maxOutputChars = MAX_COMMAND_OUTPUT_CHARS,
 }) {
   throwIfAborted(signal);
+  const gitOptions = localControlGitOptions(args);
   return new Promise((resolvePromise, rejectPromise) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timedOut = false;
-    const child = spawn("git", args, {
+    const child = spawn("git", gitOptions.args, {
       cwd,
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      ...(gitOptions.env ? { env: gitOptions.env } : {}),
     });
 
     const finish = (callback, value) => {

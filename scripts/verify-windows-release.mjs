@@ -23,9 +23,11 @@ async function files(root) {
   }
   return result;
 }
-const sources = [...await files("electron"), ...await files("shared"), ...await files("dist"), "build/icon.ico", "build/icon-dark.ico", "LICENSE", `docs/RELEASE_NOTES_v${version}.md`];
+const sources = [...await files("electron"), ...await files("shared"), ...await files("dist"), "build/icon.ico", "build/icon-dark.ico", "LICENSE", "docs/LOCAL_CONTROL.md", `docs/RELEASE_NOTES_v${version}.md`];
 try { await stat("config/cloud-endpoints.json"); sources.push("config/cloud-endpoints.json"); } catch (error) { if (error.code !== "ENOENT") throw error; }
 for (const file of sources) assert.equal(hash(packagedFile(file)), hash(await readFile(file)), `Stale/missing packaged source: ${file}`);
+assert.equal(hash(await readFile(join(output, "win-unpacked/resources/control-bridge.cjs"))),
+  hash(await readFile("build/control-bridge.cjs")), "Stale/missing standalone MCP and CLI bridge");
 for (const name of ["@xterm/addon-search", "docx-preview", "node-pty"]) {
   const installed = JSON.parse(await readFile(`node_modules/${name}/package.json`, "utf8"));
   assert.equal(JSON.parse(packagedFile(`node_modules/${name}/package.json`)).version, installed.version);

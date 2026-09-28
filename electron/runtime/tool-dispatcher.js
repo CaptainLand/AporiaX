@@ -3,6 +3,7 @@ import { executeDurableTool, waitForRuntimeResume } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
 import { requireToolResult } from "./task-conversation.js";
 import { projectScriptFingerprint } from "./project-script-trust.js";
+import { assertLocalControlTool, localControlToolRequiresApproval } from "../control/policy.js";
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -52,7 +53,9 @@ export async function dispatchNativeTool({
   }
 
   const input = parseArguments(toolCall);
-  const permissionAction = getToolPermission(permissionPolicy, toolName);
+  await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
+  const configuredPermission = getToolPermission(permissionPolicy, toolName);
+  const permissionAction = configuredPermission !== "deny" && localControlToolRequiresApproval(toolName) ? "ask" : configuredPermission;
   const decision = resolveToolExecutionPermission({
     toolName,
     permissionAction,
@@ -107,7 +110,11 @@ export async function dispatchNativeTool({
     }
   }
 
-  const result = await executeDurableTool(toolName, input, () => executeAuthorized({
+  const result = await executeDurableTool(toolName, input, async () => {
+    // Revalidate after human approval/durable reconciliation; neither can
+    // broaden the client grant or authorize a newly redirected symlink.
+    await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot, count: false });
+    return executeAuthorized({
     ...executeContext,
     toolCall,
     toolName,
@@ -115,7 +122,8 @@ export async function dispatchNativeTool({
     input,
     signal,
     permissionDecision: decision,
-  }), requestApproval, { scope: executeContext.durableScope });
+    });
+  }, requestApproval, { scope: executeContext.durableScope });
   assertNotAborted(signal);
   return requireToolResult(result, toolName);
 }
