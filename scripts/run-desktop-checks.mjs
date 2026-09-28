@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const tests = [
+  ['node', 'local-control-ui-browser.mjs'],
   ['node', 'model-onboarding-browser.mjs'],
   ['node', 'understanding-ui-browser.mjs'],
   ['node', 'workspace-preview-browser.mjs'],

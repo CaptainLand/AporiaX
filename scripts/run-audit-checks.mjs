@@ -3,6 +3,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'control-runtime-storage.mjs', 'local-control-workspaces.mjs', 'local-control-policy.mjs',
+  'local-control-service.mjs', 'local-control-http.mjs', 'local-control-desktop.mjs', 'local-control-mcp.mjs',
   'extensions-repair.mjs', 'extension-real-loop.mjs', 'overall-repair.mjs',
   'user-clarification.mjs', 'user-clarification-runtime.mjs',
   'automatic-task-suspension.mjs',

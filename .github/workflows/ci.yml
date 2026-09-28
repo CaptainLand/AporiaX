@@ -40,6 +40,9 @@ jobs:
       - name: Task runtime RPC smoke
         run: npm run test:task-runtime-rpc
 
+      - name: Local Control API, durable tasks and MCP protocol
+        run: npm run test:local-control
+
       - name: Approval and Builder failure regression
         run: npm run test:critical-reliability
 

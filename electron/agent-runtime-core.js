@@ -1,5 +1,6 @@
 import { assistantHistoryMessage } from "./runtime/task-conversation.js";
 import { resolveMcpSteering, recoveryMcpServerIds } from "./mcp-mentions.js";
+import { currentLocalControlPolicy, assertLocalControlActive, assertLocalControlTool, isLocalControlToolAvailable, LOCAL_CONTROL_SPECIAL_TOOLS } from "./control/policy.js";
 import { contextReserveTokens } from "./agent-context.js";
 import { SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL } from "./skill-resources.js";
 import { summarizeTaskBrief, briefSummarySources } from "./runtime/brief-summarizer.js";
@@ -1064,6 +1065,20 @@ export async function runHarness({
   taskContract,
   acceptanceScope = "task",
 }) {
+  const externalPolicy = currentLocalControlPolicy();
+  if (externalPolicy) {
+    assertLocalControlActive();
+    if (externalPolicy.permissionProfile === "read_only") permission = "read-only";
+    // These stores can contain material from other tasks; workspace access
+    // does not grant the external caller access to global memory or Skills.
+    knowledgeEnabled = false;
+    knowledgeProjectId = "";
+    memoryDirectory = null;
+    understandingDirectory = null;
+    userSkillsDirectory = "";
+    extensionPolicy = { ...extensionPolicy, skill: false,
+      ...(externalPolicy.permissionProfile === "read_only" || !externalPolicy.capabilities.mcp ? { mcp: false } : {}) };
+  }
   if (
     !providerConfig ||
     typeof providerConfig.id !== "string" ||
@@ -1287,13 +1302,14 @@ export async function runHarness({
         catalog: TOOL_REGISTRY.catalog(permissionPolicy),
         approvalMode: effectiveApprovalMode,
         sandboxStatus,
-      }).filter((tool) => (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
+      }).filter((tool) => isLocalControlToolAvailable(tool.name) && (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
         (tool.name !== "project_knowledge" || knowledgeSession.enabled) && (tool.name !== "remember_project_fact" || canCurateKnowledge()))
     : [];
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
   const resolveToolDefinitions = () => hasWorkspace
     ? TOOL_REGISTRY.definitions(permissionPolicy).filter((definition) => {
         const name = definition.function.name;
+        if (!isLocalControlToolAvailable(name)) return false;
         if (extensionPolicy?.skill === false && ["read_skill_resource", "search_skills"].includes(name)) return false;
         if (name === "request_user_input" && !clarification) return false;
         if (name === "project_knowledge" && !knowledgeSession.enabled) return false;
@@ -1682,7 +1698,10 @@ export async function runHarness({
       const paths = requestedPathsForToolCall(toolCall, workspaceRoot);
       if (!paths.length) continue;
       let scoped;
-      try { scoped = await resolveScopedInstructions(instructionContext, paths); }
+      try {
+        if (externalPolicy) await assertLocalControlTool({ toolName: toolCall.function.name, input: parseToolArguments(toolCall), workspaceRoot, count: false });
+        scoped = await resolveScopedInstructions(instructionContext, paths);
+      }
       catch (error) {
         if (error?.name === "AbortError" || error?.code === "RUN_PERSISTENCE_FAILED") throw error;
         retryAfterInstructions.errors.set(toolCall.id, new Error("PROJECT_INSTRUCTIONS_UNAVAILABLE: " + error.message));
@@ -1805,6 +1824,7 @@ export async function runHarness({
   }
 
   const authorizeSubagentControl = async (toolName, input) => {
+    await assertLocalControlTool({ toolName, input, workspaceRoot, count: false });
     const decision = resolveToolExecutionPermission({ toolName, permissionAction: getToolPermission(permissionPolicy, toolName),
       approvalMode: effectiveApprovalMode, sandboxStatus, input });
     if (decision.denied) throw new Error(`Permission denied for tool: ${toolName}`);
@@ -2503,6 +2523,7 @@ export async function runHarness({
       });
       const outcome = readTaskOutcome(message, parseToolArguments);
       if (outcome) {
+        await assertLocalControlTool({ toolName: "finish_task", input: outcome, workspaceRoot });
         await authorizeSubagentControl("finish_task", outcome);
         conversation.push({ role: "assistant", content: message.content ?? null, tool_calls: message.tool_calls,
           ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
@@ -2735,6 +2756,7 @@ export async function runHarness({
           let result;
           try {
             if (!alone) throw new Error("CLARIFICATION_MUST_BE_ALONE: No tools in this batch were executed.");
+            await assertLocalControlTool({ toolName: call.function.name, input: parseToolArguments(call), workspaceRoot });
             if (!clarification || getToolPermission(permissionPolicy, "request_user_input") === "deny") throw new Error("CLARIFICATION_MAIN_ONLY");
             const question = await clarification.request(parseToolArguments(call), call.id);
             result = clarificationResult(question);
@@ -2814,6 +2836,7 @@ export async function runHarness({
             let result;
             let success = true;
             try {
+              if (LOCAL_CONTROL_SPECIAL_TOOLS.has(toolName)) await assertLocalControlTool({ toolName, input: parseToolArguments(toolCall), workspaceRoot });
               strategyHistory.before(toolName, parseToolArguments(toolCall));
               if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
               if (retryAfterScopedInstructions.has(toolCall.id)) throw new Error("Review newly loaded scoped instructions and retry.");
@@ -2946,6 +2969,7 @@ export async function runHarness({
           ...activity,
         });
         try {
+          if (LOCAL_CONTROL_SPECIAL_TOOLS.has(toolCall.function.name)) await assertLocalControlTool({ toolName: toolCall.function.name, input: parseToolArguments(toolCall), workspaceRoot });
           strategyHistory.before(toolCall.function.name, parseToolArguments(toolCall));
           acceptancePreparation = await taskAcceptance.beforeTool(toolCall.function.name, parseToolArguments(toolCall));
           if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);

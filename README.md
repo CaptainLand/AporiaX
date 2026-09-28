@@ -176,6 +176,14 @@ npm run test:audit-suite
 npm run test:suspension # 自动暂停与恢复专项
 ```
 
+## 外部 Harness 接入
+
+本开发分支新增本地 **HTTP API、MCP stdio 与 CLI**。在顶栏 **外部连接** 中启用服务、授权工作区并创建连接，即可复制通用 MCP JSON 或 Codex TOML。安装版的桥接程序使用 AporiaX 自带运行时，不需要额外安装 Node。
+
+调用方可以提交任务、查询代理与顺序事件、追加指导、回答问题、暂停/继续/取消，以及读取持久化结果和产物。每个客户端独立授权和撤销；可写任务在独立 worktree 或快照中执行，并返回补丁与变更清单。工具审批由桌面用户处理。
+
+接入配置、19 个 MCP 工具、完整 HTTP / OpenAPI 文档与运行边界见 [本地控制接入指南](docs/LOCAL_CONTROL.md)。验证命令：`npm run test:local-control`、`npm run test:local-control-ui`。既有 RC1 安装包不包含这项开发分支功能。
+
 ## 子 Agent 与项目约定
 
 只读探索、审查、验证可以交给独立子 Agent。可写的 Git 任务可委派 Builder：并发 **0 / 1 / 2 / 3 / 4 / 6，默认 2**，在独立 worktree 里按范围写入，冲突检查通过后由主 Agent 合入。

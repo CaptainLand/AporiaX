@@ -30,3 +30,6 @@ deepagent-tasks.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Bundled MCP / CLI bridge
+build/control-bridge.cjs

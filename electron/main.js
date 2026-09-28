@@ -97,6 +97,11 @@ function approvalGrantKey(details = {}) {
     : "";
 }
 
+let externalRunSource = () => [];
+export function setDesktopExternalRunSource(source) {
+  externalRunSource = typeof source === "function" ? source : () => [];
+}
+
 const harnessTaskRuntime = createHarnessTaskRuntime({
   dataDirectory: () => app.getPath("userData"),
   approvalGrantKey,
@@ -106,6 +111,7 @@ const harnessTaskRuntime = createHarnessTaskRuntime({
         process.platform !== "darwin" &&
         app.isReady() &&
         !harnessTaskRuntime.hasActiveRuns() &&
+        externalRunSource().length === 0 &&
         (!mainWindow || mainWindow.isDestroyed())
       ) {
         app.quit();
@@ -600,7 +606,8 @@ function createMainWindow() {
 
 async function startHarnessTask(
   request,
-  { clientId = "", onEvent = null, detached = false } = {},
+  { clientId = "", onEvent = null, onResult = null, detached = false, signal: startupSignal = null,
+    transformResult = null, strictProvider = false } = {},
 ) {
   const runId = typeof request?.runId === "string" ? request.runId : "";
   if (!runId || runId.length > 100) {
@@ -611,6 +618,9 @@ async function startHarnessTask(
   }
 
   const provider = await resolveProvider(request?.providerId);
+  if (strictProvider && provider.id !== request?.providerId) {
+    throw new Error("The authorized Provider is no longer configured.");
+  }
   const messages = await hydrateHarnessMessages(request?.messages);
   let recoveryContext = null;
   if (request?.recoveryRunId) {
@@ -633,6 +643,7 @@ async function startHarnessTask(
     }
   }
 
+  startupSignal?.throwIfAborted();
   return harnessTaskRuntime.start({
     runId,
     taskId: request?.taskId || "",
@@ -648,24 +659,34 @@ async function startHarnessTask(
       modelId: request?.modelId,
     },
     onEvent,
-    execute: ({ signal, control, emit, requestApproval, clarification }) =>
-      runHarness({
-        ...request,
-        messages,
-        provider,
-        memoryDirectory: join(app.getPath("userData"), "project-memory"),
-        sandboxDataDirectory: app.getPath("userData"),
-        userSkillsDirectory: join(app.getPath("userData"), "skills"),
-        understandingDirectory: getProjectUnderstandingDirectory(),
-        recoveryContext,
-        signal,
-        control,
-        onEvent: emit,
-        requestApproval,
-        clarification,
-        onNativeVisionRejected: ({ providerId, modelId }) =>
-          disableProviderNativeVision(providerId, modelId),
-      }),
+    onResult,
+    execute: async ({ signal, control, emit, requestApproval, clarification }) => {
+      let result;
+      try {
+        result = await runHarness({
+          ...request,
+          messages,
+          provider,
+          memoryDirectory: join(app.getPath("userData"), "project-memory"),
+          sandboxDataDirectory: app.getPath("userData"),
+          userSkillsDirectory: join(app.getPath("userData"), "skills"),
+          understandingDirectory: getProjectUnderstandingDirectory(),
+          recoveryContext,
+          signal: startupSignal ? AbortSignal.any([signal, startupSignal]) : signal,
+          control,
+          onEvent: emit,
+          requestApproval,
+          clarification,
+          onNativeVisionRejected: ({ providerId, modelId }) =>
+            disableProviderNativeVision(providerId, modelId),
+        });
+      } catch (error) {
+        if (!transformResult) throw error;
+        result = { status: signal.aborted || startupSignal?.aborted ? "interrupted" : "failed",
+          content: error?.message || "Harness run failed.", error: error?.code || "harness_failed", changes: [] };
+      }
+      return transformResult ? transformResult(result) : result;
+    },
   });
 }
 
@@ -848,12 +869,16 @@ handleTrustedIpc(ipcMain, "attachments:store", async (event, request) => {
   });
 });
 
-handleTrustedIpc(ipcMain, "providers:list", async (event) => {
-  assertTrustedSender(event);
+export async function listDesktopProviders() {
   return [
     publicAporiaCloudProvider(),
     ...(await loadProviderRecords()).map(publicProviderSummary),
   ];
+}
+
+handleTrustedIpc(ipcMain, "providers:list", async (event) => {
+  assertTrustedSender(event);
+  return listDesktopProviders();
 });
 
 handleTrustedIpc(ipcMain, "providers:discover", async (event, request) => {
@@ -1018,7 +1043,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns()) {
+  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns() && externalRunSource().length === 0) {
     app.quit();
   }
 });
