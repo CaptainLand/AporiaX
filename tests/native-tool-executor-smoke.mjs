@@ -181,7 +181,7 @@ try {
 
   await assert.rejects(
     () => executor({ ...base, toolName: "read_file", input: { path: "../secret" } }),
-    /outside workspace/,
+    error => error.code === "FILE_ACCESS_DENIED",
   );
 } finally {
   await rm(root, { recursive: true, force: true });

@@ -17,7 +17,8 @@ export function isHumanMessage(message) {
 export function providerMessages(messages) {
   return (messages || []).map((message, index) => {
     if (!message || typeof message !== "object") throw invalidMessage(index, "missing message");
-    const { aporiaSource, aporiaPinned, aporiaSupersededBy, aporiaTaskBrief, aporiaContinuation, ...wire } = message;
+    const { aporiaSource, aporiaPinned, aporiaSupersededBy, aporiaTaskBrief, aporiaContinuation,
+      aporiaRollingContext, aporiaHistoryIndex, aporiaCurrentRequest, ...wire } = message;
     // Tool-only assistant messages may omit text. Tool receipts may not: an
     // undefined property disappears entirely when the request is serialized.
     if (wire.role === "assistant" && wire.content === undefined && wire.tool_calls?.length) wire.content = null;

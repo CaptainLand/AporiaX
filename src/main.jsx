@@ -35,6 +35,7 @@ import {
   Info,
   KeyRound,
   Languages,
+  Link2,
   LoaderCircle,
   LockKeyhole,
   MessageSquare,
@@ -93,6 +94,7 @@ import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
+import { ExternalControlPanel } from "./control/ExternalControlPanel.jsx";
 import { AccountProvider, useAccount } from "./account/AccountContext.jsx";
 import { ModelSetupActions } from "./models/ModelSetupActions.jsx";
 import { TutorialLink } from "./help/TutorialLink.jsx";
@@ -381,7 +383,7 @@ function buildWorkspaceProjects(tasks) {
   return [...projects.values()];
 }
 
-function AppTitlebar({ onOpenSettings }) {
+function AppTitlebar({ onOpenSettings, onOpenControl }) {
   const { tr } = useI18n();
   return (
     <header className="titlebar">
@@ -396,6 +398,10 @@ function AppTitlebar({ onOpenSettings }) {
           <AppGlyph />
         </span>
         <span>AporiaX</span>
+      </button>
+      <button className="titlebar-control-entry" type="button" onClick={onOpenControl}>
+        <Link2 size={14} />
+        {tr("外部连接", "External connections")}
       </button>
       <div className="titlebar-drag" />
     </header>
@@ -2932,6 +2938,16 @@ function App() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [externalControlOpen, setExternalControlOpen] = useState(false);
+  const [externalControlRunId, setExternalControlRunId] = useState("");
+  useEffect(() => {
+    const unsubscribe = window.desktop?.control?.subscribe?.((event) => {
+      if (event?.type !== "open") return;
+      setExternalControlRunId(event.runId || "");
+      setExternalControlOpen(true);
+    });
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1",
   );
@@ -3513,7 +3529,9 @@ function App() {
 
     const selectedModel = getModel(providers, targetTask.providerId, targetTask.modelId);
     if (!selectedModel.id || selectedModel.disabled) {
-      setNotice(tr("请先登录 Aporia Cloud，或在模型选择中添加自己的 API。输入内容已保留。", "Sign in to Aporia Cloud or add your own API in the model picker. Your draft is kept."));
+      setNotice(selectedModel.disabledReasonZh || selectedModel.disabledReasonEn
+        ? `${tr(selectedModel.disabledReasonZh || "模型暂不可用", selectedModel.disabledReasonEn || "Model unavailable")}${tr("。输入内容已保留。", ". Your draft is kept.")}`
+        : tr("请先登录 Aporia Cloud，或在模型选择中添加自己的 API。输入内容已保留。", "Sign in to Aporia Cloud or add your own API in the model picker. Your draft is kept."));
       return false;
     }
 
@@ -3713,6 +3731,7 @@ function App() {
                           tools: result.tools || [],
                           selfCheck: result.selfCheck || null,
                           taskBrief: result.taskBrief || null,
+                          rollingContext: result.rollingContext || null,
                           acceptance: result.acceptance || null,
                           strategy: result.strategy || null,
                           loopMetrics: result.loopMetrics || null,
@@ -4408,7 +4427,10 @@ function App() {
 
   return (
     <div className="app-shell" data-theme={theme}>
-      <AppTitlebar onOpenSettings={() => openApplicationSettings("general")} />
+      <AppTitlebar onOpenSettings={() => openApplicationSettings("general")} onOpenControl={() => {
+        setExternalControlRunId("");
+        setExternalControlOpen(true);
+      }} />
       {!welcomeOpen && <div className="app-content">
         {!sidebarCollapsed && (
           <Sidebar
@@ -4455,7 +4477,7 @@ function App() {
                 setSidebarCollapsed((current) => !current)
               }
               settingsOpen={settingsOpen}
-              coverBrowser={applicationSettingsOpen || newTaskOpen}
+              coverBrowser={applicationSettingsOpen || newTaskOpen || externalControlOpen}
               onToggleSettings={() => setSettingsOpen((open) => !open)}
               onSend={sendMessage}
               onStop={stopActiveRun}
@@ -4548,6 +4570,10 @@ function App() {
         />
       )}
       {welcomeOpen && <WelcomeOverlay onContinue={dismissWelcome} />}
+      {externalControlOpen && <ExternalControlPanel initialRunId={externalControlRunId} onClose={() => {
+        setExternalControlOpen(false);
+        setExternalControlRunId("");
+      }} />}
       <AppUpdateToast
         status={updateNotice}
         onClose={() => {

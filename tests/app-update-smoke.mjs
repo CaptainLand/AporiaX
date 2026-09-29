@@ -100,16 +100,21 @@ assert.match(updater, /autoDownload = false/);
 assert.match(updater, /autoInstallOnAppQuit = false/);
 assert.match(updater, /quitAndInstall\(false, true\)/);
 assert.match(mainV2, /installAppUpdate\(/);
-// The kernel is the authoritative source, including paused and starting tasks.
-// Exercise the real wiring rather than matching the removed tray snapshot API.
+// Runtime tasks and accepted external tasks both block update installation,
+// including external preparation before the task reaches the runtime.
+const { createControlActivityTracker } = await import("../electron/control/desktop-runtime.js");
 const updateWiring = mainV2.match(/installAppUpdate\(\{[\s\S]*?\}\);/)?.[0];
+const runSourceWiring = mainV2.match(/const desktopRuns = [^;]+;/)?.[0];
 assert(updateWiring, "Missing updater wiring");
-for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) {
+assert(runSourceWiring, "Missing desktop task source");
+for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) for (const preparing of [false, true]) {
   let options;
-  const kernel = states === null ? null : { taskRuntime: { listActiveRuns: () => states.map((status) => ({ status })) } };
-  runInNewContext(updateWiring, { kernel, installAppUpdate: (value) => { options = value; } });
+  const kernel = states === null ? null : { taskRuntime: { listActiveRuns: () => states.map((status, index) => ({ runId: `runtime-${index}`, status })) } };
+  const externalActivity = createControlActivityTracker();
+  if (preparing) externalActivity.observe({ type: "run.created", runId: "external-queued", run: { runId: "external-queued", status: "queued" } });
+  runInNewContext(`${runSourceWiring}\n${updateWiring}`, { kernel, externalActivity, installAppUpdate: (value) => { options = value; } });
   const count = options.getActiveRunCount();
-  assert.equal(count, states?.length || 0);
+  assert.equal(count, (states?.length || 0) + Number(preparing));
   const decision = installUpdateDecision({ channel: "nsis", downloaded: true, activeRuns: count });
   assert.equal(decision.ok, count === 0);
   if (count > 0) assert.equal(decision.code, "TASK_RUNNING");

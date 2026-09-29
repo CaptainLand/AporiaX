@@ -1,8 +1,9 @@
 import { assistantHistoryMessage } from "./runtime/task-conversation.js";
+import { NATIVE_FILE_TOOLS, nativeFilePath } from "./runtime/file-access-policy.js";
 import { resolveMcpSteering, recoveryMcpServerIds } from "./mcp-mentions.js";
-import { contextReserveTokens } from "./agent-context.js";
+import { currentLocalControlPolicy, assertLocalControlActive, assertLocalControlTool, isLocalControlToolAvailable, LOCAL_CONTROL_SPECIAL_TOOLS } from "./control/policy.js";
 import { SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL } from "./skill-resources.js";
-import { summarizeTaskBrief, briefSummarySources } from "./runtime/brief-summarizer.js";
+import { RollingContext } from "./runtime/rolling-context.js";
 import { TaskBrief, TASK_BRIEF_TOOL } from "./runtime/task-brief.js";
 import { StrategyHistory, REPLAN_TOOL } from "./runtime/strategy-history.js";
 import { TaskAcceptance, loadTaskContract } from "./runtime/task-acceptance.js";
@@ -1002,11 +1003,14 @@ function requestedPathsForToolCall(toolCall, workspaceRoot) {
       return [];
     }
   }
-  if (toolName === "read_external_file") {
+  if (NATIVE_FILE_TOOLS.has(toolName) && typeof input.path === "string") {
     // Outside files have no workspace-scoped instructions. This does not grant
     // access: the original absolute path still goes through normal approval.
-    if (!workspaceRoot || !isAbsolute(input.path || "")) return [];
-    return isPathInside(workspaceRoot, input.path) ? [relative(workspaceRoot, input.path)] : [];
+    if (!workspaceRoot) return [];
+    try {
+      const target = nativeFilePath(workspaceRoot, input.path);
+      return isPathInside(workspaceRoot, target) ? [relative(workspaceRoot, target) || "."] : [];
+    } catch { return []; }
   }
   if (typeof input.path === "string") return [input.path];
   if (toolName === "run_command" || toolName === "start_process") return [input.cwd || "."];
@@ -1064,6 +1068,20 @@ export async function runHarness({
   taskContract,
   acceptanceScope = "task",
 }) {
+  const externalPolicy = currentLocalControlPolicy();
+  if (externalPolicy) {
+    assertLocalControlActive();
+    if (externalPolicy.permissionProfile === "read_only") permission = "read-only";
+    // These stores can contain material from other tasks; workspace access
+    // does not grant the external caller access to global memory or Skills.
+    knowledgeEnabled = false;
+    knowledgeProjectId = "";
+    memoryDirectory = null;
+    understandingDirectory = null;
+    userSkillsDirectory = "";
+    extensionPolicy = { ...extensionPolicy, skill: false,
+      ...(externalPolicy.permissionProfile === "read_only" || !externalPolicy.capabilities.mcp ? { mcp: false } : {}) };
+  }
   if (
     !providerConfig ||
     typeof providerConfig.id !== "string" ||
@@ -1287,13 +1305,14 @@ export async function runHarness({
         catalog: TOOL_REGISTRY.catalog(permissionPolicy),
         approvalMode: effectiveApprovalMode,
         sandboxStatus,
-      }).filter((tool) => (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
+      }).filter((tool) => isLocalControlToolAvailable(tool.name) && (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
         (tool.name !== "project_knowledge" || knowledgeSession.enabled) && (tool.name !== "remember_project_fact" || canCurateKnowledge()))
     : [];
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
   const resolveToolDefinitions = () => hasWorkspace
     ? TOOL_REGISTRY.definitions(permissionPolicy).filter((definition) => {
         const name = definition.function.name;
+        if (!isLocalControlToolAvailable(name)) return false;
         if (extensionPolicy?.skill === false && ["read_skill_resource", "search_skills"].includes(name)) return false;
         if (name === "request_user_input" && !clarification) return false;
         if (name === "project_knowledge" && !knowledgeSession.enabled) return false;
@@ -1334,13 +1353,13 @@ export async function runHarness({
   }
   const sanitizedHistory = sanitizeConversation(messages, {
     supportsImages: provider.supportsImages,
-  });
+  }).map((message, index) => ({ ...message, aporiaHistoryIndex: index }));
   let supportsImages = Boolean(provider.supportsImages);
   let visionFallbackAttempted = false;
   const latestUserIndex = sanitizedHistory.findLastIndex((message) =>
     isHumanMessage(message),
   );
-  if (latestUserIndex >= 0) sanitizedHistory[latestUserIndex] = taskRequest(sanitizedHistory[latestUserIndex]);
+  if (latestUserIndex >= 0) sanitizedHistory[latestUserIndex] = { ...taskRequest(sanitizedHistory[latestUserIndex]), aporiaCurrentRequest: true };
   const restoredWorkspace = sanitizedHistory.some((message) =>
     isAnchorRestoreNotice(message),
   );
@@ -1380,6 +1399,7 @@ export async function runHarness({
         "You are AporiaX, a local coding and productivity agent.",
         `Reply to the user in ${responseLanguage}. Keep file paths, command names, source code, API identifiers, and user-provided proper nouns unchanged.`,
         "Inspect the authorized workspace with tools before making claims about its contents.",
+        "Native file tools may access explicit external paths only when the user has enabled global file access in the desktop control panel. Do not infer that setting or change it yourself. A FILE_ACCESS_DENIED result is authoritative; do not bypass it through commands, Git, MCP, links or delegated tasks. External writes affect real host files and are not part of the isolated workspace patch. Read-only tasks, child write scopes and protected credentials remain restricted.",
         "Use search_text to locate relevant code before reading many files.",
         "Use the native lsp tool for semantic diagnostics, definitions, references, hover, and symbols when the file type has a configured language server. If lsp status reports a missing supported server and semantic analysis is useful, use lsp_install with approval instead of telling the user to install it manually. After code edits, prefer LSP diagnostics as a fast inner-loop signal, but still use build/tests for final verification.",
         "For Git/GitHub work, use native Git tools end-to-end. If the workspace is not a Git repository, use git_init instead of asking the user to run git init. Local init/stage/commit/branch operations may proceed automatically when policy allows; adding remotes, pulling, pushing, creating GitHub repositories, and creating PRs must respect approval boundaries.",
@@ -1479,11 +1499,14 @@ export async function runHarness({
     if (knowledgeSession.enabled && recoveryKnowledgeId && !knowledgeProjectId) emit({ type: "knowledge.project.selected", knowledgeProjectId: knowledgeSession.projectId, workspaceRoot });
   }
   restoreAgentBudget(savedMain?.agentBudget);
+  const previousHistory = savedMain?.inputHistory || savedMain?.conversation || [];
+  const resumedInput = sanitizedHistory.slice(Math.max(0, latestUserIndex)).map((message, index) =>
+    ({ ...message, aporiaHistoryIndex: previousHistory.length + index, aporiaCurrentRequest: isHumanMessage(message) }));
   if (Array.isArray(savedMain?.conversation)) {
     const restored = recoverConversation(restoreClarificationConversation(savedMain.conversation, restoredClarifications));
     const stableInstructions = conversation[0];
     conversation.splice(0, conversation.length, stableInstructions, ...restored.slice(restored[0]?.role === "system" ? 1 : 0),
-      activeRequestBoundary, ...sanitizedHistory.slice(latestUserIndex).map(taskRequest));
+      activeRequestBoundary, ...resumedInput.map(taskRequest));
   }
 
   if (conversation.length < 2) {
@@ -1491,19 +1514,22 @@ export async function runHarness({
   }
 
   const inputHistory = savedMain
-    ? [...(savedMain.inputHistory || savedMain.conversation || []).filter((message) => ["user", "assistant"].includes(message.role)),
-      ...sanitizedHistory.slice(Math.max(0, latestUserIndex))]
+    ? [...previousHistory, ...resumedInput]
     : [...sanitizedHistory];
   for (const question of restoredClarifications.filter(item => item.status === "answered")) {
-    const human = clarificationHumanMessage(question);
+    const human = { ...clarificationHumanMessage(question), aporiaCurrentRequest: true };
     if (!conversation.some(item => item.role === "user" && item.content === human.content)) conversation.push(human);
     if (!inputHistory.some(item => item.role === "user" && item.content === human.content)) inputHistory.push(human);
   }
   let constraintLedger = reconcileHumanConstraints(conversation, inputHistory, savedMain?.constraintLedger, { pinActive: true });
   const briefOwner = createHash("sha256").update(JSON.stringify([taskId, workspaceRoot])).digest("hex");
+  const inheritedRolling = savedMain || !taskId ? null : [...(messages || [])].reverse().find(message =>
+    message.role === "assistant" && message.rollingContext?.ownerKey === briefOwner)?.rollingContext;
+  const rollingContext = new RollingContext({ ownerKey: briefOwner, history: inputHistory,
+    saved: savedMain?.rollingContext, handoff: inheritedRolling });
+  rollingContext.project(conversation);
   const inheritedBrief = savedMain ? null : [...(messages || [])].reverse().find((message) => message.role === "assistant" && message.taskBrief?.ownerKey === briefOwner)?.taskBrief;
   const taskBrief = new TaskBrief(savedMain?.taskBrief ?? inheritedBrief ?? null, { resumed: Boolean(savedMain || inheritedBrief), ownerKey: briefOwner });
-  let briefSummaryAttempts = Math.min(2, Number(savedMain?.briefSummaryAttempts) || 0);
   taskBrief.syncSources(inputHistory);
   const strategyHistory = new StrategyHistory(savedMain?.strategyHistory, { maxInterventions: effectiveLoopPolicy.maxStrategyInterventions, mode: effectiveLoopPolicy.strategyMode });
   const canReadAcceptance = getToolPermission(permissionPolicy, "read_file") === "allow";
@@ -1620,7 +1646,7 @@ export async function runHarness({
     kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
     knowledgeProjectId: knowledgeSession.projectId, knowledgeEnabled: knowledgeSession.enabled,
     selectedMcpServerIds: mcpServers.filter(server => server.enabled !== false).map(server => server.id),
-    strategyHistory: strategyHistory.snapshot(), taskAcceptance: taskAcceptance.snapshot(), briefSummaryAttempts,
+    strategyHistory: strategyHistory.snapshot(), taskAcceptance: taskAcceptance.snapshot(), rollingContext: rollingContext.snapshot(),
     loopMetrics: loopMetrics.snapshot(),
           taskBrief: taskBrief.snapshot(), acceptance: taskAcceptance.snapshot().report,
           strategy: strategyHistory.briefing(),
@@ -1630,6 +1656,13 @@ export async function runHarness({
       ({ agentId, role, task, background, requiredForCompletion, collected, input, systemOwned })),
     });
   };
+
+  const summarizeContext = async (force = false) => effectiveLoopPolicy.maxBriefSummaries > 0 && !cloudWindDownActive(provider) && rollingContext.compact({
+    conversation, provider, modelId, contextWindowTokens, accounting: tokenAccounting, signal, force,
+    shouldYield: () => Boolean(control?.hasSteering?.()), onRequest: body => loopMetrics.request(body), onEvent: emit,
+    persist: persistMainContext, scopeId: runId,
+    onUsage: async usage => { totalUsage = mergeTokenUsage(totalUsage, usage); await persistMainContext(); },
+  });
 
   const applyRuntimeControlBoundary = async () => {
     await control?.waitIfPaused?.(signal);
@@ -1653,8 +1686,10 @@ export async function runHarness({
     }
     completionPolicy.reset();
     await saveRuntimeCheckpoint({ scopeId: runId, phase: "guidance-applied", latestGuidance: steeringMessages });
-    conversation.push(...sanitizedSteering.map(taskRequest));
-    inputHistory.push(...sanitizedSteering);
+    const indexedSteering = sanitizedSteering.map((message, index) => ({ ...taskRequest(message),
+      aporiaHistoryIndex: inputHistory.length + index, aporiaCurrentRequest: isHumanMessage(message) }));
+    conversation.push(...indexedSteering);
+    inputHistory.push(...indexedSteering);
     clarification?.observeHumanGuidance(sanitizedSteering);
     constraintLedger = reconcileHumanConstraints(conversation, inputHistory, constraintLedger, { pinActive: true });
     taskBrief.syncSources(inputHistory);
@@ -1682,7 +1717,10 @@ export async function runHarness({
       const paths = requestedPathsForToolCall(toolCall, workspaceRoot);
       if (!paths.length) continue;
       let scoped;
-      try { scoped = await resolveScopedInstructions(instructionContext, paths); }
+      try {
+        if (externalPolicy) await assertLocalControlTool({ toolName: toolCall.function.name, input: parseToolArguments(toolCall), workspaceRoot, count: false });
+        scoped = await resolveScopedInstructions(instructionContext, paths);
+      }
       catch (error) {
         if (error?.name === "AbortError" || error?.code === "RUN_PERSISTENCE_FAILED") throw error;
         retryAfterInstructions.errors.set(toolCall.id, new Error("PROJECT_INSTRUCTIONS_UNAVAILABLE: " + error.message));
@@ -1805,6 +1843,7 @@ export async function runHarness({
   }
 
   const authorizeSubagentControl = async (toolName, input) => {
+    await assertLocalControlTool({ toolName, input, workspaceRoot, count: false });
     const decision = resolveToolExecutionPermission({ toolName, permissionAction: getToolPermission(permissionPolicy, toolName),
       approvalMode: effectiveApprovalMode, sandboxStatus, input });
     if (decision.denied) throw new Error(`Permission denied for tool: ${toolName}`);
@@ -1835,7 +1874,7 @@ export async function runHarness({
     if (!resumeRecord) subagentCounter += 1;
     const agentId = resumeRecord?.agentId || `${runId || "run"}-sub-${subagentCounter}`;
     const relevantMemory = [];
-    const delegationContext = captureDelegationContext(inputHistory, taskAcceptance.briefing());
+    const delegationContext = captureDelegationContext(rollingContext.delegationHistory(), taskAcceptance.briefing());
     const record = Object.assign(resumeRecord || {}, {
       agentId,
       callId,
@@ -1860,7 +1899,7 @@ export async function runHarness({
       agentId,
       input,
       session: record.session,
-      getDelegationContext: () => captureDelegationContext(inputHistory, taskAcceptance.briefing()),
+      getDelegationContext: () => captureDelegationContext(rollingContext.delegationHistory(), taskAcceptance.briefing()),
       provider,
       modelId,
       modelConfig,
@@ -2370,15 +2409,8 @@ export async function runHarness({
       );
       taskBrief.inject(conversation, { version: verificationVersion(changeMap), acceptance: taskAcceptance.briefing(), strategy: strategyHistory.briefing() });
       if (step === 0) await persistMainContext(); // Save initial originals before any compaction; later boundaries already persist new input.
-      const summaryThreshold = contextWindowTokens - contextReserveTokens(contextWindowTokens);
-      if (!cloudWindDownActive(provider) && briefSummaryAttempts < effectiveLoopPolicy.maxBriefSummaries && conversation.length > 20 &&
-          estimateManagedConversationTokens(conversation, tokenAccounting) > summaryThreshold && briefSummarySources(conversation).length) {
-        await summarizeTaskBrief({ brief: taskBrief, conversation, provider, modelId, signal,
-          shouldYield: () => Boolean(control?.hasSteering?.()), onRequest: (body) => loopMetrics.request(body), onEvent: emit,
-          beforeRequest: async () => { briefSummaryAttempts++; await persistMainContext(); },
-          onUsage: async (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); await persistMainContext(); } });
-        taskBrief.inject(conversation, { version: verificationVersion(changeMap), acceptance: taskAcceptance.briefing(), strategy: strategyHistory.briefing() });
-        await persistMainContext();
+      if (!cloudWindDownActive(provider)) {
+        await summarizeContext();
         if (control?.hasSteering?.()) continue;
       }
       compactManagedConversation({
@@ -2426,6 +2458,7 @@ export async function runHarness({
       const infer = () => completeLoopRequest({
         conversation, contextCheckpoints, accounting: tokenAccounting, contextWindowTokens,
         getBody: completionBody, signal, plan, persist: persistMainContext,
+        summarizeContext: () => summarizeContext(true),
         shouldYield: () => Boolean(control?.hasSteering?.()), onEvent: emit,
         onFailedUsage: async (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); await persistMainContext(); },
         complete: async (body, requestSignal = signal) => {
@@ -2503,6 +2536,7 @@ export async function runHarness({
       });
       const outcome = readTaskOutcome(message, parseToolArguments);
       if (outcome) {
+        await assertLocalControlTool({ toolName: "finish_task", input: outcome, workspaceRoot });
         await authorizeSubagentControl("finish_task", outcome);
         conversation.push({ role: "assistant", content: message.content ?? null, tool_calls: message.tool_calls,
           ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
@@ -2655,6 +2689,7 @@ export async function runHarness({
           continue;
         }
         const completedResult = {
+          rollingContext: savedMain ? null : rollingContext.handoff(sanitizedHistory),
           status: outcomeStatus,
           content: finalContent,
           steps,
@@ -2735,11 +2770,12 @@ export async function runHarness({
           let result;
           try {
             if (!alone) throw new Error("CLARIFICATION_MUST_BE_ALONE: No tools in this batch were executed.");
+            await assertLocalControlTool({ toolName: call.function.name, input: parseToolArguments(call), workspaceRoot });
             if (!clarification || getToolPermission(permissionPolicy, "request_user_input") === "deny") throw new Error("CLARIFICATION_MAIN_ONLY");
             const question = await clarification.request(parseToolArguments(call), call.id);
             result = clarificationResult(question);
             clarificationFailures = 0;
-            const human = clarificationHumanMessage(question);
+            const human = { ...clarificationHumanMessage(question), aporiaHistoryIndex: inputHistory.length, aporiaCurrentRequest: true };
             conversation.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) }, human);
             inputHistory.push(human);
             constraintLedger = reconcileHumanConstraints(conversation, inputHistory, constraintLedger, { pinActive: true });
@@ -2814,6 +2850,7 @@ export async function runHarness({
             let result;
             let success = true;
             try {
+              if (LOCAL_CONTROL_SPECIAL_TOOLS.has(toolName)) await assertLocalControlTool({ toolName, input: parseToolArguments(toolCall), workspaceRoot });
               strategyHistory.before(toolName, parseToolArguments(toolCall));
               if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
               if (retryAfterScopedInstructions.has(toolCall.id)) throw new Error("Review newly loaded scoped instructions and retry.");
@@ -2946,6 +2983,7 @@ export async function runHarness({
           ...activity,
         });
         try {
+          if (LOCAL_CONTROL_SPECIAL_TOOLS.has(toolCall.function.name)) await assertLocalControlTool({ toolName: toolCall.function.name, input: parseToolArguments(toolCall), workspaceRoot });
           strategyHistory.before(toolCall.function.name, parseToolArguments(toolCall));
           acceptancePreparation = await taskAcceptance.beforeTool(toolCall.function.name, parseToolArguments(toolCall));
           if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
@@ -3333,7 +3371,7 @@ export async function runHarness({
       const content = storageError?.message || "Task persistence failed.";
       turnCoordinator.fail(storageError);
       emit({ type: "turn.failed", status: "blocked", error: content, changedFiles: buildChanges(changeMap).length });
-      return { status: "blocked", error: true, content: appendSandboxRecoveryNotice(content, sandboxRecoveries, language), changes: buildChanges(changeMap), steps, usage: totalUsage,
+      return { status: "blocked", error: true, rollingContext: savedMain ? null : rollingContext.handoff(sanitizedHistory), content: appendSandboxRecoveryNotice(content, sandboxRecoveries, language), changes: buildChanges(changeMap), steps, usage: totalUsage,
           loopMetrics: loopMetrics.snapshot(),
           taskBrief: taskBrief.snapshot(), acceptance: taskAcceptance.snapshot().report,
           strategy: strategyHistory.briefing(),
@@ -3344,6 +3382,7 @@ export async function runHarness({
     if (error?.name === "AbortError" || signal?.aborted) {
       const finalizedAnchor = await finalizeAnchor("interrupted");
       const interruptedResult = {
+        rollingContext: savedMain ? null : rollingContext.handoff(sanitizedHistory),
         status: "interrupted",
         content: isEnglish
           ? "The task was stopped. Completed file changes remain available and can be reverted from the review panel."
@@ -3392,6 +3431,7 @@ export async function runHarness({
     const verificationBlocked = contextBlocked || error?.code === "VERIFICATION_UNAVAILABLE" || ["LOOP_NO_PROGRESS", "LOOP_STRATEGY_EXHAUSTED"].includes(error?.code);
     const finalizedAnchor = await finalizeAnchor(verificationBlocked ? "blocked" : "failed");
     const failedResult = {
+      rollingContext: savedMain ? null : rollingContext.handoff(sanitizedHistory),
       status: verificationBlocked ? "blocked" : "failed",
       error: !verificationBlocked,
       ...(contextBlocked ? { contextBudget: error.budget } : {}),

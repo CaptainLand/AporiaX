@@ -53,7 +53,7 @@ export function conversationTokenMaterial(conversation) {
           : 4096;
       return { type: value.type, image: "[image]" };
     }
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !["aporiaSource", "aporiaPinned", "aporiaSupersededBy", "aporiaTaskBrief"].includes(key)).map(([key, item]) => [key, visit(item)]));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !["aporiaSource", "aporiaPinned", "aporiaSupersededBy", "aporiaTaskBrief", "aporiaRollingContext", "aporiaHistoryIndex", "aporiaCurrentRequest"].includes(key)).map(([key, item]) => [key, visit(item)]));
   }
   return { serialized: JSON.stringify(visit(conversation || [])), imageTokens: imageTokens + opaqueTokens, imageCount: imageCount + (opaqueTokens ? 1 : 0) };
 }

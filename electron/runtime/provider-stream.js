@@ -10,6 +10,7 @@ import { isTemporaryNetworkError } from "./run-control.js";
 import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest } from "./cloud-request-identity.js";
 import { modelOutputBudget } from "./output-budget.js";
 import { prepareCloudWindDown, observeCloudQuota } from "./cloud-wind-down.js";
+import { assertLocalControlActive, consumeLocalControlModelCall } from "../control/policy.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -122,7 +123,7 @@ function responseError(provider, payload, status, headers, streaming = false) {
   if (Number.isSafeInteger(payload?.retryAfterMs) && payload.retryAfterMs >= 0)
     error.retryAfterMs = Math.max(error.retryAfterMs || 0, payload.retryAfterMs);
   error.category = providerErrorCategory(error);
-  if (["context", "quota", "authorization"].includes(error.category)) error.retryable = false;
+  if (["context", "request-size", "quota", "authorization"].includes(error.category)) error.retryable = false;
   if (provider.kind === "aporia-cloud") {
     const request = payload?.request;
     error.cloudRequestId = headers?.get("x-aporia-request-id") || payload?.requestId || request?.requestId || null;
@@ -142,6 +143,31 @@ function responseError(provider, payload, status, headers, streaming = false) {
       error.retryable = false;
   }
   return error;
+}
+
+// Wire bytes are not model tokens: inline image encoding, schemas and native
+// continuation blocks all count here. Do not assume a BYOK proxy's size limit.
+function requestSizeInfo(provider, body) {
+  const measure = (messages) => Buffer.byteLength(JSON.stringify(compileProviderWire(provider,
+    { ...body, messages: providerMessages(messages) }).body), "utf8");
+  return { requestBytes: measure(body.messages), measureRequestBytes: measure };
+}
+
+function assertKnownRequestSize(provider, body) {
+  // This is the existing Cloud Fastify limit, not a new quota or guessed
+  // DeepSeek context limit. Other providers learn from explicit 413 rejections.
+  if (provider.kind !== "aporia-cloud") return;
+  const info = requestSizeInfo(provider, body);
+  const limit = 8 * 1024 * 1024;
+  if (info.requestBytes <= limit) return;
+  const identity = currentLoopRequestIdentity()?.identity;
+  throw Object.assign(new Error("PROVIDER_REQUEST_TOO_LARGE: 图片、历史与工具定义合计超过 Cloud 请求体上限，正在尝试整理历史；若仍过大，请拆分或缩小附件。"), {
+    code: "PROVIDER_REQUEST_TOO_LARGE", status: 413, retryable: false, ...info,
+    requestLimitBytes: limit,
+    // A resumed sent request is not proven unbilled merely because the new
+    // local preflight didn't dispatch. Keep its original identity untouched.
+    safeToRepair: !identity || (identity.status === "new" && !identity.serverRequestId),
+  });
 }
 
 function settledQuotaExhausted(receipt) {
@@ -167,9 +193,11 @@ export async function callModelProvider({
   onEvent,
   requestTrace = {},
 }) {
+  assertLocalControlActive();
   body = compileModelRequest(body);
   const identity = provider.kind === "aporia-cloud" ? currentLoopRequestIdentity() : null;
   body = await prepareCloudWindDown(provider, body, identity, onEvent, signal);
+  if (!identity?.result) assertKnownRequestSize(provider, body);
   const prepared = identity ? await prepareCloudRequest(identity, provider, body, requestTrace, signal) : null;
   if (prepared?.result) {
     await observeCloudQuota(prepared.result.cloudQuotaSnapshot, onEvent);
@@ -209,7 +237,7 @@ export async function callModelProvider({
         signal?.aborted ||
         (runtimeRunControl() && isTemporaryNetworkError(error)) ||
         !error?.retryable ||
-        ["quota", "authorization", "context", "output-limit", "tool-protocol"].includes(error.category) ||
+        ["quota", "authorization", "context", "request-size", "output-limit", "tool-protocol"].includes(error.category) ||
         attempt >= maxAttempts
       ) {
         throw error;
@@ -295,6 +323,9 @@ export async function callModelProviderOnce({
   // All callers, including subagents and side chat, share this last boundary.
   if (Array.isArray(body.messages)) body = { ...body, messages: providerMessages(body.messages) };
   const wire = compileProviderWire(provider, body);
+  // Count actual dispatch attempts (including retries), never a replayed
+  // durable result. Parallel children inherit the same AsyncLocalStorage state.
+  consumeLocalControlModelCall({ provider, body });
   const controller = new AbortController();
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });
@@ -474,6 +505,12 @@ export async function callModelProviderOnce({
     if (receivedContent && !error.partialMessage) error.partialMessage = { content: receivedContent };
     if (observedUsage && !error.usage) error.usage = observedUsage;
     if (signal?.aborted) throw Object.assign(createAbortError(), { usage: observedUsage, partialMessage: { content: receivedContent } });
+    if (providerErrorCategory(error) === "request-size") {
+      Object.assign(error, requestSizeInfo(provider, body));
+      error.message = `${provider.name} 请求体过大（HTTP ${error.status || 413}）：图片编码或历史内容超过了服务端限制。${error.safeToRepair === false
+        ? "Cloud 尚未确认原请求未计费，已保留身份，不会自动重复生成。"
+        : "将有限压缩历史后重试；若当前附件本身过大，请缩小或拆分。"}`;
+    }
     if (provider.kind === "aporia-cloud" && error?.message === "DESKTOP_ACCOUNT_SIGNED_OUT") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
     }

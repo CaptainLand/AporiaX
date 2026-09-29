@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { normalizeProviderInput, normalizeProviderModels, publicProviderSummary, createAporiaCloudProvider } from "../electron/provider-config.js";
 import { modelSupportsVision, conversationContainsImages, isNativeVisionRejectedError, stripImagePartsFromMessages } from "../electron/model-vision.js";
 import { exposeVisionProxyCapabilities, selectVisionCandidate } from "../electron/vision-proxy-core.js";
-import { queryCloudVisionCapability } from "../electron/cloud-vision-capability.js";
+import { queryCloudVisionCapability, cloudVisionCapabilityError } from "../electron/cloud-vision-capability.js";
 import { providerModelsById, buildProviderModels } from "../src/state/provider-models.js";
 
 const id = "deepseek-v4.1-flash";
@@ -54,6 +54,39 @@ for (const data of [{ status: "ready" }, { ...ready, verification: "unknown" }, 
 }
 assert.equal((await queryCloudVisionCapability(() => new Promise(() => {}), { timeoutMs: 20 })).status, "unknown");
 assert.equal((await queryCloudVisionCapability(async () => { throw Error("network"); })).status, "unknown");
+for (const reason of ["DEVICE_SESSION_REQUIRED", "PRICING_REVIEW_REQUIRED", "PROVIDER_NOT_CONFIGURED", "USAGE_RECONCILIATION_REQUIRED"]) {
+  const state = await queryCloudVisionCapability(async () => Response.json({ status: "unavailable", reason }));
+  assert.equal(state.reason, reason);
+  assert.equal(cloudVisionCapabilityError(state).reason, reason);
+  assert.match(cloudVisionCapabilityError(state).message, new RegExp(reason));
+}
+assert.doesNotMatch(cloudVisionCapabilityError({ reason: "secret-key-fixture" }).message, /secret-key-fixture/);
+const general = { protocolVersion: 1, status: "ready", verification: "configuration",
+  modelGateway: { quotaAdmission: "actual-usage-v1" },
+  models: [{ ...ready.model, enabled: true, available: false, reason: "QUOTA_UNAVAILABLE" }] };
+for (const legacy of [404, "quota"]) {
+  const calls = [];
+  const value = await queryCloudVisionCapability(async (path, init) => {
+    calls.push(path); assert.equal(init.body, undefined, "capability discovery never uploads images");
+    return path.endsWith("/vision") ? legacy === 404 ? new Response("", { status: 404 })
+      : Response.json({ status: "unavailable", reason: "QUOTA_UNAVAILABLE" }) : Response.json(general);
+  });
+  assert.equal(value.status, "ready", "verified native images use the same gateway quota admission as text");
+  assert.equal(calls.length, 2);
+}
+for (const patch of [{ verification: "unknown" }, { protocolVersion: 0 }, { modelGateway: {} },
+    { models: [{ ...general.models[0], enabled: false }] },
+    { models: [{ ...general.models[0], supportsImages: false }] },
+    { models: [{ ...general.models[0], reason: "DEVICE_SESSION_REQUIRED" }] }]) {
+  const state = await queryCloudVisionCapability(async path => path.endsWith("/vision")
+    ? new Response("", { status: 404 }) : Response.json({ ...general, ...patch }));
+  assert.notEqual(state.status, "ready", "compatibility is not an authorization/configuration bypass");
+}
+const abort = new AbortController();
+const pending = queryCloudVisionCapability(() => new Promise(() => {}), { signal: abort.signal, timeoutMs: 500 });
+abort.abort();
+await assert.rejects(pending, { name: "AbortError" });
+await assert.rejects(queryCloudVisionCapability(() => { throw Error("must not fetch"); }, { signal: abort.signal }), { name: "AbortError" });
 
 assert.equal(
   isNativeVisionRejectedError({ message: "unknown variant `image_url`, expected `text`" }),

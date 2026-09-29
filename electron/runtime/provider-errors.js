@@ -2,6 +2,7 @@
 export function providerErrorCategory(error) {
   const code = [error?.providerCode, error?.code, error?.message].filter(Boolean).join(" ");
   if (/insufficient_quota|insufficient_credits|quota_reservation_insufficient|billing_hard_limit|quota_exhausted|budget_exhausted|account.*(?:balance|credit)/i.test(code)) return "quota";
+  if (Number(error?.status) === 413 || /PROVIDER_REQUEST_TOO_LARGE|request[_ ](?:entity|body|payload).{0,25}too[_ ]large|payload[_ ]too[_ ]large/i.test(code)) return "request-size";
   if (/context_length_exceeded|context_window_exceeded|maximum context length|prompt.{0,30}too long|too many (?:input )?tokens|context.{0,30}(?:exceed|overflow)/i.test(code)) return "context";
   if (error?.code === "PROVIDER_FINISH_LENGTH") return "output-limit";
   if (["PROVIDER_TOOL_CALL_INVALID", "PROVIDER_TOOL_CALL_INCOMPLETE", "APORIA_TOOL_PROTOCOL_INVALID"].includes(error?.code)) return "tool-protocol";

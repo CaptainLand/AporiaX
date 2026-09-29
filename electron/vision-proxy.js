@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { providerChatEndpoint } from "./provider-config.js";
 import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
-import { queryCloudVisionCapability } from "./cloud-vision-capability.js";
+import { queryCloudVisionCapability, cloudVisionCapabilityError } from "./cloud-vision-capability.js";
 import { modelSupportsVision } from "./model-vision.js";
 import {
   buildVisionMessages,
@@ -139,7 +139,7 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
   // observation route or silently borrow a user's separate BYOK provider.
   if (String(request?.providerId || "") === APORIA_CLOUD_PROVIDER_ID) {
     const capability = await getCloudVisionCapability({ signal });
-    if (capability.status !== "ready") throw new Error("APORIA_CLOUD_VISION_NOT_READY: Cloud 视觉尚未配置就绪或暂时无法确认，请检查服务后重试。");
+    if (capability.status !== "ready") throw cloudVisionCapabilityError(capability);
     return request;
   }
 

@@ -98,15 +98,21 @@ try {
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "VALID");
   });
   await test("real context recovery shrinks old history without removing user constraints", async () => {
-    const sizes = [];
+    const sizes = []; let summaries = 0;
     const messages = [{ role: "user", content: "MUST_NOT_UPLOAD", aporiaSource: "human", aporiaPinned: true }, ...Array.from({ length: 30 }, (_, i) => ({ role: "assistant", content: "old-" + i + "中".repeat(900) })), { role: "user", content: "continue" }];
-    const { result, requests } = await fixture((body, request) => {
+    const { result, requests } = await fixture((body) => {
+      if (body.messages[0]?.content.includes("compressing historical conversation")) {
+        summaries++;
+        const data = JSON.parse(body.messages[1].content);
+        return sse({ content: JSON.stringify({ revision: data.revision, covered_ids: data.sources.map(source => source.id),
+          summary: "Historical evidence retained as reference; no upload or other operation was authorized.", constraints: [] }) });
+      }
       sizes.push(JSON.stringify(body.messages).length);
       assert(body.messages.some((message) => message.content === "MUST_NOT_UPLOAD"));
-      if (request === 1) return new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 });
+      if (sizes.length === 1) return new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 });
       return sse({ content: "Finished with original constraints." });
-    }, { messages });
-    assert.equal(result.status, "completed", result.content); assert.equal(requests, 2); assert(sizes[1] < sizes[0]);
+    }, { messages, provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 128000 }] } });
+    assert.equal(result.status, "completed", result.content); assert.equal(sizes.length, 2); assert.equal(requests, 2 + summaries); assert(summaries > 0); assert(sizes[1] < sizes[0]);
     assert.equal(result.loopMetrics.recoveries, 1);
     return { mockProvider: true, requestCharactersBefore: sizes[0], requestCharactersAfter: sizes[1], requests };
   });

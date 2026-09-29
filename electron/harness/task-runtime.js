@@ -11,6 +11,10 @@ import {
   finishRunJournal,
   getRunRecoveryContext,
   listRecoverableRuns,
+  listRunRecords,
+  readRunResult,
+  readRunEvents,
+  sanitizeRunResult,
   markRunRecoveryStarted,
   updateRunJournalMetadata,
   saveRunCheckpoint,
@@ -54,6 +58,7 @@ export class HarnessTaskRuntime {
   #activeRuns = new Map();
   #startingRuns = new Map();
   #activeListeners = new Set();
+  #finishedListeners = new Set();
   subscribeActiveRuns(listener) {
     this.#activeListeners.add(listener);
     listener(this.listActiveRuns());
@@ -62,6 +67,20 @@ export class HarnessTaskRuntime {
   #notifyActive() {
     for (const listener of this.#activeListeners) {
       try { listener(this.listActiveRuns()); } catch { /* observers cannot change task state */ }
+    }
+  }
+  subscribeRunFinished(listener) {
+    if (typeof listener !== "function") throw new TypeError("Run result listener must be a function.");
+    this.#finishedListeners.add(listener);
+    return () => this.#finishedListeners.delete(listener);
+  }
+  async #notifyFinished(record) {
+    const result = await readRunResult(this.#directory(), record.runId);
+    if (!result) return;
+    const notification = { runId: record.runId, taskId: record.taskId, clientId: record.clientId || null, result };
+    for (const listener of new Set([record.onResult, ...this.#finishedListeners])) {
+      if (typeof listener !== "function") continue;
+      try { Promise.resolve(listener(notification)).catch(() => undefined); } catch { /* observers do not own execution */ }
     }
   }
   #pendingApprovals = new Map();
@@ -125,6 +144,7 @@ export class HarnessTaskRuntime {
     if (record.persistenceError) return;
     record.pendingEvents.push(event);
     record.pendingBytes += Buffer.byteLength(JSON.stringify(event));
+    if (this.#startingRuns.has(record.runId)) return;
     const stream = ["response.delta", "witness.updated"].includes(event.type);
     if (!stream || record.pendingEvents.length >= 64 || record.pendingBytes >= 64_000) {
       this.#flushJournal(record);
@@ -176,14 +196,15 @@ export class HarnessTaskRuntime {
     return typeof this.#taskStarter === "function";
   }
 
-  startFromRpc(request = {}) {
+  startFromRpc(request = {}, { clientId = "core-http", onEvent = null, onResult = null } = {}) {
     if (!this.#taskStarter) {
       throw new Error("Task creation is not available through Core RPC.");
     }
     return this.#taskStarter(request, {
-      clientId: "core-http",
+      clientId: String(clientId),
       detached: true,
-      onEvent: null,
+      onEvent,
+      onResult,
     });
   }
 
@@ -217,6 +238,27 @@ export class HarnessTaskRuntime {
       .filter(Boolean);
   }
 
+  listRuns(options = {}) {
+    return listRunRecords(this.#directory(), options);
+  }
+
+  getRunResult(runId) {
+    return readRunResult(this.#directory(), runId);
+  }
+
+  async readEvents(runId, options = {}) {
+    const record = this.#activeRuns.get(String(runId || ""));
+    if (record) await this.#flushJournal(record);
+    return readRunEvents(this.#directory(), runId, options);
+  }
+
+  getPendingApprovals(runId) {
+    return [...this.#pendingApprovals.values()]
+      .filter(approval => runId === undefined || approval.runId === String(runId))
+      .map(approval => ({ approvalId: approval.approvalId, runId: approval.runId, clientId: approval.clientId || null,
+        approval: { ...approval.publicDetails } }));
+  }
+
   async listRecoverableRuns() {
     const records = await listRecoverableRuns(this.#directory());
     return Promise.all(records.map(async record => {
@@ -244,6 +286,7 @@ export class HarnessTaskRuntime {
     metadata = {},
     recoveryContext = null,
     onEvent = null,
+    onResult = null,
     execute,
     detached = false,
   } = {}) {
@@ -281,6 +324,7 @@ export class HarnessTaskRuntime {
       approvalGrants: new Set(),
       startedAt: new Date().toISOString(),
       onEvent,
+      onResult,
     };
 
     this.#startingRuns.set(safeRunId, record);
@@ -300,8 +344,9 @@ export class HarnessTaskRuntime {
     }
     this.#activeRuns.set(safeRunId, record);
     this.#startingRuns.delete(safeRunId);
+    this.#flushJournal(record);
     let lastPauseKey = "";
-    const unsubscribeControl = control.onChange((state) => {
+    const onControlChange = (state) => {
       if (record.controller.signal.aborted) return;
       const key = state.pauseReasons.join("|");
       if (lastPauseKey !== key) {
@@ -317,7 +362,9 @@ export class HarnessTaskRuntime {
       record.journalTail.catch(() => {});
       this.#notifyActive();
       return record.journalTail;
-    });
+    };
+    const unsubscribeControl = control.onChange(onControlChange);
+    if (control.paused) onControlChange(control.snapshot());
     if (this.#environment.sleeping) control.suspend();
     control.setOnline(this.#environment.online);
     this.#notifyActive();
@@ -378,6 +425,9 @@ export class HarnessTaskRuntime {
           runId: safeRunId,
           clientId: record.clientId,
           grantKey,
+          publicDetails: sanitizeRunResult({ id: approvalId, canRememberForRun: Boolean(grantKey),
+            ...Object.fromEntries(["kind", "tool", "title", "command", "cwd", "path", "description", "reason", "capability"]
+              .filter(key => details[key] !== undefined).map(key => [key, details[key]])) }, { maxBytes: 32_000 }),
           resolve: (response) => {
             controller.signal.removeEventListener("abort", handleAbort);
             resolveApproval(response);
@@ -469,13 +519,18 @@ export class HarnessTaskRuntime {
         if (record.persistenceError) return { ...result, status: "blocked", error: true, content: record.persistenceError.message,
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         await finishRunJournal(this.#directory(), safeRunId, result);
+        await this.#notifyFinished(record);
         return result;
       } catch (error) {
         await this.#flushJournal(record);
         await finishRunJournal(this.#directory(), safeRunId, {
-          status: controller.signal.aborted ? "interrupted" : "failed",
+          status: record.persistenceError ? "blocked" : controller.signal.aborted ? "interrupted" : "failed",
+          content: record.persistenceError?.message || error?.message || "Harness run failed.",
+          error: !controller.signal.aborted || Boolean(record.persistenceError),
+          errorDetails: { name: error?.name || "Error", ...(error?.code ? { code: error.code } : {}) },
           changes: [],
-        }).catch(() => undefined);
+          ...(record.persistenceError ? { persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } } : {}),
+        }).then(() => this.#notifyFinished(record)).catch(() => undefined);
         if (record.persistenceError) return { status: "blocked", error: true, content: record.persistenceError.message, changes: [],
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         throw error;
@@ -512,7 +567,7 @@ export class HarnessTaskRuntime {
   }
 
   interrupt(runId, { clientId = "" } = {}) {
-    const record = this.#activeRuns.get(String(runId || ""));
+    const record = this.#activeRuns.get(String(runId || "")) || this.#startingRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
     record.clarification?.cancel().catch((error) => this.#persistenceFailed(record, error));
     record.controller.abort();
@@ -521,7 +576,7 @@ export class HarnessTaskRuntime {
   }
 
   async pause(runId, { clientId = "" } = {}) {
-    const record = this.#activeRuns.get(String(runId || ""));
+    const record = this.#activeRuns.get(String(runId || "")) || this.#startingRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
     record.control.pause();
     await record.control.flush();
@@ -529,7 +584,7 @@ export class HarnessTaskRuntime {
   }
 
   async resume(runId, { clientId = "" } = {}) {
-    const record = this.#activeRuns.get(String(runId || ""));
+    const record = this.#activeRuns.get(String(runId || "")) || this.#startingRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
     record.control.resume();
     record.control.resume("quota");
@@ -542,7 +597,7 @@ export class HarnessTaskRuntime {
   }
 
   steer(runId, message, { clientId = "" } = {}) {
-    const record = this.#activeRuns.get(String(runId || ""));
+    const record = this.#activeRuns.get(String(runId || "")) || this.#startingRuns.get(String(runId || ""));
     if (!record || !clientCanControl(record, clientId)) return false;
     const steeringMessage = normalizeSteeringMessage(message);
     if (!steeringMessage) return false;
@@ -571,22 +626,24 @@ export class HarnessTaskRuntime {
     ) {
       return false;
     }
+    const record = this.#activeRuns.get(approval.runId);
+    if (!record) return false;
     this.#pendingApprovals.delete(approval.approvalId);
     const shouldRemember =
       approved && scope === "run" && Boolean(approval.grantKey);
-    if (shouldRemember) {
-      this.#activeRuns.get(approval.runId)?.approvalGrants.add(approval.grantKey);
-    }
-    const record = this.#activeRuns.get(approval.runId);
-    if (record) {
-      record.journalTail = record.journalTail
-        .then(() => saveRunCheckpoint(this.#directory(), approval.runId, {
+    const event = { type: "approval.resolved", approval: { id: approval.approvalId, approved, scope }, approved, scope };
+    record.journalTail = record.journalTail
+      .then(async () => {
+        await saveRunCheckpoint(this.#directory(), approval.runId, {
           scopeId: "approval:" + approval.approvalId, phase: "approval-resolved",
-          approved, requiresFreshApproval: true,
-        }))
-        .catch((error) => this.#persistenceFailed(record, error));
-    }
-    approval.resolve({ approved, remembered: shouldRemember });
+          approved, scope, requiresFreshApproval: true,
+        });
+        await appendRunJournalEvents(this.#directory(), approval.runId, [event]);
+        this.#publish(record, event, { journal: false });
+        if (shouldRemember) record.approvalGrants.add(approval.grantKey);
+        approval.resolve({ approved, remembered: shouldRemember });
+      })
+      .catch((error) => this.#persistenceFailed(record, error));
     return true;
   }
 

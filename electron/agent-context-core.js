@@ -4,6 +4,7 @@ export { mergeTokenUsage } from "./runtime/token-usage.js";
 import { isHumanMessage } from "./runtime/task-conversation.js";
 import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
 import { conversationTokenMaterial } from "./runtime/multimodal-budget.js";
+import { assertLocalControlTool } from "./control/policy.js";
 import {
   lstat,
   mkdir,
@@ -305,9 +306,18 @@ export function compactConversationForRequest({
   plan = null,
   relevantMemory = [],
   inputBudgetTokens = null,
+  inputBudgetBytes = null,
+  targetInputBytes = inputBudgetBytes,
+  measureRequestBytes = (messages) => Buffer.byteLength(JSON.stringify(messages), "utf8"),
 }) {
   if (inputBudgetTokens !== null && (!Number.isSafeInteger(inputBudgetTokens) || inputBudgetTokens <= 0)) {
     throw new TypeError("inputBudgetTokens must be a positive integer.");
+  }
+  if (inputBudgetBytes !== null && (!Number.isSafeInteger(inputBudgetBytes) || inputBudgetBytes <= 0)) {
+    throw new TypeError("inputBudgetBytes must be a positive integer.");
+  }
+  if (targetInputBytes !== null && (!Number.isSafeInteger(targetInputBytes) || targetInputBytes <= 0 || targetInputBytes > inputBudgetBytes)) {
+    throw new TypeError("targetInputBytes must be a positive integer within inputBudgetBytes.");
   }
   const reserveTokens = contextReserveTokens(contextWindowTokens);
   const compactAtTokens = Math.max(1, Math.min(contextWindowTokens - reserveTokens, inputBudgetTokens ?? Infinity));
@@ -315,7 +325,16 @@ export function compactConversationForRequest({
     conversation,
     accounting,
   );
-  if (estimatedTokensBefore <= compactAtTokens) return null;
+  const bytesBefore = inputBudgetBytes === null ? null : measureRequestBytes(conversation);
+  const fits = (messages) => estimateConversationTokens(messages, accounting) <= compactAtTokens &&
+    (inputBudgetBytes === null || measureRequestBytes(messages) <= inputBudgetBytes);
+  if (fits(conversation)) return null;
+  // After crossing the high-water mark, aim lower to leave room for subsequent
+  // tool rounds. This is a soft target: never reject protected inputs that fit
+  // the real budget solely to achieve extra headroom.
+  const targetTokens = inputBudgetTokens === null ? Math.max(1, Math.floor(compactAtTokens * .75)) : compactAtTokens;
+  const fitsTarget = (messages) => estimateConversationTokens(messages, accounting) <= targetTokens &&
+    (targetInputBytes === null || measureRequestBytes(messages) <= targetInputBytes);
 
   // First reclaim old, closed tool output only when a task-owned full-result
   // reference exists. Recent exchanges stay verbatim; failure diagnostics and
@@ -332,14 +351,15 @@ export function compactConversationForRequest({
     prunedToolOutputs++;
     return { ...message, content: summary };
   });
-  if (prunedToolOutputs && estimateConversationTokens(workingConversation, accounting) <= compactAtTokens) {
+  if (prunedToolOutputs && fitsTarget(workingConversation)) {
     const checkpoint = { ...buildStructuredContextCheckpoint([], { plan }), prunedToolOutputs };
     conversation.splice(0, conversation.length, ...workingConversation);
     contextCheckpoints.push(checkpoint);
     if (contextCheckpoints.length > 8) contextCheckpoints.splice(0, contextCheckpoints.length - 8);
     onEvent?.({ type: "context.compacted", checkpoint, reason: "archived-tool-output-prune",
       compactedMessages: 0, estimatedTokensBefore,
-      estimatedTokensAfter: estimateConversationTokens(conversation, accounting), contextWindowTokens });
+      estimatedTokensAfter: estimateConversationTokens(conversation, accounting), contextWindowTokens,
+      requestBytesBefore: bytesBefore, requestBytesAfter: inputBudgetBytes === null ? null : measureRequestBytes(conversation) });
     return checkpoint;
   }
 
@@ -361,6 +381,7 @@ export function compactConversationForRequest({
   }
   const latestUser = groups.findLastIndex((group) => isHumanMessage(group[0]));
   const protectedGroup = (index) => index === latestUser ||
+    groups[index].some((message) => message.aporiaRollingContext === true) ||
     groups[index].some((message) => message.aporiaTaskBrief === true) ||
     groups[index].some((message) => message.aporiaPinned && (isHumanMessage(message) || message.aporiaSource === 'delegation')) ||
     groups[index].some((message) => isAnchorRestoreNotice(message)) ||
@@ -392,11 +413,13 @@ export function compactConversationForRequest({
   const updateOmitted = () => { omitted = groups.flatMap((group, index) => retained.has(index) ? [] : group); };
   updateOmitted();
   rebuild();
-  while (estimateConversationTokens(candidate, accounting) > compactAtTokens) {
+  while (!fitsTarget(candidate)) {
     const removable = [...retained].find((index) => !protectedGroup(index) && index !== groups.length - 1);
     if (removable !== undefined) {
       retained.delete(removable);
       updateOmitted();
+    } else if (fits(candidate)) {
+      break;
     } else if (summaryLimit > 0) {
       summaryLimit = Math.floor(summaryLimit / 2);
     } else if (!compactedToolOutput) {
@@ -405,6 +428,13 @@ export function compactConversationForRequest({
         ? { ...message, content: JSON.stringify({ ...conciseToolEvidence(message), contextCompacted: true, note: "Full output omitted; re-read the relevant range if needed." }) }
         : message);
     } else {
+      if (inputBudgetBytes !== null && measureRequestBytes(candidate) > inputBudgetBytes) {
+        const error = new Error("PROVIDER_REQUEST_TOO_LARGE: 历史压缩后，当前要求、图片附件或工具定义仍超过请求体大小限制。原始内容和进度已保留；请减小图片/PDF、拆分附件后重试，不会自动删除附件或重复执行工具。");
+        error.code = "PROVIDER_REQUEST_TOO_LARGE";
+        error.retryable = false;
+        error.budget = { inputBudgetBytes, requestBytes: measureRequestBytes(candidate) };
+        throw error;
+      }
       const error = new Error("CONTEXT_BUDGET_EXCEEDED: system instructions or the latest request/tool exchange exceed the available input budget. Narrow the request or use a larger context window.");
       error.code = "CONTEXT_BUDGET_EXCEEDED";
       const material = conversationTokenMaterial(candidate);
@@ -430,6 +460,8 @@ export function compactConversationForRequest({
     estimatedTokensAfter,
     contextWindowTokens,
     estimator: accounting?.source || "model-aware-heuristic",
+    requestBytesBefore: bytesBefore,
+    requestBytesAfter: inputBudgetBytes === null ? null : measureRequestBytes(conversation),
   });
   return checkpoint;
 }
@@ -654,6 +686,9 @@ function globToRegExp(pattern) {
 async function readInstructionFile(path) {
   const stats = await lstat(path);
   if (!stats.isFile() || stats.size > MAX_RULE_FILE_CHARS * 4) return "";
+  // Instruction loading happens before the first model/tool call. A regular
+  // file beneath a linked parent must obey the same external workspace grant.
+  await assertLocalControlTool({ toolName: "read_file", input: { path }, count: false });
   return (await readFile(path, "utf8")).slice(0, MAX_RULE_FILE_CHARS);
 }
 
@@ -664,6 +699,9 @@ async function scanRuleDirectory(workspaceRoot) {
     if (output.length >= MAX_RULE_FILES) return;
     let entries;
     try {
+      // readdir follows a symlink/junction at either .aporiax or rules even
+      // though child Dirents omit symlinks. Check the real root before reading.
+      await assertLocalControlTool({ toolName: "list_directory", input: { path: directory }, workspaceRoot, count: false });
       entries = await readdir(directory, { withFileTypes: true });
     } catch (error) {
       if (error?.code === "ENOENT") return;

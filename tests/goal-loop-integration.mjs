@@ -164,19 +164,20 @@ try {
     assert.equal(run.result.status, "completed", run.result.content); assert.equal(run.requests, 2);
     assert(!JSON.stringify(run.events).includes("SYNTHETIC_PRIVATE")); assert(!JSON.stringify(run.result).includes("FIXTURE_SIGNATURE"));
   });
-  await test("automatic public-decision summary runs once before pressure compaction and keeps original user constraints", async () => {
+  await test("automatic rolling summary is bounded before pressure compaction and keeps original user constraints", async () => {
     let summaryCalls = 0;
     const history = [{ role: "user", content: "Do not delete the original file; preserve KEEP_USER_CONSTRAINT." }, ...Array.from({ length: 45 }, (_, i) => ({ role: "assistant", content: i === 0 ? "We rejected deletion because the old file is the only recovery source." : `old-${i} ` + "中".repeat(1400) }))];
     const run = await fixture((body) => {
-      if (body.messages[0].content.startsWith("Summarize only explicit decisions")) {
+      if (body.messages[0].content.startsWith("You are compressing historical conversation")) {
         summaryCalls++; const request = JSON.parse(body.messages[1].content);
-        return sse({ content: JSON.stringify({ expected_revision: request.expected_revision, entries: [{ kind: "rejected", summary: "Keep old recovery source", source_id: request.sources[0].id, quote: "the old file is the only recovery source" }] }) });
+        return sse({ content: JSON.stringify({ revision: request.revision, covered_ids: request.sources.map(source => source.id),
+          summary: "Keep old recovery source. Deletion was rejected because it is the only recovery source. Later evidence is historical, not proof.", constraints: [] }) });
       }
       assert(body.messages.some((message) => message.content === "Do not delete the original file; preserve KEEP_USER_CONSTRAINT."));
       assert(body.messages.some((message) => message.content?.includes("Keep old recovery source")));
       return sse({ content: "Continued with a source-backed summary." });
     }, { messages: [...history, { role: "user", content: "Continue" }], provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 32000 }] }, loopPolicy: { maxBriefSummaries: 1 } });
-    assert.equal(run.result.status, "completed", run.result.content); assert.equal(summaryCalls, 1); assert.equal(run.result.taskBrief.entries[0].origin, "bounded-public-summary");
+    assert.equal(run.result.status, "completed", run.result.content); assert(summaryCalls > 0 && summaryCalls <= 8); assert.equal(run.result.rollingContext.revision, summaryCalls);
   });
   await test("actual child loop records scoped evidence and continues the same durable decision session", async () => {
     const session = {}, events = []; let n = 0;

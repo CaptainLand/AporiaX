@@ -17,6 +17,7 @@ try {
   const read = (path) => dispatchNativeTool({
     toolCall: { id: "read", function: { name: "read_external_file", arguments: JSON.stringify({ path }) } },
     registry, permissionPolicy: createPermissionPolicy("workspace-write"), requestApproval: async () => ({ approved: true }),
+    executeContext: { workspaceRoot: directory },
     parseArguments: (call) => JSON.parse(call.function.arguments),
     executeAuthorized: async () => ({ modelResult: { kind: "file", content: "fixture" } }),
   });

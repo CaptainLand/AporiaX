@@ -13,6 +13,7 @@ import { installAppUpdate } from "./app-update.js";
 import { showApprovalToast, showClarificationToast, closeClarificationToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
+import { createDesktopLocalControl, desktopControlBridgePath, createControlActivityTracker } from "./control/desktop-runtime.js";
 import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
 import {
   capabilityAvailability,
@@ -64,8 +65,10 @@ handleTrustedIpc(ipcMain, "core:library:install-online-skill", (_event, request 
 handleTrustedIpc(ipcMain, "core:library:verify-skill", (_event, request = {}) => verifyInstalledSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
 
 const desktopBackground = installDesktopBackground();
+const externalActivity = createControlActivityTracker();
+const desktopRuns = () => externalActivity.combined(kernel?.taskRuntime?.listActiveRuns() || []);
 installAppUpdate({
-  getActiveRunCount: () => kernel?.taskRuntime?.listActiveRuns().length || 0,
+  getActiveRunCount: () => desktopRuns().length,
 });
 const activeRunMetadata = new Map();
 let kernel = null;
@@ -288,7 +291,8 @@ kernel = createHarnessKernel({
   taskRuntime: desktopMain.harnessTaskRuntime,
 });
 setDefaultHarnessEventBus(kernel.events);
-desktopBackground.setRunSource(() => desktopMain.harnessTaskRuntime.listActiveRuns());
+desktopMain.setDesktopExternalRunSource(() => externalActivity.listRuns());
+desktopBackground.setRunSource(desktopRuns);
 desktopMain.harnessTaskRuntime.subscribeActiveRuns(() => desktopBackground.refresh());
 const notifiedQuestions = new Set();
 const remindClarification = (event) => {
@@ -305,7 +309,9 @@ const remindClarification = (event) => {
       if (window.isMinimized()) window.restore();
       window.show();
       window.focus();
-      window.webContents.send("desktop:task-requested", { taskId: question.taskId, clarificationId: question.id });
+      const external = desktopMain.harnessTaskRuntime.getActiveRun(event.runId)?.clientId?.startsWith("external:");
+      if (external) window.webContents.send("control:event", { type: "open", runId: event.runId });
+      else window.webContents.send("desktop:task-requested", { taskId: question.taskId, clarificationId: question.id });
     },
   });
 };
@@ -351,6 +357,25 @@ desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
   );
 });
 const coreServer = createHarnessCoreServer({ kernel });
+const localControlReady = app.whenReady().then(async () => createDesktopLocalControl({
+  fileAccessSettings: await desktopMain.fileAccessSettingsReady,
+  dataDirectory: app.getPath("userData"), taskRuntime: desktopMain.harnessTaskRuntime,
+  startHarnessTask: desktopMain.startHarnessTask, listProviders: desktopMain.listDesktopProviders,
+  listWorkspaces: desktopMain.listDesktopWorkspaces,
+  capabilityRegistry: kernel.capabilitiesRegistry, execPath: process.execPath,
+  bridgePath: desktopControlBridgePath({ isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
+  onEvent: (payload) => {
+    externalActivity.observe(payload);
+    if (payload.run) desktopBackground.refresh();
+    const window = desktopMain.getDesktopMainWindow?.();
+    if (window && !window.isDestroyed()) window.webContents.send("control:event", payload);
+  },
+}));
+// Keep startup failures observable through the settings IPC without producing
+// an unhandled rejection before the user opens the panel.
+localControlReady.catch(() => undefined);
+handleTrustedIpc(ipcMain, "control:request", async (_event, request) => (await localControlReady).request(request));
 
 handleTrustedIpc(ipcMain, "core:status", () => ({
   running: Boolean(coreServer.url),
@@ -520,6 +545,7 @@ handleTrustedIpc(ipcMain, "desktop:background-status", () => desktopBackground.s
 app.whenReady().then(() => coreServer.listen()).catch(() => undefined);
 app.on("before-quit", () => {
   coreServer.close().catch(() => undefined);
+  localControlReady.then(control => control.shutdown()).catch(() => undefined);
 });
 
 export {

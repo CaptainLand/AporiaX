@@ -10,7 +10,7 @@ import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequest
 // request. Do not replay an already-executed/uncertain external operation.
 export async function completeLoopRequest({ conversation, contextCheckpoints, accounting,
   contextWindowTokens, getBody, complete, persist = async () => {}, onEvent = () => {},
-  onFailedUsage = () => {}, shouldYield = () => false, signal, plan = null, scopeId = "main" }) {
+  onFailedUsage = () => {}, shouldYield = () => false, signal, plan = null, scopeId = "main", summarizeContext = null }) {
   const control = runtimeRunControl();
   let requestIdentity = createLoopRequestIdentity(scopeId);
   let compactions = requestIdentity.identity.compactions || 0, corrections = requestIdentity.identity.repairCount || 0;
@@ -92,14 +92,21 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
       }
       if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation };
       const category = providerErrorCategory(error);
-      if (category === "context" && compactions < 2 && error.safeToRepair !== false) {
+      if (["context", "request-size"].includes(category) && compactions < 2 && error.safeToRepair !== false) {
         const before = conversationTokenMaterial(conversation);
-        const inputBudgetTokens = Math.max(1, Math.floor(estimateConversationTokens(conversation, accounting) * 0.70));
+        const byteRepair = category === "request-size";
+        const measureRequestBytes = error.measureRequestBytes || ((messages) => Buffer.byteLength(JSON.stringify(requestBody(messages)), "utf8"));
+        const bytesBefore = byteRepair ? measureRequestBytes(conversation) : null;
+        const targetInputBytes = byteRepair ? Math.max(1, Math.floor(Math.min(bytesBefore, error.requestLimitBytes || Infinity) * 0.70)) : null;
+        const inputBudgetBytes = byteRepair ? Math.min(bytesBefore - 1, error.requestLimitBytes || targetInputBytes) : null;
+        const inputBudgetTokens = byteRepair ? null : Math.max(1, Math.floor(estimateConversationTokens(conversation, accounting) * 0.70));
+        const summarized = await summarizeContext?.();
         const checkpoint = compactConversationForRequest({ conversation, contextCheckpoints,
-          accounting, contextWindowTokens, inputBudgetTokens, plan, onEvent });
+          accounting, contextWindowTokens, inputBudgetTokens, inputBudgetBytes, targetInputBytes, measureRequestBytes, plan, onEvent });
         const after = conversationTokenMaterial(conversation);
-        if (!checkpoint || after.serialized.length >= before.serialized.length ||
-            estimateConversationTokens(conversation, accounting) > inputBudgetTokens) throw error;
+        if ((!checkpoint && !summarized) || (byteRepair
+          ? measureRequestBytes(conversation) >= bytesBefore || measureRequestBytes(conversation) > inputBudgetBytes
+          : after.serialized.length >= before.serialized.length || estimateConversationTokens(conversation, accounting) > inputBudgetTokens)) throw error;
         compactions++;
       } else if (category === "output-limit" && corrections < 1 && error.streamComplete && error.safeToRepair !== false) {
         if (!error.partialToolCalls && error.partialMessage?.content?.trim()) {

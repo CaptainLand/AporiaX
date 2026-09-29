@@ -15,6 +15,15 @@ import {
 } from "electron";
 import { handleDesktopLink } from "./desktop-links.js";
 import { registerWorkbench } from "./workbench/service.js";
+import { createFileAccessSettings } from "./runtime/file-access-settings.js";
+import { configureNativeFileAccess } from "./runtime/file-access-policy.js";
+
+export const fileAccessSettingsReady = app.whenReady().then(async () => {
+  const settings = await createFileAccessSettings({ dataDirectory: app.getPath("userData") });
+  configureNativeFileAccess(settings.policy);
+  return settings;
+});
+fileAccessSettingsReady.catch(() => undefined);
 import { createSideChatService } from "./side-chat/service.js";
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
 import {
@@ -97,6 +106,11 @@ function approvalGrantKey(details = {}) {
     : "";
 }
 
+let externalRunSource = () => [];
+export function setDesktopExternalRunSource(source) {
+  externalRunSource = typeof source === "function" ? source : () => [];
+}
+
 const harnessTaskRuntime = createHarnessTaskRuntime({
   dataDirectory: () => app.getPath("userData"),
   approvalGrantKey,
@@ -106,6 +120,7 @@ const harnessTaskRuntime = createHarnessTaskRuntime({
         process.platform !== "darwin" &&
         app.isReady() &&
         !harnessTaskRuntime.hasActiveRuns() &&
+        externalRunSource().length === 0 &&
         (!mainWindow || mainWindow.isDestroyed())
       ) {
         app.quit();
@@ -414,6 +429,11 @@ async function saveTasks(tasks) {
     : getTaskHistoryStore().saveTasks(tasks?.tasks, { expectedRevision: tasks?.expectedRevision, deletedTaskIds: tasks?.deletedTaskIds });
 }
 
+export async function listDesktopWorkspaces() {
+  return ((await loadTasks()) || []).filter(task => typeof task.workspacePath === "string" && task.workspacePath)
+    .map(task => ({ path: task.workspacePath, label: task.workspaceName || "" }));
+}
+
 async function hydrateHarnessMessages(messages) {
   try {
     return await getTaskHistoryStore().hydrateMessages(messages);
@@ -600,7 +620,8 @@ function createMainWindow() {
 
 async function startHarnessTask(
   request,
-  { clientId = "", onEvent = null, detached = false } = {},
+  { clientId = "", onEvent = null, onResult = null, detached = false, signal: startupSignal = null,
+    transformResult = null, strictProvider = false } = {},
 ) {
   const runId = typeof request?.runId === "string" ? request.runId : "";
   if (!runId || runId.length > 100) {
@@ -611,6 +632,10 @@ async function startHarnessTask(
   }
 
   const provider = await resolveProvider(request?.providerId);
+  await fileAccessSettingsReady;
+  if (strictProvider && provider.id !== request?.providerId) {
+    throw new Error("The authorized Provider is no longer configured.");
+  }
   const messages = await hydrateHarnessMessages(request?.messages);
   let recoveryContext = null;
   if (request?.recoveryRunId) {
@@ -633,6 +658,7 @@ async function startHarnessTask(
     }
   }
 
+  startupSignal?.throwIfAborted();
   return harnessTaskRuntime.start({
     runId,
     taskId: request?.taskId || "",
@@ -648,24 +674,34 @@ async function startHarnessTask(
       modelId: request?.modelId,
     },
     onEvent,
-    execute: ({ signal, control, emit, requestApproval, clarification }) =>
-      runHarness({
-        ...request,
-        messages,
-        provider,
-        memoryDirectory: join(app.getPath("userData"), "project-memory"),
-        sandboxDataDirectory: app.getPath("userData"),
-        userSkillsDirectory: join(app.getPath("userData"), "skills"),
-        understandingDirectory: getProjectUnderstandingDirectory(),
-        recoveryContext,
-        signal,
-        control,
-        onEvent: emit,
-        requestApproval,
-        clarification,
-        onNativeVisionRejected: ({ providerId, modelId }) =>
-          disableProviderNativeVision(providerId, modelId),
-      }),
+    onResult,
+    execute: async ({ signal, control, emit, requestApproval, clarification }) => {
+      let result;
+      try {
+        result = await runHarness({
+          ...request,
+          messages,
+          provider,
+          memoryDirectory: join(app.getPath("userData"), "project-memory"),
+          sandboxDataDirectory: app.getPath("userData"),
+          userSkillsDirectory: join(app.getPath("userData"), "skills"),
+          understandingDirectory: getProjectUnderstandingDirectory(),
+          recoveryContext,
+          signal: startupSignal ? AbortSignal.any([signal, startupSignal]) : signal,
+          control,
+          onEvent: emit,
+          requestApproval,
+          clarification,
+          onNativeVisionRejected: ({ providerId, modelId }) =>
+            disableProviderNativeVision(providerId, modelId),
+        });
+      } catch (error) {
+        if (!transformResult) throw error;
+        result = { status: signal.aborted || startupSignal?.aborted ? "interrupted" : "failed",
+          content: error?.message || "Harness run failed.", error: error?.code || "harness_failed", changes: [] };
+      }
+      return transformResult ? transformResult(result) : result;
+    },
   });
 }
 
@@ -848,12 +884,16 @@ handleTrustedIpc(ipcMain, "attachments:store", async (event, request) => {
   });
 });
 
-handleTrustedIpc(ipcMain, "providers:list", async (event) => {
-  assertTrustedSender(event);
+export async function listDesktopProviders() {
   return [
     publicAporiaCloudProvider(),
     ...(await loadProviderRecords()).map(publicProviderSummary),
   ];
+}
+
+handleTrustedIpc(ipcMain, "providers:list", async (event) => {
+  assertTrustedSender(event);
+  return listDesktopProviders();
 });
 
 handleTrustedIpc(ipcMain, "providers:discover", async (event, request) => {
@@ -1018,7 +1058,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns()) {
+  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns() && externalRunSource().length === 0) {
     app.quit();
   }
 });

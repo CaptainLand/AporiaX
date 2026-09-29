@@ -71,6 +71,7 @@ jobs:
             .tmp/workbench-documents-git/*.png
             .tmp/workbench-git-v2/*.png
             .tmp/side-chat-browser/*.png
+            .tmp/local-control-ui/*.png
           retention-days: 7
       - name: Build Windows packages without publishing
         if: ${{ !cancelled() && steps.workbench.outcome != 'skipped' }}

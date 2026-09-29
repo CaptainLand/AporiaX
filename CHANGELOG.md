@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.2 — 2026-09-30
+
+Windows release candidate on the default GitHub update channel; not final 1.0.0. This release does not deploy Web / Cloud or raise the minimum client version. MIT remains in effect.
+
+- Add bounded same-model rolling summaries for long main-agent conversations, local original-history readback, durable summary reuse and protection against duplicate paid summary requests after interrupted recovery.
+- Preserve current user requirements, explicit long-term constraints and recent complete tool groups; failed or interrupted summaries never overwrite original history or switch providers.
+- Recognize HTTP 413 as request-size failure, budget serialized request bytes as well as tokens, and permit only bounded, demonstrably smaller safe recovery attempts. Oversized protected attachments still receive an actionable error.
+- Disable Cloud model selection when confirmed personal or fresh shared quota is exhausted; refresh availability after billing events and distinguish quota failures from vision readiness errors.
+- Include the locally integrated Control API / MCP bridge and global file-access control. External access remains opt-in, bound to existing desktop workspaces; global outside-workspace access is off by default and requires explicit risk confirmation.
+- Retain removed mobile-sync channels, hidden avatar UI, existing permissions and Cloud billing protections.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-rc.2.md)
+
 ## 1.0.0-rc.1 — 2026-09-26
 
 Windows release candidate on the default update channel; not final 1.0.0. MIT remains in effect for this RC; the proposed new license is reserved for the final stable release after review.

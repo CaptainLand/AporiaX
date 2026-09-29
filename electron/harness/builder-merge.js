@@ -61,11 +61,12 @@ async function atomicWrite(target, content, { mode = 0o600, beforeReplace } = {}
   }
 }
 
-async function replaceState(root, path, desired, expected) {
+async function replaceState(root, path, desired, expected, beforeApply) {
   const target = await targetPath(root, path);
   const assertUnchanged = async () => {
     await targetPath(root, path);
     if (!same(await stateAt(target), expected)) throw new Error(`Merge target changed concurrently: ${path}`);
+    await beforeApply?.(path);
   };
   await assertUnchanged();
   if (desired.missing) {
@@ -77,7 +78,7 @@ async function replaceState(root, path, desired, expected) {
   }
 }
 
-export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, recoveryRoot, onPrepared, emit, signal }) {
+export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, recoveryRoot, onPrepared, beforeApply, emit, signal }) {
   const root = await fs.realpath(workspaceRoot);
   const recoveryDirectory = await fs.mkdtemp(join(recoveryRoot, "merge-recovery-"));
   const manifestPath = join(recoveryDirectory, "manifest.json");
@@ -117,7 +118,7 @@ export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, r
       await save();
       await replaceState(root, entry.path, after.get(entry.path) || absent(), {
         ...(before.get(entry.path) || absent()), mode: entry.beforeMode,
-      });
+      }, beforeApply);
       entry.state = "applied";
       await save();
     }

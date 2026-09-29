@@ -14,6 +14,7 @@ import {
   sep,
 } from "node:path";
 import { normalizeLocalPath } from "../link-target.js";
+import { localControlGitOptions } from "../control/policy.js";
 
 export const MAX_COMMAND_OUTPUT_CHARS = 80_000;
 export const MAX_SEARCH_FILE_BYTES = 2_000_000;
@@ -358,16 +359,18 @@ export async function runGitCommand({
   maxOutputChars = MAX_COMMAND_OUTPUT_CHARS,
 }) {
   throwIfAborted(signal);
+  const gitOptions = localControlGitOptions(args);
   return new Promise((resolvePromise, rejectPromise) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timedOut = false;
-    const child = spawn("git", args, {
+    const child = spawn("git", gitOptions.args, {
       cwd,
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      ...(gitOptions.env ? { env: gitOptions.env } : {}),
     });
 
     const finish = (callback, value) => {
@@ -418,6 +421,7 @@ export async function searchWorkspaceText({
   signal,
   ignores = TREE_IGNORES,
   maxFileBytes = MAX_SEARCH_FILE_BYTES,
+  authorizePath = null,
 }) {
   if (
     typeof query !== "string" ||
@@ -439,6 +443,9 @@ export async function searchWorkspaceText({
     throw new Error("The search path must be a directory.");
   }
   try {
+    // A guarded search must authorize each discovered file BEFORE reading it;
+    // filtering ripgrep output afterwards would already have read credentials.
+    if (authorizePath) throw new Error("Guarded traversal required.");
     return await searchWithRipgrep({
       workspaceRoot,
       searchRoot,
@@ -472,6 +479,7 @@ export async function searchWorkspaceText({
 
   async function visit(directoryPath) {
     throwIfAborted(signal);
+    if (authorizePath) await authorizePath(directoryPath);
     const entries = await readdir(directoryPath, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
@@ -483,6 +491,10 @@ export async function searchWorkspaceText({
       if (ignores.has(entry.name) || entry.isSymbolicLink()) continue;
       const entryPath = resolve(directoryPath, entry.name);
       if (!isPathInside(workspaceRoot, entryPath)) continue;
+      if (authorizePath) {
+        try { await authorizePath(entryPath); }
+        catch (error) { if (error?.code === "FILE_ACCESS_DENIED") continue; throw error; }
+      }
       if (entry.isDirectory()) {
         await visit(entryPath);
         if (truncated) return;

@@ -1,5 +1,6 @@
 import { runIsolatedBuilder } from "./runtime/delegated-builder.js";
 import { saveRuntimeContext } from "./runtime/durable-run.js";
+import { currentLocalControlPolicy, acquireLocalControlWorker, withLocalControlWorker } from "./control/policy.js";
 export * from "./agent-runtime-core.js";
 
 import { realpath } from "node:fs/promises";
@@ -615,7 +616,7 @@ async function runOrchestratedHarness(options) {
         },
         { budgetEvent: false },
       );
-      const plannerResult = await runWithAgentBudget(
+      const plannerResult = await withLocalControlWorker({ agentId: `${options.runId || "run"}-orchestration-planner`, role: "explore" }, () => runWithAgentBudget(
         plannerChildBudget(),
         {},
         () =>
@@ -637,7 +638,7 @@ async function runOrchestratedHarness(options) {
             understandingDirectory: null,
             onEvent: () => undefined,
           }),
-      );
+      ));
       totalUsage = mergeTokenUsage(totalUsage, plannerResult?.usage);
       plan = normalizeBuilderOrchestrationPlan(
         String(plannerResult?.content || "").slice(
@@ -760,7 +761,9 @@ async function runOrchestratedHarness(options) {
             },
             run: async () => {
               let started = false;
+              let releaseLocalControl = () => {};
               try {
+                releaseLocalControl = acquireLocalControlWorker({ agentId, role: "builder" });
                 const inbox = mailbox.forTarget(node.id);
                 emit({
                   type: "subagent.started",
@@ -1008,6 +1011,8 @@ async function runOrchestratedHarness(options) {
                   }, { budgetEvent: node.executionRole !== "main" });
                 }
                 return result;
+              } finally {
+                releaseLocalControl();
               }
             },
           });
@@ -1235,6 +1240,7 @@ async function runOrchestratedHarness(options) {
 }
 
 export async function runHarness(options = {}) {
+  if (currentLocalControlPolicy()?.permissionProfile === "read_only") options = { ...options, permission: "read-only", builderOrchestration: false };
   if (currentAgentBudget()) {
     return runOrchestratedHarness(options);
   }

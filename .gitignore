@@ -30,3 +30,9 @@ deepagent-tasks.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Retired mobile prototype: local recovery only, never publish or package.
+/.tmp/privacy-channel-removal-backup/
+
+# Bundled MCP / CLI bridge
+build/control-bridge.cjs

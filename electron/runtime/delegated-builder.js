@@ -5,6 +5,7 @@ import { isUtf8 } from "node:buffer";
 import { createBuilderWorkspaceManager, builderSnapshotLimits } from "../harness/builder-workspace.js";
 import { assertSubagentRealScope } from "./subagent-model.js";
 import { saveRuntimeContext, executeDurableTool } from "./durable-run.js";
+import { withLocalControlWorkspace } from "../control/policy.js";
 
 function checkpointBytes(patch, side) {
   if (patch[`${side}Missing`]) return null;
@@ -64,13 +65,13 @@ export async function runIsolatedBuilder(options, execute) {
     }
     let result;
     try {
-      result = await execute({ ...options, __builderIsolated: true,
+      result = await withLocalControlWorkspace(workspace.workspaceRoot, () => execute({ ...options, __builderIsolated: true,
         workspaceRoot: workspace.workspaceRoot, ownerWorkspaceRoot: workspaceRoot,
         snapshotProvisional: async () => { session.provisionalChanges = await workspace.snapshot(); },
         emit: (event) => {
           if (["subagent.completed", "subagent.failed", "subagent.cancelled"].includes(event.type)) terminalEvent = event;
           else options.emit(event);
-        } });
+        } }));
     } catch (error) {
       result = { agentId, role: "builder", status: signal?.aborted || error.name === "AbortError" ? "interrupted" : "failed",
         summary: error.message, evidence: error.evidence || [], steps: error.steps || [], usage: error.usage || null };

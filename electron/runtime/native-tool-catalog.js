@@ -255,7 +255,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "list_directory",
       description:
-        "List direct children of a directory inside the authorized workspace.",
+        "List direct children of an authorized directory. Outside-workspace paths require the user's global file-access setting.",
       parameters: {
         type: "object",
         properties: {
@@ -275,7 +275,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a UTF-8 text file or extract text from a PDF inside the authorized workspace. Supports line ranges and character continuation for large files. Scanned PDFs may require OCR.",
+        "Read an authorized UTF-8 text file or PDF. Outside-workspace paths require the user's global file-access setting. Supports line ranges and character continuation; scanned PDFs may require OCR.",
       parameters: {
         type: "object",
         properties: {
@@ -366,7 +366,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "write_file",
       description:
-        "Create or replace a UTF-8 text file inside the authorized workspace. Only available when workspace write permission is enabled.",
+        "Create or replace an authorized UTF-8 text file. Requires task write permission; external paths additionally require the user's global file-access setting and affect the host directly.",
       parameters: {
         type: "object",
         properties: {
@@ -864,7 +864,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "read_external_file",
       description:
-        "Read a user-approved UTF-8 text file or PDF outside the workspace. Every call requires explicit approval and never grants write access.",
+        "Read a user-approved UTF-8 text file or PDF outside the workspace. Requires the user's global file-access setting as well as the configured approval. Never grants write access.",
       parameters: {
         type: "object",
         properties: {
