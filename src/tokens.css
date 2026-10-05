@@ -1,0 +1,190 @@
+/* Design tokens. Every color, type size, weight, radius and elevation in the
+ * app resolves through these variables; change the look here, not in components.
+ * Color ramps use a 12-step scale: 1-2 app/subtle backgrounds, 3-5 component
+ * backgrounds (rest/hover/active), 6-8 borders, 9-10 solids, 11-12 text.
+ * Ramps were generated in OKLCH; edit the hex values directly. */
+:root {
+  color-scheme: light;
+
+  --font-sans: Inter, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+  --text-4xl: 30px;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 999px;
+
+  --shadow-xs: 0 1px 2px rgb(16 18 24 / 0.06);
+  --shadow-sm: 0 1px 2px rgb(16 18 24 / 0.05), 0 2px 8px rgb(16 18 24 / 0.06);
+  --shadow-md: 0 2px 4px rgb(16 18 24 / 0.04), 0 8px 24px rgb(16 18 24 / 0.08);
+  --shadow-lg: 0 4px 8px rgb(16 18 24 / 0.04), 0 16px 40px rgb(16 18 24 / 0.12);
+  --shadow-xl: 0 8px 16px rgb(16 18 24 / 0.06), 0 24px 64px rgb(16 18 24 / 0.16);
+
+  --gray-1: #ffffff;
+  --gray-2: #f8fafe;
+  --gray-3: #f3f5f9;
+  --gray-4: #eef0f4;
+  --gray-5: #e9ebef;
+  --gray-6: #e2e4e8;
+  --gray-7: #d7d9dd;
+  --gray-8: #c2c4c8;
+  --gray-9: #909296;
+  --gray-10: #727478;
+  --gray-11: #595b5e;
+  --gray-12: #1c1e21;
+
+  --accent-1: #ffffff;
+  --accent-2: #f1fbff;
+  --accent-3: #e7f7ff;
+  --accent-4: #dcf3ff;
+  --accent-5: #d1efff;
+  --accent-6: #c2e8ff;
+  --accent-7: #aedeff;
+  --accent-8: #8bcaff;
+  --accent-9: #1a7acb;
+  --accent-10: #006bbb;
+  --accent-11: #0865ae;
+  --accent-12: #0b375e;
+
+  --red-1: #ffffff;
+  --red-2: #fff5f3;
+  --red-3: #ffedea;
+  --red-4: #ffe5e0;
+  --red-5: #ffdcd7;
+  --red-6: #ffd0ca;
+  --red-7: #ffc0b8;
+  --red-8: #ffa29a;
+  --red-9: #cb4644;
+  --red-10: #ba3535;
+  --red-11: #aa3232;
+  --red-12: #5c1d1b;
+
+  --amber-1: #ffffff;
+  --amber-2: #fff8ed;
+  --amber-3: #fff2e0;
+  --amber-4: #ffecd2;
+  --amber-5: #ffe6c4;
+  --amber-6: #ffddb2;
+  --amber-7: #fdd099;
+  --amber-8: #f1b86f;
+  --amber-9: #e49921;
+  --amber-10: #d38900;
+  --amber-11: #925200;
+  --amber-12: #4f2c00;
+
+  --green-1: #ffffff;
+  --green-2: #f3fdf5;
+  --green-3: #e9fbed;
+  --green-4: #dff8e4;
+  --green-5: #d5f5dc;
+  --green-6: #c7f0d1;
+  --green-7: #b5e8c1;
+  --green-8: #93d7a5;
+  --green-9: #359658;
+  --green-10: #22864a;
+  --green-11: #1b763f;
+  --green-12: #124022;
+
+  /* Semantic aliases for new code. */
+  --bg-app: var(--gray-1);
+  --bg-subtle: var(--gray-2);
+  --border: var(--gray-6);
+  --border-strong: var(--gray-7);
+  --text-1: var(--gray-12);
+  --text-2: var(--gray-11);
+  --text-3: var(--gray-10);
+  --accent: var(--accent-9);
+  --focus-ring: color-mix(in srgb, var(--accent-9) 40%, transparent);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 8px rgb(0 0 0 / 0.25);
+  --shadow-md: 0 2px 4px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 4px 8px rgb(0 0 0 / 0.3), 0 16px 40px rgb(0 0 0 / 0.45);
+  --shadow-xl: 0 8px 16px rgb(0 0 0 / 0.35), 0 24px 64px rgb(0 0 0 / 0.55);
+
+  --gray-1: #0f1114;
+  --gray-2: #14161a;
+  --gray-3: #1a1d20;
+  --gray-4: #202226;
+  --gray-5: #26282c;
+  --gray-6: #2e3034;
+  --gray-7: #3b3d41;
+  --gray-8: #505357;
+  --gray-9: #787a7f;
+  --gray-10: #8f9297;
+  --gray-11: #b1b4b9;
+  --gray-12: #eaedf2;
+
+  --accent-1: #0e1114;
+  --accent-2: #10171d;
+  --accent-3: #121d29;
+  --accent-4: #132334;
+  --accent-5: #132940;
+  --accent-6: #14324f;
+  --accent-7: #163f66;
+  --accent-8: #1b558a;
+  --accent-9: #398ad6;
+  --accent-10: #4c9deb;
+  --accent-11: #7ac3ff;
+  --accent-12: #c1edff;
+
+  --red-1: #140f0e;
+  --red-2: #1e1312;
+  --red-3: #291715;
+  --red-4: #341a18;
+  --red-5: #3f1c1a;
+  --red-6: #4e201e;
+  --red-7: #632825;
+  --red-8: #863531;
+  --red-9: #d8625c;
+  --red-10: #ed756e;
+  --red-11: #ff9990;
+  --red-12: #ffd3cc;
+
+  --amber-1: #13100d;
+  --amber-2: #1b150e;
+  --amber-3: #241a0f;
+  --amber-4: #2d1f0d;
+  --amber-5: #36240b;
+  --amber-6: #432b07;
+  --amber-7: #553502;
+  --amber-8: #734800;
+  --amber-9: #eaa950;
+  --amber-10: #fbb961;
+  --amber-11: #edb161;
+  --amber-12: #ffe1b4;
+
+  --green-1: #0e110f;
+  --green-2: #111813;
+  --green-3: #142017;
+  --green-4: #15271a;
+  --green-5: #162e1d;
+  --green-6: #183822;
+  --green-7: #1c472a;
+  --green-8: #256039;
+  --green-9: #52a76d;
+  --green-10: #66ba7f;
+  --green-11: #85d29a;
+  --green-12: #c8f5d3;
+}

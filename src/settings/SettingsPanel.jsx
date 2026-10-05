@@ -17,6 +17,7 @@ import { IconButton, SegmentedControl, Switch } from "../components/Controls.jsx
 import { TaskGoalSettings } from "./TaskGoalSettings.jsx";
 import { TaskCapabilityCards } from "./TaskCapabilityCards.jsx";
 import { ModelSetupActions } from "../models/ModelSetupActions.jsx";
+import "./task-settings.css";
 
 export function SettingsPanel({
   task,
@@ -46,18 +47,17 @@ export function SettingsPanel({
     <aside className="settings-panel" style={style}>
       <div className="settings-panel-header">
         <div>
-          <span className="eyebrow">{tr("当前任务", "Current task")}</span>
           <h2>{tr("任务设置", "Task settings")}</h2>
+          <span className="settings-panel-subtitle" title={task.title || ""}>{task.title || tr("当前任务", "Current task")}</span>
         </div>
         <IconButton label={tr("关闭设置面板", "Close settings")} onClick={onClose}>
           <PanelRightClose size={18} />
         </IconButton>
       </div>
 
-      <TaskGoalSettings key={task.id} task={task} onUpdateTask={onUpdateTask} />
       <section className="settings-section">
         <div className="settings-label">{tr("模型服务", "Model service")}</div>
-        <div className="api-status-row">
+        <div className="api-status-row settings-group">
           <div className="api-status-copy">
             <span className={`api-status-dot ${provider && !cloudNeedsLogin ? "ready" : ""}`} />
             <div>
@@ -103,52 +103,70 @@ export function SettingsPanel({
           ]}
           onChange={(nextMode) => onUpdateTask({ executionMode: nextMode })}
         />
-        <p className="settings-language-note">
+        <p className="settings-help">
           {executionMode === "direct"
             ? tr("直接在真实工作区执行，不创建临时副本；是否询问由下方审批模式决定。", "Runs in the real workspace without a temporary copy; approval behavior is controlled below.")
             : executionMode === "safe"
               ? tr("在临时工作区副本执行并冲突检查后同步；仍使用本机网络与进程权限。", "Runs in a temporary workspace copy and conflict-checks synchronization; host network and process authority remain available.")
               : tr("只在 Docker 强隔离环境执行；Docker 未就绪时不会静默降级到 Host。", "Runs only inside the Docker isolation profile; it never silently falls back to Host when Docker is unavailable.")}
         </p>
-        <div className="sandbox-status-card">
-          <span
-            className={`sandbox-status-icon ${
-              sandboxStatus?.available || sandboxStatus?.localAvailable
-                ? "ready"
-                : "fallback"
-            }`}
-          >
-            {sandboxStatus?.available || sandboxStatus?.localAvailable ? (
-              <LockKeyhole size={16} />
-            ) : (
-              <AlertTriangle size={16} />
-            )}
-          </span>
-          <div>
-            <strong>
-              {!sandboxStatus
-                ? tr("正在检测执行环境", "Checking execution environment")
-                : executionMode === "direct"
-                  ? tr("Direct · 真实工作区", "Direct · real workspace")
-                  : executionMode === "safe"
-                    ? tr("Safe · 临时工作区副本", "Safe · temporary workspace copy")
-                    : sandboxStatus.available
-                      ? tr("Isolated · Docker 已就绪", "Isolated · Docker ready")
-                      : tr("Isolated · Docker 尚未就绪", "Isolated · Docker not ready")}
-            </strong>
-            <span>
-              {executionMode === "direct"
-                ? tr("命令直接使用 Host 工作区；敏感环境变量仍会过滤。", "Commands use the Host workspace directly; sensitive environment variables are still filtered.")
-                : executionMode === "safe"
-                  ? tr("命令在临时副本执行，结束后进行 Hash 冲突检查与同步。", "Commands run in a temporary copy, followed by hash-based conflict checks and synchronization.")
-                  : sandboxStatus?.detail ||
-                    tr("正在检测 Docker 与 AporiaX 沙箱镜像", "Checking Docker and the AporiaX sandbox image")}
+        <div className="settings-group">
+          <div className="sandbox-status-card">
+            <span
+              className={`sandbox-status-icon ${
+                sandboxStatus?.available || sandboxStatus?.localAvailable
+                  ? "ready"
+                  : "fallback"
+              }`}
+            >
+              {sandboxStatus?.available || sandboxStatus?.localAvailable ? (
+                <LockKeyhole size={16} />
+              ) : (
+                <AlertTriangle size={16} />
+              )}
             </span>
+            <div>
+              <strong>
+                {!sandboxStatus
+                  ? tr("正在检测执行环境", "Checking execution environment")
+                  : executionMode === "direct"
+                    ? tr("Direct · 真实工作区", "Direct · real workspace")
+                    : executionMode === "safe"
+                      ? tr("Safe · 临时工作区副本", "Safe · temporary workspace copy")
+                      : sandboxStatus.available
+                        ? tr("Isolated · Docker 已就绪", "Isolated · Docker ready")
+                        : tr("Isolated · Docker 尚未就绪", "Isolated · Docker not ready")}
+              </strong>
+              <span>
+                {executionMode === "direct"
+                  ? tr("命令直接使用 Host 工作区；敏感环境变量仍会过滤。", "Commands use the Host workspace directly; sensitive environment variables are still filtered.")
+                  : executionMode === "safe"
+                    ? tr("命令在临时副本执行，结束后进行 Hash 冲突检查与同步。", "Commands run in a temporary copy, followed by hash-based conflict checks and synchronization.")
+                    : sandboxStatus?.detail ||
+                      tr("正在检测 Docker 与 AporiaX 沙箱镜像", "Checking Docker and the AporiaX sandbox image")}
+              </span>
+            </div>
           </div>
+          {sandboxStatus && executionMode !== "isolated" && (
+            <div className="sandbox-constraints fallback">
+              <span>{executionMode === "direct" ? tr("真实工作区", "Real workspace") : tr("临时工作区", "Temporary workspace")}</span>
+              <span>{approvalLabel}</span>
+              <span>{tr("使用本机网络", "Host network")}</span>
+              <span>{executionMode === "direct" ? tr("无隔离", "No isolation") : tr("冲突检查同步", "Conflict-checked sync")}</span>
+            </div>
+          )}
+          {executionMode === "isolated" && sandboxStatus?.available && (
+            <div className="sandbox-constraints">
+              <span>{tr("断网", "Offline")}</span>
+              <span>{tr("只读系统", "Read-only system")}</span>
+              <span>{sandboxStatus.memory || "1536m"}</span>
+              <span>{tr("{count} 进程", "{count} processes", { count: sandboxStatus.pidsLimit || 256 })}</span>
+            </div>
+          )}
         </div>
         {executionMode === "isolated" && !sandboxStatus?.available && (
           <button
-            className="workspace-settings-button"
+            className="settings-button block"
             type="button"
             disabled={sandboxPreparing}
             onClick={onPrepareSandbox}
@@ -161,34 +179,21 @@ export function SettingsPanel({
               : tr("启用 Docker 加强隔离（可选）", "Enable stronger Docker isolation (optional)")}
           </button>
         )}
-        {executionMode === "isolated" && sandboxStatus?.available && (
-          <div className="sandbox-constraints">
-            <span>{tr("断网", "Offline")}</span>
-            <span>{tr("只读系统", "Read-only system")}</span>
-            <span>{sandboxStatus.memory || "1536m"}</span>
-            <span>{tr("{count} 进程", "{count} processes", { count: sandboxStatus.pidsLimit || 256 })}</span>
-          </div>
-        )}
-        {sandboxStatus && executionMode !== "isolated" && (
-          <div className="sandbox-constraints fallback">
-            <span>{executionMode === "direct" ? tr("真实工作区", "Real workspace") : tr("临时工作区", "Temporary workspace")}</span>
-            <span>{approvalLabel}</span>
-            <span>{tr("使用本机网络", "Host network")}</span>
-            <span>{executionMode === "direct" ? tr("无隔离", "No isolation") : tr("冲突检查同步", "Conflict-checked sync")}</span>
-          </div>
-        )}
-        <div className="execution-settings-actions"><button type="button" className="secondary-button" onClick={async () => {
+        <div className="execution-settings-actions"><button type="button" className="settings-button" onClick={async () => {
           setRecoveryError("");
           try {
             if (!window.desktop?.sandbox?.openRecovery) throw new Error(tr("请使用更新后的桌面端。", "Use the updated desktop app."));
             await window.desktop.sandbox.openRecovery();
           } catch (error) { setRecoveryError(error.message); }
         }}><FolderOpen size={15} />{tr("沙箱恢复目录", "Sandbox recovery folders")}</button>
-        <button type="button" className="secondary-button" onClick={() => setFilePermissionsOpen(true)}><ShieldCheck size={15} />{tr("全局文件权限", "Global file permissions")}</button></div>
-        {recoveryError && <p role="alert">{recoveryError}</p>}
-        <p className="approval-mode-description">{tr("安全模式的冲突、中断与失败产物会保留在此；重启后仍可查看。依赖使用独立副本，不回写原 node_modules。仅清理已不需要且没有运行中的记录。", "Safe-mode conflicted, interrupted or failed output remains here after restart. Dependencies use private copies, never written back to node_modules. Only clean inactive records you no longer need.")}</p>
+        <button type="button" className="settings-button" onClick={() => setFilePermissionsOpen(true)}><ShieldCheck size={15} />{tr("全局文件权限", "Global file permissions")}</button></div>
+        {recoveryError && <p className="settings-error" role="alert">{recoveryError}</p>}
+        <p className="settings-help">{tr("安全模式的冲突、中断与失败产物会保留在此；重启后仍可查看。依赖使用独立副本，不回写原 node_modules。仅清理已不需要且没有运行中的记录。", "Safe-mode conflicted, interrupted or failed output remains here after restart. Dependencies use private copies, never written back to node_modules. Only clean inactive records you no longer need.")}</p>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-label">{tr("审批模式", "Approval mode")}</div>
         <div className="sandbox-auto-approval">
-          <strong>{tr("审批模式", "Approval mode")}</strong>
           <SegmentedControl
             value={approvalMode}
             ariaLabel={tr("审批模式", "Approval mode")}
@@ -213,13 +218,13 @@ export function SettingsPanel({
               "External/ambiguous deletion and uncertain recovery still ask; denied tools stay denied. This is not OS isolation and cannot guarantee blocking indirect script/MCP deletion.",
             )}</p>
           </details>
-          <span>{tr("修改在下次运行生效。", "Changes apply to the next run.")}</span>
         </div>
+        <p className="settings-help">{tr("修改在下次运行生效。", "Changes apply to the next run.")}</p>
       </section>
 
       <section className="settings-section">
         <div className="settings-label">{tr("工作目录", "Workspace")}</div>
-        <div className="workspace-summary">
+        <div className="workspace-summary settings-group">
           {task.workspacePath ? (
             <FolderOpen size={17} />
           ) : (
@@ -231,16 +236,20 @@ export function SettingsPanel({
               {task.workspacePath || tr("当前任务只能进行纯对话", "This task is limited to conversation")}
             </span>
           </div>
+          <button
+            type="button"
+            className="settings-link"
+            aria-label={task.workspacePath ? tr("更改工作目录", "Change workspace") : tr("绑定工作目录", "Bind workspace")}
+            onClick={onSelectWorkspace}
+          >
+            {task.workspacePath
+              ? tr("更改", "Change")
+              : tr("绑定", "Bind")}
+          </button>
         </div>
-        <button
-          className="workspace-settings-button"
-          onClick={onSelectWorkspace}
-        >
-          {task.workspacePath
-            ? tr("更改工作目录", "Change workspace")
-            : tr("绑定工作目录", "Bind workspace")}
-        </button>
       </section>
+
+      <TaskGoalSettings key={task.id} task={task} onUpdateTask={onUpdateTask} />
 
       <TaskCapabilityCards
         task={task}
@@ -251,7 +260,7 @@ export function SettingsPanel({
       <section className="settings-section">
         <div className="settings-label">{tr("界面语言", "Interface language")}</div>
         <LanguageSwitch />
-        <p className="settings-language-note">
+        <p className="settings-help">
           {tr(
             "界面和新回复会使用所选语言；历史消息与文件内容保持原样。",
             "The interface and new replies use this language; existing messages and files remain unchanged.",

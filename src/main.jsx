@@ -3109,7 +3109,7 @@ function App() {
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute(
         "content",
-        theme === "dark" ? "#14191f" : "#eef3f7",
+        theme === "dark" ? "#14161a" : "#f8fafe",
       );
     void window.desktop?.theme?.set(theme);
   }, [theme]);

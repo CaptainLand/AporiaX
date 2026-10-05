@@ -10,19 +10,19 @@
   gap: 9px;
   min-height: 40px;
   padding: 8px 10px;
-  border: 1px solid rgba(121, 133, 148, 0.16);
-  border-radius: 10px;
-  background: rgba(117, 128, 148, 0.045);
+  border: 1px solid color-mix(in srgb, var(--gray-9) 16%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--gray-10) 4.5%, transparent);
 }
 
 .aporiax-live-agent-status.running {
-  border-color: rgba(81, 150, 184, 0.23);
-  background: linear-gradient(90deg, rgba(69, 139, 178, 0.07), rgba(117, 128, 148, 0.035));
+  border-color: color-mix(in srgb, var(--accent-9) 23%, transparent);
+  background: color-mix(in srgb, var(--accent-9) 7%, transparent);
 }
 
 .aporiax-live-agent-status.failed {
-  border-color: rgba(194, 89, 89, 0.2);
-  background: rgba(194, 89, 89, 0.05);
+  border-color: color-mix(in srgb, var(--red-9) 20%, transparent);
+  background: color-mix(in srgb, var(--red-9) 5%, transparent);
 }
 
 .aporiax-live-agent-status-icon {
@@ -30,25 +30,25 @@
   width: 26px;
   height: 26px;
   place-items: center;
-  border-radius: 8px;
-  color: #5a7688;
-  background: rgba(82, 132, 158, 0.09);
+  border-radius: var(--radius-md);
+  color: var(--accent-9);
+  background: color-mix(in srgb, var(--accent-9) 9%, transparent);
 }
 
 .aporiax-live-agent-status.running .aporiax-live-agent-status-icon {
-  color: #3d8eaf;
-  background: rgba(61, 142, 175, 0.1);
+  color: var(--accent-9);
+  background: color-mix(in srgb, var(--accent-9) 10%, transparent);
 }
 
 .aporiax-live-agent-status.completed .aporiax-live-agent-status-icon {
-  color: #3f806c;
-  background: rgba(63, 128, 108, 0.09);
+  color: var(--green-10);
+  background: color-mix(in srgb, var(--green-10) 9%, transparent);
 }
 
 .aporiax-live-agent-status.failed .aporiax-live-agent-status-icon,
 .aporiax-live-agent-status.interrupted .aporiax-live-agent-status-icon {
-  color: #a55d5d;
-  background: rgba(165, 93, 93, 0.09);
+  color: var(--red-9);
+  background: color-mix(in srgb, var(--red-9) 9%, transparent);
 }
 
 .aporiax-live-agent-status-copy {
@@ -66,14 +66,14 @@
 }
 
 .aporiax-live-agent-status-copy strong {
-  color: #3b4349;
-  font-size: 11.8px;
-  font-weight: 650;
+  color: var(--gray-11);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .aporiax-live-agent-status-copy span {
-  color: #7e878d;
-  font-size: 10.4px;
+  color: var(--gray-10);
+  font-size: var(--text-2xs);
 }
 
 .aporiax-live-agent-status-meta {
@@ -86,27 +86,27 @@
 .aporiax-live-agent-status-meta em,
 .aporiax-live-agent-status-meta small {
   padding: 2px 6px;
-  border-radius: 999px;
-  font-size: 9px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
   font-style: normal;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .aporiax-live-agent-status-meta em {
-  color: #3e7f9a;
-  background: rgba(62, 127, 154, 0.09);
-  font-weight: 650;
+  color: var(--accent-9);
+  background: color-mix(in srgb, var(--accent-9) 9%, transparent);
+  font-weight: var(--weight-semibold);
 }
 
 .aporiax-live-agent-status.completed .aporiax-live-agent-status-meta em {
-  color: #4a7769;
-  background: rgba(74, 119, 105, 0.08);
+  color: var(--green-10);
+  background: color-mix(in srgb, var(--green-10) 8%, transparent);
 }
 
 .aporiax-live-agent-status-meta small {
-  color: #818990;
-  background: rgba(112, 123, 134, 0.07);
+  color: var(--gray-10);
+  background: color-mix(in srgb, var(--gray-10) 7%, transparent);
 }
 
 .aporiax-live-agent-status-meta small.skill {
@@ -115,49 +115,49 @@
   align-items: center;
   gap: 3px;
   overflow: hidden;
-  color: #78599b;
-  background: rgba(120, 89, 155, 0.09);
-  font-weight: 620;
+  color: var(--accent-10);
+  background: color-mix(in srgb, var(--accent-10) 9%, transparent);
+  font-weight: var(--weight-semibold);
   text-overflow: ellipsis;
 }
 
 [data-theme="dark"] .aporiax-live-agent-status {
-  border-color: rgba(125, 139, 162, 0.16);
-  background: rgba(106, 116, 140, 0.055);
+  border-color: color-mix(in srgb, var(--accent-9) 16%, transparent);
+  background: color-mix(in srgb, var(--accent-9) 5.5%, transparent);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status.running {
-  border-color: rgba(80, 164, 202, 0.24);
-  background: linear-gradient(90deg, rgba(55, 143, 184, 0.09), rgba(105, 113, 137, 0.04));
+  border-color: color-mix(in srgb, var(--accent-10) 24%, transparent);
+  background: color-mix(in srgb, var(--accent-9) 9%, transparent);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status-copy strong {
-  color: #e2dde6;
+  color: var(--gray-12);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status-copy span,
 [data-theme="dark"] .aporiax-live-agent-status-meta small {
-  color: #9993a1;
+  color: var(--gray-10);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status-icon {
-  color: #8ca6b7;
-  background: rgba(115, 154, 180, 0.08);
+  color: var(--accent-10);
+  background: color-mix(in srgb, var(--accent-10) 8%, transparent);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status.running .aporiax-live-agent-status-icon,
 [data-theme="dark"] .aporiax-live-agent-status-meta em {
-  color: #69b7d6;
+  color: var(--accent-11);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status.completed .aporiax-live-agent-status-icon,
 [data-theme="dark"] .aporiax-live-agent-status.completed .aporiax-live-agent-status-meta em {
-  color: #76b69f;
+  color: var(--green-10);
 }
 
 [data-theme="dark"] .aporiax-live-agent-status-meta small.skill {
-  color: #c6a4ea;
-  background: rgba(170, 121, 218, 0.1);
+  color: var(--accent-11);
+  background: color-mix(in srgb, var(--accent-10) 10%, transparent);
 }
 
 /* While the observable Live Agent Status is mounted, the old empty-body

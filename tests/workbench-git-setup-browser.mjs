@@ -77,7 +77,7 @@ try {
   assert.equal(await git(root, ["rev-parse", "--abbrev-ref", "@{u}"]), "offline/preview");
   await page.setViewportSize({ width: 820, height: 720 }); await page.evaluate(() => document.documentElement.dataset.theme = "dark"); await button("仓库设置").click();
   await dialog.locator(".git-remote-list button").first().waitFor();
-  assert.equal(await dialog.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(33, 29, 41)");
+  assert.equal(await dialog.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(20, 22, 26)");
   await button("保存远程关联").scrollIntoViewIfNeeded(); await page.screenshot({ path: ".tmp/workbench-git-v2/remotes-dark-narrow.png" });
   assert.equal(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth), true); await button("关闭弹窗").click();
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, FileText, History, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, ChevronDown, ChevronRight, FileText, History, MessageSquareText, RotateCcw, Search, X } from "lucide-react";
 import { useI18n } from "../i18n";
 import { UnderstandingControls } from "../settings/UnderstandingControls.jsx";
 import { TaskKnowledgeControls } from "./TaskKnowledgeControls.jsx";
@@ -17,6 +17,15 @@ const groups = [
 ];
 const categories = { architecture: ["架构", "Architecture"], module: ["模块", "Module"], convention: ["约定", "Convention"], preference: ["偏好", "Preference"], command: ["命令", "Command"], verification: ["验证", "Verification"], decision: ["决策", "Decision"], known_issue: ["已知问题", "Known issue"] };
 const dateLabel = (value) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString() : "—";
+const DAY = 86400000;
+function relativeDate(value, language) {
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return "—";
+  const days = Math.round((time - Date.now()) / DAY);
+  if (Math.abs(days) > 30) return new Date(time).toLocaleDateString(language);
+  return new Intl.RelativeTimeFormat(language, { numeric: "auto" }).format(days, "day");
+}
+const sourceOf = (fact) => fact.evidence?.[0]?.reference || fact.evidence?.[0]?.detail || "";
 
 // Remount on workspace changes so late reads or writes cannot paint another project.
 export function ProjectUnderstandingPanel(props) {
@@ -76,12 +85,13 @@ function KnowledgeProjects(props) {
 }
 
 function KnowledgePanel({ task, knowledgeProjectId, projectName, projects, onSelectProject, onCreateProject, refreshToken, onOpenFile, onNotice, onDialogChange, onUpdateTask, isRunning }) {
-  const { tr } = useI18n();
+  const { tr, language } = useI18n();
   const [snapshot, setSnapshot] = useState(null), [loading, setLoading] = useState(true), [error, setError] = useState("");
   // Keep the settings dialog open while switching projects, but never show the
   // previous project's facts or apply its late settings response to this one.
   const state = snapshot?.projectId === knowledgeProjectId ? snapshot.data : null;
-  const [query, setQuery] = useState(""), [group, setGroup] = useState("all"), [dialog, setDialog] = useState(null);
+  const [query, setQuery] = useState(""), [group, setGroup] = useState("all"), [dialog, setDialog] = useState(null), [selectedId, setSelectedId] = useState(null);
+  const triggerRefs = useRef(new Map()), inspectorRef = useRef(null);
   const [confirmRevision, setConfirmRevision] = useState(""), [reverting, setReverting] = useState(false), [dialogError, setDialogError] = useState("");
   const generation = useRef(0), mounted = useRef(false), writing = useRef(false);
   const activeProject = useRef(knowledgeProjectId);
@@ -107,7 +117,7 @@ function KnowledgePanel({ task, knowledgeProjectId, projectName, projects, onSel
     return () => { mounted.current = false; generation.current++; window.removeEventListener(CHANGED, changed); };
   }, [workspace, knowledgeProjectId]);
   useEffect(() => { void load(); }, [refreshToken, knowledgeProjectId]);
-  useEffect(() => { setQuery(""); setGroup("all"); setDialogError(""); setConfirmRevision(""); }, [knowledgeProjectId]);
+  useEffect(() => { setQuery(""); setGroup("all"); setDialogError(""); setConfirmRevision(""); setSelectedId(null); }, [knowledgeProjectId]);
   useEffect(() => {
     if (!dialog) return;
     onDialogChange?.(true);
@@ -140,30 +150,92 @@ function KnowledgePanel({ task, knowledgeProjectId, projectName, projects, onSel
     const needle = query.trim().toLocaleLowerCase();
     return facts.filter((fact) => (!selected?.categories || selected.categories.includes(fact.category)) && (!needle || [fact.content, label(fact.category), ...(fact.evidence || []).flatMap((item) => [item.reference, item.detail])].join(" ").toLocaleLowerCase().includes(needle)));
   }, [facts, query, group, tr]);
-  const fact = dialog?.type === "fact" ? facts.find((item) => item.id === dialog.id) : null;
+  const counts = useMemo(() => Object.fromEntries(groups.map((item) => [item.id, item.categories ? facts.filter((entry) => item.categories.includes(entry.category)).length : facts.length])), [facts]);
+  const fact = selectedId ? facts.find((item) => item.id === selectedId) : null;
+  const closeDetail = () => {
+    const id = selectedId;
+    setSelectedId(null);
+    requestAnimationFrame(() => triggerRefs.current.get(id)?.focus());
+  };
+  const toggleDetail = (id) => {
+    if (selectedId === id) return closeDetail();
+    setSelectedId(id);
+    requestAnimationFrame(() => inspectorRef.current?.focus({ preventScroll: true }));
+  };
+  // Escape closes the inspector unless a modal owns the key.
+  useEffect(() => {
+    if (!selectedId) return;
+    const escape = (event) => { if (event.key === "Escape" && !document.querySelector("dialog[open]")) { event.preventDefault(); closeDetail(); } };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [selectedId]);
   const settingsSummary = task.knowledgeEnabled ? tr("本任务：按需读取", "Task: on-demand reading") : tr("本任务：知识关闭", "Task: knowledge off");
-  const title = dialog?.type === "settings" ? tr("知识设置", "Knowledge settings") : dialog?.type === "history" ? tr("修订历史", "Revision history") : tr("知识详情", "Knowledge details");
+  const title = dialog?.type === "settings" ? tr("知识设置", "Knowledge settings") : tr("修订历史", "Revision history");
   return <section className="knowledge-panel" aria-label={tr("项目知识", "Project knowledge")}>
     <header className="knowledge-header">
-      <div className="knowledge-heading"><BookOpen size={20} /><h2>{tr("项目知识", "Project knowledge")}</h2></div>
+      <div className="knowledge-heading">
+        <span className="knowledge-heading-icon"><BookOpen size={16} /></span>
+        <h2>{tr("项目知识", "Project knowledge")}</h2>
+        {state && <span className="knowledge-count">{tr("{count} 条", "{count} entries", { count: facts.length })}</span>}
+      </div>
       <div className="knowledge-tools">
         <button className="knowledge-project-trigger" type="button" onClick={() => open({ type: "settings" })} aria-label={tr("项目设置：{name}", "Project settings: {name}", { name: projectName })} aria-haspopup="dialog" aria-expanded={dialog?.type === "settings"} title={projectName}><span>{projectName}</span><ChevronDown size={14} /></button>
-        <button type="button" onClick={() => open({ type: "history" })} disabled={!state} aria-label={tr("修订历史", "Revision history")} title={tr("修订历史", "Revision history")}><History size={16} /><span>{tr("历史", "History")}</span></button>
-        <button type="button" onClick={() => void load()} disabled={loading || reverting} aria-label={tr("刷新知识", "Refresh knowledge")} title={tr("刷新知识", "Refresh knowledge")}><RotateCcw size={16} className={loading ? "spin" : ""} /></button>
+        <button type="button" onClick={() => open({ type: "history" })} disabled={!state} aria-label={tr("修订历史", "Revision history")} title={tr("修订历史", "Revision history")}><History size={15} /><span>{tr("历史", "History")}</span></button>
+        <button type="button" onClick={() => void load()} disabled={loading || reverting} aria-label={tr("刷新知识", "Refresh knowledge")} title={tr("刷新知识", "Refresh knowledge")}><RotateCcw size={15} className={loading ? "spin" : ""} /></button>
       </div>
     </header>
-    <div className="knowledge-search"><Search size={16} /><input type="search" aria-label={tr("搜索项目知识", "Search project knowledge")} placeholder={tr("搜索知识、文件或命令…", "Search knowledge, files or commands…")} value={query} onChange={(event) => setQuery(event.target.value)} />{query && <button type="button" aria-label={tr("清除搜索", "Clear search")} onClick={() => setQuery("")}><X size={14} /></button>}</div>
-    <div className="knowledge-filters" role="group" aria-label={tr("知识分类", "Knowledge categories")}>{groups.map((item) => <button key={item.id} type="button" aria-pressed={group === item.id} onClick={() => setGroup(item.id)}>{tr(item.zh, item.en)}</button>)}</div>
-    {error && <div className="knowledge-alert" role="alert"><AlertTriangle size={16} /><span>{error}</span></div>}
-    {loading && !state ? <p role="status" className="knowledge-empty">{tr("正在读取项目知识…", "Loading project knowledge…")}</p> : <>
-      {(query || group !== "all") && <p className="knowledge-result-count" role="status">{tr("找到 {count} 条知识", "{count} matching entries", { count: visible.length })}</p>}
-      <div className="knowledge-list">{visible.map((item) => <article className="knowledge-item" key={item.id}>
-        <div className="knowledge-item-top"><span className="knowledge-category">{label(item.category)}</span><button className="knowledge-detail-trigger" type="button" aria-haspopup="dialog" aria-label={tr("查看知识详情：{content}", "View knowledge details: {content}", { content: item.content.slice(0, 60) })} title={tr("查看详情", "View details")} onClick={() => open({ type: "fact", id: item.id })}><ChevronRight size={16} /></button></div>
-        <p>{item.content}</p>
-        <div className="knowledge-item-meta"><span>{tr("来源", "Source")}: {item.evidence?.[0]?.reference || item.evidence?.[0]?.detail || tr("未记录", "Not recorded")}{item.evidence?.length > 1 ? ` +${item.evidence.length - 1}` : ""}</span><span>{dateLabel(item.lastConfirmedAt)}</span></div>
-      </article>)}</div>
-      {!visible.length && !error && <div className="knowledge-empty"><BookOpen size={24} /><h3>{facts.length ? tr("没有匹配的知识", "No matching knowledge") : tr("还没有保存的项目知识", "No project knowledge yet")}</h3><p>{facts.length ? tr("试试其他关键词或分类。", "Try another search or category.") : tr("这里保存可复用的项目约定和经验。查看不消耗模型额度。", "Reusable project conventions and findings live here. Viewing uses no model quota.")}</p><button type="button" onClick={() => facts.length ? (setQuery(""), setGroup("all")) : open({ type: "settings" })} disabled={!state}>{facts.length ? tr("清除筛选", "Clear filters") : tr("查看记录设置", "Recording settings")}</button></div>}
-    </>}
+    <div className="knowledge-search"><Search size={15} /><input type="search" aria-label={tr("搜索项目知识", "Search project knowledge")} placeholder={tr("搜索知识、文件或命令…", "Search knowledge, files or commands…")} value={query} onChange={(event) => setQuery(event.target.value)} />{query && <button type="button" aria-label={tr("清除搜索", "Clear search")} onClick={() => setQuery("")}><X size={14} /></button>}</div>
+    {error && <div className="knowledge-alert" role="alert"><AlertTriangle size={15} /><span>{error}</span></div>}
+    <div className={`knowledge-body ${fact ? "has-detail" : ""}`}>
+      <nav className="knowledge-filters" role="group" aria-label={tr("知识分类", "Knowledge categories")}>{groups.map((item) => <button key={item.id} type="button" aria-pressed={group === item.id} title={state ? tr("{count} 条", "{count} entries", { count: counts[item.id] }) : undefined} onClick={() => setGroup(item.id)}><span>{tr(item.zh, item.en)}</span>{state && <small aria-hidden="true">{counts[item.id]}</small>}</button>)}</nav>
+      <div className="knowledge-main">
+        {loading && !state ? <p role="status" className="knowledge-empty">{tr("正在读取项目知识…", "Loading project knowledge…")}</p> : <>
+          {(query || group !== "all") && <p className="knowledge-result-count" role="status">{tr("找到 {count} 条知识", "{count} matching entries", { count: visible.length })}</p>}
+          {visible.length > 0 && <div className="knowledge-list">{visible.map((item) => {
+            const source = sourceOf(item);
+            const selected = item.id === selectedId;
+            return <article className={`knowledge-item ${selected ? "selected" : ""}`} key={item.id}>
+              <div className="knowledge-item-top">
+                <span className="knowledge-category" data-category={item.category}>{label(item.category)}</span>
+                <button className="knowledge-detail-trigger" type="button" ref={(node) => { if (node) triggerRefs.current.set(item.id, node); else triggerRefs.current.delete(item.id); }}
+                  aria-expanded={selected} aria-controls="knowledge-inspector"
+                  aria-label={tr("查看知识详情：{content}", "View knowledge details: {content}", { content: item.content.slice(0, 60) })} title={tr("查看详情", "View details")} onClick={() => toggleDetail(item.id)}><ChevronRight size={15} /></button>
+              </div>
+              <p>{item.content}</p>
+              <div className="knowledge-item-meta">
+                <span className="knowledge-source">{item.evidence?.[0]?.type === "file" ? <FileText size={12} /> : <MessageSquareText size={12} />}<span>{source || tr("未记录来源", "No source recorded")}</span>{item.evidence?.length > 1 && <em>+{item.evidence.length - 1}</em>}</span>
+                <time dateTime={item.lastConfirmedAt} title={dateLabel(item.lastConfirmedAt)}>{relativeDate(item.lastConfirmedAt, language)}</time>
+              </div>
+            </article>;
+          })}</div>}
+          {!visible.length && !error && <div className="knowledge-empty"><span className="knowledge-empty-icon"><BookOpen size={20} /></span><h3>{facts.length ? tr("没有匹配的知识", "No matching knowledge") : tr("还没有保存的项目知识", "No project knowledge yet")}</h3><p>{facts.length ? tr("试试其他关键词或分类。", "Try another search or category.") : tr("这里保存可复用的项目约定和经验。查看不消耗模型额度。", "Reusable project conventions and findings live here. Viewing uses no model quota.")}</p><button type="button" onClick={() => facts.length ? (setQuery(""), setGroup("all")) : open({ type: "settings" })} disabled={!state}>{facts.length ? tr("清除筛选", "Clear filters") : tr("查看记录设置", "Recording settings")}</button></div>}
+        </>}
+      </div>
+      {selectedId && <aside className="knowledge-inspector" id="knowledge-inspector" ref={inspectorRef} tabIndex={-1} aria-label={tr("知识详情", "Knowledge details")}>
+        <header className="knowledge-inspector-heading">
+          <button type="button" className="knowledge-inspector-back" onClick={closeDetail}><ArrowLeft size={14} />{tr("返回列表", "Back to list")}</button>
+          <h3>{tr("知识详情", "Knowledge details")}</h3>
+          <button type="button" className="knowledge-inspector-close" aria-label={tr("关闭详情", "Close details")} onClick={closeDetail}><X size={15} /></button>
+        </header>
+        {fact ? <div className="knowledge-detail">
+          <span className="knowledge-category" data-category={fact.category}>{label(fact.category)}</span>
+          <p className="knowledge-detail-content">{fact.content}</p>
+          <dl className="knowledge-facts">
+            <div><dt>{tr("最近记录／确认", "Last recorded / confirmed")}</dt><dd>{dateLabel(fact.lastConfirmedAt)}</dd></div>
+            <div><dt>{tr("来源", "Sources")}</dt><dd>{fact.evidence?.length || 0}</dd></div>
+          </dl>
+          <h4>{tr("来源与依据", "Sources & evidence")}</h4>
+          <div className="knowledge-evidence-list">
+            {(fact.evidence || []).map((item, index) => <div className="knowledge-evidence" key={index}>
+              {item.type === "file" && item.reference ? <button type="button" onClick={() => onOpenFile?.(item.reference)}><FileText size={13} /><span>{item.reference}</span><ChevronRight size={13} /></button> : <strong><MessageSquareText size={13} /><span>{item.reference || tr("来源记录", "Source record")}</span></strong>}
+              {item.detail && <p>{item.detail}</p>}
+            </div>)}
+            {!fact.evidence?.length && <p className="knowledge-muted">{tr("未记录来源，请以当前项目文件为准。", "No source recorded. Consult the current project files.")}</p>}
+          </div>
+          <details className="knowledge-more"><summary>{tr("更多信息", "More information")}</summary><p>{tr("模型估计的置信度", "Model-estimated confidence")}: <b>{Number.isFinite(fact.confidence) ? `${Math.round(fact.confidence * 100)}%` : "—"}</b></p><p>{tr("不是正确率或验证通过的证明。是否进入任务上下文，还取决于相关性、时效和文件证据检查。", "This is not an accuracy score or proof of verification. Recall also depends on relevance, freshness and file-evidence checks.")}</p></details>
+        </div> : <p className="knowledge-muted">{tr("该条目已在其他任务中变更，请关闭后刷新。", "This entry changed in another task. Close and refresh.")}</p>}
+      </aside>}
+    </div>
     {dialog && <SideChatDialog className="knowledge-dialog" title={title} subtitle={task.workspaceName || workspace} onClose={close}>
       {dialog.type === "settings" && <>
         <div className="knowledge-project-options">
@@ -181,14 +253,6 @@ function KnowledgePanel({ task, knowledgeProjectId, projectName, projects, onSel
         <UnderstandingControls key={knowledgeProjectId} workspacePath={workspace} knowledgeProjectId={knowledgeProjectId} state={state} onChange={changed} />
         {!!task.knowledgeReads?.length && <details className="knowledge-read-log"><summary>{tr("本任务知识读取记录", "Task knowledge reads")} · {task.knowledgeReads.length}</summary>{task.knowledgeReads.slice().reverse().map((read, index) => <p key={index}>{dateLabel(read.at)} · {read.projectId} · {read.count} {tr("条", "entries")} {read.query}</p>)}</details>}
       </>}
-      {dialog.type === "fact" && (fact ? <div className="knowledge-detail">
-        <span className="knowledge-category">{label(fact.category)}</span><p className="knowledge-detail-content">{fact.content}</p>
-        <dl><dt>{tr("最近记录／确认", "Last recorded / confirmed")}</dt><dd>{dateLabel(fact.lastConfirmedAt)}</dd></dl>
-        <h3>{tr("来源与依据", "Sources & evidence")}</h3>
-        {(fact.evidence || []).map((item, index) => <div className="knowledge-evidence" key={index}>{item.type === "file" && item.reference ? <button type="button" onClick={() => { close(); onOpenFile?.(item.reference); }}><FileText size={15} /><span>{item.reference}</span></button> : <strong>{item.reference || tr("来源记录", "Source record")}</strong>}{item.detail && <p>{item.detail}</p>}</div>)}
-        {!fact.evidence?.length && <p>{tr("未记录来源，请以当前项目文件为准。", "No source recorded. Consult the current project files.")}</p>}
-        <details><summary>{tr("更多信息", "More information")}</summary><p>{tr("模型估计的置信度", "Model-estimated confidence")}: {Number.isFinite(fact.confidence) ? `${Math.round(fact.confidence * 100)}%` : "—"}</p><p>{tr("不是正确率或验证通过的证明。是否进入任务上下文，还取决于相关性、时效和文件证据检查。", "This is not an accuracy score or proof of verification. Recall also depends on relevance, freshness and file-evidence checks.")}</p></details>
-      </div> : <p>{tr("该条目已在其他任务中变更，请关闭后刷新。", "This entry changed in another task. Close and refresh.")}</p>)}
       {dialog.type === "history" && <div className="knowledge-history"><p className="knowledge-history-note">{tr("仅恢复项目知识，不修改代码或任务对话；恢复会新增一条历史记录。", "Restores knowledge only, not code or conversations. A new history entry is kept.")}</p>{dialogError && <p className="knowledge-alert" role="alert">{dialogError}</p>}
         {(state?.revisions || []).map((revision) => <article key={revision.id} className="knowledge-revision"><header><strong>{tr("版本 {number}", "Revision {number}", { number: revision.number })}</strong>{revision.number === state.currentRevision && <span>{tr("当前", "Current")}</span>}<time>{dateLabel(revision.createdAt)}</time></header><p>{revision.summary}</p><small>{tr("{count} 条知识", "{count} entries", { count: revision.factCount })}</small>
           {!!revision.changes?.length && <details><summary>{tr("查看该次修改", "View revision changes")}</summary>{revision.changes.map((change, index) => <p key={index}><b>{tr(...({ add: ["新增", "Added"], update: ["更新", "Updated"], remove: ["移除", "Removed"] }[change.operation] || ["变更", "Changed"]))}</b> · {change.content}</p>)}</details>}

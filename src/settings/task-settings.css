@@ -1,0 +1,507 @@
+/* Task settings panel.
+ * One rhythm for every section: small label, optional bordered group of
+ * rows, then muted help text. Capability cards share the group styling so
+ * the panel reads as a single list. Imported after styles.css. */
+:root[data-theme] .settings-panel {
+  background: var(--bg-subtle);
+}
+
+:root[data-theme] .settings-panel-header {
+  height: 60px;
+  padding: 0 12px 0 18px;
+  border-color: var(--gray-5);
+}
+
+:root[data-theme] .settings-panel-header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+:root[data-theme] .settings-panel-header h2 {
+  color: var(--text-1);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.settings-panel-subtitle {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-theme] .settings-section,
+:root[data-theme] .aporiax-vision-capability,
+:root[data-theme] .aporiax-skill-capability {
+  padding: 18px;
+  border: 0;
+  border-bottom: 1px solid var(--gray-5);
+}
+
+:root[data-theme] .settings-label,
+:root[data-theme] .aporiax-vision-label,
+:root[data-theme] .aporiax-skill-label {
+  margin-bottom: 10px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
+}
+
+:root[data-theme] .settings-help,
+:root[data-theme] .settings-section .approval-mode-description {
+  display: block;
+  margin: 10px 0 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.settings-section > .settings-label + .settings-help {
+  margin-top: -2px;
+  margin-bottom: 12px;
+}
+
+.settings-error {
+  margin: 10px 0 0;
+  color: var(--red-10);
+  font-size: var(--text-xs);
+}
+
+/* Bordered group. */
+:root[data-theme] .settings-group,
+:root[data-theme] .aporiax-vision-card,
+:root[data-theme] .aporiax-skill-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius-md);
+  background: var(--gray-1);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .settings-group,
+:root[data-theme="dark"] .aporiax-vision-card,
+:root[data-theme="dark"] .aporiax-skill-card {
+  border-color: var(--gray-5);
+  background: var(--gray-3);
+}
+
+:root[data-theme] .settings-label + .settings-group,
+:root[data-theme] .aporiax-vision-label + .aporiax-vision-card,
+:root[data-theme] .aporiax-skill-label + .aporiax-skill-card {
+  margin-top: 0;
+}
+
+:root[data-theme] .settings-group:has(> .settings-row) {
+  padding: 0;
+}
+
+.settings-row {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid var(--gray-5);
+}
+
+.settings-row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row-copy strong {
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.settings-row-copy small {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.settings-select {
+  flex: 0 0 auto;
+  max-width: 65%;
+  height: 30px;
+  padding: 0 26px 0 10px;
+  border: 1px solid var(--gray-6);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  background: var(--gray-1)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23888' stroke-width='1.5'%3E%3Cpath d='m1 1 4 4 4-4'/%3E%3C/svg%3E")
+    no-repeat right 9px center;
+  font-size: var(--text-xs);
+  appearance: none;
+  cursor: pointer;
+}
+
+:root[data-theme="dark"] .settings-select {
+  background-color: var(--gray-2);
+}
+
+.settings-select:hover {
+  border-color: var(--gray-7);
+}
+
+/* Native checkbox styled as a switch, keeping checkbox semantics. */
+.settings-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border-radius: var(--radius-full);
+  background: var(--gray-7);
+  cursor: pointer;
+  appearance: none;
+  transition: background 140ms ease;
+}
+
+.settings-toggle::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+  content: "";
+  transition: transform 140ms ease;
+}
+
+.settings-toggle:checked {
+  background: var(--accent-9);
+}
+
+.settings-toggle:checked::after {
+  transform: translateX(12px);
+}
+
+/* Buttons. */
+.settings-button,
+:root[data-theme] .aporiax-vision-card > button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--gray-6);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  background: var(--gray-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+:root[data-theme="dark"] .settings-button,
+:root[data-theme="dark"] .aporiax-vision-card > button {
+  border-color: var(--gray-6);
+  color: var(--text-1);
+  background: var(--gray-4);
+}
+
+.settings-button:hover:not(:disabled),
+:root[data-theme] .aporiax-vision-card > button:hover {
+  border-color: var(--gray-7);
+  color: var(--text-1);
+  background: var(--gray-4);
+}
+
+:root[data-theme="dark"] .settings-button:hover:not(:disabled),
+:root[data-theme="dark"] .aporiax-vision-card > button:hover {
+  background: var(--gray-5);
+}
+
+.settings-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-button.primary,
+:root[data-theme="dark"] .settings-button.primary {
+  border-color: var(--gray-12);
+  color: var(--gray-1);
+  background: var(--gray-12);
+}
+
+.settings-button.primary:hover:not(:disabled),
+:root[data-theme="dark"] .settings-button.primary:hover:not(:disabled) {
+  border-color: var(--gray-11);
+  color: var(--gray-1);
+  background: var(--gray-11);
+}
+
+.settings-button.block {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.settings-button > svg {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+
+.settings-button-row,
+:root[data-theme] .execution-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+:root[data-theme] .execution-settings-actions .settings-button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+:root[data-theme] .settings-link {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--accent-10);
+  background: transparent;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+:root[data-theme] .settings-link:hover {
+  background: var(--gray-4);
+}
+
+/* Segmented controls fill the panel width. */
+:root[data-theme] .settings-section > .segmented-control,
+:root[data-theme] .sandbox-auto-approval > .segmented-control {
+  display: flex;
+  width: 100%;
+  border-color: var(--gray-5);
+  background: var(--gray-4);
+}
+
+:root[data-theme] .settings-section > .segmented-control button,
+:root[data-theme] .sandbox-auto-approval > .segmented-control button {
+  flex: 1 1 0;
+  height: 28px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+:root[data-theme] .settings-section .segmented-control button.active {
+  color: var(--text-1);
+  background: var(--gray-1);
+  box-shadow: var(--shadow-xs);
+}
+
+:root[data-theme="dark"] .settings-section .segmented-control button.active {
+  background: var(--gray-6);
+}
+
+/* Model / workspace / sandbox summaries. */
+:root[data-theme] .api-status-row.settings-group,
+:root[data-theme] .workspace-summary.settings-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+:root[data-theme] .workspace-summary.settings-group > div {
+  flex: 1 1 auto;
+}
+
+:root[data-theme] .workspace-summary > svg {
+  margin-top: 0;
+  color: var(--text-3);
+}
+
+:root[data-theme] .api-status-copy strong,
+:root[data-theme] .workspace-summary strong,
+:root[data-theme] .sandbox-status-card strong,
+:root[data-theme] .aporiax-vision-heading strong,
+:root[data-theme] .aporiax-skill-heading strong {
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+:root[data-theme] .api-status-copy span:last-child,
+:root[data-theme] .workspace-summary span,
+:root[data-theme] .sandbox-status-card span,
+:root[data-theme] .aporiax-vision-heading span:not(.aporiax-vision-icon),
+:root[data-theme] .aporiax-skill-heading span {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+:root[data-theme] .sandbox-status-icon,
+:root[data-theme] .aporiax-vision-icon,
+:root[data-theme] .aporiax-skill-icon {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: var(--gray-4);
+}
+
+:root[data-theme] .sandbox-status-icon.ready,
+:root[data-theme] .aporiax-vision-capability.ready .aporiax-vision-icon {
+  color: var(--green-10);
+  background: color-mix(in srgb, var(--green-9) 12%, transparent);
+}
+
+:root[data-theme] .sandbox-status-icon.fallback,
+:root[data-theme] .aporiax-vision-capability.missing .aporiax-vision-icon {
+  color: var(--amber-11);
+  background: color-mix(in srgb, var(--amber-9) 14%, transparent);
+}
+
+/* Status chips: one neutral style. */
+:root[data-theme] .settings-group .sandbox-constraints {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--gray-5);
+}
+
+:root[data-theme] .sandbox-constraints span,
+:root[data-theme] .sandbox-constraints.fallback span,
+:root[data-theme] .aporiax-skill-footnote span,
+:root[data-theme] .aporiax-skill-item em,
+:root[data-theme] .aporiax-skill-item small,
+:root[data-theme] .aporiax-vision-route > em {
+  padding: 2px 7px;
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  background: var(--gray-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-regular);
+}
+
+:root[data-theme] .sandbox-auto-approval {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  gap: 0;
+}
+
+/* Disclosures. */
+:root[data-theme] .approval-mode-details,
+.settings-disclosure {
+  margin-top: 10px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.settings-disclosure {
+  margin-top: 14px;
+}
+
+:root[data-theme] .approval-mode-details summary,
+.settings-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  list-style: none;
+  cursor: pointer;
+}
+
+:root[data-theme] .approval-mode-details summary::-webkit-details-marker,
+.settings-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+:root[data-theme] .approval-mode-details summary::before,
+.settings-disclosure summary::before {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  content: "";
+  transition: transform 120ms ease;
+}
+
+:root[data-theme] .approval-mode-details[open] summary::before,
+.settings-disclosure[open] summary::before {
+  transform: rotate(90deg);
+}
+
+:root[data-theme] .approval-mode-details summary:hover,
+.settings-disclosure summary:hover {
+  color: var(--text-1);
+}
+
+.settings-code-field {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--gray-6);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  background: var(--gray-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+:root[data-theme="dark"] .settings-code-field {
+  background: var(--gray-2);
+}
+
+.settings-code-field:focus {
+  border-color: var(--gray-8);
+  outline: none;
+}
+
+/* Capability cards. */
+:root[data-theme] .aporiax-vision-card > p,
+:root[data-theme] .aporiax-skill-empty p {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+:root[data-theme] .aporiax-vision-card > button {
+  width: 100%;
+  margin-top: 12px;
+}
+
+:root[data-theme] .aporiax-vision-route {
+  border: 1px solid var(--gray-5);
+  border-radius: var(--radius-sm);
+  background: var(--gray-2);
+}
+
+:root[data-theme] .aporiax-skill-item {
+  border-color: var(--gray-5);
+  background: var(--gray-2);
+  box-shadow: none;
+}
+
+:root[data-theme] .aporiax-skill-empty code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
