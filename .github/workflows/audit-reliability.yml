@@ -11,6 +11,11 @@ concurrency:
   cancel-in-progress: true
 jobs:
   regression:
+    # Use the runner's canonical path, not Windows' 8.3 TEMP alias. Native
+    # workspace checks deliberately reject lexical/realpath scope mismatches.
+    env:
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +46,9 @@ jobs:
           path: .tmp/audit-results
           retention-days: 7
   desktop:
+    env:
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
