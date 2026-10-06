@@ -68,9 +68,14 @@ try {
   const bounds = await menu.boundingBox();
   assert.ok(bounds.x + bounds.width <= 1450 && bounds.y + bounds.height <= 850, 'Menu stays on screen');
   await page.getByRole('menuitem', { name: '添加到对话', exact: true }).click();
+  await page.waitForFunction(expected => {
+    const input = document.querySelector('.composer textarea');
+    return input?.value === expected && document.activeElement === input;
+  }, '保留已有草稿\n\n> 这段对话用于引用测试。\n\n');
   assert.equal(await composer.inputValue(), '保留已有草稿\n\n> 这段对话用于引用测试。\n\n');
   assert.equal(await composer.evaluate(el => el === document.activeElement), true);
   await select(text); await page.getByRole('menuitem', { name: '复制选中文字' }).click();
+  await page.waitForFunction(() => window.copiedSelection === '这段对话用于引用测试。');
   assert.equal(await page.evaluate(() => window.copiedSelection), '这段对话用于引用测试。');
   await select(text); await page.keyboard.press('Escape'); assert.equal(await menu.count(), 0);
   await select(text); await page.locator('.thread-header').click(); assert.equal(await menu.count(), 0);
@@ -99,6 +104,9 @@ try {
   const sideDraft = page.getByRole('textbox', { name: '侧聊输入' });
   await sideDraft.fill('侧聊草稿'); await select('.side-chat-message.assistant p');
   await page.getByRole('menuitem', { name: '添加到对话', exact: true }).click();
+  await page.waitForFunction(expected =>
+    document.querySelector('.side-chat-composer textarea')?.value === expected,
+  '侧聊草稿\n\n> 侧聊选中文字\n\n');
   assert.equal(await sideDraft.inputValue(), '侧聊草稿\n\n> 侧聊选中文字\n\n');
   assert.match(await composer.inputValue(), /^保留已有草稿/);
   await page.getByRole('button', { name: '打开内容', exact: true }).click();
