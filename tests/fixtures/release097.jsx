@@ -12,7 +12,7 @@ const bridge = async (input) => {
   const result = await response.json(); if (!response.ok) throw new Error(result.error); return result;
 };
 window.desktop = { ocr: { request: (input) => bridge({ ...input, action: "ocr" }) } };
-const workbench = { key: "fixture", draft: () => "", saveDraft() {}, dirty: { current: new Set() }, request: bridge, openFile() {}, openBrowser(url) { window.openedPr = url; } };
+const workbench = { key: "fixture", draft: () => "", saveDraft() {}, dirty: { current: new Set() }, request: bridge, openFile() {}, openHref(url) { window.openedPr = url; return true; } };
 function Fixture() {
   const [open, setOpen] = useState(false);
   return <><style>{`body { background: #f8f7f8; } .fixture-tools { height:50px;display:flex;gap:12px;padding:8px; } .fixture-tools button { border-radius:8px;padding:6px 12px;cursor:pointer; } .fixture-git { height:calc(100vh - 50px);width:min(480px,100%); }`}</style>

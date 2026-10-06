@@ -51,7 +51,7 @@ try {
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   assert.equal(await readFile(join(root, "conflict.txt"), "utf8"), "merged by UI\n");
   await page.getByRole("button", { name: "PR", exact: true }).click(); await page.getByText("#42 Example PR").waitFor();
-  await page.getByRole("button", { name: "打开 PR", exact: true }).click(); assert.equal(await page.evaluate(() => window.openedPr), "https://github.com/fixture/repository/pull/42");
+  await page.getByRole("button", { name: "打开 PR 详情", exact: true }).click(); assert.equal(await page.evaluate(() => window.openedPr), "https://github.com/fixture/repository/pull/42");
   await page.getByRole("button", { name: "测试 OCR" }).click();
   await page.getByRole("spinbutton", { name: "结束页" }).fill("2");
   await page.getByRole("button", { name: "开始识别", exact: true }).click();
