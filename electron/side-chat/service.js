@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { callModelProvider } from "../runtime/provider-stream.js";
+import { modelReasoningParameters } from "../../shared/model-reasoning.js";
 import { SIDE_CHAT_PROMPT, sanitizeSnapshot, taskRecords, taskSnapshot, text } from "./context.js";
 
 const tools = [{ type: "function", function: {
@@ -113,8 +114,7 @@ export function createSideChatService({ dataDirectory, resolveProvider, loadTask
         const completion = await callProvider({ provider: { ...provider, nativeModel: model }, signal: controller.signal,
           body: { model: model.id, messages,
             ...(snapshot && model.supportsTools !== false && round < 3 ? { tools, tool_choice: "auto" } : {}),
-            ...(model.thinkingMode === "deepseek" ? { thinking: { type: "disabled" } } : {}),
-            ...(model.thinkingMode === "reasoning-effort" ? { reasoning_effort: "low" } : {}),
+            ...modelReasoningParameters({ ...model, supportsThinking: ["deepseek", "reasoning-effort"].includes(model.thinkingMode) }, { modelId: model.id, thinking: model.thinkingMode === "reasoning-effort", effort: "low" }),
           },
           onEvent: (event) => {
             if (event.type === "response.delta") {

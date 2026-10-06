@@ -27,6 +27,7 @@ function Fixture() {
   ] });
   window.routeFixture = {
     calls: window.routeFixture?.calls || [],
+    setRetention: (count) => setTask((value) => ({ ...value, messages: value.messages.map((message) => message.id === 'live' ? { ...message, witness: { ...message.witness, omittedRecords: count } } : message) })),
     emit: (event) => { emit(event); setTask((value) => ({ ...value, messages: value.messages.map((message) => message.id === 'live' ? { ...message, witness: monitor.snapshot(), status: event.type === 'turn.completed' ? event.status || 'completed' : message.status } : message) })); },
     append: () => setTask((value) => ({ ...value, messages: [...value.messages, { id: 'next', role: 'assistant', status: 'running', prompt: '下一轮任务', witness: { status: 'running', records: [] } }] })),
     bulk: () => {

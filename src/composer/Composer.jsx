@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { appendConversationQuote } from "../conversation/ConversationSelectionMenu.jsx";
 import {
   ArrowUp,
   ChevronDown,
@@ -14,9 +15,8 @@ import {
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { OCR_UI_ENABLED, OcrDialog, ocrSource } from "../workbench/OcrDialog.jsx";
-import { ModelChoice, SegmentedControl, Switch } from "../components/Controls.jsx";
-import { getModel, getModelGroups } from "../models/model-catalog.js";
-import { ModelSetupActions } from "../models/ModelSetupActions.jsx";
+import { getModel } from "../models/model-catalog.js";
+import { ModelMenu } from "../models/ModelMenu.jsx";
 import { useWorkspaceMentionAutocomplete } from "./WorkspaceMentionAutocomplete.jsx";
 import { isComposingKey } from "../../shared/mention-tokens.js";
 import {
@@ -31,99 +31,6 @@ import {
   DEFAULT_BUILDER_LIMIT,
   normalizeBuilderCount,
 } from "../../electron/harness/builder-count.js";
-
-function ModelMenu({ task, providers, onUpdate, onClose, onManageProviders }) {
-  const { tr } = useI18n();
-  const menuRef = useRef(null);
-  const selectedModel = getModel(
-    providers,
-    task.providerId,
-    task.modelId,
-  );
-  const modelGroups = getModelGroups(providers);
-
-  useEffect(() => {
-    const handlePointerDown = (event) => {
-      if (!menuRef.current?.contains(event.target)) onClose();
-    };
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
-  return (
-    <div className="model-menu" ref={menuRef}>
-      <div className="model-menu-heading">{tr("选择模型", "Choose a model")}</div>
-      <div className="model-menu-options">
-        {modelGroups.map((group, groupIndex) => (
-          <div className="model-menu-source-group" key={group.source}>
-            {groupIndex > 0 && <div className="model-menu-divider" />}
-            <div className="model-menu-heading">
-              {tr(group.titleZh, group.titleEn)}
-            </div>
-            <div className="model-menu-source-note">
-              {tr(group.noteZh, group.noteEn)}
-            </div>
-            {group.models.map((model) => (
-              <ModelChoice
-                key={`${model.providerId}:${model.id}`}
-                compact
-                model={model}
-                selected={
-                  task.providerId === model.providerId &&
-                  task.modelId === model.id
-                }
-                onSelect={(selection) =>
-                  onUpdate({
-                    providerId: selection.providerId,
-                    modelId: selection.id,
-                    thinking: selection.supportsThinking
-                      ? task.thinking
-                      : false,
-                  })
-                }
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-      <ModelSetupActions onManageProviders={onManageProviders} />
-      <div className="model-menu-divider" />
-      <div className="model-menu-row">
-        <div>
-          <span className="model-menu-label">{tr("深度思考", "Deep thinking")}</span>
-          <small>{tr("先规划再执行", "Plan before acting")}</small>
-        </div>
-        <Switch
-          checked={task.thinking}
-          label={tr("深度思考", "Deep thinking")}
-          disabled={!selectedModel.id || selectedModel.disabled || !selectedModel.supportsThinking}
-          onChange={(thinking) => onUpdate({ thinking })}
-        />
-      </div>
-      {task.thinking && (
-        <div className="model-menu-row">
-          <span className="model-menu-label">{tr("思考强度", "Reasoning effort")}</span>
-          <SegmentedControl
-            value={task.effort}
-            ariaLabel={tr("思考强度", "Reasoning effort")}
-            options={[
-              { value: "high", label: "High" },
-              { value: "max", label: "Max" },
-            ]}
-            onChange={(effort) => onUpdate({ effort })}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
 
 function BuilderCountMenu({ value, onChange, onClose }) {
   const { tr } = useI18n();
@@ -264,6 +171,7 @@ function formatAttachmentSize(size) {
 }
 
 export function Composer({
+  quoteRequest,
   task,
   providers,
   onSend,
@@ -290,6 +198,20 @@ export function Composer({
   const textareaRef = useRef(null);
   const imageInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
+  const appliedQuote = useRef(null);
+  useEffect(() => {
+    if (!quoteRequest || quoteRequest.taskId !== task.id || appliedQuote.current === quoteRequest) return;
+    appliedQuote.current = quoteRequest;
+    setMessage(current => appendConversationQuote(current, quoteRequest.text));
+    const frame = window.requestAnimationFrame(() => {
+      const input = textareaRef.current;
+      if (!input) return;
+      input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 156) + "px";
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [quoteRequest, task.id]);
   const model = getModel(
     providers,
     task.providerId,
@@ -297,6 +219,30 @@ export function Composer({
   );
   const builderLimit = normalizeBuilderCount(task.builderLimit, DEFAULT_BUILDER_LIMIT);
   const modelReady = Boolean(model.id && !model.disabled);
+  useLayoutEffect(() => {
+    const shell = textareaRef.current?.closest(".composer-shell");
+    const workspace = shell?.closest(".task-workspace");
+    if (!shell || !workspace) return undefined;
+    const hint = shell.querySelector(".composer-hint");
+    const synchronizeStatusSpace = () => {
+      const css = hint ? window.getComputedStyle(hint) : null;
+      const height = hint?.getClientRects().length
+        ? hint.getBoundingClientRect().height + (parseFloat(css.marginTop) || 0) + (parseFloat(css.marginBottom) || 0)
+        : 0;
+      const value = `${height}px`;
+      if (workspace.style.getPropertyValue("--main-composer-status-space") !== value) workspace.style.setProperty("--main-composer-status-space", value);
+    };
+    synchronizeStatusSpace();
+    const observer = typeof window.ResizeObserver === "function" ? new window.ResizeObserver(synchronizeStatusSpace) : null;
+    observer?.observe(shell);
+    if (hint) observer?.observe(hint);
+    window.addEventListener("resize", synchronizeStatusSpace);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", synchronizeStatusSpace);
+      workspace.style.removeProperty("--main-composer-status-space");
+    };
+  }, [task.id, isRunning, isPaused, pendingSteeringCount, queuedCount, modelReady, collapsed]);
   const mentionAutocomplete = useWorkspaceMentionAutocomplete({
     taskId: task.id,
     value: message,
@@ -655,8 +601,8 @@ export function Composer({
               >
                 <model.icon size={15} />
                 <span>{modelReady ? model.shortName : tr("选择模型", "Choose a model")}</span>
-                {modelReady && task.thinking && (
-                  <span className="thinking-pill">{task.effort}</span>
+                {modelReady && (task.thinking || model.thinkingAlwaysOn) && (
+                  <span className="thinking-pill">{task.effort || model.defaultEffort}</span>
                 )}
                 <ChevronDown size={14} />
               </button>
@@ -746,7 +692,7 @@ export function Composer({
           </div>
         </div>
       </div>
-      <p className="composer-hint">
+      {(isRunning || !modelReady) && <p className="composer-hint">
         {isRunning
           ? isPaused
             ? tr(
@@ -769,12 +715,8 @@ export function Composer({
                 "任务运行中 · 可以继续纠偏，新要求会在安全边界立即接入",
                 "Task running · keep steering; new guidance is applied at a safe boundary",
               )
-          : !modelReady
-            ? tr("先登录 Cloud 或添加自己的 API，输入内容会保留。", "Sign in to Cloud or add your own API first. Your draft is kept.")
-          : model.supportsImages
-            ? tr("Enter 发送 · Shift Enter 换行 · 可添加图片、PDF、文档与代码", "Enter to send · Shift Enter for a new line · Add images, PDFs, documents, and code")
-            : tr("Enter 发送 · Shift Enter 换行 · 可添加 PDF、文档与代码附件", "Enter to send · Shift Enter for a new line · Add PDFs, documents, and code")}
-      </p>
+          : tr("先登录 Cloud 或添加自己的 API，输入内容会保留。", "Sign in to Cloud or add your own API first. Your draft is kept.")}
+      </p>}
       {OCR_UI_ENABLED && ocr && <OcrDialog key={task.id} source={ocr.source} onClose={() => setOcr(null)} onAttach={(attachment) => {
         if (attachments.length >= 6) { onNotice(tr("附件已满，请先移除一个附件。", "Remove an attachment first; limit is six.")); return false; }
         setAttachments((current) => current.length >= 6 ? current : [...current, attachment]);

@@ -10,6 +10,11 @@
 .model-choice:disabled .model-choice-check { display: none; }
 .model-menu .model-setup { flex-shrink: 0; border-top: 1px solid var(--gray-6); }
 .model-menu { max-height: min(600px, calc(100dvh - 240px)); overflow-y: auto; overscroll-behavior: contain; }
+.model-menu-row > div:first-child { min-width: 0; }
+.model-menu-row .switch { flex-shrink: 0; }
+.model-menu-row.model-menu-effort { flex-direction: column; align-items: stretch; gap: 6px; }
+.model-menu-effort .segmented-control { display: flex; }
+.model-menu-effort .segmented-control button { flex: 1; min-width: 0; padding-inline: 3px; }
 .side-chat-model-menu .model-setup { flex-shrink: 0; }
 .model-control .model-trigger.needs-setup { color: var(--gray-10); }
 .side-chat-model-option:disabled { opacity: .52; cursor: not-allowed; }

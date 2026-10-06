@@ -17,6 +17,7 @@ import { handleDesktopLink } from "./desktop-links.js";
 import { registerWorkbench } from "./workbench/service.js";
 import { createFileAccessSettings } from "./runtime/file-access-settings.js";
 import { configureNativeFileAccess } from "./runtime/file-access-policy.js";
+import { configureModelResponseDiagnostics } from "./runtime/model-response-diagnostics.js";
 
 export const fileAccessSettingsReady = app.whenReady().then(async () => {
   const settings = await createFileAccessSettings({ dataDirectory: app.getPath("userData") });
@@ -68,6 +69,7 @@ import { monitorTaskEnvironment } from "./runtime/environment-monitor.js";
 import { createProjectUnderstandingStore } from "./project-understanding.js";
 import { createKnowledgeWorkspace } from "./knowledge-projects.js";
 import { setDesktopTrayImage } from "./desktop-background.js";
+import { windowThemePalette } from "./window-theme.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -80,6 +82,9 @@ const workbench = registerWorkbench(() => mainWindow);
 let completionFlashTimer = null;
 let currentWindowTheme = "light";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (hasSingleInstanceLock && process.argv.includes("--capture-next-model-response")) {
+  configureModelResponseDiagnostics({ dataDirectory: () => app.getPath("userData"), requests: 1 });
+}
 
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -482,17 +487,17 @@ function applyWindowTheme(theme) {
     setDesktopTrayImage(image);
   }
   if (!mainWindow || mainWindow.isDestroyed()) return normalizedTheme;
-  const dark = normalizedTheme === "dark";
+  const palette = windowThemePalette(normalizedTheme);
   if (!image.isEmpty()) mainWindow.setIcon(image);
-  mainWindow.setBackgroundColor(dark ? "#15111b" : "#eef3f7");
+  mainWindow.setBackgroundColor(palette.backgroundColor);
   if (
     process.platform !== "darwin" &&
     typeof mainWindow.setTitleBarOverlay === "function"
   ) {
     mainWindow.setTitleBarOverlay({
-      color: dark ? "#1b1622" : "#edf2f6",
-      symbolColor: dark ? "#f0edf3" : "#303438",
-      height: 38,
+      color: palette.color,
+      symbolColor: palette.symbolColor,
+      height: palette.height,
     });
   }
   return normalizedTheme;
@@ -549,6 +554,7 @@ function notifyTaskCompleted(payload) {
 }
 
 function createMainWindow() {
+  const palette = windowThemePalette(currentWindowTheme);
   mainWindow = new BrowserWindow({
     title: "AporiaX",
     width: 1500,
@@ -560,9 +566,9 @@ function createMainWindow() {
     ...(process.platform !== "darwin"
       ? {
           titleBarOverlay: {
-            color: "#edf2f6",
-            symbolColor: "#303438",
-            height: 38,
+            color: palette.color,
+            symbolColor: palette.symbolColor,
+            height: palette.height,
           },
         }
       : {}),
@@ -570,7 +576,7 @@ function createMainWindow() {
     maximizable: true,
     minimizable: true,
     icon: themedNativeIcon(currentWindowTheme),
-    backgroundColor: "#eef3f7",
+    backgroundColor: palette.backgroundColor,
     webPreferences: {
       preload: join(currentDirectory, "preload.cjs"),
       contextIsolation: true,

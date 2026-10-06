@@ -35,7 +35,7 @@ export function resolveSubagentReasoningPolicy({
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   builder: Object.freeze({
     description: "Implement the delegated task only within explicit write scopes in an isolated Git worktree. Return changes, verification evidence and remaining issues. Do not delegate again or publish.",
-    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "apply_patch"]),
+    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "cleanup_temporary_check", "apply_patch"]),
   }),
   explore: Object.freeze({
     description:
@@ -153,6 +153,7 @@ export function subagentToolPaths(toolName, input = {}) {
       "search_text",
       "inspect_office_file",
       "write_file",
+      "cleanup_temporary_check",
       "apply_patch",
     ].includes(toolName)
   ) {

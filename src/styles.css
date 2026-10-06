@@ -182,8 +182,8 @@ textarea:focus-visible {
   height: 32px;
   padding-left: 4px;
   color: var(--gray-12);
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
 }
 
 .icon-button {
@@ -228,8 +228,8 @@ textarea:focus-visible {
 
 .new-task-button span:nth-child(2) {
   margin-left: 9px;
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
 }
 
 .new-task-shortcut {
@@ -252,8 +252,8 @@ textarea:focus-visible {
 }
 
 .sidebar-search:focus-within {
-  border-color: var(--accent-8);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-10) 8%, transparent);
+  border-color: var(--gray-8);
+  box-shadow: none;
 }
 
 .sidebar-search input {
@@ -336,7 +336,7 @@ textarea:focus-visible {
 .task-item-title {
   color: var(--gray-12);
   font-size: var(--text-base);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 
 .task-item-workspace {
@@ -880,7 +880,7 @@ textarea::placeholder {
 
 .thread-header {
   display: flex;
-  flex: 0 0 64px;
+  flex: 0 0 var(--pane-header-height);
   align-items: center;
   justify-content: space-between;
   padding: 0 17px 0 10px;
@@ -1075,6 +1075,11 @@ textarea::placeholder {
   margin-bottom: 18px;
 }
 
+/* Separate the next prompt from the previous reply and its result cards. */
+.message-list > :not(.user-message) + .user-message {
+  margin-top: 32px;
+}
+
 .anchor-restore-notice {
   display: flex;
   width: min(100%, 520px);
@@ -1161,7 +1166,7 @@ textarea::placeholder {
 .composer-shell {
   width: min(780px, calc(100% - 44px));
   margin: 0 auto;
-  padding: 0 0 13px;
+  padding: var(--composer-content-gap) 0 var(--composer-bottom-space);
 }
 
 .composer {
@@ -1182,8 +1187,8 @@ textarea::placeholder {
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 58px;
-  max-height: 156px;
+  min-height: var(--composer-textarea-min-height);
+  max-height: var(--composer-textarea-max-height);
   resize: none;
   padding: 15px 16px 7px;
   border: 0;
@@ -1203,7 +1208,7 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 42px;
+  min-height: var(--composer-toolbar-min-height);
   padding: 4px 8px 7px 9px;
 }
 
@@ -1347,6 +1352,39 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
 }
+
+/* Main and side chat share this surface; placement is measured above the input. */
+.model-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--text-base);
+  max-height: min(620px, calc(100vh - 100px));
+  overflow: auto;
+}
+
+.model-menu > :not(.model-menu-options) { flex: 0 0 auto; }
+.model-menu .model-menu-options {
+  flex: 1 1 auto;
+  min-height: 80px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.model-menu .model-choice:disabled { opacity: .52; }
+.model-menu .model-setup-actions button:disabled { opacity: 1; }
+.model-menu-search {
+  display: flex; align-items: center; min-width: 0;
+  margin: 0 0 5px; padding: 4px 7px; gap: 7px;
+  border: 1px solid var(--gray-6); border-radius: var(--radius-md); color: var(--gray-10);
+}
+.model-menu-search input {
+  flex: 1; min-width: 0; width: 100%; padding: 0; border: 0; outline: 0;
+  color: var(--gray-12); background: transparent; font-size: var(--text-sm);
+}
+.model-menu-search .icon-button { width: 24px; height: 24px; flex: 0 0 24px; }
+.model-menu-search:focus-within { border-color: var(--gray-8); }
+:root[data-theme] .model-menu-search input:focus-visible { outline: 0; box-shadow: none; }
+.model-menu-empty { margin: 0; padding: 14px 7px; color: var(--gray-10); font-size: var(--text-sm); }
 
 .model-menu-divider {
   height: 1px;
@@ -2695,7 +2733,7 @@ body.panel-is-resizing * {
 
 /* Workspace projects: one workspace groups many task threads. */
 .sidebar-project {
-  margin: 1px 0 6px;
+  margin: 0 0 2px;
 }
 
 .sidebar-project-row {
@@ -2708,7 +2746,7 @@ body.panel-is-resizing * {
 .sidebar-project-toggle {
   display: flex;
   min-width: 0;
-  height: 34px;
+  height: 30px;
   align-items: center;
   flex: 1;
   padding: 0 7px;
@@ -2733,15 +2771,10 @@ body.panel-is-resizing * {
   overflow: hidden;
   flex: 1;
   color: var(--gray-12);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebar-project-toggle > small {
-  color: var(--gray-10);
-  font-size: var(--text-2xs);
 }
 
 .sidebar-project-add {
@@ -2753,42 +2786,58 @@ body.panel-is-resizing * {
   color: var(--gray-10);
   background: transparent;
   place-items: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-project-row:hover .sidebar-project-add,
+.sidebar-project-row:focus-within .sidebar-project-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar-project-toggle:focus-visible,
+.sidebar-project-add:focus-visible {
+  outline: 1px solid var(--accent-9);
+  outline-offset: -1px;
+}
+
+@media (hover: none) {
+  .sidebar-project-add {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .sidebar-project-tasks {
-  position: relative;
-  margin-left: 19px;
-  padding-left: 8px;
-}
-
-.sidebar-project-tasks::before {
-  position: absolute;
-  top: 2px;
-  bottom: 4px;
-  left: 0;
-  width: 1px;
-  content: "";
-  background: color-mix(in srgb, var(--gray-10) 15%, transparent);
+  margin: 0;
+  padding: 0;
 }
 
 .sidebar-project .task-item {
-  min-height: 38px;
+  min-height: 30px;
   align-items: center;
-  padding: 6px 8px;
+  padding: 4px 8px 4px 27px;
+  gap: 8px;
 }
 
 .sidebar-project .task-item-copy {
-  margin-left: 8px;
+  flex: 1;
+  margin-left: 0;
 }
 
 .sidebar-project .task-item-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
 }
 
 .task-running {
   flex: 0 0 auto;
   margin-left: auto;
   color: var(--accent-8);
+}
+
+.sidebar-project .task-running {
+  margin-top: 0;
 }
 
 .project-select {
@@ -2810,7 +2859,6 @@ body.panel-is-resizing * {
   color: var(--gray-12);
 }
 
-:root[data-theme="dark"] .sidebar-project-toggle > small,
 :root[data-theme="dark"] .field-hint {
   color: var(--gray-10);
 }
@@ -2822,10 +2870,6 @@ body.panel-is-resizing * {
 
 :root[data-theme="dark"] .sidebar-project-add {
   color: var(--accent-11);
-}
-
-:root[data-theme="dark"] .sidebar-project-tasks::before {
-  background: color-mix(in srgb, var(--accent-11) 14%, transparent);
 }
 
 .toast {
@@ -4313,10 +4357,6 @@ body.panel-is-resizing * {
   background: var(--gray-1);
 }
 
-:root[data-theme="dark"] * {
-  scrollbar-color: var(--gray-8) var(--gray-2);
-}
-
 :root[data-theme="dark"] .app-shell {
   color: var(--gray-12);
   background: var(--gray-1);
@@ -4444,8 +4484,6 @@ body.panel-is-resizing * {
 
 :root[data-theme="dark"] .empty-state h1 {
   color: var(--gray-12);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.012em;
 }
 
 :root[data-theme="dark"] .section-label,
@@ -8016,7 +8054,6 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .markdown-message h3 {
-  border: 0;
   color: var(--gray-12);
   background: transparent;
 }
@@ -8026,16 +8063,8 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .office-artifact-summary,
 :root[data-theme="dark"] .office-artifact-metrics > div,
 :root[data-theme="dark"] .code-block {
-  border: 0;
   background:
     color-mix(in srgb, var(--gray-6) 68%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--gray-12) 9%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--gray-12) 1.8%, transparent), var(--shadow-lg);
-}
-
-:root[data-theme="dark"] .markdown-message th,
-:root[data-theme="dark"] .markdown-message td {
-  border: 0;
 }
 
 :root[data-theme="dark"] .markdown-message th {
@@ -8048,7 +8077,6 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .edited-files-header {
-  border: 0;
   background: color-mix(in srgb, var(--gray-12) 2.5%, transparent);
 }
 
@@ -8056,34 +8084,25 @@ body.panel-is-resizing * {
   background: transparent;
 }
 
-:root[data-theme="dark"] .edited-file-row {
-  border: 0;
-}
-
 :root[data-theme="dark"] .edited-file-row:hover {
   background: color-mix(in srgb, var(--accent-10) 7.5%, transparent);
 }
 
 :root[data-theme="dark"] .review-files-button {
-  border: 0;
   color: var(--accent-11);
   background: color-mix(in srgb, var(--accent-10) 12%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--gray-12) 8%, transparent);
 }
 
 :root[data-theme="dark"] .review-files-button:hover {
-  border: 0;
   background: color-mix(in srgb, var(--accent-10) 20%, transparent);
 }
 
 :root[data-theme="dark"] .office-file-status {
-  border: 0;
   color: var(--accent-11);
   background: color-mix(in srgb, var(--accent-10) 14%, transparent);
 }
 
 :root[data-theme="dark"] .show-more-files {
-  border: 0;
   background: color-mix(in srgb, var(--gray-12) 2.5%, transparent);
 }
 
@@ -8092,17 +8111,12 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .self-check-card {
-  border: 0;
   background:
     color-mix(in srgb, var(--green-6) 60%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--green-11) 10%, transparent), var(--shadow-lg);
 }
 
 :root[data-theme="dark"] .self-check-verification {
-  border: 0;
   background: color-mix(in srgb, var(--gray-12) 3.5%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--gray-12) 5.5%, transparent);
 }
 
 /* Refined liquid glass: neutral material, refractive edge, clean contents */
@@ -8115,8 +8129,6 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .thread-body {
-  position: relative;
-  isolation: isolate;
   background: var(--gray-1);
 }
 
@@ -8132,52 +8144,8 @@ body.panel-is-resizing * {
 :root[data-theme="dark"] .office-artifact-metrics > div,
 :root[data-theme="dark"] .code-block,
 :root[data-theme="dark"] .composer {
-  border: 0;
   background:
     var(--liquid-glass-fill);
-  -webkit-backdrop-filter: blur(36px) saturate(155%) brightness(1.06);
-  backdrop-filter: blur(36px) saturate(155%) brightness(1.06);
-  box-shadow:
-    inset 0 1px 0 var(--liquid-glass-highlight),
-    inset 1px 0 0 rgba(255, 255, 255, 0.035),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.2),
-    0 14px 34px var(--liquid-glass-shadow);
-}
-
-:root[data-theme="dark"] .edited-files-card,
-:root[data-theme="dark"] .self-check-card,
-:root[data-theme="dark"] .office-artifact-summary,
-:root[data-theme="dark"] .code-block,
-:root[data-theme="dark"] .composer {
-  position: relative;
-  isolation: isolate;
-}
-
-:root[data-theme="dark"] .edited-files-card::before,
-:root[data-theme="dark"] .self-check-card::before,
-:root[data-theme="dark"] .office-artifact-summary::before,
-:root[data-theme="dark"] .code-block::before,
-:root[data-theme="dark"] .composer::before {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  padding: 1px;
-  border-radius: inherit;
-  pointer-events: none;
-  content: "";
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--gray-12) 24%, transparent),
-    color-mix(in srgb, var(--gray-12) 3.5%, transparent) 28%,
-    transparent 52%,
-    color-mix(in srgb, var(--accent-11) 10%, transparent) 82%,
-    color-mix(in srgb, var(--gray-12) 7%, transparent)
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
 }
 
 :root[data-theme="dark"] .code-block-toolbar {
@@ -8218,22 +8186,16 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .markdown-message table {
-  border-radius: var(--radius-xl);
   background:
     color-mix(in srgb, var(--gray-12) 1.2%, transparent);
 }
 
 :root[data-theme="dark"] .markdown-message th {
-  padding-block: 11px;
   color: color-mix(in srgb, var(--gray-12) 68%, transparent);
   background: transparent;
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.035em;
 }
 
 :root[data-theme="dark"] .markdown-message td {
-  padding-block: 11px;
   color: color-mix(in srgb, var(--gray-12) 88%, transparent);
 }
 
@@ -8242,62 +8204,33 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .markdown-message table code {
-  padding: 0;
-  border: 0;
   color: var(--accent-11);
   background: transparent;
-  box-shadow: none;
-}
-
-:root[data-theme="dark"] .edited-files-card {
-  border-radius: var(--radius-xl);
 }
 
 :root[data-theme="dark"] .edited-files-header {
-  min-height: 54px;
-  padding: 11px 15px 8px;
-  border: 0;
   background: transparent;
 }
 
 :root[data-theme="dark"] .edited-files-icon {
-  width: 25px;
-  height: 25px;
-  border-radius: 0;
   color: var(--accent-11);
   background: transparent;
 }
 
-:root[data-theme="dark"] .edited-files-title {
-  gap: 6px;
-}
-
-:root[data-theme="dark"] .edited-files-title > div {
-  gap: 2px;
-}
-
 :root[data-theme="dark"] .edited-files-title strong {
   color: color-mix(in srgb, var(--gray-12) 90%, transparent);
-  font-weight: var(--weight-semibold);
 }
 
 :root[data-theme="dark"] .edited-file-list {
-  gap: 0;
-  padding: 0 15px 11px;
   background: transparent;
 }
 
 :root[data-theme="dark"] .edited-file-row {
-  min-height: 36px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-md);
   color: color-mix(in srgb, var(--gray-12) 78%, transparent);
   background: transparent;
 }
 
 :root[data-theme="dark"] .edited-file-row:hover {
-  padding-inline: 8px;
   background: color-mix(in srgb, var(--gray-12) 2.8%, transparent);
 }
 
@@ -8310,16 +8243,8 @@ body.panel-is-resizing * {
 }
 
 :root[data-theme="dark"] .review-files-button {
-  height: 29px;
-  padding-inline: 12px;
-  border: 0;
-  border-radius: var(--radius-full);
   color: color-mix(in srgb, var(--gray-12) 92%, transparent);
   background: color-mix(in srgb, var(--gray-12) 5.5%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
-  backdrop-filter: blur(18px) saturate(145%);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--gray-12) 11%, transparent), var(--shadow-md);
 }
 
 :root[data-theme="dark"] .review-files-button:hover {
@@ -8328,49 +8253,23 @@ body.panel-is-resizing * {
 
 :root[data-theme="dark"] .office-file-status,
 :root[data-theme="dark"] .edited-file-name em {
-  padding: 0;
-  border: 0;
   color: var(--accent-11);
   background: transparent;
-  box-shadow: none;
 }
 
 :root[data-theme="dark"] .self-check-card {
-  padding: 15px 16px;
-  border-radius: var(--radius-xl);
   color: color-mix(in srgb, var(--gray-12) 82%, transparent);
   background:
     color-mix(in srgb, var(--green-9) 7%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--green-11) 15%, transparent), inset 1px 0 0 color-mix(in srgb, var(--green-11) 5%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--gray-1) 18%, transparent), var(--shadow-lg);
-}
-
-:root[data-theme="dark"] .self-check-card::before {
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--green-12) 26%, transparent),
-    color-mix(in srgb, var(--green-11) 4.5%, transparent) 30%,
-    transparent 54%,
-    color-mix(in srgb, var(--green-10) 11%, transparent) 84%,
-    color-mix(in srgb, var(--green-12) 7%, transparent)
-  );
 }
 
 :root[data-theme="dark"] .self-check-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 0;
   color: var(--green-11);
   background: transparent;
 }
 
-:root[data-theme="dark"] .self-check-heading {
-  gap: 7px;
-}
-
 :root[data-theme="dark"] .self-check-heading strong {
   color: color-mix(in srgb, var(--green-12) 92%, transparent);
-  font-weight: var(--weight-semibold);
 }
 
 :root[data-theme="dark"] .self-check-heading span,
@@ -8380,73 +8279,13 @@ body.panel-is-resizing * {
   color: color-mix(in srgb, var(--gray-11) 66%, transparent);
 }
 
-:root[data-theme="dark"] .self-check-card p,
-:root[data-theme="dark"] .self-check-card details {
-  margin-left: 29px;
-}
-
 :root[data-theme="dark"] .self-check-verification {
-  margin-left: 29px;
-  padding: 7px 0 0;
-  border: 0;
-  border-radius: 0;
   background: transparent;
-  box-shadow: none;
 }
 
 :root[data-theme="dark"] .composer {
-  border-radius: var(--radius-xl);
   background:
     color-mix(in srgb, var(--gray-12) 1.6%, transparent);
-}
-
-:root[data-theme="dark"] .composer:focus-within {
-  border: 0;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--gray-12) 17%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent-11) 16%, transparent), var(--shadow-lg);
-}
-
-:root[data-theme="dark"] .message-list {
-  padding-top: 46px;
-  padding-bottom: clamp(120px, 18vh, 180px);
-  scroll-margin-bottom: 120px;
-}
-
-:root[data-theme="dark"] .dialogue-panel .message-list:has(.witness-panel) {
-  padding-bottom: 16px;
-  scroll-margin-bottom: 16px;
-}
-
-:root[data-theme="dark"] .assistant-message {
-  margin-bottom: 38px;
-}
-
-:root[data-theme="dark"] .markdown-message h3 {
-  margin-top: 32px;
-  margin-bottom: 16px;
-}
-
-:root[data-theme="dark"] .markdown-message table {
-  margin-top: 12px;
-  margin-bottom: 27px;
-}
-
-:root[data-theme="dark"] .edited-files-card {
-  margin-top: 27px;
-}
-
-:root[data-theme="dark"] .self-check-card {
-  margin-top: 18px;
-}
-
-:root[data-theme="dark"] .composer-shell {
-  padding-top: 16px;
-  padding-bottom: 15px;
-}
-
-:root[data-theme="dark"] .thread-body {
-  scroll-padding-top: 36px;
-  scroll-padding-bottom: 140px;
 }
 
 /* Restrained neutral treatment for the dark new-task flow. */
@@ -10076,15 +9915,6 @@ body.panel-is-resizing * {
   background: color-mix(in srgb, var(--accent-10) 23%, transparent);
 }
 
-:root[data-theme="dark"] .composer-stack {
-  padding-bottom: 15px;
-}
-
-:root[data-theme="dark"] .composer-stack > .composer-shell {
-  padding-top: 0;
-  padding-bottom: 0;
-}
-
 :root[data-theme="dark"] .composer-stack .deliverables-shelf {
   border-color: color-mix(in srgb, var(--accent-10) 23%, transparent);
   background: color-mix(in srgb, var(--gray-2) 94%, transparent);
@@ -10480,11 +10310,11 @@ body.panel-is-resizing * {
 
 /* Readable Route and Workspace scale, aligned with the main conversation. */
 .thread-view-tabs {
-  flex-basis: 43px;
+  flex-basis: var(--pane-navigation-height);
 }
 
 .thread-view-tabs button {
-  height: 43px;
+  height: calc(var(--pane-navigation-height) - 1px);
   font-size: var(--text-xs);
 }
 
@@ -12765,6 +12595,11 @@ button.anchor-history-heading:hover {
   background: var(--bg-subtle);
 }
 
+/* In light mode, only the global window titlebar is a tinted surface. */
+:root[data-theme="light"] .sidebar {
+  background: var(--bg-app);
+}
+
 :root[data-theme] .thread-header,
 :root[data-theme] .thread-view-tabs {
   border-color: var(--gray-5);
@@ -12802,8 +12637,16 @@ button.anchor-history-heading:hover {
 }
 
 :root[data-theme] .task-item-title {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+}
+
+:root[data-theme] .sidebar-project .task-item:hover {
+  background: var(--gray-3);
+}
+
+:root[data-theme] .sidebar-project .task-item.active {
+  background: var(--gray-4);
 }
 
 :root[data-theme] .task-item-workspace {
@@ -12814,6 +12657,11 @@ button.anchor-history-heading:hover {
 :root[data-theme] .sidebar-search {
   border-color: var(--gray-6);
   background: var(--gray-1);
+}
+
+:root[data-theme] .sidebar-search:focus-within {
+  border-color: var(--gray-8);
+  box-shadow: none;
 }
 
 /* Conversation. */
@@ -12880,6 +12728,19 @@ button.anchor-history-heading:hover {
   outline-offset: 2px;
 }
 
+/* Editable textareas also match :focus-visible after a mouse click. Keep the
+ * composer's neutral focus border, not the global blue input outline. */
+:root[data-theme] .composer textarea:focus-visible {
+  outline: 0;
+}
+
+/* The search field keeps a visible neutral container border instead of the
+ * global blue editable-input focus ring. Other controls retain their focus cues. */
+:root[data-theme] .sidebar-search input:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
 :root[data-theme] *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -12900,6 +12761,30 @@ button.anchor-history-heading:hover {
 }
 
 /* Primary send actions match across the main thread and side chat. */
+/* Workspace is a working surface, not a second tinted sidebar. Keep tint
+ * only for hover/selection and content-specific code blocks. */
+:root[data-theme] .file-explorer-panel,
+:root[data-theme] .file-explorer-panel > header,
+:root[data-theme] .file-explorer-panel .file-search,
+:root[data-theme] .file-explorer-panel .file-explorer-body,
+:root[data-theme] .file-explorer-panel .workspace-tree,
+:root[data-theme] .file-explorer-panel .workspace-preview,
+:root[data-theme] .file-explorer-panel .workspace-preview-header,
+:root[data-theme] .file-explorer-panel .workspace-preview pre,
+:root[data-theme] .file-explorer-panel .workspace-code-editor,
+:root[data-theme] .workspace-rich-preview,
+:root[data-theme] .workspace-inline-toolbar,
+:root[data-theme] .workbench-code,
+:root[data-theme] .workbench-editor,
+:root[data-theme] .workbench-host,
+:root[data-theme] .workbench-git {
+  background: var(--bg-app);
+  border-color: var(--gray-5);
+}
+:root[data-theme] .workbench-git { --git-bg: var(--bg-app); --git-line: var(--gray-6); }
+:root[data-theme] .file-explorer-panel .workspace-tree button:hover { background: var(--gray-3); }
+:root[data-theme] .file-explorer-panel .workspace-tree button.active { background: var(--gray-4); color: var(--text-1); box-shadow: none; }
+
 :root[data-theme] .send-button,
 :root[data-theme] .side-chat .side-chat-submit {
   color: var(--gray-1);

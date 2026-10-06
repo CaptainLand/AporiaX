@@ -1,4 +1,5 @@
 import { Brain, Zap } from "lucide-react";
+import { claudeReasoningProfile } from "../../shared/model-reasoning.js";
 
 export const EMPTY_MODEL = {
   id: "",
@@ -86,6 +87,7 @@ export function getAvailableModels(providers) {
     );
     return (provider.models || []).map((model) => ({
       ...model,
+      ...(claudeReasoningProfile(model.id) ? { ...claudeReasoningProfile(model.id), supportsThinking: true } : {}),
       providerId: provider.id,
       providerName: provider.name,
       providerKind: provider.kind,
@@ -136,6 +138,7 @@ export function getDefaultTaskConfig(providers) {
   return {
     ...DEFAULT_TASK_OPTIONS,
     thinking: Boolean(model.supportsThinking),
+    effort: model.defaultEffort || DEFAULT_TASK_OPTIONS.effort,
     providerId: model.providerId || "",
     modelId: model.id || "",
   };

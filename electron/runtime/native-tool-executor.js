@@ -1,5 +1,6 @@
 import { readTextPage } from "./text-reader.js";
 import { mutateWorkspaceFiles } from "./workspace-mutations.js";
+import { cleanupTemporaryCheck, registerTemporaryCheck, validateTemporaryCheckCreation } from "./temporary-check-files.js";
 import { readSkillResource, searchSkills } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
@@ -364,6 +365,13 @@ export function createNativeToolExecutor({
         results: external ? result.results.map(entry => ({ ...entry, path: join(searchPath, entry.path) })) : result.results } };
     }
 
+    if (toolName === "cleanup_temporary_check") {
+      const result = await cleanupTemporaryCheck(workspaceRoot, input.path, { signal });
+      const { beforeContent, ...modelResult } = result;
+      return { modelResult, change: { path: input.path, beforeContent, afterContent: "", beforeMissing: false,
+        afterMissing: true, deleted: true, ...calculateLineChanges(beforeContent, "") } };
+    }
+
     if (toolName === "write_file") {
       if (
         typeof input.content !== "string" ||
@@ -382,14 +390,17 @@ export function createNativeToolExecutor({
       } catch (error) {
         if (error?.code !== "ENOENT") throw error;
       }
+      if (input.temporary_self_check === true) await validateTemporaryCheckCreation(workspaceRoot, input.path, { created, content: input.content });
       const lineChanges = calculateLineChanges(previousContent, input.content);
       throwIfAborted(signal);
       await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: created ? null : Buffer.from(previousContent), after: Buffer.from(input.content) }] });
+      if (input.temporary_self_check === true) await registerTemporaryCheck(workspaceRoot, input.path, input.content);
       return {
         modelResult: {
           path: input.path,
           bytesWritten: Buffer.byteLength(input.content, "utf8"),
           created,
+          ...(input.temporary_self_check === true ? { temporarySelfCheck: true, cleanupTool: "cleanup_temporary_check" } : {}),
           ...lineChanges,
         },
         change: {

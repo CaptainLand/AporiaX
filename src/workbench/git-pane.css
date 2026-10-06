@@ -2,7 +2,7 @@
 :root[data-theme="dark"] .workbench-git { --git-bg:var(--gray-2);--git-alt:var(--gray-4);--git-text:var(--gray-12);--git-muted:var(--gray-11);--git-line:var(--gray-6);--git-accent:var(--accent-11); }
 .workbench-git button { cursor:pointer;color:inherit;background:transparent; }
 .workbench-git button:disabled { opacity:.4;cursor:default; }
-.git-heading { display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid var(--git-line); }
+.git-heading { display:flex;align-items:center;gap:9px;flex:0 0 var(--pane-navigation-height);min-height:var(--pane-navigation-height);padding:0 16px;border-bottom:1px solid var(--gray-5);background:var(--bg-app); }
 .git-heading strong { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:var(--weight-semibold); }
 .git-tracking { color:var(--git-muted);font-size:var(--text-2xs);white-space:nowrap; }
 .git-icon { display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:26px;height:26px;border-radius:var(--radius-sm); }
@@ -73,3 +73,40 @@
 .git-conflict-editor .git-conflict-source { max-height: 180px; overflow: auto; white-space: pre; padding: 12px; border: 1px solid var(--sc-line); border-radius: var(--radius-md); font: var(--text-xs)/1.6 var(--font-mono); }
 .git-conflict-editor textarea { width: 100%; min-height: 200px; resize: vertical; padding: 10px; border: 1px solid var(--sc-line); border-radius: var(--radius-md); background: var(--sc-surface); color: var(--sc-text); font: var(--text-sm)/1.6 var(--font-mono); }
 .git-conflict-editor code { overflow-wrap: anywhere; }
+
+/* PRs are review summaries, not an unstructured CLI transcript. */
+.git-pull-requests { padding: 16px; }
+.git-pr-heading { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+.git-pr-heading > div { flex: 1; min-width: 0; }
+.git-pr-heading p { margin: 5px 0 0; line-height: 1.6; }
+.git-pull-requests .git-field { font-size: var(--text-xs); }
+.git-pull-requests select { width: 100%; min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--git-line); border-radius: var(--radius-sm); color: var(--git-text); background: var(--bg-app); font: inherit; }
+.git-pr-repository { display: flex; align-items: center; gap: 7px; margin: 16px 0 10px; color: var(--git-muted); font-size: var(--text-xs); }
+.git-pr-repository > span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.git-history .git-pr-card { padding: 14px; margin-bottom: 12px; border: 1px solid var(--git-line); border-radius: var(--radius-md); background: var(--bg-app); }
+.git-pr-title { display: flex; align-items: flex-start; gap: 8px; line-height: 1.55; }
+.git-pr-title > svg { flex-shrink: 0; margin-top: 2px; color: var(--git-accent); }
+.git-pr-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 9px 0 13px; color: var(--git-muted); font-size: var(--text-xs); }
+.git-pr-badge { padding: 2px 7px; border-radius: var(--radius-full); background: var(--gray-3); color: var(--text-2); }
+.git-pr-badge.open, .git-pr-check.passed > svg { color: var(--green-11); }
+.git-pr-badge.open { background: color-mix(in srgb, var(--green-9) 9%, var(--bg-app)); }
+.git-pr-badge.merged { color: var(--accent-11); background: var(--accent-3); }
+.git-pr-badge.closed, .git-pr-check.failed > svg { color: var(--red-11); }
+.git-pr-badge.closed { background: color-mix(in srgb, var(--red-9) 9%, var(--bg-app)); }
+.git-pr-checks { padding-top: 10px; border-top: 1px solid var(--gray-5); }
+.git-pr-checks h4 { margin: 0 0 8px; font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--text-2); }
+.git-pr-check { display: flex; align-items: center; gap: 7px; margin: 8px 0; font-size: var(--text-xs); }
+.git-pr-check > svg { flex-shrink: 0; }
+.git-pr-check > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.git-pr-check small { flex-shrink: 0; font-size: var(--text-xs); }
+.git-pr-check.pending > svg { color: var(--amber-11); }
+.workbench-git .git-pr-open, .git-pr-error button { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; min-height: 32px; padding: 6px 9px; border: 1px solid var(--git-line); border-radius: var(--radius-sm); color: var(--git-accent); font-size: var(--text-xs); }
+.workbench-git .git-pr-open:hover { background: var(--git-alt); }
+.git-pr-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 25px 4px; color: var(--git-muted); }
+.git-pr-empty strong { color: var(--git-text); }
+.git-pr-empty p { margin: 0; line-height: 1.7; }
+.git-pr-error { margin-top: 14px; padding: 12px; border: 1px solid color-mix(in srgb, var(--red-9) 25%, var(--git-line)); border-radius: var(--radius-md); }
+.git-pr-error p { margin: 0; color: var(--red-11); line-height: 1.65; overflow-wrap: anywhere; }
+.git-commit .git-field > span { font-size: var(--text-xs); }
+.git-commit .git-hint { margin: 7px 0 0; font-size: var(--text-xs); }
+.git-commit textarea { background: var(--bg-app); font-weight: var(--weight-regular); }

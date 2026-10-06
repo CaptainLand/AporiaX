@@ -20,6 +20,7 @@ import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js
 import { ToolProgressGuard } from "./tool-progress-guard.js";
 import { dispatchNativeTool } from "./tool-dispatcher.js";
 import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume } from "./durable-run.js";
+import { modelReasoningParameters } from "../../shared/model-reasoning.js";
 import { providerMessages } from "./task-conversation.js";
 import { runIsolatedBuilder } from "./delegated-builder.js";
 import { withAgentBudgetAdmission } from "../harness/agent-budget.js";
@@ -206,11 +207,12 @@ export async function runSubagentTask(options = {}) {
   }
   const brief = new TaskBrief(session.taskBrief, { resumed: Boolean(session.taskBrief) });
   const loopPolicy = normalizeLoopPolicy(options.loopPolicy);
+  const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: loopPolicy.maxRepeatedEvidence, snapshot: session.toolProgress });
   const strategy = new StrategyHistory(session.strategyHistory, { mode: loopPolicy.strategyMode, maxInterventions: loopPolicy.maxStrategyInterventions });
   brief.syncSources(conversation);
   Object.assign(session, { conversation, contextCheckpoints, evidence, steps: toolSteps });
   const persistSession = async (status = "running", result = null) => {
-    session.taskBrief = brief.snapshot(); session.strategyHistory = strategy.snapshot();
+    session.taskBrief = brief.snapshot(); session.strategyHistory = strategy.snapshot(); session.toolProgress = toolProgress.snapshot();
     await options.snapshotProvisional?.();
     await saveRuntimeContext(agentId, {
       kind: "worker", workspaceRoot: options.ownerWorkspaceRoot || workspaceRoot, input, session, status, result,
@@ -243,7 +245,6 @@ export async function runSubagentTask(options = {}) {
   emit({ type: "subagent.configured", agentId, role: input.role, provider: provider.id, model: modelId,
     permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: effectiveMaxRounds });
 
-  const toolProgress = new ToolProgressGuard();
   try {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
@@ -252,6 +253,7 @@ export async function runSubagentTask(options = {}) {
         toolProgress.reset(); strategy.reset();
         conversation.push(...session.pendingGuidance.splice(0).map((content) => ({ role: 'user', content, aporiaSource: 'delegation', aporiaPinned: true })));
       }
+      toolProgress.assertBudget();
       strategy.assertBudget();
       brief.syncSources(conversation);
       brief.inject(conversation, { strategy: strategy.briefing() });
@@ -283,23 +285,7 @@ export async function runSubagentTask(options = {}) {
           ...(provider.supportsTools && enabledTools.length
             ? { tools: enabledTools, tool_choice: "auto" }
             : {}),
-          ...(provider.supportsThinking &&
-          provider.thinkingMode === "deepseek"
-            ? {
-                thinking: { type: thinking ? "enabled" : "disabled" },
-                ...(thinking
-                  ? {
-                      reasoning_effort:
-                        effort === "max" ? "max" : "high",
-                    }
-                  : {}),
-              }
-            : {}),
-          ...(provider.supportsThinking &&
-          provider.thinkingMode === "reasoning-effort" &&
-          thinking
-            ? { reasoning_effort: effort === "max" ? "high" : "medium" }
-            : {}),
+          ...modelReasoningParameters(provider, { modelId, thinking, effort }),
         }),
         complete: async (body, requestSignal = signal) => {
           loopMetrics.request(body);
@@ -420,7 +406,7 @@ export async function runSubagentTask(options = {}) {
           }
           const parsedInput = parseToolArguments(toolCall);
           strategy.before(toolName, parsedInput);
-          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
+          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
           const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
             instructionContext,
             subagentToolPaths(toolName, parsedInput),

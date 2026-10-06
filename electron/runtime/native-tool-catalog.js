@@ -378,8 +378,25 @@ export const TOOL_DEFINITIONS = [
             type: "string",
             description: "Complete UTF-8 file content to write.",
           },
+          temporary_self_check: {
+            type: "boolean",
+            description: "Mark a NEW workspace script as disposable self-check scaffolding (not a deliverable). Only registered, unchanged files can later be removed by cleanup_temporary_check without a deletion prompt. Never mark user files or existing scripts.",
+          },
         },
         required: ["path", "content"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cleanup_temporary_check",
+      description: "Recoverably remove ONE unchanged temporary self-check script created by write_file with temporary_self_check=true in this active task. No shell, recursive deletion, user files, external files, or unregistered scripts. Explicit deny/ask policies and uncertain recovery still apply.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string", description: "Exact workspace-relative path returned by write_file." } },
+        required: ["path"],
         additionalProperties: false,
       },
     },
@@ -961,6 +978,7 @@ export const TOOL_RISKS = {
   github_auth_status: "read",
   inspect_office_file: "read",
   write_file: "write",
+  cleanup_temporary_check: "write",
   apply_patch: "write",
   lsp: "read",
   lsp_install: "control",

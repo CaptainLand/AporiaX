@@ -120,19 +120,28 @@ file hashes, read cursors or output. Warnings escalate to explicit replanning
 advice. A quiet valid process gets polling guidance; it is not hard-stopped solely
 for being quiet. This PR does not add an OS process wait primitive.
 
-Defaults remain advisory and agent-led. Advanced callers may supply:
+Strategy/completion defaults remain advisory and agent-led. Repeated identical
+evidence and planning without new execution evidence have a default budget of
+six. Advanced callers may supply:
 
 ```js
 loopPolicy: {
-  maxRepeatedEvidence: 6,             // 0 (default) disables the hard threshold
+  maxRepeatedEvidence: 6,             // default 6; explicit 0 disables it
   requireVerifiedChanges: true,       // false by default
   maxCompletionContinuations: 1       // 0..3; default 1
 }
 ```
 
-The hard repeated-evidence threshold applies at the main loop's next model
-boundary, not in the middle of a tool operation. New user guidance resets it.
-Child loops retain their existing round budgets and advisory guards.
+The hard repeated-evidence threshold applies at the next model boundary, not
+in the middle of a tool operation. Desktop runs save receipts/context and pause
+with reason `no-progress`, requiring explicit resume; headless invocations return
+`blocked` with preserved changes. No automatic timer or retry resumes the guard.
+New user guidance resets it. A changing file version resets the evidence budget;
+new evidence resets the planning streak and repeated-evidence budget. Re-reading
+a common file while still discovering new evidence is not by itself a hard stop.
+Live process polling stays advisory.
+Child loops also enforce the repeated-evidence budget, in addition to their
+existing round limits. Main guard evidence fingerprints survive recovery.
 
 The optional completion policy consults current-version verification evidence
 and the latest workspace snapshot; it does not run scripts or Review itself.
@@ -142,6 +151,23 @@ recognized user verification waivers and non-completed outcome states are
 respected. These options are per invocation and exposed through the existing
 request path; no new settings UI or persisted cross-run policy editor is added.
 No arbitrary executable hooks are loaded from the project.
+
+### Claude relay reasoning compatibility
+
+Claude capability inference uses the model ID, not just the endpoint hostname.
+Legacy host-inferred `supportsThinking: false` / `thinkingMode: none` records
+are normalized when read without rewriting credentials or changing transport.
+Opus 5.5 exposes low/medium/high/xhigh/max and uses medium for new selections.
+Existing explicit task effort is preserved. Adaptive thinking is always on for
+this model; disabling the UI thinking toggle must not silently discard effort.
+Main, child, side-chat and summary requests share one reasoning mapper. Side
+chat and low-compute child roles use low; rolling summaries use low. Native
+Messages requests use `output_config.effort` and adaptive thinking; a selected
+Chat Completions relay receives `reasoning_effort` without an automatic switch
+to Messages or a silent effort downgrade. The relay must actually support that
+field/level; offline tests cannot establish its conversion, cache behavior,
+latency, or billing correctness. No live model validation is performed by the
+regression suite.
 
 ### Diagnostics
 

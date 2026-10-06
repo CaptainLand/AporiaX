@@ -1,4 +1,5 @@
 import { assistantHistoryMessage } from "./runtime/task-conversation.js";
+import { modelReasoningParameters } from "../shared/model-reasoning.js";
 import { NATIVE_FILE_TOOLS, nativeFilePath } from "./runtime/file-access-policy.js";
 import { resolveMcpSteering, recoveryMcpServerIds } from "./mcp-mentions.js";
 import { currentLocalControlPolicy, assertLocalControlActive, assertLocalControlTool, isLocalControlToolAvailable, LOCAL_CONTROL_SPECIAL_TOOLS } from "./control/policy.js";
@@ -638,6 +639,7 @@ const PARALLEL_MAIN_TOOLS = new Set([
 
 const MUTATING_TOOLS = new Set([
   "write_file",
+  "cleanup_temporary_check",
   "apply_patch",
   "run_command",
   "start_process",
@@ -1408,6 +1410,7 @@ export async function runHarness({
         "Use workspace-relative paths only.",
         "Never claim a file was changed unless a file-writing tool succeeded or a Builder result explicitly reports integrated=true. Provisional Builder edits are not changes in the parent workspace.",
         "Prefer apply_patch for localized edits and write_file for new files or complete rewrites.",
+        "For disposable self-check scripts you create in this task, set write_file.temporary_self_check=true (new workspace scripts only, never deliverables). When finished, use cleanup_temporary_check with the exact returned path instead of shell deletion or extra cleanup scripts. Only registered unchanged scripts qualify; ordinary deletion and explicit approval/recovery restrictions are unchanged.",
         "Use concise Markdown headings and GFM tables when structure helps.",
         "When handing off an existing workspace file, use a Markdown link with a descriptive label and a workspace-relative path, for example [Report](docs/report.pdf) or [code](src/main.js:12). Use an absolute path in <angle brackets> only for a file outside the workspace. Never invent artifact paths; the desktop can open, save a copy, reveal and open these links in an IDE.",
         "Completion handoff only: when a requested deliverable is ready, lead with one short outcome sentence, then a short list of clickable links to the actual deliverable files. File size and version are optional when verified. Add only a brief validation result, a material caveat or the next necessary action. Do not append a development diary, repeated feature inventory, long self-check report or generic suggestions. If the user explicitly asks for a detailed report, follow that request instead.",
@@ -1578,7 +1581,7 @@ export async function runHarness({
   let anchorCaptureError = "";
   let anchorBaselinePromise = null;
   let anchorDirty = false;
-  const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: effectiveLoopPolicy.maxRepeatedEvidence });
+  const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: effectiveLoopPolicy.maxRepeatedEvidence, snapshot: savedMain?.toolProgress });
   let clarificationFailures = 0;
   const observeToolProgress = (toolCall, modelResult, changes = []) => {
     let input;
@@ -1648,6 +1651,7 @@ export async function runHarness({
     selectedMcpServerIds: mcpServers.filter(server => server.enabled !== false).map(server => server.id),
     strategyHistory: strategyHistory.snapshot(), taskAcceptance: taskAcceptance.snapshot(), rollingContext: rollingContext.snapshot(),
     loopMetrics: loopMetrics.snapshot(),
+    toolProgress: toolProgress.snapshot(),
           taskBrief: taskBrief.snapshot(), acceptance: taskAcceptance.snapshot().report,
           strategy: strategyHistory.briefing(),
     continuation: snapshotContinuation(selfCheck, changeMap), usage: totalUsage, cumulativeUsage: cumulativeUsage(), usageHistoryComplete,
@@ -1665,7 +1669,11 @@ export async function runHarness({
   });
 
   const applyRuntimeControlBoundary = async () => {
+    const resumingNoProgress = toolProgress.blocked && control?.snapshot?.().pauseReasons?.includes("no-progress");
     await control?.waitIfPaused?.(signal);
+    // A recovered paused run also requires explicit resume, but should not
+    // immediately re-pause using the exhausted snapshot after that action.
+    if (resumingNoProgress) toolProgress.reset();
     const steeringMessages = control?.consumeSteering?.() || [];
     if (!steeringMessages.length) return;
     const mcpSelection = await resolveMcpSteering({ workspacePath: workspaceRoot || "", messages: steeringMessages }, mcpServers);
@@ -2378,6 +2386,19 @@ export async function runHarness({
         signal,
         applyControlBoundary: applyRuntimeControlBoundary,
       });
+      if (toolProgress.blocked && typeof control?.pause === "function") {
+        // Save all tool receipts before waiting. No model call, automatic
+        // retry, or timed resume is allowed while this guard is paused.
+        await persistMainContext();
+        await saveRuntimeCheckpoint({ scopeId: runId, phase: "no-progress", status: "paused", pendingTools: [], plan });
+        control.pause("no-progress");
+        emit({ type: "runtime.no_progress.paused", message: "Repeated planning or unchanged evidence; progress saved. Add guidance before resuming.", decision: toolProgress.lastDecision });
+        await control.flush?.();
+        await control.waitIfPaused(signal);
+        toolProgress.reset();
+        await applyRuntimeControlBoundary();
+        await persistMainContext();
+      }
       toolProgress.assertBudget();
       strategyHistory.assertBudget();
       if (provider.supportsTools) {
@@ -2433,27 +2454,7 @@ export async function runHarness({
                 tool_choice: "auto",
               }
             : {}),
-          ...(provider.supportsThinking &&
-          provider.thinkingMode === "deepseek"
-            ? {
-                thinking: {
-                  type: thinking ? "enabled" : "disabled",
-                },
-                ...(thinking
-                  ? {
-                      reasoning_effort:
-                        effort === "max" ? "max" : "high",
-                    }
-                  : {}),
-              }
-            : {}),
-          ...(provider.supportsThinking &&
-          provider.thinkingMode === "reasoning-effort" &&
-          thinking
-            ? {
-                reasoning_effort: effort === "max" ? "high" : "medium",
-              }
-            : {}),
+          ...modelReasoningParameters(provider, { modelId, thinking, effort }),
       });
       const infer = () => completeLoopRequest({
         conversation, contextCheckpoints, accounting: tokenAccounting, contextWindowTokens,

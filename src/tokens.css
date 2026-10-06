@@ -20,6 +20,16 @@
   --text-3xl: 24px;
   --text-4xl: 30px;
 
+  --pane-header-height: 64px;
+  --pane-navigation-height: 44px;
+
+  /* Shared main/side-chat composer geometry; independent of the palette. */
+  --composer-textarea-min-height: 58px;
+  --composer-textarea-max-height: 156px;
+  --composer-toolbar-min-height: 42px;
+  --composer-bottom-space: 13px;
+  --composer-content-gap: 10px;
+
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;

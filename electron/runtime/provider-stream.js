@@ -11,6 +11,7 @@ import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, 
 import { modelOutputBudget } from "./output-budget.js";
 import { prepareCloudWindDown, observeCloudQuota } from "./cloud-wind-down.js";
 import { assertLocalControlActive, consumeLocalControlModelCall } from "../control/policy.js";
+import { beginModelResponseDiagnostic } from "./model-response-diagnostics.js";
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -176,14 +177,14 @@ function settledQuotaExhausted(receipt) {
     Number.isSafeInteger(receipt.quota.remainingMicros) && receipt.quota.remainingMicros <= 0;
 }
 
-async function fetchProviderResponse(provider, init, wire) {
+async function fetchProviderResponse(provider, init, wire, diagnostic) {
   if (provider.kind === "aporia-cloud") {
     if (typeof provider.authenticatedFetch !== "function") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
     }
     return provider.authenticatedFetch("/v1/chat/completions", init);
   }
-  return normalizeNativeResponse(await fetch(wire.url, init), wire);
+  return normalizeNativeResponse(await fetch(wire.url, init), wire, { observe: diagnostic?.observe });
 }
 
 export async function callModelProvider({
@@ -278,6 +279,8 @@ export function createOpenAICompatibleProvider({
     kind: config.kind,
     name: config.name,
     vendor: config.vendor,
+    modelId: model.id,
+    protocol: config.protocol,
     supportsImages: Boolean(model.supportsImages),
     supportsTools: model.supportsTools !== false,
     supportsThinking: Boolean(model.supportsThinking),
@@ -326,6 +329,10 @@ export async function callModelProviderOnce({
   // Count actual dispatch attempts (including retries), never a replayed
   // durable result. Parallel children inherit the same AsyncLocalStorage state.
   consumeLocalControlModelCall({ provider, body });
+  const diagnostic = beginModelResponseDiagnostic({ protocol: wire.protocol, modelId: body.model,
+    trace: { ...runtimeRequestTrace(), ...cloudTrace } });
+  const nativeProtocol = ["responses", "anthropic-messages"].includes(wire.protocol);
+  let diagnosticOutcome = "failed";
   const controller = new AbortController();
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });
@@ -357,7 +364,7 @@ export async function callModelProviderOnce({
         if (queue.state === "queued") clearTimeout(idleTimeout); else resetIdleTimeout();
         onEvent?.({ type: `response.cloud.${queue.state}`, ...queue });
       } } : {}),
-    }, wire);
+    }, wire, diagnostic);
 
     if (provider.kind === "aporia-cloud") {
       try { await rememberCloudReceipt(currentLoopRequestIdentity(), response.headers.get("x-aporia-request-id")); }
@@ -386,11 +393,15 @@ export async function callModelProviderOnce({
     let lastActivityAt = 0;
     const processLine = (line) => {
       const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) return;
+      if (!trimmed.startsWith("data:")) {
+        if (!nativeProtocol && trimmed.startsWith(":")) diagnostic?.observe(null);
+        return;
+      }
       const data = trimmed.slice(5).trim();
       if (!data) return;
-      if (data === "[DONE]") { sawDone = true; return; }
+      if (data === "[DONE]") { sawDone = true; if (!nativeProtocol) diagnostic?.observe(data); return; }
       const payload = JSON.parse(data);
+      if (!nativeProtocol) diagnostic?.observe(payload);
       if (provider.kind === "aporia-cloud" && ["queued", "admitted"].includes(payload.aporiaQueue?.state)) {
         const queue = payload.aporiaQueue;
         onEvent?.({ type: `response.cloud.${queue.state}`, state: queue.state, source: "gateway",
@@ -483,6 +494,7 @@ export async function callModelProviderOnce({
     if (finishReason === "tool_calls" && !toolCalls.filter(Boolean).length) failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE");
     if (!toolCalls.filter(Boolean).length && !content.trim()) failIncomplete("MODEL_EMPTY_RESPONSE");
 
+    diagnosticOutcome = "completed";
     return {
       finishReason: finishReason || (toolCalls.length ? "tool_calls" : "stop"),
       streamComplete: true,
@@ -540,6 +552,8 @@ export async function callModelProviderOnce({
   } finally {
     clearTimeout(idleTimeout);
     signal?.removeEventListener("abort", handleAbort);
+    // Do not let a slow local disk hold up task completion or tool execution.
+    void diagnostic?.finish({ outcome: diagnosticOutcome, interrupted: signal?.aborted || idleTimedOut });
   }
 }
 

@@ -629,7 +629,7 @@ export function createWitnessMonitor({
           timestamp,
           kind: "status",
           eventType: "control.paused",
-          detail: pauseReasons.includes("clarification") ? "等待你的回答：上下文已保留" : pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : pauseReasons.includes("provider-budget-wait") ? "等待 Cloud 全站费用结算：自动继续，不预占个人额度" : pauseReasons.includes("daily-budget") ? "Cloud 今日额度已达上限：进度已保存" : pauseReasons.includes("quota") ? "Cloud 额度不足：补充后可继续，进度已保存" : pauseReasons.includes("quota-wait") ? "等待其他 Cloud 请求结算：自动继续" : "用户暂停",
+          detail: pauseReasons.includes("clarification") ? "等待你的回答：上下文已保留" : pauseReasons.includes("no-progress") ? "重复规划或读取：已暂停付费调用，进度已保存，请检查后继续" : pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : pauseReasons.includes("provider-budget-wait") ? "等待 Cloud 全站费用结算：自动继续，不预占个人额度" : pauseReasons.includes("daily-budget") ? "Cloud 今日额度已达上限：进度已保存" : pauseReasons.includes("quota") ? "Cloud 额度不足：补充后可继续，进度已保存" : pauseReasons.includes("quota-wait") ? "等待其他 Cloud 请求结算：自动继续" : "用户暂停",
           status: "completed",
         });
         break;

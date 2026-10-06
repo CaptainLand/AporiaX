@@ -87,6 +87,7 @@ import {
   isImageAttachment,
 } from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
+import { ConversationSelectionMenu } from "./conversation/ConversationSelectionMenu.jsx";
 import { WorkbenchLayout } from "./workbench/WorkbenchLayout.jsx";
 import { WorkspaceFilePreview } from "./workbench/WorkspaceFilePreview.jsx";
 import { CollapsedDropRail } from "./workbench/CollapsedDropRail.jsx";
@@ -536,7 +537,6 @@ function Sidebar({
       </div>
 
       <div className="task-list">
-        <div className="section-label">{tr("项目", "Projects")}</div>
         {projects.length ? (
           projects.map((project) => {
             const collapsed = collapsedProjects.has(project.id) && !query;
@@ -546,6 +546,7 @@ function Sidebar({
                   <button
                     className="sidebar-project-toggle"
                     type="button"
+                    aria-expanded={!collapsed}
                     onClick={() =>
                       setCollapsedProjects((current) => {
                         const next = new Set(current);
@@ -557,21 +558,15 @@ function Sidebar({
                     title={project.path || project.name}
                   >
                     {collapsed ? (
-                      <ChevronRight size={13} />
+                      <Folder size={14} aria-hidden="true" />
                     ) : (
-                      <ChevronDown size={13} />
-                    )}
-                    {collapsed ? (
-                      <Folder size={15} />
-                    ) : (
-                      <FolderOpen size={15} />
+                      <FolderOpen size={14} aria-hidden="true" />
                     )}
                     <span>
                       {project.path
                         ? project.name
                         : tr("无工作区", "No workspace")}
                     </span>
-                    <small>{project.tasks.length}</small>
                   </button>
                   <button
                     className="sidebar-project-add"
@@ -593,6 +588,8 @@ function Sidebar({
                       <button
                         key={task.id}
                         className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
+                        title={task.title}
+                        aria-current={task.id === activeTaskId ? "page" : undefined}
                         onClick={() => {
                           setContextMenu(null);
                           onSelectTask(task.id);
@@ -613,7 +610,6 @@ function Sidebar({
                           });
                         }}
                       >
-                        <MessageSquare size={14} />
                         <span className="task-item-copy">
                           <span className="task-item-title">{task.title}</span>
                         </span>
@@ -1446,6 +1442,8 @@ function TaskWorkspace({
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewMenu, setViewMenu] = useState(null);
+  const [quoteRequest, setQuoteRequest] = useState(null);
+  const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [routeDialogOpen, setRouteDialogOpen] = useState(false);
   const [anchorVisible, setAnchorVisible] = useState(() => {
@@ -1980,6 +1978,7 @@ function TaskWorkspace({
             }`}
             aria-hidden={activeView !== "dialogue"}
           >
+            <ConversationSelectionMenu key={task.id} onNotice={onNotice} onOpenChange={setSelectionMenuOpen} onQuote={(text) => setQuoteRequest({ taskId: task.id, text })}>
             <Conversation
               task={task}
               isRunning={isRunning}
@@ -1993,6 +1992,7 @@ function TaskWorkspace({
               onSaveChanges={onSaveChanges}
               onNotice={onNotice}
             />
+            </ConversationSelectionMenu>
           </div>
           <div
             className={`thread-view-panel route-panel ${
@@ -2059,6 +2059,7 @@ function TaskWorkspace({
 
         {activeView === "understanding" && <div className="knowledge-return"><span>{isRunning ? tr("任务仍在运行，可随时返回对话", "Task is running. Return to chat at any time.") : tr("按知识项目独立保存，任务按需读取", "Saved per project; read by tasks on demand")}</span><button type="button" onClick={() => switchView("dialogue")}><MessageSquare size={14} />{tr("返回对话", "Back to chat")}</button></div>}
         <Composer
+          quoteRequest={quoteRequest}
           collapsed={activeView === "understanding"}
           task={task}
           providers={providers}
@@ -2085,7 +2086,7 @@ function TaskWorkspace({
       {workbench.layout.open ? (
         <WorkbenchLayout
           workbench={workbench}
-          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu) || knowledgeDialogOpen || routeDialogOpen}
+          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu) || selectionMenuOpen || knowledgeDialogOpen || routeDialogOpen}
           onNotice={onNotice}
           onNeedWorkspace={onSelectWorkspace}
           builtins={workbenchBuiltins}

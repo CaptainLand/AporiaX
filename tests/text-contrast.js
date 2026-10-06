@@ -1,7 +1,13 @@
 // Browser-side contrast measurement, including translucent ancestor surfaces
 // and group opacity. Target text is tested against its rendered background.
 export function measureTextContrast(element) {
-  const parse = value => { const v = value.match(/[\d.]+/g)?.map(Number) || [0, 0, 0, 0]; return [v[0], v[1], v[2], v[3] ?? 1]; };
+  const parse = value => {
+    const v = value.match(/[\d.]+/g)?.map(Number) || [0, 0, 0, 0];
+    // Chromium resolves color-mix() to color(srgb ...), whose channels are
+    // normalized, unlike rgb()/rgba(). Account surfaces use both formats.
+    const scale = value.startsWith('color(srgb ') ? 255 : 1;
+    return [v[0] * scale, v[1] * scale, v[2] * scale, v[3] ?? 1];
+  };
   const over = (fg, bg) => fg.slice(0, 3).map((v, i) => v * fg[3] + bg[i] * (1 - fg[3]));
   const chain = []; for (let node = element; node; node = node.parentElement) chain.unshift(node);
   const surfaces = []; let bg = [255, 255, 255];

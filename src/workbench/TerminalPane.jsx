@@ -67,7 +67,7 @@ export function TerminalPane({ tab, resource, workbench }) {
       <span className="terminal-connection" data-exited={exited} title={stateText + " · " + tr("关闭标签会结束会话", "Closing the tab ends the session")} aria-label={stateText} />
       <button aria-label={tr("搜索终端", "Search terminal")} title="Ctrl+F" onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }}><Search size={15} /></button>
       <button aria-label={tr("中断", "Interrupt")} title={tr("Ctrl+C · 中断当前命令，保留 Shell", "Ctrl+C · Interrupt command, keep shell")} disabled={exited || !resource} onClick={async () => { await controller.current?.command({ action: "interrupt" }); controller.current?.term.focus(); }}><Square size={12} /></button>
-      <button aria-label={tr("终端菜单", "Terminal menu")} aria-expanded={Boolean(menu)} onClick={() => setMenu(menu ? null : { right: 8, top: 38 })}><Ellipsis size={17} /></button>
+      <button aria-label={tr("终端菜单", "Terminal menu")} aria-expanded={Boolean(menu)} onClick={() => setMenu(menu ? null : { right: 8, top: "calc(var(--pane-navigation-height) + 4px)" })}><Ellipsis size={17} /></button>
     </div>
     {searchOpen && <div className="terminal-search" role="search" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeSearch(); } }}>
       <Search size={14} /><input ref={searchRef} aria-label={tr("搜索终端输出", "Search terminal output")} value={query} placeholder={tr("搜索输出", "Find in output")}

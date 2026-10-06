@@ -29,14 +29,103 @@ async function fixture(handler, options = {}) {
     let result;
     if (options.durable) {
       const runtime = createHarnessTaskRuntime({ dataDirectory: data });
-      result = await runtime.start({ runId: id, taskId, metadata: { workspacePath: workspace },
-        execute: ({ signal, control, emit }) => runHarness({ ...settings, signal, control, onEvent: (event) => { events.push(event); emit(event); } }) });
+      result = await runtime.start({ runId: id, taskId, metadata: { workspacePath: workspace }, onEvent: event => { if (event.type.startsWith("control.")) events.push(event); },
+        execute: ({ signal, control, emit }) => runHarness({ ...settings, signal, control, onEvent: (event) => { events.push(event); emit(event); options.onRuntimeEvent?.(event, { runtime, runId: id, requests: () => requests }); } }) });
     } else result = await runHarness(settings);
     return { result, events, requests, workspace, runId: id };
   } finally { clearTimeout(timer); }
 }
 const toolResult = (body, id) => JSON.parse(body.messages.find((message) => message.tool_call_id === id).content);
 try {
+  await test("default no-progress budget stops repeating reads before another paid round", async () => {
+    const run = await fixture((_body, n) => tools(call(`same-${n}`, "list_directory", { path: "." })));
+    assert.equal(run.requests, 6);
+    assert.equal(run.result.status, "blocked");
+    assert.match(run.result.content, /LOOP_NO_PROGRESS/);
+    assert.equal(await readFile(join(run.workspace, "a.txt"), "utf8"), "ORIGINAL");
+  });
+  await test("pure plan rewrites pause durably and do not automatically spend again", async () => {
+    let paused = false, resumed = false, resumePromise, pausedRecovery;
+    const run = await fixture((_body, n) => n <= 6 ? tools(call(`plan-${n}`, "update_plan", {
+      explanation: `wording-${n}`, steps: [{ title: `Inspect sources ${n}`, status: "in_progress" }, { title: "Implement", status: "pending" }],
+    })) : sse({ content: "Stopped planning after explicit user resume." }), {
+      durable: true,
+      onRuntimeEvent(event, { runtime, runId, requests }) {
+        if (event.type !== "runtime.no_progress.paused") return;
+        paused = true;
+        resumePromise = (async () => {
+          const before = requests();
+          await new Promise(resolve => setTimeout(resolve, 80));
+          assert.equal(requests(), before, "no automatic paid calls while paused");
+          assert.equal(before, 6);
+          const saved = await getRunRecoveryContext(data, runId);
+          pausedRecovery = saved;
+          assert.equal(saved.contexts[runId].toolProgress.planning, 6);
+          assert.equal(saved.contexts[runId].conversation.filter(message => message.role === "tool").length, 6);
+          resumed = await runtime.resume(runId); // Explicit test user action.
+        })();
+      },
+    });
+    await resumePromise;
+    assert(paused && resumed);
+    assert.equal(run.requests, 7);
+    assert.equal(run.result.status, "completed", run.result.content);
+    assert(run.events.some(event => event.type === "control.paused" && event.pauseReasons?.includes("no-progress")));
+    let recoveryResume;
+    const recovered = await fixture(() => sse({ content: "Resumed only after reviewing the preserved results." }), {
+      durable: true, recoveryContext: pausedRecovery, workspacePath: run.workspace,
+      onRuntimeEvent(event, { runtime, runId, requests }) {
+        if (event.type !== "runtime.no_progress.paused") return;
+        recoveryResume = (async () => {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          assert.equal(requests(), 0, "recovery must not bypass the persisted guard");
+          assert.equal(runtime.getActiveRun(runId).paused, true);
+          await runtime.resume(runId);
+        })();
+      },
+    });
+    await recoveryResume;
+    assert(recoveryResume, "a recovered exhausted guard must pause");
+    assert.equal(recovered.requests, 1);
+    assert.equal(recovered.result.status, "completed", recovered.result.content);
+  });
+  await test("relay Claude uses the selected effort in the actual main request", async () => {
+    const run = await fixture(body => {
+      assert.equal(body.reasoning_effort, "xhigh");
+      assert.equal(body.thinking, undefined);
+      return sse({ content: "Fixture complete." });
+    }, { provider: { ...provider, vendor: "openai-compatible", models: [{ id: "claude-opus-5-5", supportsThinking: false, thinkingMode: "none", supportsTools: true }] }, modelId: "claude-opus-5-5", thinking: false, effort: "xhigh" });
+    assert.equal(run.result.status, "completed", run.result.content);
+  });
+  await test("genuine file progress may continue beyond six model rounds", async () => {
+    const run = await fixture((_body, n) => n <= 9 ? tools(
+      call(`write-${n}`, "write_file", { path: "a.txt", content: `VERSION-${n}` }),
+      call(`plan-${n}`, "update_plan", { steps: [{ title: `Finish iteration ${n}`, status: "completed" }] }),
+    ) : sse({ content: "Delivered actual file changes without a false verification claim." }));
+    assert.equal(run.requests, 10);
+    assert.equal(run.result.status, "completed", run.result.content);
+    assert.equal(await readFile(join(run.workspace, "a.txt"), "utf8"), "VERSION-9");
+    assert(!run.events.some(event => event.type === "runtime.no_progress.paused"));
+  });
+  await test("child Claude loop keeps low effort and stops repeated evidence at six calls", async () => {
+    const workspace = join(root, "claude-child"); await mkdir(workspace); await writeFile(join(workspace, "a.txt"), "SOURCE");
+    const model = { id: "claude-opus-5-5", supportsThinking: false, thinkingMode: "none", supportsTools: true };
+    const config = { ...provider, vendor: "openai-compatible", models: [model] };
+    let requests = 0;
+    globalThis.fetch = async (_url, init) => {
+      assert.equal(JSON.parse(init.body).reasoning_effort, "low");
+      assert(++requests <= 6);
+      return tools(call(`read-${requests}`, "read_file", { path: "a.txt" }));
+    };
+    const result = await runSubagentTask({ __kernelRouted: true, agentId: "claude-child", input: { role: "explore", task: "Inspect", background: false, scope: ["."], maxRounds: 8 },
+      provider: createOpenAICompatibleProvider({ config, model }), modelId: model.id, modelConfig: model,
+      thinking: false, effort: "low", workspaceRoot: workspace, parentPermissionPolicy: { "*": "allow" }, approvalMode: "manual",
+      signal: AbortSignal.timeout(12000), language: "en", emit: () => {}, toolRegistry: TOOL_REGISTRY, parseToolArguments: item => JSON.parse(item.function.arguments), session: {},
+      executeAuthorizedTool: async ({ toolCall }) => { assert.equal(toolCall.function.name, "read_file"); return { modelResult: { path: "a.txt", content: await readFile(join(workspace, "a.txt"), "utf8") } }; } });
+    assert.equal(requests, 6);
+    assert.equal(result.status, "failed");
+    assert.match(result.summary, /LOOP_NO_PROGRESS/);
+  });
   await test("real loop records source-backed decisions and recovers them from SQLite", async () => {
     const first = await fixture((body, n) => {
       if (n === 1) return tools(call("read-source", "read_file", { path: "a.txt" }));

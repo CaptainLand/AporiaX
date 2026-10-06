@@ -56,6 +56,7 @@ try {
   assert.ok(await page.evaluate(() => window.routeCalls.some((call) => call.action === 'file-check' && call.path === 'index.html')));
   await page.locator('.thread-view-tabs').getByRole('button', { name: '对话', exact: true }).click();
   await page.locator('.dialogue-panel.active').waitFor();
+  assert.equal(await page.locator('.dialogue-panel.active .assistant-message-heading strong').innerText(), 'AporiaX', 'Dialogue uses assistant identity; detailed verification state stays in execution records');
   assert.deepEqual(errors, []);
   console.log('Route activity production app: PASS (strict CSP, main/sidebar, outcome, details, validated file link, adjacent dialogue).');
 } finally { await browser?.close(); await new Promise((resolve) => server.httpServer.close(resolve)); }

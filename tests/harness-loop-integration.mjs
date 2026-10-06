@@ -72,8 +72,8 @@ try {
     assert.equal(result.status, "blocked", result.content); assert.match(result.content, /LOOP_NO_PROGRESS/);
     assert.equal(requests, 6); assert.equal(events.filter((event) => event.type === "tool.completed").length, 6);
   });
-  await test("default progress policy remains advisory rather than cancelling work", async () => {
-    const { result, requests } = await fixture((_body, request) => request <= 12 ? toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]) : sse({ content: "No new evidence; report blocker." }));
+  await test("explicit zero progress budget keeps the advisory opt-out", async () => {
+    const { result, requests } = await fixture((_body, request) => request <= 12 ? toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]) : sse({ content: "No new evidence; report blocker." }), { loopPolicy: { maxRepeatedEvidence: 0 } });
     assert.equal(result.status, "completed", result.content); assert.equal(requests, 13); assert.equal(result.loopMetrics.noProgressWarnings, 4);
   });
   await test("real main loop preserves both parts of a bounded output continuation", async () => {

@@ -33,6 +33,10 @@ const providers = [
     ],
   },
 ];
+const reasoningFixture = new URLSearchParams(location.search).get("reasoning");
+const hintState = new URLSearchParams(location.search).get("hintState");
+if (hintState === "locked") providers.splice(0);
+if (reasoningFixture) providers[0].models.push({ id: "claude-opus-5-5", name: "Claude Opus 5.5", shortName: "Opus 5.5", supportsThinking: false, thinkingMode: "none", supportsTools: true });
 
 function Fixture() {
   const [task, setTask] = useState({
@@ -41,7 +45,7 @@ function Fixture() {
     workspacePath: "D:/Fixture",
     workspaceName: "Fixture",
     providerId: "fake",
-    modelId: "vision",
+    modelId: reasoningFixture === "claude" ? "claude-opus-5-5" : "vision",
     thinking: false,
     effort: "high",
     builderLimit: 2,
@@ -59,17 +63,19 @@ function Fixture() {
               <button type="button" className="theme-toggle">主题</button>
             </div>
           </header>
+          {/* Match the app's bottom-docked composer so upward menus fit on screen. */}
+          <div className="thread-body" style={{ flex: "1 1 auto", minHeight: 0 }} />
           <Composer
             task={task}
             providers={providers}
-            onSend={() => true}
+            onSend={() => { window.fixtureSendCount = (window.fixtureSendCount || 0) + 1; return true; }}
             onStop={() => {}}
             onPause={() => {}}
             onResume={() => {}}
             onUpdateTask={(patch) => setTask((current) => ({ ...current, ...patch }))}
             onNotice={(message) => window.notices.push(message)}
-            isRunning={false}
-            isPaused={false}
+            isRunning={hintState === "running" || hintState === "paused"}
+            isPaused={hintState === "paused"}
           />
         </section>
         {workbench.layout.open ? (

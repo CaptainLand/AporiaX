@@ -11,6 +11,7 @@ import { getAvailableModels } from "../models/model-catalog.js";
 import { SideChatModelPicker, sideChatModelLabel } from "./SideChatModelPicker.jsx";
 import { SideChatDialog } from "./SideChatDialog.jsx";
 import "./side-chat.css";
+import { ConversationSelectionMenu, appendConversationQuote } from "../conversation/ConversationSelectionMenu.jsx";
 
 const states = { running: "运行中", paused: "已暂停", completed: "已完成", failed: "发生错误", stopped: "已停止", interrupted: "已中断", idle: "未运行", waiting: "等待中", thinking: "等待模型" };
 const activities = { "response.activity": "收到模型流式数据", "response.delta": "模型正在输出", "response.retry": "模型请求重试", "tool.started": "正在执行工具", "tool.completed": "工具执行结束", "subagent.started": "子 Agent 开始工作", "turn.completed": "本轮结束" };
@@ -211,6 +212,11 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
         <button type="button" className="side-chat-icon" aria-label={tr("清空侧聊历史", "Clear side chat history")} title={tr("清空当前模式的侧聊历史", "Clear this mode's side-chat history")} disabled={busy || loading || !messages.length} onClick={() => showDialog({ kind: "clear" })}><Trash2 size={14} /></button>
       </div>
     </header>
+    <ConversationSelectionMenu key={viewKey} onQuote={(text) => {
+      const next = appendConversationQuote(draft, text);
+      if (next.length > 8000) { setError(tr("引用后超过侧聊 8000 字符上限，请缩短选区或草稿。", "The quote exceeds the 8,000-character side-chat limit. Shorten the selection or draft.")); return; }
+      updateDraft(next); inputRef.current?.focus();
+    }}>
     <div className="side-chat-messages" ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }}>
       {!messages.length && !loading && <div className="side-chat-welcome">
         <MessagesSquare size={27} strokeWidth={1.4} /><h3>{tr("在旁边聊，不打断工作", "Ask without interrupting")}</h3>
@@ -234,12 +240,13 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
       </article>)}
       {pending && !running && <p className="side-chat-meta">{tr("正在连接侧聊模型…", "Connecting…")}</p>}
     </div>
+    </ConversationSelectionMenu>
     {error && <div className="side-chat-error" role="alert">{error}<button disabled={busy} onClick={() => { setError(""); setRetryLoad((n) => n + 1); }}>{tr("刷新", "Refresh")}</button></div>}
     <form className="side-chat-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
       <textarea ref={inputRef} rows={1} aria-label={tr("侧聊输入", "Side chat input")} placeholder={tr("问问 AporiaX…", "Message AporiaX…")} maxLength={8000} value={draft} onChange={(e) => updateDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
       <div className="side-chat-composer-footer">
-        <SideChatModelPicker options={options} choice={choice} disabled={busy} onManageProviders={onManageProviders} onSelect={(value) => {
+        <SideChatModelPicker providers={providers} options={options} choice={choice} disabled={busy} onManageProviders={onManageProviders} onSelect={(value) => {
           setSelected(value); try { localStorage.setItem(scope + ":sidechat-model", value); } catch { setError("模型选择无法保存：本地存储不可用。"); }
         }} />
         {busy ? <button type="button" className="side-chat-submit" aria-label={tr("停止侧聊", "Stop side chat")} onClick={() => void cancel()}><Square size={14} /></button>

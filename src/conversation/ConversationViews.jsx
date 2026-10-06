@@ -865,15 +865,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
             ? tr("运行失败", "Run failed")
             : interrupted
               ? tr("任务已停止", "Task stopped")
-              : message.status === "completed" && message.selfCheck?.delivery?.status === "unverified"
-                ? tr("已交付 · 未验证", "Delivered · Unverified")
-                : message.status === "completed" && message.selfCheck?.delivery?.status === "unavailable"
-                  ? tr("已交付 · 验证不可用", "Delivered · Verification unavailable")
-                  : message.status === "completed" && message.selfCheck?.delivery?.status === "failed"
-                    ? tr("已交付 · 验证未通过", "Delivered · Checks failed")
-                    : message.status === "completed" && message.selfCheck?.verification?.waived
-                      ? tr("已交付 · 未验证", "Delivered · Unverified")
-                      : "AporiaX"}
+              : "AporiaX"}
         </strong>
         <RunDurationChip message={message} />
         {hasAnchor && (

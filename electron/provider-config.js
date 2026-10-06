@@ -1,4 +1,5 @@
 import { normalizeProviderProtocol } from "./runtime/native-provider-codec.js";
+import { isClaudeModel, claudeReasoningProfile } from "../shared/model-reasoning.js";
 import { randomUUID } from "node:crypto";
 import { modelSupportsVision, normalizeImageCapability } from "./model-vision.js";
 
@@ -145,7 +146,10 @@ export function inferModelCapabilities(modelId, vendor) {
   const supportsImages = modelSupportsVision({ id: modelId });
   let supportsThinking = false;
   let thinkingMode = "none";
-  if (vendor === "deepseek") {
+  if (isClaudeModel(modelId)) {
+    supportsThinking = true;
+    thinkingMode = "reasoning-effort";
+  } else if (vendor === "deepseek") {
     supportsThinking = /deepseek|reasoner/i.test(value);
     thinkingMode = supportsThinking ? "deepseek" : "none";
   } else if (vendor === "anthropic") {
@@ -180,6 +184,10 @@ export function normalizeProviderModels(models, vendor) {
       input && typeof input === "object" && !Array.isArray(input)
         ? input
         : {};
+    // Older versions persisted host-inferred false/none for relay Claude.
+    // Correct that stale inference without touching keys, endpoints or routes.
+    const legacyClaude = isClaudeModel(modelId) && source.reasoningCapabilitySource !== "explicit";
+    const profile = claudeReasoningProfile(modelId);
     normalized.push({
       id: modelId,
       name: String(source.name || modelId).slice(0, 240),
@@ -188,14 +196,16 @@ export function normalizeProviderModels(models, vendor) {
       ).slice(0, 40),
       ...normalizeImageCapability({ ...source, id: modelId }),
       supportsThinking:
-        typeof source.supportsThinking === "boolean"
+        legacyClaude ? true : typeof source.supportsThinking === "boolean"
           ? source.supportsThinking
           : inferred.supportsThinking,
-      thinkingMode: ["none", "deepseek", "reasoning-effort"].includes(
+      thinkingMode: legacyClaude ? "reasoning-effort" : ["none", "deepseek", "reasoning-effort"].includes(
         source.thinkingMode,
       )
         ? source.thinkingMode
         : inferred.thinkingMode,
+      ...(source.reasoningCapabilitySource === "explicit" ? { reasoningCapabilitySource: "explicit" } : {}),
+      ...(profile || {}),
       supportsTools:
         typeof source.supportsTools === "boolean"
           ? source.supportsTools

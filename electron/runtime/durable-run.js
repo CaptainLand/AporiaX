@@ -49,7 +49,7 @@ function stableInput(value) {
 // file mutation. They remain journaled and keep normal tool permissions.
 const REPLAY_SAFE = new Set(["browser_open", "browser_close"]);
 export const isReplaySafeNativeTool = (name) => REPLAY_SAFE.has(name);
-const FILE_MUTATIONS = new Set(["write_file", "apply_patch", "delete_file", "create_directory"]);
+const FILE_MUTATIONS = new Set(["write_file", "apply_patch", "cleanup_temporary_check", "delete_file", "create_directory"]);
 function sameTarget(previous, tool, input, context, scope) {
   if ((previous.scope || null) !== (scope || null)) return false;
   if (!FILE_MUTATIONS.has(previous.tool) || !FILE_MUTATIONS.has(tool) || !previous.target || !input?.path) return false;

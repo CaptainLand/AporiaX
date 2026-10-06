@@ -11,10 +11,17 @@ try {
   const page = await browser.newPage();
   const errors = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/task-outcomes.html");
-  for (const title of ["部分完成", "等待补充信息", "任务受阻", "已交付 · 未验证", "运行失败", "任务已停止"]) {
+  for (const title of ["部分完成", "等待补充信息", "任务受阻", "AporiaX", "运行失败", "任务已停止"]) {
     await page.locator("#static-outcomes .assistant-message-heading strong").filter({ hasText: title }).waitFor();
   }
   assert.equal(await page.locator("#static-outcomes .assistant-message").count(), 6);
+  assert.deepEqual(await page.locator("#completed-headings .assistant-message-heading strong").allTextContents(), Array(6).fill("AporiaX"), "Completed replies show assistant identity, not verification status");
+  assert.deepEqual(await page.locator("#completed-headings .aporiax-run-duration").allTextContents(), Array(6).fill("17s"), "Elapsed time remains available");
+  await mkdir(".tmp", { recursive: true });
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
+    await page.locator("#completed-headings").screenshot({ path: `.tmp/completed-headings-${theme}.png` });
+  }
   assert.equal(await page.getByRole("link", { name: "成果", exact: true }).getAttribute("href"), "https://example.invalid/result");
   const flow = page.locator("#retry-flow");
   const file = flow.getByRole("link", { name: "资料 #1.docx", exact: true });
@@ -53,5 +60,5 @@ try {
   await flow.getByRole("button", { name: "切换新任务", exact: true }).click();
   assert.equal(await flow.locator(".assistant-message.error, .witness-panel, .historical-run").count(), 0);
   assert.deepEqual(errors, []);
-  console.log("Task outcomes browser: six states, saved file links, failure/follow-up/retry/new task, no stale Witness: PASS");
+  console.log("Task outcomes browser: six states, six completion labels = AporiaX + unchanged duration (light/dark), saved file links, failure/follow-up/retry/new task, no stale Witness: PASS");
 } finally { await browser?.close(); await server.close(); }

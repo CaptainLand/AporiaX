@@ -210,7 +210,6 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
     <div className="route-view route-activity">
       <header className="ra-heading">
         <div className="ra-heading-copy">
-          <span className="ra-eyebrow">{tr('执行记录', 'Activity')}<i aria-hidden="true">/</i>{tr('第 {count} 轮', 'Run {count}', { count: selectedIndex + 1 })}{runs.length > 1 && <span>{tr('共 {count} 轮', 'of {count}', { count: runs.length })}</span>}</span>
           <h2>{selectedRun?.summary || task.title}</h2>
         </div>
         <div className="ra-toolbar" ref={runMenuRef}>
@@ -315,7 +314,7 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
           {filtered.length > visible.length && <button className="ra-load-older" type="button" onClick={() => { rememberViewport(); setFollow(false); setLimit((value) => value + 40); }}>{tr('显示更早的记录（剩余 {count} 条）', 'Show earlier records ({count} remaining)', { count: filtered.length - visible.length })}</button>}
           {!visible.length && <p className="ra-empty-list">{filter === 'attention' ? tr('暂无需关注的记录', 'No attention items') : tr('暂无已结束的动作', 'No finished actions yet')}</p>}
         </div>
-        <footer className="ra-retention">{tr('最新记录在上 · 展示可观察的事件，不代表完成百分比', 'Newest first · Observable events, not a completion percentage')}{selectedRun?.witness?.omittedRecords > 0 && <span>{tr('Witness 仅保留最近 {count} 条；更早的工具记录若已保存仍可查看。', 'Witness retains its latest {count} records; older saved tool entries remain available.', { count: selectedRun.witness.records.length })}</span>}</footer>
+        {selectedRun?.witness?.omittedRecords > 0 && <footer className="ra-retention"><span>{tr('Witness 仅保留最近 {count} 条；更早的工具记录若已保存仍可查看。', 'Witness retains its latest {count} records; older saved tool entries remain available.', { count: selectedRun.witness.records.length })}</span></footer>}
       </section>
     </div>
 

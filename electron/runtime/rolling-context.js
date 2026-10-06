@@ -5,6 +5,7 @@ import { isAnchorRestoreNotice } from "../anchor-restore-notice.js";
 import { explicitlyReplacesAllConstraints } from "./human-constraints.js";
 import { createLoopRequestIdentity, withLoopRequestIdentity } from "./cloud-request-identity.js";
 import { runtimeRunControl } from "./durable-run.js";
+import { modelReasoningParameters } from "../../shared/model-reasoning.js";
 import { completeWithSteering } from "./steerable-completion.js";
 import { isTemporaryNetworkError } from "./run-control.js";
 
@@ -111,7 +112,7 @@ export class RollingContext {
         Array.isArray(message.content) && message.content.some(part => part.type !== "text");
       const selected = [], sources = [];
       const makeBody = () => ({ model: modelId, stream: true, max_tokens: 3072,
-        ...(provider.supportsThinking && provider.thinkingMode === "deepseek" ? { thinking: { type: "disabled" } } : {}),
+        ...modelReasoningParameters(provider, { modelId, thinking: false, effort: "low" }),
         messages: [{ role: "system", content: POLICY }, { role: "user", content: JSON.stringify({
           revision: this.state.revision, previous_summary: this.state.summary, sources }) }] });
       for (const group of groups.slice(0, -8)) {

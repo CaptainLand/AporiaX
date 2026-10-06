@@ -4,8 +4,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { homedir } from "node:os";
 import { parsePatch } from "diff";
 
-export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "inspect_office_file", "write_file", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
-const WRITES = new Set(["write_file", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
+export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "inspect_office_file", "write_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
+const WRITES = new Set(["write_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const scope = new AsyncLocalStorage();
 let settings = () => ({ enabled: false, protectedPaths: [] });
 // Trusted main-process wiring only. This function is not exposed over IPC or tools.

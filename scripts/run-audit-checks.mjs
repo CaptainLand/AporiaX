@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'claude-compatibility.mjs', 'model-response-capture.mjs', 'model-response-diagnostics.mjs', 'temporary-check-cleanup.mjs',
   'global-file-access.mjs',
   'control-runtime-storage.mjs', 'local-control-workspaces.mjs', 'local-control-desktop-workspaces.mjs', 'local-control-policy.mjs',
   'local-control-service.mjs', 'local-control-http.mjs', 'local-control-desktop.mjs', 'local-control-mcp.mjs',

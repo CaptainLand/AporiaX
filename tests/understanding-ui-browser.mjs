@@ -241,7 +241,9 @@ try {
     dialog = await openSettings();
     await dialog.getByText("本任务：按需读取", { exact: true }).waitFor();
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "在 示例项目 中新建任务", exact: true }).click();
+    const projectAdd = page.getByRole("button", { name: "在 示例项目 中新建任务", exact: true });
+    await projectAdd.locator("..").hover();
+    await projectAdd.click();
     const modal = page.locator(".new-task-modal");
     assert.equal(await modal.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "false", "New tasks default off independently");
     await modal.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).click();

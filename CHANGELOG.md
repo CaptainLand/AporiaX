@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-rc.4 — 2026-10-06
+
+Windows release candidate, not final 1.0.0. MIT remains in effect; existing Cloud billing, server security and minimum client version are unchanged.
+
+- Share daylight layout geometry with dark mode, preserve conversation reading position on theme switches, and unify scrollbar styling.
+- Flatten project/task rows, match ordinary conversation typography, remove duplicate labels and generic hints, and use neutral search focus.
+- Align main/side-chat composer heights and bottom edges, including real running/paused notices; retain multiline growth and a small Witness gap.
+- Reuse one model picker for main/side chat while retaining independent side-chat selection and main-task reasoning controls.
+- Correct Claude relay capability/effort mapping without changing protocol; pause repeated no-progress planning/evidence loops after the default six-repeat budget.
+- Add recoverable cleanup for registered, unchanged self-check scripts created by the active task. Ordinary deletion permissions remain unchanged.
+- Add explicit one-request local response diagnostics, OFF by default; readable provider-returned reasoning only, with no request credentials or Cloud upload.
+- Include conversation selection actions, desktop account/heading refinements, Git/workspace UI updates and refreshed Windows shell icons.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-rc.4.md)
+
 ## 1.0.0-rc.2 — 2026-09-30
 
 Windows release candidate on the default GitHub update channel; not final 1.0.0. This release does not deploy Web / Cloud or raise the minimum client version. MIT remains in effect.

@@ -115,13 +115,13 @@ export function LocalAccountPanel() {
           title={tr("Aporia Account 与周额度", "Aporia Account and weekly quota")}
           type="button"
         >
-          <AccountAvatar profile={profile} compact />
           <span className="local-account-profile-copy">
             <strong>{visibleName}</strong>
             <span className="local-account-quota-row">
               <small>{tr("周额度", "Weekly")}</small>
-              <span className="local-account-quota-track" aria-hidden="true"><i style={{ width: `${remaining}%` }} /></span>
+              <span className="local-account-quota-percent">{remaining}%</span>
             </span>
+            <span className="local-account-quota-track" aria-hidden="true"><i style={{ width: `${remaining}%` }} /></span>
           </span>
         </button>
       </div>

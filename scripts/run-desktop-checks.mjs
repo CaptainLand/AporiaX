@@ -5,6 +5,12 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const tests = [
+  ['node', 'claude-reasoning-browser.mjs'], ['node', 'desktop-ui-details-browser.mjs'],
+  ['node', 'pane-alignment-browser.mjs'], ['node', 'sidebar-compact-browser.mjs'],
+  ['node', 'theme-layout-parity-browser.mjs'], ['node', 'composer-alignment-browser.mjs'],
+  ['node', 'model-picker-parity-browser.mjs'], ['node', 'ui-copy-cleanup-browser.mjs'],
+  ['node', 'conversation-turn-spacing-browser.mjs'], ['node', 'task-outcomes-browser.mjs'],
+  ['node', 'desktop-theme-electron.mjs'],
   ['node', 'local-control-ui-browser.mjs'],
   ['node', 'model-onboarding-browser.mjs'],
   ['node', 'understanding-ui-browser.mjs'],

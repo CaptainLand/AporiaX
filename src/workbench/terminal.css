@@ -2,7 +2,7 @@
 .terminal-pane[data-terminal-theme="dark"] { --term-bg:var(--gray-12);--term-text:var(--gray-7);--term-muted:var(--gray-10);--term-line:var(--gray-12);--term-alt:var(--gray-12);--term-accent:var(--accent-8); }
 .terminal-pane button { color:inherit;background:transparent;cursor:pointer; }
 .terminal-pane button:disabled { opacity:.4;cursor:default; }
-.terminal-toolbar { display:flex;align-items:center;gap:5px;min-height:36px;padding:3px 10px;border-bottom:1px solid var(--term-line);flex-shrink:0; }
+.terminal-toolbar { display:flex;align-items:center;gap:5px;flex:0 0 var(--pane-navigation-height);min-height:var(--pane-navigation-height);padding:3px 10px;border-bottom:1px solid var(--gray-5);background:var(--bg-app);color:var(--text-2); }
 .terminal-location { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-xs);color:var(--term-muted); }
 .terminal-connection { width:5px;height:5px;border-radius:50%;background:var(--term-accent);margin:0 5px; }
 .terminal-connection[data-exited="true"] { background:var(--term-muted); }
