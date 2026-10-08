@@ -24,6 +24,7 @@ try {
     const facts = Array.from({ length: 18 }, (_, i) => ({ id: "fact-" + i, category: categories[i % 8], content: content[i % 8] + (i > 7 ? ` 补充记录 ${i}。` : ""), confidence: .85, lastConfirmedAt: new Date().toISOString(), evidence: [{ type: i % 2 ? "user" : "file", reference: i % 2 ? "任务中的项目约定" : "package.json", detail: "这是一段支持该条目的来源说明。" }] }));
     window.fixture = { state: { facts, currentRevision: 13, settings: { useForContext: false, autoCurate: false }, revisions: [{ id: "r13", number: 13, summary: "补充项目知识", factCount: 18, createdAt: new Date().toISOString(), changes: [] }, { id: "r12", number: 12, summary: "记录常用命令和约定", factCount: 16, createdAt: new Date().toISOString(), changes: [{ operation: "add", category: "command", content: "npm start 启动项目" }] }] }, calls: [], failSettings: false, failLoad: false };
     const fixture = window.fixture;
+    fixture.knowledgeReads = [];
     window.desktop = {
       theme: { set: async () => {} }, account: { get: async () => ({ status: "anonymous" }) },
       providers: { list: async () => [{ id: "own", name: "自己的 API", models: [{ id: "own-model", name: "Own model", shortName: "Own model" }] }] },
@@ -32,9 +33,9 @@ try {
       workspace: { listTree: async () => ({ entries: [] }) },
       workbench: { request: async (request) => { fixture.calls.push(request); return request.action === "list" ? [] : true; }, subscribe: () => () => {} },
       understanding: {
-        projects: async () => [{ id: "legacy", name: "未分类（旧知识）" }, ...(fixture.projects || [])],
+        projects: async () => { fixture.knowledgeReads.push("projects"); return [{ id: "legacy", name: "未分类（旧知识）" }, ...(fixture.projects || [])]; },
         createProject: async ({ name, description }) => { if (fixture.failCreate) throw new Error("创建失败，请重试"); const existing = (fixture.projects || []).find((p) => p.name === name); if (existing) return { project: existing, created: false }; const project = { id: "kp-test-project", name, description }; fixture.projects = [...(fixture.projects || []), project]; return { project, created: true }; },
-        get: async (request) => { if (fixture.failLoad) throw new Error("读取失败，请重试"); if (fixture.loadDelay?.[request?.knowledgeProjectId]) await new Promise((resolve) => setTimeout(resolve, fixture.loadDelay[request.knowledgeProjectId])); if (request?.knowledgeProjectId && request.knowledgeProjectId !== "legacy") return { facts: [], revisions: [], currentRevision: 0, settings: { autoCurate: false } }; return structuredClone(fixture.state); },
+        get: async (request) => { fixture.knowledgeReads.push("get"); if (fixture.failLoad) throw new Error("读取失败，请重试"); if (fixture.loadDelay?.[request?.knowledgeProjectId]) await new Promise((resolve) => setTimeout(resolve, fixture.loadDelay[request.knowledgeProjectId])); if (request?.knowledgeProjectId && request.knowledgeProjectId !== "legacy") return { facts: [], revisions: [], currentRevision: 0, settings: { autoCurate: false } }; return structuredClone(fixture.state); },
         setSettings: async ({ settings }) => { fixture.calls.push({ action: "settings", settings }); if (fixture.failSettings) throw new Error("保存失败，请重试"); if (fixture.settingsDelay) await new Promise((resolve) => setTimeout(resolve, fixture.settingsDelay)); fixture.state.settings = { ...fixture.state.settings, ...settings }; return structuredClone(fixture.state); },
         revert: async (request) => { fixture.calls.push({ action: "revert", ...request }); fixture.state.currentRevision = 14; return { state: structuredClone(fixture.state) }; },
       },
@@ -53,6 +54,14 @@ try {
     await page.screenshot({ path: ".tmp/understanding-ui/before.png" });
     console.log("BASELINE: large header/settings/stats, permanent history column, full composer visible.");
   } else {
+    const enableKnowledge = (scope = page) => scope.getByRole("button", { name: "为此对话开启项目知识", exact: true });
+    await page.getByText("此对话尚未开启项目知识", { exact: true }).waitFor();
+    assert.equal(await page.locator(".knowledge-item, .knowledge-project-trigger, .knowledge-count").count(), 0, "Default-off tasks never display stored knowledge or project metadata");
+    assert.deepEqual(await page.evaluate(() => window.fixture.knowledgeReads), [], "Disabled knowledge does not fetch projects or facts");
+    await page.screenshot({ path: ".tmp/understanding-ui/disabled-light.png" });
+    await enableKnowledge().click();
+    await page.waitForFunction(() => window.fixture.tasks?.find((task) => task.id === "knowledge-fixture")?.knowledgeEnabled === true);
+    assert.equal(await page.evaluate(() => window.fixture.state.settings.autoCurate), false, "Enabling this task does not enable automatic recording");
     await page.locator(".knowledge-item").first().waitFor();
     assert.equal(await page.locator(".knowledge-item").count(), 18);
     assert.equal(await page.getByRole("textbox", { name: "任务输入", exact: true }).isVisible(), false);
@@ -116,8 +125,8 @@ try {
     let dialog;
     dialog = await openSettings();
     await dialog.getByText("18 条已保存", { exact: true }).waitFor();
-    await dialog.getByText("本任务：知识关闭", { exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "false");
+    await dialog.getByText("本任务：按需读取", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "true");
     await page.evaluate(() => { window.fixture.failSettings = true; });
     await dialog.getByRole("switch", { name: "自动记录", exact: true }).click();
     await dialog.getByRole("alert").waitFor();
@@ -125,7 +134,7 @@ try {
     await page.evaluate(() => { window.fixture.failSettings = false; });
     await dialog.getByRole("switch", { name: "自动记录", exact: true }).click();
     await page.waitForFunction(() => window.fixture.state.settings.autoCurate);
-    assert.equal(await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "false", "Recording and task recall remain independent");
+    assert.equal(await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).getAttribute("aria-checked"), "true", "Recording and task recall remain independent");
     await dialog.getByRole("button", { name: "关闭弹窗", exact: true }).click();
     assert.equal(await panel.locator(".knowledge-summary").count(), 0, "Settings state stays out of the main page");
     assert.equal(await panel.locator(".knowledge-project-trigger").evaluate((el) => el === document.activeElement), true);
@@ -163,6 +172,19 @@ try {
     dialog = await openSettings(side);
     assert.equal(await dialog.getByRole("switch", { name: "自动记录", exact: true }).getAttribute("aria-checked"), "true");
     await dialog.getByRole("switch", { name: "允许任务使用项目知识", exact: true }).click();
+    await side.getByText("此对话尚未开启项目知识", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("dialog", { name: "知识设置", exact: true }).count(), 0, "Disabling knowledge closes its settings dialog");
+    assert.equal(await side.locator(".knowledge-item, .knowledge-project-trigger").count(), 0, "Disabled sidebar hides all existing knowledge");
+    assert.equal(await side.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true, "Disabled prompt fits the narrow sidebar");
+    const readsWhenOff = await page.evaluate(() => window.fixture.knowledgeReads.length);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("aporiax:knowledge-changed", { detail: "D:/Fixture" })));
+    assert.equal(await page.evaluate(() => window.fixture.knowledgeReads.length), readsWhenOff, "Disabled views ignore knowledge refresh events");
+    await page.screenshot({ path: ".tmp/understanding-ui/disabled-sidebar.png" });
+    await enableKnowledge(side).click();
+    await side.locator(".knowledge-item").first().waitFor();
+    assert.equal(await side.locator(".knowledge-item").count(), 18, "Re-enabling restores the saved knowledge without deletion");
+    dialog = await openSettings(side);
+    assert.equal(await dialog.getByRole("switch", { name: "自动记录", exact: true }).getAttribute("aria-checked"), "true", "Toggling task knowledge preserves recording settings");
     await dialog.getByText("本任务：按需读取", { exact: true }).waitFor();
     await page.keyboard.press("Escape");
     await page.screenshot({ path: ".tmp/understanding-ui/sidebar-light.png" });
@@ -233,9 +255,10 @@ try {
     await page.keyboard.press("Escape");
     await page.locator(".task-item.active").click({ button: "right" });
     await page.getByRole("menuitem", { name: "关闭项目知识", exact: true }).click();
-    dialog = await openSettings();
-    await dialog.getByText("本任务：知识关闭", { exact: true }).waitFor();
-    await page.keyboard.press("Escape");
+    await panel.getByText("此对话尚未开启项目知识", { exact: true }).waitFor();
+    assert.equal(await panel.locator(".knowledge-item, .knowledge-project-trigger").count(), 0);
+    assert.equal(await page.evaluate(() => window.fixture.tasks.find((task) => task.id === "knowledge-fixture").knowledgeProjectId), "kp-test-project", "Disabling knowledge preserves the task's chosen project");
+    await page.screenshot({ path: ".tmp/understanding-ui/disabled-dark.png" });
     await page.locator(".task-item.active").click({ button: "right" });
     await page.getByRole("menuitem", { name: "开启项目知识", exact: true }).click();
     dialog = await openSettings();
@@ -261,7 +284,7 @@ try {
     await panel.getByRole("button", { name: "刷新知识", exact: true }).click();
     await panel.getByText("还没有保存的项目知识", { exact: true }).waitFor();
     assert.equal(await page.locator(".toast").filter({ hasText: /not a function/ }).count(), 0);
-    console.log(`PASS knowledge UI (${production ? "production CSP" : "dev"}): compact project settings, arrow-only details/text selection/focus, async project isolation, project creation/error/browse isolation, task binding, new-task toggle/persistence, context menu, search/history, draft retention and narrow sidebar sync.`);
+    console.log(`PASS knowledge UI (${production ? "production CSP" : "dev"}): default-off gate/no reads, enable/disable/persistence/data retention, compact project settings, arrow-only details/text selection/focus, async project isolation, project creation/error/browse isolation, task binding, new-task toggle/persistence, context menu, search/history, draft retention and narrow sidebar sync.`);
   }
   assert.deepEqual(errors, []);
 } finally { await browser?.close(); if (production) await new Promise((resolve) => server.httpServer.close(resolve)); else await server.close(); }

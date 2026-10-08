@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'professional-roles.mjs', 'professional-roles-runtime.mjs', 'professional-role-capabilities.mjs', 'cloud-domain.mjs',
   'claude-compatibility.mjs', 'model-response-capture.mjs', 'model-response-diagnostics.mjs', 'temporary-check-cleanup.mjs',
   'global-file-access.mjs',
   'control-runtime-storage.mjs', 'local-control-workspaces.mjs', 'local-control-desktop-workspaces.mjs', 'local-control-policy.mjs',

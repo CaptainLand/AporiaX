@@ -1,5 +1,6 @@
 import { compileProviderWire, normalizeNativeResponse } from "./native-provider-codec.js";
 import { mergeTokenUsage } from "./token-usage.js";
+import { beginRoleRequest, finishRoleRequest } from "./role-budget.js";
 import { providerChatEndpoint } from "../provider-config.js";
 import { providerMessages } from "./task-conversation.js";
 import { providerErrorCategory, providerRetryDelay, retryAfterMilliseconds } from "./provider-errors.js";
@@ -207,6 +208,7 @@ export async function callModelProvider({
   const cloudTrace = prepared?.trace || { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
   let attemptUsage = null;
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
+    const budgetTicket = await beginRoleRequest(body);
     const started = performance.now();
     onEvent?.({ type: "response.attempt.started", attempt });
     try {
@@ -217,6 +219,7 @@ export async function callModelProvider({
         onEvent,
         cloudTrace,
       });
+      await finishRoleRequest(budgetTicket, result.usage);
       onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
         status: "completed", usage: result.usage, finishReason: result.finishReason });
       attemptUsage = mergeTokenUsage(attemptUsage, result.usage);
@@ -225,6 +228,7 @@ export async function callModelProvider({
       if (provider.kind === "aporia-cloud") await observeCloudQuota(completed.cloudQuotaSnapshot, onEvent);
       return completed;
     } catch (error) {
+      await finishRoleRequest(budgetTicket, error.usage);
       if (provider.kind === "aporia-cloud") await observeCloudQuota(error.cloudQuotaSnapshot, onEvent);
       attemptUsage = mergeTokenUsage(attemptUsage, error.usage);
       error.attemptUsage = attemptUsage;

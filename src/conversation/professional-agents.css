@@ -1,0 +1,23 @@
+.professional-agents { margin: 14px 0; font: 14px/1.5 var(--font-sans); color: var(--text-1); }
+.professional-agents h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
+.professional-agents small { font-size: 12px; font-weight: 400; color: var(--text-3); }
+.pa-row { border-bottom: 1px solid var(--border); }
+.pa-row summary { display: flex; align-items: center; gap: 10px; padding: 9px 0; cursor: pointer; }
+.pa-row summary::before { content: '›'; color: var(--text-3); }
+.pa-row[open] summary::before { transform: rotate(90deg); }
+.pa-row summary strong { font-weight: 500; max-width: 30%; overflow-wrap: anywhere; }
+.pa-row summary > span:last-child { flex-shrink: 0; font-size: 12px; color: var(--text-3); }
+.pa-task { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.pa-detail { padding: 0 0 14px 18px; overflow-wrap: anywhere; }
+.pa-detail p { margin: 8px 0; }
+.pa-detail dl { margin: 10px 0; font-size: 12px; }
+.pa-detail dl > div { display: grid; grid-template-columns: 75px minmax(0,1fr); gap: 10px; margin: 5px 0; }
+.pa-detail dt { color: var(--text-3); }
+.pa-detail dd { margin: 0; }
+.pa-result { white-space: pre-wrap; }
+.pa-detail textarea { width: 100%; box-sizing: border-box; color: inherit; font: inherit; background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px; padding: 7px; resize: vertical; }
+.pa-detail textarea:focus { outline: none; }
+.pa-actions { display: flex; gap: 8px; margin-top: 6px; }
+.pa-actions button { font: inherit; color: inherit; background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.professional-agents :focus-visible { outline: 2px solid var(--text-3); outline-offset: 2px; }
+.professional-agents button:disabled { opacity: .5; cursor: default; }

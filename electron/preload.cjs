@@ -18,6 +18,13 @@ const rememberTaskExecutionModes = (tasks) => {
 
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
+  agentProfiles: {
+    get: () => ipcRenderer.invoke('agent-profiles:get'),
+    save: value => ipcRenderer.invoke('agent-profiles:save', value),
+    list: request => ipcRenderer.invoke('harness:agents:list', request),
+    steer: request => ipcRenderer.invoke('harness:agents:steer', request),
+    stop: request => ipcRenderer.invoke('harness:agents:stop', request),
+  },
   control: {
     request: (input) => ipcRenderer.invoke("control:request", input),
     subscribe: (callback) => {

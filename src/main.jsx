@@ -57,6 +57,7 @@ import {
   Sun,
   Trash2,
   Undo2,
+  Users,
   X,
   Zap,
 } from "lucide-react";
@@ -94,6 +95,7 @@ import { CollapsedDropRail } from "./workbench/CollapsedDropRail.jsx";
 import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
+import { ProfessionalRolesSettings } from './settings/ProfessionalRolesSettings.jsx';
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
 import { ExternalControlPanel } from "./control/ExternalControlPanel.jsx";
 import { AccountProvider, useAccount } from "./account/AccountContext.jsx";
@@ -2642,6 +2644,8 @@ function ProviderManagerModal({
 }
 
 function ApplicationSettingsModal({
+  task,
+  onUpdateTask,
   initialSection = "general",
   startAddingProvider = false,
   theme,
@@ -2725,6 +2729,9 @@ function ApplicationSettingsModal({
               <Zap size={16} />
               {tr("扩展与能力", "Extensions")}
             </button>
+            <button type="button" className={section === 'agents' ? 'active' : ''} onClick={() => setSection('agents')}>
+              <Users size={16} />{tr('专业角色', 'Professional roles')}
+            </button>
             <button
               type="button"
               className={section === "about" ? "active" : ""}
@@ -2736,6 +2743,7 @@ function ApplicationSettingsModal({
           </nav>
 
           <main className={`application-settings-content ${section}-section`}>
+            {section === 'agents' && <ProfessionalRolesSettings task={task} providers={providers} onUpdateTask={onUpdateTask} />}
             {section === "general" ? (
               <>
                 <div className="application-settings-intro">
@@ -3674,10 +3682,8 @@ function App() {
         loopPolicy: targetTask.loopPolicy,
         executionMode: taskExecutionMode(targetTask.executionMode),
         approvalMode: taskApprovalMode(targetTask.approvalMode),
-        builderLimit: normalizeBuilderCount(
-          targetTask.builderLimit,
-          DEFAULT_BUILDER_LIMIT,
-        ),
+        builderLimit: normalizeBuilderCount(targetTask.builderLimit, null),
+        professionalRoles: targetTask.professionalRoles,
         language,
         messages: [
           ...targetTask.messages.filter(
@@ -3719,6 +3725,7 @@ function App() {
                              result,
                            ),
                           usage: result.usage || null,
+                          subagents: result.subagents || message.subagents || [],
                           instructionFiles:
                             result.instructionFiles || [],
                           permissionConfigFile:
@@ -4538,6 +4545,8 @@ function App() {
       )}
       {applicationSettingsOpen && (
         <ApplicationSettingsModal
+          task={activeTask}
+          onUpdateTask={updateActiveTask}
           key={`${applicationSettingsSection}:${startAddingProvider}`}
           initialSection={applicationSettingsSection}
           startAddingProvider={startAddingProvider}

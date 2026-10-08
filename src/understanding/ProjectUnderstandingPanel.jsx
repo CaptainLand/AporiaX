@@ -29,6 +29,30 @@ const sourceOf = (fact) => fact.evidence?.[0]?.reference || fact.evidence?.[0]?.
 
 // Remount on workspace changes so late reads or writes cannot paint another project.
 export function ProjectUnderstandingPanel(props) {
+  const { tr } = useI18n();
+  const { task, onUpdateTask, isRunning } = props;
+  // Keep the browser unmounted while off: do not fetch or briefly display saved knowledge.
+  if (task.knowledgeEnabled !== true) return <div className="knowledge-projects">
+    <section className="knowledge-panel" aria-label={tr("项目知识", "Project knowledge")}>
+      <header className="knowledge-header">
+        <div className="knowledge-heading">
+          <span className="knowledge-heading-icon"><BookOpen size={16} /></span>
+          <h2>{tr("项目知识", "Project knowledge")}</h2>
+        </div>
+      </header>
+      <div className="knowledge-empty">
+        <h3>{tr("此对话尚未开启项目知识", "Project knowledge is off for this conversation")}</h3>
+        <p>{!task.workspacePath
+          ? tr("请先为此对话选择工作区。", "Choose a workspace for this conversation first.")
+          : isRunning
+            ? tr("开启后下次运行生效；已有知识和自动记录设置保持不变。", "Enabling applies to the next run. Saved knowledge and recording settings stay unchanged.")
+            : tr("开启后可选择知识项目，由 AI 按需读取；自动记录保持原设置。", "Choose a knowledge project for AI to read on demand. Automatic recording settings stay unchanged.")}</p>
+        <button type="button" disabled={!task.workspacePath || !onUpdateTask} onClick={() => onUpdateTask({ knowledgeEnabled: true })}>
+          {tr("为此对话开启项目知识", "Enable project knowledge for this conversation")}
+        </button>
+      </div>
+    </section>
+  </div>;
   return <KnowledgeProjects key={`${props.task.id}:${props.task.workspacePath || "none"}`} {...props} />;
 }
 

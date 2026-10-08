@@ -1,5 +1,8 @@
 import { configureTrustedIpc, isTrustedAppUrl } from "./security/trusted-ipc.js";
 import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
+import { roleSettingsStore } from './harness/role-settings.js';
+import { effectiveRoleSettings } from '../shared/professional-roles.js';
+import { controlWorker } from './runtime/worker-controls.js';
 import {
   BrowserWindow,
   Notification,
@@ -684,8 +687,24 @@ async function startHarnessTask(
     execute: async ({ signal, control, emit, requestApproval, clarification }) => {
       let result;
       try {
+        const roleDefaults = (await roleSettingsStore(app.getPath('userData'))).snapshot();
+        const roleSettings = { ...effectiveRoleSettings(roleDefaults, {
+          ...request.professionalRoles, builderLimit: request.professionalRoles?.builderLimit ?? request.builderLimit ?? roleDefaults.builderLimit,
+        }), ...(roleDefaults.error ? { error: roleDefaults.error } : {}) };
         result = await runHarness({
           ...request,
+          roleSettings,
+          builderLimit: roleSettings.builderLimit,
+          resolveAgentModel: async (selection) => {
+            let pair;
+            try { pair = JSON.parse(selection); } catch { pair = [provider.id, selection]; }
+            if (!Array.isArray(pair) || pair.length !== 2 || !pair.every(value => typeof value === 'string')) throw new Error('角色模型配置无效。');
+            const target = await resolveProvider(pair[0]);
+            if (target.id !== pair[0]) throw new Error('角色使用的 Provider 已不存在。');
+            const modelConfig = target.models.find(model => model.id === pair[1]);
+            if (!modelConfig) throw new Error('角色使用的模型已不存在。');
+            return { provider: target, modelId: modelConfig.id, modelConfig };
+          },
           messages,
           provider,
           memoryDirectory: join(app.getPath("userData"), "project-memory"),
@@ -710,6 +729,10 @@ async function startHarnessTask(
     },
   });
 }
+
+handleTrustedIpc(ipcMain, 'agent-profiles:get', async () => (await roleSettingsStore(app.getPath('userData'))).snapshot());
+handleTrustedIpc(ipcMain, 'agent-profiles:save', async (_event, value) => (await roleSettingsStore(app.getPath('userData'))).save(value));
+for (const action of ['list', 'steer', 'stop']) handleTrustedIpc(ipcMain, `harness:agents:${action}`, (_event, value) => controlWorker(action, value));
 
 handleTrustedIpc(ipcMain, "desktop:minimize", (event) => {
   assertTrustedSender(event);

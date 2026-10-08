@@ -1,6 +1,7 @@
 import { normalizeProviderProtocol } from "./runtime/native-provider-codec.js";
 import { isClaudeModel, claudeReasoningProfile } from "../shared/model-reasoning.js";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_APORIAX_MODEL_GATEWAY_URL } from '../shared/cloud-endpoints.js';
 import { modelSupportsVision, normalizeImageCapability } from "./model-vision.js";
 
 export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
@@ -8,7 +9,7 @@ export const APORIA_CLOUD_FLASH_MODEL_ID = "aporia-cloud-default";
 export const APORIA_CLOUD_PRO_MODEL_ID = "aporia-cloud-pro";
 // Backwards-compatible alias used by existing task defaults and integrations.
 export const APORIA_CLOUD_MODEL_ID = APORIA_CLOUD_FLASH_MODEL_ID;
-export const DEFAULT_APORIA_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
+export const DEFAULT_APORIA_MODEL_GATEWAY_URL = DEFAULT_APORIAX_MODEL_GATEWAY_URL;
 
 export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY_URL) {
   return {

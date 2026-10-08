@@ -466,6 +466,15 @@ export class AporiaXMcpRuntime {
     return this.#tools.has(String(name || "")) || CORE_NAMES.has(String(name || ""));
   }
 
+  selectedToolDefinitions(names, permissionMode = 'read-only') {
+    const allowed = new Set(this.toolCatalog(permissionMode).map(tool => tool.name));
+    return [...new Set(names)].filter(name => allowed.has(name)).map(name => {
+      const record = this.#tools.get(name);
+      return { type: 'function', function: { name, description: `[MCP: ${record.public.serverName}] ${record.public.description || record.public.title}`.slice(0, 1800),
+        parameters: schemaObject(record.tool.inputSchema) } };
+    });
+  }
+
   async setServers(servers, { retryServerIds = [] } = {}) {
     if (this.#closed) return;
     const next = (Array.isArray(servers) ? servers : []).filter((server) => server?.enabled !== false);

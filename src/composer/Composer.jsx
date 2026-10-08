@@ -10,7 +10,6 @@ import {
   Play,
   Plus,
   Square,
-  Users,
   X,
 } from "lucide-react";
 import { useI18n } from "../i18n";
@@ -26,55 +25,6 @@ import {
   filePathOf,
   isComposerAttachmentDrag,
 } from "../attachments.js";
-import {
-  BUILDER_COUNT_CHOICES,
-  DEFAULT_BUILDER_LIMIT,
-  normalizeBuilderCount,
-} from "../../electron/harness/builder-count.js";
-
-function BuilderCountMenu({ value, onChange, onClose }) {
-  const { tr } = useI18n();
-  const menuRef = useRef(null);
-
-  useEffect(() => {
-    const handlePointerDown = (event) => {
-      if (!menuRef.current?.contains(event.target)) onClose();
-    };
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
-  return (
-    <div className="builder-count-menu" ref={menuRef} role="menu">
-      <div className="model-menu-heading">{tr("Builder 并发上限", "Concurrent Builders")}</div>
-      <p className="builder-count-note">
-        {tr("默认 2，按需调用；完成后释放名额，后续可继续分批。0 为关闭，较高并发会增加内存和模型费用。", "Default 2, on demand. Slots are reused across waves. 0 disables Builders; higher concurrency uses more memory and tokens.")}
-      </p>
-      {BUILDER_COUNT_CHOICES.map((count) => (
-        <button
-          className={`builder-count-option${value === count ? " selected" : ""}`}
-          key={count}
-          type="button"
-          role="menuitemradio"
-          aria-checked={value === count}
-          onClick={() => {
-            onChange(count);
-            onClose();
-          }}
-        >
-          {count === 0 ? tr("无", "None") : String(count)}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function bytesToDataUrl(type, bytes) {
   let binary = "";
@@ -194,7 +144,6 @@ export function Composer({
   useEffect(() => { setOcr(null); }, [task.id]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [builderMenuOpen, setBuilderMenuOpen] = useState(false);
   const textareaRef = useRef(null);
   const imageInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
@@ -217,7 +166,6 @@ export function Composer({
     task.providerId,
     task.modelId,
   );
-  const builderLimit = normalizeBuilderCount(task.builderLimit, DEFAULT_BUILDER_LIMIT);
   const modelReady = Boolean(model.id && !model.disabled);
   useLayoutEffect(() => {
     const shell = textareaRef.current?.closest(".composer-shell");
@@ -595,7 +543,6 @@ export function Composer({
                 aria-expanded={modelMenuOpen}
                 onClick={(event) => {
                   event.stopPropagation();
-                  setBuilderMenuOpen(false);
                   setModelMenuOpen((open) => !open);
                 }}
               >
@@ -604,31 +551,6 @@ export function Composer({
                 {modelReady && (task.thinking || model.thinkingAlwaysOn) && (
                   <span className="thinking-pill">{task.effort || model.defaultEffort}</span>
                 )}
-                <ChevronDown size={14} />
-              </button>
-            </div>
-            <div className="builder-control">
-              {builderMenuOpen && (
-                <BuilderCountMenu
-                  value={builderLimit}
-                  onClose={() => setBuilderMenuOpen(false)}
-                  onChange={(count) => onUpdateTask({ builderLimit: count })}
-                />
-              )}
-              <button
-                className={`builder-trigger ${builderMenuOpen ? "active" : ""}`}
-                type="button"
-                aria-label={tr("Builder 数量", "Builder count")}
-                title={tr("Builder 数量", "Builder count")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setModelMenuOpen(false);
-                  setBuilderMenuOpen((open) => !open);
-                }}
-              >
-                <Users size={15} />
-                <span>{builderLimit === 0 ? tr("无", "None") : builderLimit}</span>
-                {isRunning && task.builderActivity && <small title={tr("运行中 / 排队", "Running / queued")}>{task.builderActivity.running}/{task.builderActivity.queued}</small>}
                 <ChevronDown size={14} />
               </button>
             </div>

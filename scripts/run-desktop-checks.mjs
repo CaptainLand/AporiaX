@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const tests = [
+  ['node', 'professional-roles-browser.mjs'],
   ['node', 'claude-reasoning-browser.mjs'], ['node', 'desktop-ui-details-browser.mjs'],
   ['node', 'pane-alignment-browser.mjs'], ['node', 'sidebar-compact-browser.mjs'],
   ['node', 'theme-layout-parity-browser.mjs'], ['node', 'composer-alignment-browser.mjs'],

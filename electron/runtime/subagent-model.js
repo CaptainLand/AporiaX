@@ -112,8 +112,11 @@ export function normalizeWorkspaceScope(values) {
   return normalized.length ? normalized : ["."];
 }
 
-export function normalizeSubagentInput(input) {
-  const role = String(input?.role || "").trim();
+export function normalizeSubagentInput(input, profiles = null) {
+  const requestedRole = String(input?.profile_id || input?.profileId || input?.role || "").trim();
+  const profile = profiles?.find(item => item.id === requestedRole);
+  if (profiles && (!profile || !profile.enabled)) throw new Error(`Agent profile is unavailable: ${requestedRole}`);
+  const role = profile?.template || requestedRole;
   if (!SUBAGENT_ROLE_CONFIG[role]) {
     throw new Error("Subagent role must be explore, review, verify, curator, or builder.");
   }
@@ -126,13 +129,15 @@ export function normalizeSubagentInput(input) {
   const requestedRounds = Number(input?.max_rounds);
   const maxRounds = Number.isInteger(requestedRounds)
     ? Math.min(MAX_SUBAGENT_ROUNDS, Math.max(2, requestedRounds))
-    : DEFAULT_SUBAGENT_ROUNDS;
+    : profile?.maxRounds || DEFAULT_SUBAGENT_ROUNDS;
   return {
     role,
+    ...(profile ? { profileId: profile.id, profile } : {}),
+    ...((input?.depends_on || input?.dependsOn) ? { dependsOn: input.depends_on || input.dependsOn } : {}),
     task,
     scope: normalizeWorkspaceScope(input?.scope),
     ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
-    background: Boolean(input?.background),
+    background: Boolean(input?.background || input?.depends_on?.length || input?.dependsOn?.length),
     requiredForCompletion: !(input?.background && input?.required_for_completion === false && ["explore", "curator"].includes(role)),
     maxRounds,
   };
@@ -234,7 +239,9 @@ export function assertSubagentScope(toolName, input, scope) {
 }
 
 export function createSubagentPermissionPolicy(parentPolicy, role, definition = null) {
-  const allowed = SUBAGENT_ROLE_CONFIG[role]?.tools;
+  const base = SUBAGENT_ROLE_CONFIG[role]?.tools;
+  const allowed = base ? new Set([...base, ...(definition?.tools || []).filter(name =>
+    ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(name))]) : null;
   if (!allowed) throw new Error(`Unknown subagent role: ${role}`);
   const policy = { "*": "deny" };
   const rank = { allow: 0, ask: 1, deny: 2 };

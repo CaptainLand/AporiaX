@@ -1,4 +1,10 @@
 import { assistantHistoryMessage } from "./runtime/task-conversation.js";
+import { defaultRoleSettings } from '../shared/professional-roles.js';
+import { roleDefinition } from './runtime/role-capabilities.js';
+import { createRoleCoordinator } from './runtime/role-coordinator.js';
+import { createRoleLedger, createRoleClock, withRoleBudget } from './runtime/role-budget.js';
+import { activeTimeout } from './runtime/run-control.js';
+import { registerWorkerControls } from './runtime/worker-controls.js';
 import { modelReasoningParameters } from "../shared/model-reasoning.js";
 import { NATIVE_FILE_TOOLS, nativeFilePath } from "./runtime/file-access-policy.js";
 import { resolveMcpSteering, recoveryMcpServerIds } from "./mcp-mentions.js";
@@ -1069,6 +1075,8 @@ export async function runHarness({
   loopPolicy = {},
   taskContract,
   acceptanceScope = "task",
+  roleSettings = null,
+  resolveAgentModel = null,
 }) {
   const externalPolicy = currentLocalControlPolicy();
   if (externalPolicy) {
@@ -1113,6 +1121,8 @@ export async function runHarness({
   const modelConfig = providerConfig.models.find(
     (candidate) => candidate.id === modelId,
   );
+  const roleSnapshot = recoveryContext?.contexts?.[recoveryContext.runId]?.roleSettings || roleSettings || defaultRoleSettings();
+  const roles = roleSnapshot.error ? [] : roleSnapshot.profiles;
   if (!modelConfig) {
     throw new Error(
       isEnglish
@@ -1399,6 +1409,8 @@ export async function runHarness({
       role: "system",
       content: [
         "You are AporiaX, a local coding and productivity agent.",
+        `Configured professional roles (use their id as delegate_subagent.role; disabled roles are unavailable): ${JSON.stringify(roles.filter(p => p.enabled).map(p => ({ id: p.id, name: p.name, responsibility: p.description.slice(0, 500), execution: p.template, skills: p.skills, knowledge: p.knowledge, maxRounds: p.maxRounds, model: p.model, thinking: p.thinking })))}`,
+        "Choose a suitable configured role only when delegation helps. Independent tasks may run concurrently; pass depends_on with existing worker IDs for dependent work. Review and accept dependency reports to unblock waiting workers. Do not repeatedly poll the model for worker progress. Role budgets, model settings and permissions are user-owned and cannot be raised by delegation.",
         `Reply to the user in ${responseLanguage}. Keep file paths, command names, source code, API identifiers, and user-provided proper nouns unchanged.`,
         "Inspect the authorized workspace with tools before making claims about its contents.",
         "Native file tools may access explicit external paths only when the user has enabled global file access in the desktop control panel. Do not infer that setting or change it yourself. A FILE_ACCESS_DENIED result is authoritative; do not bypass it through commands, Git, MCP, links or delegated tasks. External writes affect real host files and are not part of the isolated workspace patch. Read-only tasks, child write scopes and protected credentials remain restricted.",
@@ -1556,6 +1568,8 @@ export async function runHarness({
       },
     ]);
   const subagents = new Map();
+  const roleCoordinator = createRoleCoordinator(subagents, signal, roleSnapshot);
+  const roleTotal = createRoleLedger(savedMain?.roleTotal);
   const parentWorkerEvidence = new Map();
   let workerReviewContinuations = savedMain?.workerReviewContinuations || 0;
   const subagentController = new AbortController();
@@ -1648,6 +1662,7 @@ export async function runHarness({
     return saveRuntimeContext(runId, {
     kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
     knowledgeProjectId: knowledgeSession.projectId, knowledgeEnabled: knowledgeSession.enabled,
+    roleSettings: roleSnapshot, roleTotal,
     selectedMcpServerIds: mcpServers.filter(server => server.enabled !== false).map(server => server.id),
     strategyHistory: strategyHistory.snapshot(), taskAcceptance: taskAcceptance.snapshot(), rollingContext: rollingContext.snapshot(),
     loopMetrics: loopMetrics.snapshot(),
@@ -1850,13 +1865,13 @@ export async function runHarness({
     }
   }
 
-  const authorizeSubagentControl = async (toolName, input) => {
+  const authorizeSubagentControl = async (toolName, input, approve = requestApproval) => {
     await assertLocalControlTool({ toolName, input, workspaceRoot, count: false });
     const decision = resolveToolExecutionPermission({ toolName, permissionAction: getToolPermission(permissionPolicy, toolName),
       approvalMode: effectiveApprovalMode, sandboxStatus, input });
     if (decision.denied) throw new Error(`Permission denied for tool: ${toolName}`);
     if (decision.requiresApproval) {
-      const approval = await requestApproval?.(buildToolApprovalRequest({ toolName, descriptor: TOOL_REGISTRY.get(toolName), input, sandboxStatus, permissionDecision: decision }));
+      const approval = await approve?.(buildToolApprovalRequest({ toolName, descriptor: TOOL_REGISTRY.get(toolName), input, sandboxStatus, permissionDecision: decision }));
       if (!approval?.approved) throw new Error(`The user rejected tool: ${toolName}`);
     }
     throwIfAborted(signal);
@@ -1869,7 +1884,9 @@ export async function runHarness({
     if (!systemOwned && !resumeRecord) await authorizeSubagentControl("delegate_subagent", rawInput);
     const deferred = cloudWorkerDeferral(provider);
     if (deferred) return deferred;
-    const input = normalizeSubagentInput(rawInput);
+    const profileList = resumeRecord?.input?.profile ? [{ ...resumeRecord.input.profile, enabled: true }] : roles;
+    const input = normalizeSubagentInput(rawInput, profileList);
+    const profile = input.profile;
     if (input.role === "builder") {
       if (permission !== "workspace-write" || !canWriteWorkspace) throw new Error("Builder requires parent workspace-write permission.");
       await ensureAnchorBaseline();
@@ -1879,8 +1896,10 @@ export async function runHarness({
       thinking,
       effort,
     });
+    if (profile.thinking === 'inherit') Object.assign(reasoningPolicy, { thinking, effort });
     if (!resumeRecord) subagentCounter += 1;
     const agentId = resumeRecord?.agentId || `${runId || "run"}-sub-${subagentCounter}`;
+    roleCoordinator.validate(input.dependsOn || [], agentId);
     const relevantMemory = [];
     const delegationContext = captureDelegationContext(rollingContext.delegationHistory(), taskAcceptance.briefing());
     const record = Object.assign(resumeRecord || {}, {
@@ -1897,15 +1916,63 @@ export async function runHarness({
       input,
       session: resumeRecord?.session || {},
       systemOwned,
+      phase: input.dependsOn?.length ? 'waiting_dependencies' : 'queued',
     });
     const childController = new AbortController();
     const abortChild = () => childController.abort();
     record.controller = childController;
     if (subagentController.signal.aborted) abortChild();
     else subagentController.signal.addEventListener("abort", abortChild, { once: true });
-    record.promise = runSubagentTask({
+    subagents.set(agentId, record);
+    record.session.delegationContext = delegationContext;
+    record.session.roleBudget = createRoleLedger(record.session.roleBudget);
+    const definition = roleDefinition(profile, { skills: extensionPolicy?.skill !== false, knowledge: knowledgeSession.enabled });
+    const mcpAllowed = input.role === 'verify' && input.scope.includes('.') && permission === 'workspace-write' && extensionPolicy.mcp !== false;
+    const selectedMcp = mcpAllowed ? mcpRuntime.selectedToolDefinitions(profile.mcpTools, permission) : [];
+    emit({ type: 'subagent.profile', agentId, role: input.role, profileId: profile.id, profileName: profile.name,
+      task: input.task, phase: record.phase, dependsOn: input.dependsOn || [], systemOwned });
+    record.promise = (async () => {
+      await persistMainContext();
+      const release = await roleCoordinator.enter(record, profile);
+      const clock = createRoleClock(control, record.session.roleElapsedMs || 0, true);
+      const workerApproval = args => clock.approval(async () => {
+        const previousPhase = record.phase;
+        record.phase = 'approval'; emit({ type: 'subagent.phase', agentId, phase: 'approval' });
+        try { return await requestApproval(args); }
+        finally { record.phase = previousPhase; emit({ type: 'subagent.phase', agentId, phase: previousPhase }); }
+      });
+      let deadline;
+      if (profile.maxSeconds) deadline = activeTimeout(() => { record.budgetTimeout = true; childController.abort(); },
+        Math.max(1, profile.maxSeconds * 1000 - (record.session.roleElapsedMs || 0)), clock);
+      try { return await withRoleBudget({ ledger: record.session.roleBudget, total: roleTotal, profile, limit: roleSnapshot.maxRequests,
+        persist: async () => { await saveRuntimeContext(agentId, { kind: 'worker', workspaceRoot, input, session: record.session, status: record.status, result: record.result }); await persistMainContext(); },
+        emit: budget => emit({ type: 'subagent.budget', agentId, budget }),
+      }, () => runSubagentTask({
       agentId,
       input,
+      agentDefinition: definition,
+      assertDependencies: () => roleCoordinator.assertDependencies(record),
+      extensionDefinitions: selectedMcp,
+      executeRoleExtension: async ({ toolName, input: args, signal: workerSignal, requestApproval: approve }) => {
+        await assertLocalControlTool({ toolName, input: args, workspaceRoot, count: false });
+        if (profile.mcpTools.includes(toolName)) {
+          if (!mcpAllowed || !selectedMcp.some(def => def.function.name === toolName)) throw new Error('MCP 不满足本角色的权限与范围要求。');
+          if (!(await approve({ toolName, kind: 'control', title: `专业角色 ${profile.name} 调用 MCP`, command: toolName,
+            description: '此外部工具不受文件路径沙箱约束，仅在父任务授权范围内执行。', input: args }))?.approved) throw new Error('MCP 调用未获授权。');
+          return executeDurableTool(toolName, args, () => mcpRuntime.call(toolName, args, { requestApproval: approve, signal: workerSignal }), approve);
+        }
+        await authorizeSubagentControl(toolName, args, approve);
+        if (toolName === 'project_knowledge') {
+          if (!knowledgeSession.enabled || !knowledgeSession.projectId || profile.knowledge === 'off') throw new Error('项目知识未启用或未绑定。');
+          const allowedActions = profile.knowledge === 'write' && permission === 'workspace-write' ? ['search', 'read', 'save'] : ['search', 'read'];
+          if (!allowedActions.includes(args.action) || (args.project_id && args.project_id !== knowledgeSession.projectId)) throw new Error('角色不能切换知识项目或执行此知识操作。');
+          return knowledgeSession.call(args);
+        }
+        if (extensionPolicy.skill === false) throw new Error('Skills 已禁用。');
+        if (toolName === 'search_skills') return { skills: profile.skills.map(name => ({ name, instructions: 'SKILL.md' })), total: profile.skills.length };
+        if (toolName !== 'read_skill_resource' || !profile.skills.includes(args.skill)) throw new Error('Skill 未授予此角色。');
+        return (await executeTrackedTool({ toolName, input: args, workspaceRoot, signal: workerSignal })).modelResult;
+      },
       session: record.session,
       getDelegationContext: () => captureDelegationContext(rollingContext.delegationHistory(), taskAcceptance.briefing()),
       provider,
@@ -1913,6 +1980,12 @@ export async function runHarness({
       modelConfig,
       thinking: reasoningPolicy.thinking,
       resolveModel: async (requestedModel) => {
+        if (externalPolicy && requestedModel !== modelId && requestedModel !== JSON.stringify([providerConfig.id, modelId]))
+          throw new Error('外部任务的专业角色只能使用该任务已授权的模型。');
+        if (resolveAgentModel) {
+          const resolved = await resolveAgentModel(requestedModel);
+          return { ...resolved, provider: createOpenAICompatibleProvider({ config: resolved.provider, model: resolved.modelConfig, onEvent: emit }) };
+        }
         const configured = providerConfig.models.find((item) => item.id === requestedModel);
         if (!configured) throw new Error(`SUBAGENT_MODEL_NOT_CONFIGURED: ${requestedModel}`);
         return { provider: createOpenAICompatibleProvider({ config: providerConfig, model: configured, onEvent: emit }), modelId: configured.id, modelConfig: configured };
@@ -1922,14 +1995,20 @@ export async function runHarness({
       parentPermissionPolicy: permissionPolicy,
       loopPolicy: effectiveLoopPolicy,
       approvalMode: effectiveApprovalMode,
-      requestApproval,
+      requestApproval: workerApproval,
       signal: childController.signal,
       sandboxExecutor: commandSandboxExecutor,
       sandboxStatus,
       language,
       memoryFacts: relevantMemory,
       getMemoryFacts: () => [],
-      emit: (event) => { emit(event); if (event.type === 'subagent.started') onStarted?.(); },
+      emit: (event) => {
+        if (event.type === 'subagent.configured') record.configuration = event;
+        if (event.type === 'subagent.started') { clock.start(); record.phase = 'model'; onStarted?.(); }
+        if (event.type === 'subagent.tool.started') record.phase = 'tool';
+        if (event.type === 'subagent.tool.completed') record.phase = 'model';
+        emit(event);
+      },
       onUsage: (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); },
       toolRegistry: TOOL_REGISTRY,
       parseToolArguments,
@@ -1954,7 +2033,8 @@ export async function runHarness({
       describeCapability: (toolName, phase = "work") =>
         capabilityRegistry?.describeTool(toolName, phase) || null,
       systemOwned,
-    })
+    })); } finally { deadline?.(); record.session.roleElapsedMs = clock.elapsed(); release(); }
+    })()
       .catch((error) => ({
         agentId,
         role: input.role,
@@ -1967,11 +2047,17 @@ export async function runHarness({
         steps: error?.steps || [],
         usage: error?.usage || null,
       }))
-      .then((result) => {
+      .then(async (result) => {
         result.reportId ||= `${agentId}:${record.session.activationSequence || 0}`;
         result.acceptance ||= { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' };
+        if (record.budgetTimeout || String(result.summary).includes('AGENT_BUDGET_EXHAUSTED')) result.status = 'budget_exhausted';
+        if (record.budgetTimeout) result.summary = 'AGENT_BUDGET_EXHAUSTED: 执行时间预算已耗尽，已有结果已保留。';
+        if (String(result.summary).includes('DEPENDENCY_')) result.status = 'blocked';
         record.status = result.status;
         record.result = result;
+        await saveRuntimeContext(agentId, { kind: 'worker', workspaceRoot, input, session: record.session, status: record.status, result });
+        roleCoordinator.notify();
+        emit({ type: 'subagent.profile_result', agentId, ...workerSummary(record) });
         // Usage is accumulated per completed round, including cancelled workers.
         return result;
       }).finally(() => subagentController.signal.removeEventListener("abort", abortChild));
@@ -2001,6 +2087,21 @@ export async function runHarness({
     // complete result. Only model-facing background collection is summarized.
     return result;
   };
+
+  const controlChild = async (action, { agentId, task }) => {
+    const record = subagents.get(agentId);
+    if (!record) throw new Error('Unknown subagent id in this task.');
+    if (action === 'stop') { record.controller?.abort(); roleCoordinator.notify(); return { agentId, status: record.status === 'running' ? 'cancellation_requested' : record.status }; }
+    const guidance = String(task || '').trim();
+    if (!guidance || guidance.length > 4000) throw new Error('追加要求需为 1–4000 字符。');
+    if (record.session.roleBudget?.requests >= (record.input.profile?.maxRequests ?? 24)) throw new Error('子 Agent 请求预算已耗尽，请在下一轮继续。');
+    (record.session.pendingGuidance ||= []).push(guidance);
+    await saveRuntimeContext(agentId, { kind: 'worker', workspaceRoot, input: record.input, session: record.session, status: record.status, result: record.result });
+    if (record.status === 'running') return { agentId, status: 'guidance_queued' };
+    return startSubagent({ ...record.input, role: record.input.profileId || record.role, task: guidance, background: true }, '', { resumeRecord: record });
+  };
+  const unregisterWorkerControls = registerWorkerControls({ runId, taskId,
+    list: () => [...subagents.values()].map(workerSummary), steer: request => controlChild('steer', request), stop: request => controlChild('stop', request) });
 
   const curateProjectUnderstanding = async ({ finalAnswer, changes, onStarted }) => {
     const evidenceSteps = steps.filter(
@@ -3040,29 +3141,15 @@ export async function runHarness({
             const currentEvidence = new Map([...parentWorkerEvidence].filter(([, item]) => item.observedVersion === verificationVersion(changeMap)));
             const acceptance = reviewWorkerResult(record, input, currentEvidence);
             record.result.acceptance = acceptance;
+            roleCoordinator.notify();
             await saveRuntimeContext(record.agentId, { kind: 'worker', workspaceRoot, input: record.input, session: record.session, status: record.status, result: record.result });
             emit({ type: 'subagent.reviewed', agentId: record.agentId, role: record.role, acceptance });
             result = { modelResult: { agentId: record.agentId, acceptance } };
           } else if (["followup_subagent", "cancel_subagent"].includes(toolCall.function.name)) {
             const input = parseToolArguments(toolCall);
             await authorizeSubagentControl(toolCall.function.name, input);
-            const record = subagents.get(input.agent_id);
-            if (!record) throw new Error("Unknown subagent id in this task.");
-            if (toolCall.function.name === "cancel_subagent") {
-              record.controller?.abort();
-              result = { modelResult: { agentId: record.agentId, status: record.status === "running" ? "cancellation_requested" : record.status } };
-            } else {
-              const deferred = cloudWorkerDeferral(provider);
-              if (deferred) throw Object.assign(new Error(deferred.summary), { code: deferred.reason });
-              const task = String(input.task || "").trim();
-              if (!task || task.length > 4000) throw new Error("Follow-up task must contain 1–4000 characters.");
-              (record.session.pendingGuidance ||= []).push(task);
-              await saveRuntimeContext(record.agentId, { kind: "worker", workspaceRoot, input: record.input, session: record.session, status: record.status, result: record.result });
-              result = { modelResult: record.status === "running"
-                ? { agentId: record.agentId, status: "running", message: "Follow-up queued for the next worker boundary." }
-                : await startSubagent({ ...record.input, task, max_rounds: input.max_rounds ?? record.input.maxRounds, background: true,
-                    required_for_completion: record.requiredForCompletion }, toolCall.id, { resumeRecord: record }) };
-            }
+            result = { modelResult: await controlChild(toolCall.function.name === 'cancel_subagent' ? 'stop' : 'steer',
+              { agentId: input.agent_id, task: input.task }) };
           } else if (toolCall.function.name === "project_knowledge") {
             const input = parseToolArguments(toolCall);
             await authorizeSubagentControl("project_knowledge", input);
@@ -3477,6 +3564,7 @@ export async function runHarness({
     failedResult.content = appendSandboxRecoveryNotice(failedResult.content, sandboxRecoveries, language);
     return failedResult;
   } finally {
+    unregisterWorkerControls();
     forwardEvent({ type: "loop.metrics", metrics: loopMetrics.snapshot() });
     await safeDependencySession.close();
     await lspManager?.closeAll().catch(() => undefined);

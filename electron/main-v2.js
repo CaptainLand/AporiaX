@@ -1,4 +1,6 @@
 import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
+import { roleSettingsStore } from './harness/role-settings.js';
+import { effectiveRoleSettings } from '../shared/professional-roles.js';
 import "./gpu-guard.js";
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
@@ -260,7 +262,11 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
   if (channel !== "harness:run") return nativeHandle(channel, listener);
   return nativeHandle(channel, async (event, request) => {
     assertTrustedIpcSender(event);
-    const budget = planAgentBudget(request || {});
+    const roleDefaults = (await roleSettingsStore(app.getPath('userData'))).snapshot();
+    const settings = effectiveRoleSettings(roleDefaults, { ...request?.professionalRoles,
+      builderLimit: request?.professionalRoles?.builderLimit ?? request?.builderLimit ?? roleDefaults.builderLimit });
+    const budget = planAgentBudget({ ...request, builderLimit: settings.builderLimit,
+      agentBudget: { ...request?.agentBudget, maxActiveSubagents: Math.min(request?.agentBudget?.maxActiveSubagents ?? settings.maxActive, settings.maxActive) } });
     const runId = String(request?.runId || "").trim();
     const workspacePath = String(request?.workspacePath || "").trim();
     desktopBackground.runStarted(runId);

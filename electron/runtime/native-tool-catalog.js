@@ -60,7 +60,6 @@ export const TOOL_DEFINITIONS = [
         properties: {
           role: {
             type: "string",
-            enum: ["explore", "review", "verify", "curator", "builder"],
             description:
               "explore searches, review inspects, verify runs checks, curator extracts knowledge. builder implements a scoped change in an isolated Git worktree; requires write_scopes, cannot recursively delegate or run shell commands. Main/verify handles validation after integration.",
           },
@@ -69,6 +68,7 @@ export const TOOL_DEFINITIONS = [
             description:
               "A self-contained task with the question, expected evidence, and completion criteria.",
           },
+            depends_on: { type: "array", maxItems: 12, items: { type: "string" }, description: "Existing worker IDs in this run. Waits without model calls until their reports are accepted. Dependencies always run in background. Failed dependencies block this worker." },
           scope: {
             type: "array",
             maxItems: 12,

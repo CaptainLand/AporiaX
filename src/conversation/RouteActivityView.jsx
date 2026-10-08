@@ -7,6 +7,7 @@ import { useWorkbenchContext } from '../workbench/use-workbench.js';
 import { activeRouteRecords, activityActor, activityElapsed, activityStatus, describeRouteRecord, formatActivityElapsed, routeActivityRecords, routeRunLabel, routeRunStatus } from './route-activity-model.js';
 import '../workbench/side-chat.css';
 import './route-activity.css';
+import { ProfessionalAgentPanel } from './ProfessionalAgentPanel.jsx';
 import { ACTIVITY_AGENT_ROLES, activityRecordStatus, routeAgentActivity } from './route-activity-model.js';
 
 const LIVE_STATES = ['running', 'starting', 'waiting'];
@@ -237,7 +238,8 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
         <div className="ra-stat"><span>{tr('文件修改', 'Files changed')}</span><strong>{changes.length}{changes.length > 0 && <small><em className="add">+{overview.additions}</em><em className="del">−{overview.deletions}</em></small>}</strong></div>
       </section>
 
-      <AgentActivitySummary run={selectedRun} />
+      {!selectedRun?.subagents?.length && <AgentActivitySummary run={selectedRun} />}
+      <ProfessionalAgentPanel key={selectedRun?.id} run={selectedRun} taskId={task.id} active={isLatest && isRunning} />
       {!isLatest && <div className="ra-history-notice"><span>{tr('正在查看历史轮次，当前任务不受影响。', 'Viewing history. The current task is unaffected.')}</span><button type="button" onClick={() => chooseRun(runs.at(-1).id)}>{tr('回到最新一轮', 'Back to latest')}<ArrowRight size={13} /></button></div>}
       {isLatest && approval && <ApprovalCard approval={approval} responding={approvalResponding} onRespond={onRespondApproval} />}
 

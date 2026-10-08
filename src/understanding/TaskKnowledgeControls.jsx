@@ -23,7 +23,7 @@ export function TaskKnowledgeControls({ workspacePath, enabled, projectId = "", 
       {projectId && !projects.some((p) => p.id === projectId) && <option value={projectId}>{loading ? tr("读取中…", "Loading…") : tr("项目不可用，请重新选择", "Project unavailable; select again")}</option>}
       {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
     </select></label>}
-    <p className="field-hint">{isRunning ? tr("开关在下次运行生效；当前运行的知识项目保持不变。", "Toggle applies to the next run; the current run keeps its project.") : tr("仅影响本任务。关闭后仍可浏览已保存知识。", "Applies to this task only. Saved knowledge remains viewable when off.")}</p>
+    <p className="field-hint">{isRunning ? tr("开关在下次运行生效；当前运行的知识项目保持不变。", "Toggle applies to the next run; the current run keeps its project.") : tr("仅影响本任务。关闭后隐藏已保存知识，不会删除记录。", "Applies to this task only. Turning it off hides saved knowledge without deleting it.")}</p>
     {error && <p className="knowledge-alert" role="alert">{error}</p>}
   </section>;
 }

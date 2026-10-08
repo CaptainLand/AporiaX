@@ -1,11 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 export const APORIAX_DESKTOP_CLIENT_ID = "aporiax-desktop";
-export const DEFAULT_APORIAX_ACCOUNT_WEB_URL = "https://aporiax-preview-ecutg2r-d0gdndswo0a18e7b3.webapps.tcloudbase.com";
-// Fixed public Account API endpoint provided by the local Tailscale Funnel.
-// Keep the paid model gateway private until it has authenticated public ingress.
-export const DEFAULT_APORIAX_CLOUD_API_URL = "https://captainlan.tail0f652a.ts.net";
-export const DEFAULT_APORIAX_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
+export { DEFAULT_APORIAX_ACCOUNT_WEB_URL, DEFAULT_APORIAX_CLOUD_API_URL, DEFAULT_APORIAX_MODEL_GATEWAY_URL } from '../../shared/cloud-endpoints.js';
 
 function base64urlRandom(bytes) {
   return randomBytes(bytes).toString("base64url");
@@ -47,9 +43,8 @@ export function buildDesktopAuthorizationUrl({
     throw new Error("DESKTOP_STATE_INVALID");
   }
 
-  // CloudBase static hosting does not provide an SPA fallback for deep links.
-  // Keep the authorization entry on the deployable root document and let the
-  // Web app select the Desktop authorization screen through a query flag.
+  // The Web app selects Desktop authorization through a query flag on the root
+  // document. Keep the existing PKCE/loopback contract across domain changes.
   const url = new URL(`${normalizeHttpBaseUrl(webBaseUrl)}/`);
   url.searchParams.set("desktop_authorize", "1");
   url.searchParams.set("client_id", APORIAX_DESKTOP_CLIENT_ID);

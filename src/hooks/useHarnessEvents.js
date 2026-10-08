@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { applyProfessionalAgentEvent } from '../conversation/professional-agent-events.js';
 import { taskSuspensionLabel } from "../state/task-suspension.js";
 import { splitSteeredReply } from "../state/steering-messages.js";
 import {
@@ -111,6 +112,8 @@ export function useHarnessEvents({
     const unsubscribe = window.desktop.harness.onEvent((event) => {
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+      if (event.type.startsWith('subagent.') && event.agentId) setTasks(current => updateRunAssistant(current, run,
+        message => ({ ...message, runId: event.runId, subagents: applyProfessionalAgentEvent(message.subagents, event) })));
       if (event.type === "clarification.required" || event.type === "clarification.updated") {
         flushPendingDeltas();
         setTasks(current => updateRunAssistant(current, run, message => ({ ...message, clarifications: event.questions || [] })));

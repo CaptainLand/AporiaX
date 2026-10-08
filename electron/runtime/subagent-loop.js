@@ -1,5 +1,6 @@
 import { TaskBrief } from "./task-brief.js";
 import { cloudWorkerDeferral } from "./cloud-wind-down.js";
+import { applyRoleThinking } from './role-capabilities.js';
 import { StrategyHistory } from "./strategy-history.js";
 import { normalizeLoopPolicy } from "./completion-policy.js";
 import { assistantHistoryMessage } from "./task-conversation.js";
@@ -40,6 +41,7 @@ import {
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const MAX_PARALLEL_TOOL_CALLS = 4;
+const getRolePermissionDenied = (policy, name, mcp) => !mcp && (policy[name] ?? policy['*']) === 'deny';
 
 function abortError() {
   const error = new Error("The run was interrupted.");
@@ -74,6 +76,7 @@ export async function runSubagentTask(options = {}) {
       emit: options.emit,
       signal: options.signal,
       continuation: Boolean(options.session?.conversation),
+      definition: options.agentDefinition,
       execute: ({ definition }) =>
         runSubagentTask({
           ...options,
@@ -89,6 +92,11 @@ export async function runSubagentTask(options = {}) {
     const resolved = await options.resolveModel(requestedModel);
     if (!resolved?.provider || !resolved?.modelId || !resolved?.modelConfig) throw new Error(`SUBAGENT_MODEL_NOT_CONFIGURED: ${requestedModel}`);
     return runSubagentTask({ ...options, ...resolved, __modelResolved: true });
+  }
+  if (!options.__thinkingResolved && options.input?.profile) {
+    const policy = applyRoleThinking(options.input.profile, options.provider, options.modelId,
+      { thinking: options.thinking, effort: options.effort });
+    return runSubagentTask({ ...options, ...policy, __thinkingResolved: true });
   }
   if (options.input?.role === "builder" && !options.__builderIsolated) return runIsolatedBuilder(options, runSubagentTask);
   const loopMetrics = new LoopMetrics();
@@ -142,7 +150,10 @@ export async function runSubagentTask(options = {}) {
     typeof describeCapability === "function"
       ? describeCapability
       : () => null;
-  const roleConfig = SUBAGENT_ROLE_CONFIG[input.role];
+  const roleConfig = { ...SUBAGENT_ROLE_CONFIG[input.role], tools: new Set([
+    ...SUBAGENT_ROLE_CONFIG[input.role].tools,
+    ...(agentDefinition?.tools || []).filter(name => ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(name)),
+  ]) };
   const runtimeDefinition = agentDefinition || null;
   const permissionPolicy = createSubagentPermissionPolicy(
     parentPermissionPolicy,
@@ -161,6 +172,7 @@ export async function runSubagentTask(options = {}) {
         (!definitionTools || definitionTools.has(definition.function.name)),
     );
   enabledTools.push(FINISH_SUBAGENT_TOOL);
+  enabledTools.push(...(options.extensionDefinitions || []));
   const instructionContext = await loadProjectInstructionContext(workspaceRoot);
   const session = options.session || {};
   const contextCheckpoints = session.contextCheckpoints || [];
@@ -183,6 +195,7 @@ export async function runSubagentTask(options = {}) {
       role: "system",
       content: [
         `You are the AporiaX ${input.role} subagent.`,
+        input.profile ? `Professional role: ${input.profile.name} (${input.profile.id}).` : '',
         runtimeDefinition?.description || roleConfig.description,
         runtimeDefinition?.systemPrompt || "",
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
@@ -242,12 +255,17 @@ export async function runSubagentTask(options = {}) {
     systemOwned,
     runtime: runtimeDefinition ? "kernel" : "compatibility",
   });
+  const wireReasoning = modelReasoningParameters(provider, { modelId, thinking, effort });
   emit({ type: "subagent.configured", agentId, role: input.role, provider: provider.id, model: modelId,
+    profileId: input.profileId, profileName: input.profile?.name,
+    thinking: Boolean(wireReasoning.reasoning_effort || wireReasoning.thinking?.type === 'enabled'), effort: wireReasoning.reasoning_effort || null,
     permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: effectiveMaxRounds });
 
   try {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
+      if (input.profile && (session.roleRounds || 0) >= input.profile.maxRounds) throw new Error('AGENT_BUDGET_EXHAUSTED: 累计轮次预算已耗尽。');
+      options.assertDependencies?.();
       await refreshInheritedContext();
       if (session.pendingGuidance?.length) {
         toolProgress.reset(); strategy.reset();
@@ -273,6 +291,7 @@ export async function runSubagentTask(options = {}) {
         accounting: tokenAccounting,
         relevantMemory: relevant,
       });
+      session.roleRounds = (session.roleRounds || 0) + 1;
       await persistSession();
       const completion = await completeLoopRequest({ conversation, contextCheckpoints,
         accounting: tokenAccounting, contextWindowTokens, signal, persist: persistSession, scopeId: agentId,
@@ -396,15 +415,25 @@ export async function runSubagentTask(options = {}) {
           ...activityFor(toolCall),
         });
         try {
+          options.assertDependencies?.();
           await refreshInheritedContext();
+          if (session.pendingGuidance?.length) throw new Error('SUBAGENT_GUIDANCE_CHANGED: additional instructions arrived; skip stale actions and replan.');
           if (session.delegationContext?.revision !== issuedContextRevision) throw new Error('SUBAGENT_GUIDANCE_CHANGED: action skipped; replan using updated user requirements.');
-          if (!roleConfig.tools.has(toolName)) {
+          const extension = options.extensionDefinitions?.some(def => def.function.name === toolName);
+          if (!roleConfig.tools.has(toolName) && !extension) {
             throw new Error(`Tool is not available to ${input.role}: ${toolName}`);
           }
-          if (definitionTools && !definitionTools.has(toolName)) {
+          if (definitionTools && !definitionTools.has(toolName) && !extension) {
             throw new Error(`Tool is not enabled by Agent Registry for ${input.role}: ${toolName}`);
           }
           const parsedInput = parseToolArguments(toolCall);
+          const roleExtension = extension || ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(toolName);
+          if (roleExtension) {
+            if (getRolePermissionDenied(permissionPolicy, toolName, extension)) throw new Error(`Permission denied for tool: ${toolName}`);
+            const result = await options.executeRoleExtension?.({ toolName, input: parsedInput, signal, agentId, requestApproval });
+            if (result === undefined) throw new Error('Role extension is unavailable.');
+            modelResult = compactSubagentModelResult(result);
+          } else {
           strategy.before(toolName, parsedInput);
           await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
           const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
@@ -448,6 +477,7 @@ export async function runSubagentTask(options = {}) {
           });
           appliedChanges = executed.changes || (executed.change ? [executed.change] : []);
           modelResult = compactSubagentModelResult(executed.modelResult);
+          }
         } catch (error) {
           if (error?.name === "AbortError") throw error;
           success = false;

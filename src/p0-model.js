@@ -673,6 +673,8 @@ export function collectTaskRouteRuns(task) {
       return {
         id: message.id,
         messageId: message.id,
+        runId: message.runId,
+        subagents: message.subagents || [],
         prompt,
         summary: summarizeRoutePrompt(prompt),
         createdAt: message.createdAt || sourceMessage?.createdAt || null,
