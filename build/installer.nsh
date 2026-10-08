@@ -1,8 +1,11 @@
+!include "${BUILD_RESOURCES_DIR}\installer-legacy-update.nsh"
+
 ; electron-builder intentionally keeps shortcuts during an update. If the
 ; registered installation was a different copy, those shortcuts can still point
 ; at the old directory after /D= selects the running copy. Retarget only links
 ; that already exist; do not recreate shortcuts the user deliberately removed.
 !macro customInstall
+  Call AporiaLegacyUpdateCompleted
   SetOutPath "$INSTDIR"
   !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
     ${if} ${FileExists} "$newStartMenuLink"
