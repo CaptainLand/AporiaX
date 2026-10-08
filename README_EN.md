@@ -1,66 +1,79 @@
-<p align="center">
-  <img src="build/icon.png" width="88" alt="AporiaX" />
-</p>
-
+<p align="center"><img src="build/icon.png" width="88" alt="AporiaX" /></p>
 <h1 align="center">AporiaX</h1>
+<p align="center"><em>Every problem begins with an aporia.</em></p>
 
 <p align="center">
-  <a href="README.md">简体中文</a> · <strong>English</strong>
+  <strong><a href="https://aporiax.cloud">Official website · aporiax.cloud</a></strong> · <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5">Download RC5</a> · <a href="https://aporiax.cloud/guide/">User guide</a> · <a href="https://aporiax.cloud/account">Account center</a>
 </p>
-
+<p align="center"><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
 <p align="center">
-  <em>Every problem begins with an aporia.</em>
-</p>
-
-<p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.3"><img alt="Source v1.0.0-preview.3" src="https://img.shields.io/badge/source-v1.0.0--preview.3-59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5"><img alt="1.0.0-rc.5" src="https://img.shields.io/badge/release-1.0.0--rc.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
-</p>
-
-AporiaX is a local-first Windows desktop agent. It edits code, runs commands, and creates Word / PowerPoint / Excel files inside an authorized workspace. Conversation, files, browser, terminal, and Git share one screen. Steps, evidence, and rollback stay in the UI instead of collapsing into a chat reply.
+AporiaX is a local-first Windows desktop agent for code, commands and Word / PowerPoint / Excel files. Conversation, files, browser, terminal and Git share one window, with execution records, evidence and rollback controls.
 
 > [!IMPORTANT]
-> Current Windows preview: **`v1.0.0-preview.3`**, not the final 1.0.0 release.
-> Direct HTTPS beta sign-in, account center, tutorials, and safer Cloud recovery. See [Preview 3 notes](docs/RELEASE_NOTES_v1.0.0-preview.3.md). Cloud is temporarily limited to 20 users and ¥5/day site-wide. Independent AporiaX Beta builds need a one-time manual download.
-> Published as a regular GitHub Release marked **Latest**, so the default app update channel can discover it. The preview name and known issues remain.
-> This build adds network waiting and sleep/wake continuation, clearer main/subagent collaboration, execution records, on-demand project knowledge, and first-use model setup.
-> Aporia Account, Aporia Cloud, your own APIs, and local models stay independent. Quota exhaustion does not silently switch paths.
-> Binaries are unsigned. Quit the previous build before updating.
+> Current version: **1.0.0-rc.5**, a release candidate—not final 1.0.0. [Release notes](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5) · [Matching source](https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5).
+> Desktop authorization, account center, Cloud gateway and China downloads now use **[aporiax.cloud](https://aporiax.cloud)**. Old-endpoint credentials are not forwarded automatically; you may need to sign in again.
+> RC5 is on the default update channel. Windows binaries remain unsigned and may trigger security warnings.
 
-## What it can do today
+## RC5 highlights
+
+- **Professional role settings:** configure Explore / Review / Verify / Curator / Builder or custom roles, models, reasoning and budgets. Builder concurrency moves to Settings.
+- **Main-led delegation:** Main discovers and invokes configured roles; independent work can run in parallel, dependencies wait, and the runtime enforces concurrency and cumulative budgets.
+- **Scoped capabilities:** select Skills, MCP, project knowledge and verification tools without exceeding parent permissions. The Agent panel shows status, results and usage, supports follow-ups and stop, and never invents unavailable cost data.
+- **Official-domain integration:** desktop sign-in, account management, Cloud requests and China downloads use the website.
+- **Opt-in project knowledge:** disabled tasks show an enable entry first; multiple knowledge projects per workspace are selected per task and read on demand.
+- **RC4 foundations retained:** consistent light/dark layouts and main/side-chat model pickers, rolling context summaries, bounded recovery, Skills / MCP and local external connections.
+
+Validation: **103/103** local core regression scripts, **30/30** desktop checks, and **6/6** [Windows / Linux CI jobs](https://github.com/CaptainLand/AporiaX/actions/runs/37784953275) passed. Mock-provider tests do not guarantee live-provider compatibility, speed or cost.
+
+## Download
+
+[Official website](https://aporiax.cloud) · [GitHub Latest](https://github.com/CaptainLand/AporiaX/releases/latest) · [Earlier releases](https://github.com/CaptainLand/AporiaX/releases)
+
+| Windows x64 · RC5 | China mirror | GitHub |
+| --- | --- | --- |
+| Installer (recommended) | [Download](https://aporiax.cloud/downloads/AporiaX-Setup-1.0.0-rc.5-x64.exe) | [Download](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/AporiaX-Setup-1.0.0-rc.5-x64.exe) |
+| Portable | [Download](https://aporiax.cloud/downloads/AporiaX-Portable-1.0.0-rc.5-x64.exe) | [Download](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/AporiaX-Portable-1.0.0-rc.5-x64.exe) |
+| SHA-256 checksums | [Checksums](https://aporiax.cloud/downloads/SHA256SUMS-1.0.0-rc.5.txt) | [Checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/SHA256SUMS-1.0.0-rc.5.txt) |
+
+Older versions can use Settings → About → Check for updates. Installed builds download and restart to install; portable builds require replacing the executable. Latest enables update discovery; it does not mean final 1.0.0 acceptance is complete.
+
+## Main capabilities
 
 | Capability | Current implementation |
 | --- | --- |
-| Code and workspace | Paged/ranged reads, bundled ripgrep, file tree, preview/editing, multi-file Unified Patch, Git status and diff |
-| Same-screen workbench | Files, Browser, terminal, Git, and side chat beside the conversation; Agent opens sidebar tabs with `present_to_user` |
-| Language intelligence | Persistent LSP diagnostics, definition, references, hover, document symbols, workspace symbols, plus approval-gated language-server installation |
-| Git / GitHub | Init, stage/commit/branch, remotes, pull/push, repository creation; sidebar editing of ordinary UTF-8 merge conflicts; read-only PR and CI for the current branch |
-| Permissions and execution | Smart Permission plus Direct / Safe / Isolated; Safe does not write the host `node_modules`; Isolated refuses to run without Docker |
-| Aporia Account | Browser authorization, PKCE, Main-only Access Token, safeStorage Refresh Token, account/quota/device state |
-| Aporia Cloud | Managed DeepSeek V4.1 Flash, server-reported availability, rolling weekly quota, isolated from BYOK / Local |
-| Cloud images | Flash native image input when supported by the server; the old Qwen proxy is retired |
-| Document production | Real `.docx`, `.pptx`, and `.xlsx` generation with structural inspection |
-| Adaptive multi-agent execution | Adaptive Agent Budget keeps simple tasks Main-only and grants bounded extra agents when complexity needs them |
-| Builder orchestration | Concurrency 0 / 1 / 2 / 3 / 4 / 6, default 2, with Task Graph, Scope Leases, isolated Git worktrees, and conflict-safe merge |
-| Agent collaboration | Independent child contexts inherit original user constraints; structured results await Main review. Builders do not execute shell commands; Main / Verify owns verification |
-| Observable execution | Newest-first execution records, current actions, detail dialogs, per-run Main / Explore / Review / Verify / Curator / Builder activation counts, and Builder concurrency/queue/peak |
-| Pause and recovery | Wait through temporary network loss and resume after wake; Main and children share pause gates, retaining received context and receipts without replaying uncertain side effects |
-| Review and rollback | File snapshots, line diffs, Office binary checkpoints, per-turn Anchors, cross-turn recovery, and conflict checks |
-| Independent checks | The main agent selects relevant commands and review; delivery with unverified or failed status is allowed |
-| Project knowledge | Multiple knowledge projects per workspace, per-task selection and opt-in access, tool-driven reads instead of full-store context injection, with sources and revision history |
-| Extensions | Skills, MCP, Browser, Office, and native tools share the same capability system |
-| Multiple model APIs | Aporia Cloud plus multiple OpenAI-compatible providers/keys, `/models` discovery, and task-level model selection |
-| Desktop background | Tasks may continue in the Windows tray with restore/exit, completion notifications, and live runtime display |
-| Local OCR | Chinese/English engine remains; language data downloads on first use; composer, attachment, and sidebar entries are hidden for now |
+| Code and workspace | Paged reads, ripgrep search, file tree/editing, multi-file patches, Git status and diff |
+| Workbench | Files, browser, terminal, Git and side chat; Agents can present artifacts beside the conversation |
+| Git / GitHub | Init, staging/commits/branches, remotes, pull/push, repository creation, conflict editing and read-only PR / CI views |
+| Professional roles | Default/custom responsibilities, model/reasoning/budget/capability settings, Main-led delegation |
+| Builders | Concurrency 0–6 in Settings (default 2), task inheritance, isolated Git worktrees, scoped writes and conflict-safe integration |
+| Long conversations | Same-model rolling summaries, local original-history readback and bounded recovery—not infinite context; summary calls consume normal usage |
+| Project knowledge | Per-task opt-in, multiple knowledge projects per workspace, on-demand retrieval, sources and revisions |
+| Extensions | Skills, MCP and native tools within parent permissions, file scopes and approvals |
+| External connections | Authenticated local API / MCP using existing workspaces—not a publicly exposed remote service by default |
+| Permissions | Direct / Safe / Isolated; outside-workspace access is off by default and explicit opt-in retains sensitive-directory protections |
+| Documents and language tools | Word / PowerPoint / Excel generation and structural checks; LSP diagnostics, definitions and references |
+| Aporia Cloud | Managed model, weekly quota, native images and server capability checks, separate from BYOK / local providers |
+| Web account center | Quota, devices, security and per-request history; unresolved usage no longer pre-deducts shared daily capacity, while real settlement and reconciliation remain |
+| Review and recovery | Execution records, diffs, snapshots and Anchors; uncertain side effects are not blindly replayed |
+| Desktop background | System tray, completion notifications and elapsed time; recovery after exit is not an always-online service |
 
-See [SECURITY.md](SECURITY.md) for boundaries.
+## First launch
+
+1. Create a task and choose a local workspace.
+2. Add your own API / local provider, or sign in to Aporia Account for Cloud.
+3. Optionally enable project knowledge and configure collaborators in Settings → Professional roles.
+4. Describe the outcome, then inspect execution records, file changes and deliverables.
+
+[User guide](https://aporiax.cloud/guide/) · [Security boundaries](SECURITY.md)
 
 ## Interface preview
+
+These are previously published screenshots, some from Preview builds—not all show RC5. The current package is authoritative.
 
 <table>
   <tr>
@@ -105,99 +118,33 @@ See [SECURITY.md](SECURITY.md) for boundaries.
   </tr>
 </table>
 
-The dialogue, execution records, workspace, project knowledge and two sidebar screenshots now show 1.0.0-preview; click them to view the originals. Welcome, About and settings screenshots are retained from earlier versions; the current package is authoritative.
-
-## 1.0.0-preview
-
-- **Wait instead of failing immediately:** temporary connection loss uses backoff; sleep pauses new work and wake resumes it. Automatic recovery never clears a manual pause or resurrects a stopped task.
-- **Clearer collaboration:** child contexts retain user constraints and return structured results for review. Pause gates cover children and the Builder queue without changing the selected concurrency cap.
-- **Readable execution records:** separate current actions from newest-first history, inspect details, and see per-run agent activation and Builder queue counts.
-- **On-demand project knowledge:** keep multiple knowledge projects in one workspace and select access per task; simplified project controls and tool-driven reads.
-- **Easier setup and previews:** signed-out Cloud models are disabled with a prompt to add your API; workspace files reuse sidebar previews, with Anchors collapsed by default.
-- **Retain the 0.9.9 foundations:** source-backed decisions, diagnostic retention, ordered tools, process-event waiting, and evidence-based acceptance without unrelated forced tests or false verification claims.
-
-Local validation: **67/67** regression scripts, 15 suspension/recovery scenarios, browser state checks, and actual packaged recovery/terminal tests passed. No live-model A/B speed or cost claim is made.
-
-Known preview issues: the [release commit's GitHub checks](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832) include failures in Windows knowledge projects, Curator activation tracking and the execution-record UI. These remain unresolved; the local results above do not mean all CI environments passed.
-
-> Automatic continuation requires the app process to remain alive. Power loss, exit, or crashes still require manual recovery. Preserved memory means received, saveable task state, not provider-side computation that never returned. Unknown command/upload outcomes are not blindly replayed, and reconnecting may incur duplicate charges. Real hardware network-loss and sleep/wake checks remain outstanding.
-
-[Full 1.0.0-preview notes](docs/RELEASE_NOTES_v1.0.0-preview.md) · [0.9.9 notes](docs/RELEASE_NOTES_v0.9.9.md) · [Changelog](CHANGELOG.md)
-
-## Download
-
-The current public version is **v1.0.0-preview.3**, published as a regular GitHub Release marked **Latest** on the default update channel. The preview name and known issues remain; this does not mean final 1.0.0 acceptance is complete. [Open the Latest download page](https://github.com/CaptainLand/AporiaX/releases/latest).
-
-In an older build, use Settings → About → Check for updates to refresh manually. Installed builds can download and restart to install; portable builds open the download page so you can replace the executable manually. Automatic checks are spaced 12 hours apart.
-
-| Windows x64 | Current package |
-| --- | --- |
-| [Browse Releases](https://github.com/CaptainLand/AporiaX/releases) | History and notes |
-| [Preview 3 Installer](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.3/AporiaX-Setup-1.0.0-preview.3-x64.exe) | Recommended, in-app updates |
-| [Preview 3 Portable](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.3/AporiaX-Portable-1.0.0-preview.3-x64.exe) | No install; download each update |
-| [SHA-256 checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.3/SHA256SUMS-1.0.0-preview.3.txt) | Verify your download |
-
-First launch:
-
-1. Create a task and choose a local workspace.
-2. Add your own API / local provider in the model picker, or sign in to Aporia Account for Aporia Cloud. Signed-out Cloud models are disabled.
-3. Optionally select project knowledge for this task, describe the outcome, and inspect execution records, files, and deliverables.
-
 ## Run from source
 
-**Node.js 22.12.0 or newer.** Docker Desktop is required only for Isolated mode. Direct and Safe run without Docker.
+Requires **Node.js 22.12.0 or newer**. Check out the RC5 tag to match the published package rather than the development main branch.
 
 ```powershell
-git clone https://github.com/CaptainLand/AporiaX.git
+git clone --branch v1.0.0-rc.5 --single-branch https://github.com/CaptainLand/AporiaX.git
 cd AporiaX
 npm install
 npm run dev
 ```
 
-API keys are encrypted with Electron `safeStorage` and never returned to the renderer. Do not put real credentials in source, `.env`, issues, or logs. Legacy DeepSeek still accepts `DEEPSEEK_API_KEY`.
-
 ```powershell
-npm run dev          # development
-npm run build        # production renderer
-npm run dist:win     # Windows installer and portable
+npm run build
+npm run dist:win
 npm run test:audit-suite
-npm run test:suspension # automatic pause/recovery scenarios
 ```
 
-## Subagents and project rules
+Docker Desktop is needed only for Isolated mode; Direct and Safe work without it. API keys use Electron safeStorage encryption. Never put real credentials in source, issues or logs.
 
-Read-only explore, review, and verify work can go to isolated subagents. Writable Git tasks can delegate Builders: concurrency **0 / 1 / 2 / 3 / 4 / 6, default 2**, writing in isolated worktrees under scoped leases, then merging through the main agent after conflict checks.
+## Execution boundaries
 
-Builders use file tools within their delegated scope, not shell execution or publishing. Main / Verify selects relevant checks; Main reviews returned results.
+Main delegates; the runtime enforces permissions, budgets, dependencies and concurrency. Builders use scoped file tools, not shell execution or publishing. Main / Verify chooses relevant checks, and a returned result is not automatically an accepted result.
 
-Harness reads `AGENTS.md`, `APORIAX.md`, `DEEPAGENT.md`, and `.aporiax/rules/*.md`. Project knowledge stores commands, architecture, and explicit preferences separately per knowledge project. Tasks can disable access or read on demand; the full store is not forcibly injected, and credentials are rejected.
+Harness reads `AGENTS.md`, `APORIAX.md`, `DEEPAGENT.md` and `.aporiax/rules/*.md`. Workspace-root `.aporiax.json` can only tighten permissions, not elevate read-only tasks.
 
-`.aporiax.json` in the workspace root can only **tighten** permissions:
+Automatic continuation requires a live app process. Exit/crashes, provider outages and real hardware sleep have limitations. Unreturned provider computation cannot be recovered, and rolling summaries are not unlimited memory. Cloud exhaustion never silently switches providers.
 
-```json
-{
-  "permissions": {
-    "write_file": "ask",
-    "apply_patch": "ask",
-    "run_command": "deny"
-  }
-}
-```
+## Contributing and license
 
-```text
-electron/   Main process, Harness, tools, security boundaries
-src/        UI, workbench, review
-tests/      Runtime and behavior checks
-docs/       Architecture and release notes
-build/      Icons and pack resources
-```
-
-Roadmap: [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md).
-
-## Contributing
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately via [SECURITY.md](SECURITY.md).
-
-## License
-
-[MIT](LICENSE) © 2026 CaptainLand
+[Contribution guide](CONTRIBUTING.md) · [Security reports](SECURITY.md) · [MIT License](LICENSE) © 2026 CaptainLand

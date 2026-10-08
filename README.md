@@ -1,69 +1,79 @@
-<p align="center">
-  <img src="build/icon.png" width="88" alt="AporiaX" />
-</p>
-
+<p align="center"><img src="build/icon.png" width="88" alt="AporiaX" /></p>
 <h1 align="center">AporiaX</h1>
+<p align="center"><em>Every problem begins with an aporia.</em></p>
 
 <p align="center">
-  <strong>简体中文</strong> · <a href="README_EN.md">English</a>
+  <strong><a href="https://aporiax.cloud">官网 · aporiax.cloud</a></strong> · <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5">下载 RC5</a> · <a href="https://aporiax.cloud/guide/">使用教程</a> · <a href="https://aporiax.cloud/account">账户中心</a>
 </p>
-
+<p align="center"><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
 <p align="center">
-  <em>Every problem begins with an aporia.</em>
-</p>
-
-<p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-preview.3"><img alt="Source v1.0.0-preview.3" src="https://img.shields.io/badge/source-v1.0.0--preview.3-59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5"><img alt="1.0.0-rc.5" src="https://img.shields.io/badge/release-1.0.0--rc.5-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/aporiax-social-preview.jpg" width="100%" alt="AporiaX — Every problem begins with an aporia." />
-</p>
-
-AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区里改代码、跑命令、生成 Word / PPT / Excel；对话和文件、浏览器、终端、Git 在同一屏，步骤、依据和回退都留在界面里，而不是只给一段聊天回复。
+AporiaX 是 Windows 上的本地优先桌面 Agent。在授权范围内改代码、运行命令、生成 Word / PPT / Excel；对话、文件、浏览器、终端和 Git 放在同一窗口，保留执行记录、证据和回退入口。
 
 > [!IMPORTANT]
-> 当前 Windows 预览版为 **1.0.0 Preview 3（`v1.0.0-preview.3`）**，不是 1.0.0 正式版。
-> 直接浏览器登录当前 HTTPS 内测站点，新增账户中心和教程入口，改进 Cloud 请求恢复及更新链路。
-> 参见 [Preview 3 说明](docs/RELEASE_NOTES_v1.0.0-preview.3.md)。Cloud 暂限 20 人、全站每日 ¥5；独立 AporiaX Beta 需手动换包一次。
-> 本版已作为普通 GitHub Release 设为 **Latest**，应用默认更新检测可发现；版本名仍保留 preview，已知问题见下文。
-> 本版新增断网等待与睡眠唤醒续跑，完善主/子 Agent 协作、执行记录、按需项目知识与首次使用引导。
-> Aporia Account、Aporia Cloud、自己的 API 与本地模型相互独立，额度用尽不会偷偷切到另一条路径。
-> 安装包未代码签名。请先退出旧版再更新。
+> 当前版本为 **1.0.0-rc.5**（候选版），不是 1.0.0 正式版。[发行说明](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5) · [对应源码](https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5)。
+> 桌面登录、账户中心、Cloud 网关与国内下载统一接入 **[aporiax.cloud](https://aporiax.cloud)**。旧地址凭据不会自动转发；升级后可能需要重新登录。
+> RC5 已进入默认更新渠道。Windows 安装包仍未具备可信代码签名，可能出现系统安全提示。
 
-## 现在的一些功能
+## RC5 更新重点
 
-第一次使用？阅读 [中文使用教程](https://captainland.github.io/AporiaX_web/guide/)：从添加 API Key、验证连接开始，再了解侧栏、Git、项目知识与扩展。也可查看[教程 Markdown 文档](docs/USER_GUIDE.zh-CN.md)。
+- **专业角色设置**：配置 Explore / Review / Verify / Curator / Builder 或自定义角色的职责、模型、思考强度与预算；Builder 数量移入设置。
+- **主 Agent 调度**：主 Agent 可以发现并委派已配置的角色；独立工作并行，有依赖则等待，系统执行并发与累计预算约束。
+- **受控能力组合**：按角色选择 Skills、MCP、项目知识和验证工具，不突破父任务权限。专业 Agent 面板显示状态、结果与用量，支持追加要求和停止；价格未知时不虚构费用。
+- **新域名接入**：桌面授权、账户管理、Cloud 请求和国内下载统一使用官网。
+- **项目知识入口**：当前任务未开启时先显示启用入口；同一工作区支持多个知识项目，仍按任务绑定、通过工具按需读取。
+- **延续 RC4 修复**：统一日/夜布局与主/侧聊天模型选择，保留滚动上下文摘要、调用恢复、Skills / MCP 和本机外部连接能力。
+
+验证：本地 **103/103** 核心回归、**30/30** 桌面检查通过；[RC5 Windows / Linux CI](https://github.com/CaptainLand/AporiaX/actions/runs/37784953275) **6/6** 任务通过。模拟模型测试不代表真实供应商兼容性或提速、成本保证。
+
+## 下载
+
+[官网](https://aporiax.cloud) · [GitHub Latest](https://github.com/CaptainLand/AporiaX/releases/latest) · [历史版本](https://github.com/CaptainLand/AporiaX/releases)
+
+| Windows x64 · RC5 | 国内下载 | GitHub |
+| --- | --- | --- |
+| 安装版（推荐） | [官网下载](https://aporiax.cloud/downloads/AporiaX-Setup-1.0.0-rc.5-x64.exe) | [GitHub 下载](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/AporiaX-Setup-1.0.0-rc.5-x64.exe) |
+| 便携版 | [官网下载](https://aporiax.cloud/downloads/AporiaX-Portable-1.0.0-rc.5-x64.exe) | [GitHub 下载](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/AporiaX-Portable-1.0.0-rc.5-x64.exe) |
+| SHA-256 校验值 | [官网校验文件](https://aporiax.cloud/downloads/SHA256SUMS-1.0.0-rc.5.txt) | [GitHub 校验文件](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/SHA256SUMS-1.0.0-rc.5.txt) |
+
+旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版需下载新文件替换。RC5 被设为 Latest 供更新发现，不表示已完成正式版验收。
+
+## 主要能力
 
 | 能力 | 当前实现 |
 | --- | --- |
-| 代码与工作区 | 分页/按行读取、ripgrep 正则与 Glob 搜索、文件树、预览、编辑、多文件 Unified Patch、Git 状态与 Diff |
-| 同屏工作台 | 文件、Browser、终端、Git、侧边聊天与对话同一窗口；由 Agent 调用 `present_to_user` 打开侧栏 |
-| 语言智能 | 持久 LSP：诊断、定义、引用、Hover、文档符号、工作区符号；支持受控安装缺失语言服务器 |
-| Git / GitHub | 从 init、stage/commit/branch 到 remote、pull/push、创建仓库；侧栏编辑普通 UTF-8 merge 冲突；只读查看当前分支 PR 与 CI |
-| 权限与执行 | Smart Permission + Direct / Safe / Isolated；Safe 不写宿主 `node_modules`；Isolated 无 Docker 时拒绝，不静默降级 |
-| Aporia Account | 系统浏览器授权、PKCE、Main-only Access Token、safeStorage Refresh Token、账号/额度/设备状态 |
-| Aporia Cloud | 单一托管 DeepSeek V4.1 Flash、原生图片、按高峰/非高峰价格折算滚动周额度，与 BYOK / Local 独立 |
-| Cloud 图片 | 根据服务端能力使用 Flash 原生图片输入；旧 Qwen 图片代理已关闭，不偷偷切换模型 |
-| 文档生产 | 生成真实 `.docx`、`.pptx`、`.xlsx`，并进行结构化复核 |
-| 自适应多 Agent | Adaptive Agent Budget 按任务复杂度分配额外 Agent；简单任务保持 Main-only |
-| Builder 编排 | 并发可选 0 / 1 / 2 / 3 / 4 / 6，默认 2；Task Graph、Scope Lease、独立 Git worktree 与冲突安全合并 |
-| Agent 协作 | 主 Agent 传递原始要求，子 Agent 独立上下文与结构化结果；返回结果与主 Agent 验收分开，Builder 不运行 shell，验证由 Main / Verify 负责 |
-| 可观察执行 | 执行记录按最新在前展示当前动作、详情和真实状态；逐轮统计 Main / Explore / Review / Verify / Curator / Builder 激活次数、Builder 并发/排队/峰值 |
-| 暂停与恢复 | 临时断网等待，睡眠后唤醒续跑；主/子 Agent 共用暂停控制，保留已接收上下文与操作收据，不自动重放未知副作用 |
-| 审核与回退 | 文件快照、逐行 Diff、Office 二进制检查点、对话级 Anchor、跨轮恢复与冲突检查 |
-| 独立检查 | 主 Agent 明确选择相关命令与审查；允许带着未验证/失败状态交付 |
-| 项目知识 | 一个工作区可有多个知识项目；按任务选择开关与知识项目，模型通过工具按需读取，不将整库硬塞进上下文；保留来源和修订历史 |
-| 扩展 | Skill 文件夹、MCP JSON、Browser、Office 与原生工具统一进入 Capability 系统 |
-| 多模型 API | Aporia Cloud、多个 OpenAI-compatible Provider、多个密钥、`/models` 自动发现与任务级模型选择 |
-| 桌面后台 | 关闭窗口时可收至系统托盘继续任务；托盘恢复/退出、Windows 完成通知、任务运行时间显示 |
-| 本地 OCR | 中英文引擎仍在，首次下载语言模型；输入栏、附件和侧栏入口暂时隐藏 |
+| 代码与工作区 | 分页读取、ripgrep 搜索、文件树与编辑、多文件 Patch、Git 状态与 Diff |
+| 同屏工作台 | 文件、浏览器、终端、Git 与侧边聊天；Agent 可以将产物呈现在侧栏 |
+| Git / GitHub | 初始化、暂存/提交/分支、远端、拉取/推送、创建仓库、冲突编辑与只读 PR / CI 查看 |
+| 专业角色 | 默认角色与自定义职责；模型、思考强度、预算和能力组合；主 Agent 发起调度 |
+| Builder | 设置中调整并发 0–6，默认 2；任务级继承、独立 Git worktree、范围限制与冲突安全合并 |
+| 长对话 | 同模型自动滚动摘要、本机原文回读和有界恢复；不是无限上下文，摘要计入正常用量 |
+| 项目知识 | 默认按任务选择启用，一个工作区可建多个知识项目；按需读取，保留来源和修订历史 |
+| 扩展 | Skills、MCP 与原生工具；角色能力受父任务权限、范围和审批约束 |
+| 外部连接 | 受鉴权的本机 API / MCP，对接已创建的工作区；不是默认公开的远程服务 |
+| 权限与执行 | Direct / Safe / Isolated；工作区外文件权限默认关闭，明确开启后仍保留敏感目录保护 |
+| 文档与语言智能 | Word / PPT / Excel 生成与结构检查；LSP 诊断、定义、引用等 |
+| Aporia Cloud | 托管模型、周额度、原生图片与服务端可用性检查；与自有 API / 本地模型独立 |
+| Web 账户中心 | 额度、设备、安全和逐次请求记录；待核对用量不再预扣全站日额度，核对及真实结算仍保留 |
+| 审核与恢复 | 执行记录、文件 Diff、快照与 Anchor；暂停/恢复不盲目重放未知副作用 |
+| 桌面后台 | 系统托盘、完成通知与运行时间；应用退出后的恢复不等于始终在线 |
 
-完整边界见 [SECURITY.md](SECURITY.md)。
+## 开始使用
+
+1. 新建任务并选择本地工作区。
+2. 添加自己的 API / 本地 Provider，或登录 Aporia Account 使用 Cloud。
+3. 按需开启项目知识；在「设置 → 专业角色」配置协作者，再描述目标。
+4. 在执行记录和工作区查看进展、修改与产物。
+
+[完整使用教程](https://aporiax.cloud/guide/) · [安全边界](SECURITY.md)
 
 ## 界面预览
+
+以下是已公开的历史截图，部分来自 Preview 阶段，并非全部为 RC5 界面；当前安装包为准。
 
 <table>
   <tr>
@@ -108,99 +118,33 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。它在你授权的工作区
   </tr>
 </table>
 
-对话、执行记录、工作区、项目知识及两张侧栏截图已更新为 1.0.0-preview，可点击查看原图；欢迎页、关于和设置截图保留此前版本，当前界面以安装包为准。
-
-## 1.0.0-preview
-
-- **中断不再直接等于失败**：临时连接故障进入等待并退避重连；系统睡眠暂停新工作，唤醒后继续。手动暂停不会被自动解除，停止后不会被唤醒事件复活。
-- **主/子 Agent 协作更明确**：独立上下文保留用户约束，结构化结果等待验收；暂停门控覆盖子任务与 Builder 队列，保留用户设置的并发上限。
-- **执行记录更直观**：当前动作与历史分开、最新记录在前，支持详情弹窗、逐轮 Agent 激活统计和 Builder 并发/排队展示。
-- **项目知识按需使用**：一个工作区支持多个知识项目，新建任务可选择启用；简化项目切换和设置，知识由模型按需读取。
-- **更顺畅的首次使用与文件查看**：未登录的 Cloud 模型不可选择并提示添加自有 API；工作区复用侧栏文件预览，Anchor 默认收起。
-- **保留 0.9.9 的长任务基础**：有来源的决策与诊断保存、有序工具调度、进程事件等待和证据验收；不强制无关测试，不伪称验证通过。
-
-本地验证：**67/67** 个回归脚本、15 个自动暂停/恢复场景、浏览器状态展示及真实安装包内恢复/终端测试通过。尚无真实模型 A/B 提速或成本结论。
-
-预览版已知问题：[发布提交的 GitHub 检查](https://github.com/CaptainLand/AporiaX/actions/runs/35625222832)中，Windows 知识项目、Curator 启动统计及执行记录 UI 检查未全部通过，仍待修复；上述本地结果不代表所有 CI 环境通过。
-
-> 自动恢复要求应用进程仍存活；断电、退出或崩溃后仍需手动恢复。保留的是应用已接收且可保存的任务状态，不包括模型尚未返回的内部计算。未知结果的命令/上传等不会盲目重放，重连也可能重复计费。真实硬件断网、睡眠/唤醒仍待进一步实测。
-
-[完整 1.0.0-preview 说明](docs/RELEASE_NOTES_v1.0.0-preview.md) · [0.9.9 说明](docs/RELEASE_NOTES_v0.9.9.md) · [更新历史](CHANGELOG.md)
-
-## 下载
-
-当前公开版本为 **v1.0.0-preview.3**。本版作为普通 GitHub Release 设为 **Latest**，进入默认更新通道；preview 名称和已知问题保留，不表示已完成 1.0.0 正式版验收。[打开 Latest 下载页](https://github.com/CaptainLand/AporiaX/releases/latest)。
-
-旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版检测到更新后打开下载页，下载新便携版替换。自动检查间隔为 12 小时。
-
-| Windows x64 | 当前公开包 |
-| --- | --- |
-| [查看 Releases](https://github.com/CaptainLand/AporiaX/releases) | 历史版本与发行说明 |
-| [Preview 3 安装版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.3/AporiaX-Setup-1.0.0-preview.3-x64.exe) | 推荐，可在应用内更新 |
-| [Preview 3 便携版](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.3/AporiaX-Portable-1.0.0-preview.3-x64.exe) | 无需安装，更新时手动换包 |
-| [SHA-256 校验值](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-preview.3/SHA256SUMS-1.0.0-preview.3.txt) | 下载后核对 |
-
-第一次使用：
-
-1. 新建任务并选择本地工作目录。
-2. 在模型选择中添加自己的 API / 本地 Provider，或登录 Aporia Account 使用 Aporia Cloud；未登录时 Cloud 模型置灰。
-3. 按需选择本任务的项目知识，描述目标，在执行记录与工作区查看动作、文件修改和产物。
-
 ## 从源码运行
 
-需要 **Node.js 22.12.0 或更高版本**。Docker Desktop 只在 Isolated 模式需要；Direct 与 Safe 可以不装 Docker。
+需要 **Node.js 22.12.0 或更高版本**。以下命令检出与安装包对应的 RC5 标签，避免把开发中的 main 当成发布源码。
 
 ```powershell
-git clone https://github.com/CaptainLand/AporiaX.git
+git clone --branch v1.0.0-rc.5 --single-branch https://github.com/CaptainLand/AporiaX.git
 cd AporiaX
 npm install
 npm run dev
 ```
 
-API Key 用 Electron `safeStorage` 加密，不回到渲染进程。不要把真实密钥写进源码、`.env`、Issue 或日志。旧版 DeepSeek 仍可用环境变量 `DEEPSEEK_API_KEY`。
-
 ```powershell
-npm run dev          # 开发
-npm run build        # 生产渲染进程
-npm run dist:win     # Windows 安装版与便携版
+npm run build
+npm run dist:win
 npm run test:audit-suite
-npm run test:suspension # 自动暂停与恢复专项
 ```
 
-## 子 Agent 与项目约定
+Docker Desktop 仅 Isolated 模式需要；Direct 与 Safe 可不安装 Docker。API Key 由 Electron safeStorage 加密，不要将真实密钥放进源码、Issue 或日志。
 
-只读探索、审查、验证可以交给独立子 Agent。可写的 Git 任务可委派 Builder：并发 **0 / 1 / 2 / 3 / 4 / 6，默认 2**，在独立 worktree 里按范围写入，冲突检查通过后由主 Agent 合入。
+## 执行边界
 
-Builder 只在授权范围内通过文件工具修改，不自行运行 shell 或发布；Main / Verify 根据任务需要验证，主 Agent 对返回结果进行验收。
+主 Agent 委派，运行时控制权限、预算、依赖与并发。Builder 在授权范围内通过文件工具写入，不自行运行 shell 或发布；Main / Verify 按任务需要检查，返回结果不等于验收通过。
 
-工作区识别 `AGENTS.md`、`APORIAX.md`、`DEEPAGENT.md` 以及 `.aporiax/rules/*.md`。项目知识可分项目保存命令、架构约定和明确偏好；任务可关闭知识或按需读取，不强制注入整库，并拒绝写入凭据。
+工作区支持 `AGENTS.md`、`APORIAX.md`、`DEEPAGENT.md` 和 `.aporiax/rules/*.md`。项目根目录的 `.aporiax.json` 只能进一步收紧权限，不能把只读任务提升为可写。
 
-项目根目录可用 `.aporiax.json` **收紧**权限，不能把只读任务提升为可写：
+自动续跑依赖应用进程仍存活；退出、崩溃、供应商不可用及真实硬件睡眠行为仍有边界。模型未返回的内部计算无法恢复，长上下文也不是无限记忆。Cloud 额度用尽不会静默切换到另一家供应商。
 
-```json
-{
-  "permissions": {
-    "write_file": "ask",
-    "apply_patch": "ask",
-    "run_command": "deny"
-  }
-}
-```
+## 参与贡献与许可
 
-```text
-electron/   主进程、Harness、工具与安全边界
-src/        界面、工作台与审核
-tests/      运行时与行为验证
-docs/       架构与版本说明
-build/      图标等构建资源
-```
-
-路线图：[docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md)。
-
-## 参与贡献
-
-请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题按 [SECURITY.md](SECURITY.md) 私下报告。
-
-## License
-
-[MIT](LICENSE) © 2026 CaptainLand
+[贡献指南](CONTRIBUTING.md) · [安全问题](SECURITY.md) · [MIT License](LICENSE) © 2026 CaptainLand
