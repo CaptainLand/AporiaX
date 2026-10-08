@@ -3,21 +3,21 @@
 <p align="center"><em>Every problem begins with an aporia.</em></p>
 
 <p align="center">
-  <strong><a href="https://aporiax.cloud">Official website · aporiax.cloud</a></strong> · <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5">Download RC5</a> · <a href="https://aporiax.cloud/guide/">User guide</a> · <a href="https://aporiax.cloud/account">Account center</a>
+  <strong><a href="https://aporiax.cloud">Official website · aporiax.cloud</a></strong> · <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1">Download RC5.1</a> · <a href="https://aporiax.cloud/guide/">User guide</a> · <a href="https://aporiax.cloud/account">Account center</a>
 </p>
 <p align="center"><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5"><img alt="1.0.0-rc.5" src="https://img.shields.io/badge/release-1.0.0--rc.5-59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1"><img alt="1.0.0-rc.5.1" src="https://img.shields.io/badge/release-1.0.0--rc.5.1-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.1"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
 </p>
 
 AporiaX is a local-first Windows desktop agent for code, commands and Word / PowerPoint / Excel files. Conversation, files, browser, terminal and Git share one window, with execution records, evidence and rollback controls.
 
 > [!IMPORTANT]
-> Current version: **1.0.0-rc.5**, a release candidate—not final 1.0.0. [Release notes](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5) · [Matching source](https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5).
+> Current version: **1.0.0-rc.5.1**, a release candidate—not final 1.0.0. [Release notes](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1) · [Matching source](https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.1).
 > Desktop authorization, account center, Cloud gateway and China downloads now use **[aporiax.cloud](https://aporiax.cloud)**. Old-endpoint credentials are not forwarded automatically; you may need to sign in again.
-> RC5 is on the default update channel. Windows binaries remain unsigned and may trigger security warnings.
+> RC5.1 is on the default update channel. Windows binaries remain unsigned and may trigger security warnings.
 
 ## RC5 highlights
 
@@ -34,11 +34,11 @@ Validation: **103/103** local core regression scripts, **30/30** desktop checks,
 
 [Official website](https://aporiax.cloud) · [GitHub Latest](https://github.com/CaptainLand/AporiaX/releases/latest) · [Earlier releases](https://github.com/CaptainLand/AporiaX/releases)
 
-| Windows x64 · RC5 | China mirror | GitHub |
+| Windows x64 · RC5.1 | China mirror | GitHub |
 | --- | --- | --- |
-| Installer (recommended) | [Download](https://aporiax.cloud/downloads/AporiaX-Setup-1.0.0-rc.5-x64.exe) | [Download](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/AporiaX-Setup-1.0.0-rc.5-x64.exe) |
-| Portable | [Download](https://aporiax.cloud/downloads/AporiaX-Portable-1.0.0-rc.5-x64.exe) | [Download](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/AporiaX-Portable-1.0.0-rc.5-x64.exe) |
-| SHA-256 checksums | [Checksums](https://aporiax.cloud/downloads/SHA256SUMS-1.0.0-rc.5.txt) | [Checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5/SHA256SUMS-1.0.0-rc.5.txt) |
+| Installer (recommended) | [Download](https://aporiax.cloud/downloads/AporiaX-Setup-1.0.0-rc.5.1-x64.exe) | [Download](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.1/AporiaX-Setup-1.0.0-rc.5.1-x64.exe) |
+| Portable | [Download](https://aporiax.cloud/downloads/AporiaX-Portable-1.0.0-rc.5.1-x64.exe) | [Download](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.1/AporiaX-Portable-1.0.0-rc.5.1-x64.exe) |
+| SHA-256 checksums | [Checksums](https://aporiax.cloud/downloads/SHA256SUMS-1.0.0-rc.5.1.txt) | [Checksums](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.1/SHA256SUMS-1.0.0-rc.5.1.txt) |
 
 Older versions can use Settings → About → Check for updates. Installed builds download and restart to install; portable builds require replacing the executable. Latest enables update discovery; it does not mean final 1.0.0 acceptance is complete.
 
@@ -120,10 +120,10 @@ These are previously published screenshots, some from Preview builds—not all s
 
 ## Run from source
 
-Requires **Node.js 22.12.0 or newer**. Check out the RC5 tag to match the published package rather than the development main branch.
+Requires **Node.js 22.12.0 or newer**. Check out the RC5.1 tag to match the published package rather than the development main branch.
 
 ```powershell
-git clone --branch v1.0.0-rc.5 --single-branch https://github.com/CaptainLand/AporiaX.git
+git clone --branch v1.0.0-rc.5.1 --single-branch https://github.com/CaptainLand/AporiaX.git
 cd AporiaX
 npm install
 npm run dev
