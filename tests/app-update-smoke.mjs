@@ -126,5 +126,14 @@ assert.match(about, /重启安装/);
 assert.equal(pkg.build.publish.provider, "github");
 assert.equal(pkg.build.publish.owner, "CaptainLand");
 assert.equal(pkg.dependencies["electron-updater"] != null, true);
+assert.equal(pkg.build.nsis.include, "build/installer.nsh");
+const installerHook = await readFile(new URL("../build/installer.nsh", import.meta.url), "utf8");
+for (const link of ["newStartMenuLink", "newDesktopLink"]) {
+  const guardedRepair = '${if} ${FileExists} "$' + link + '"';
+  assert.ok(installerHook.includes(guardedRepair), "Only repair existing shortcuts: " + link);
+  assert.ok(installerHook.includes('CreateShortCut "$' + link + '" "$appExe"'));
+  assert.ok(installerHook.includes('WinShell::SetLnkAUMI "$' + link + '" "${APP_ID}"'));
+}
+assert.ok(installerHook.includes('${ifNot} ${isNoDesktopShortcut}'));
 
 console.log("app update smoke: PASS");

@@ -2,6 +2,7 @@ import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc
 import { BrowserWindow, app, ipcMain, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { loadCloudEndpoints } from "./account/cloud-endpoints.js";
+import { updateInstallDirectory } from "./app-update-install-path.js";
 import {
   LATEST_RELEASE_URL,
   LATEST_YML_URL,
@@ -259,7 +260,17 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
               : "UNSUPPORTED_CHANNEL",
       });
     }
-    autoUpdater.quitAndInstall(false, true);
+    try {
+      // Pin the destination at installation time, not to a possibly stale
+      // registry entry from another installed copy of AporiaX.
+      autoUpdater.installDirectory = updateInstallDirectory({
+        channel: channel(), platform: process.platform, execPath: process.execPath,
+      });
+      autoUpdater.quitAndInstall(false, true);
+    } catch (failure) {
+      return setStatus({ phase: "downloaded", availableVersion: status.availableVersion,
+        downloadPercent: 100, error: String(failure?.message || failure) });
+    }
     return status;
   };
 

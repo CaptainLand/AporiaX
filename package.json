@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0-rc.5",
+  "version": "1.0.0-rc.5.1",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -193,7 +193,7 @@
       "build/icon-dark.ico",
       "package.json",
       "LICENSE",
-      "docs/RELEASE_NOTES_v1.0.0-rc.5.md",
+      "docs/RELEASE_NOTES_v1.0.0-rc.5.1.md",
       "config/cloud-endpoints.json",
       "shared/**/*",
       "docs/LOCAL_CONTROL.md"
@@ -216,6 +216,7 @@
       ]
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "artifactName": "AporiaX-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

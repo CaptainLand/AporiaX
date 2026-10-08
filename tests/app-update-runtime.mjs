@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { EventEmitter } from "node:events";
 import * as core from "../electron/app-update-core.js";
+import { updateInstallDirectory } from "../electron/app-update-install-path.js";
+import nsisModule from "electron-updater/out/NsisUpdater.js";
 const source = (await readFile("electron/app-update.js", "utf8")).replace(/import[\s\S]*?from\s+"[^"]+";/g, "").replace("export function", "function");
-function fixture({ portable = true, fail = false, downloadFail = '', mirrorMismatch = false, updaterMismatch = false } = {}) {
+function fixture({ portable = true, fail = false, downloadFail = '', mirrorMismatch = false, updaterMismatch = false, execPath = 'D:\\aporiax\\AporiaX.exe' } = {}) {
   const events = [], urls = [], opened = [], feeds = [];
   let now = 100_000, active = 0, remote = "1.0.0-preview.4", failure = fail;
   const updater = new EventEmitter();
@@ -22,9 +24,9 @@ function fixture({ portable = true, fail = false, downloadFail = '', mirrorMisma
   };
   updater.quitAndInstall = () => { opened.push("install"); };
   const create = runInNewContext(source + "\ninstallAppUpdate", {
-    ...core, URL, AbortSignal, Date: class extends Date { static now() { return now; } },
+    ...core, updateInstallDirectory, URL, AbortSignal, Date: class extends Date { static now() { return now; } },
     app: { isPackaged: true, getVersion: () => "1.0.0-preview.3" },
-    process: { env: { APORIAX_FRIENDS_BETA: "1", ...(portable ? { PORTABLE_EXECUTABLE_FILE: "fixture.exe" } : {}) } },
+    process: { platform: 'win32', execPath, env: { APORIAX_FRIENDS_BETA: "1", ...(portable ? { PORTABLE_EXECUTABLE_FILE: "fixture.exe" } : {}) } },
     loadCloudEndpoints: () => ({ configured: true, accountWebUrl: "https://cloud.example.invalid" }),
     BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: (_name, value) => events.push(value) } }] },
     electronUpdater: { autoUpdater: updater }, ipcMain: {}, handleTrustedIpc: () => {},
@@ -60,6 +62,33 @@ await n.runtime.download(); assert.equal(n.runtime.snapshot().phase,"downloaded"
 const before = n.urls.length; await n.runtime.check({force:true}); assert.equal(n.urls.length,before);
 n.active(1); await n.runtime.install(); assert.equal(n.runtime.snapshot().error,"TASK_RUNNING"); assert.equal(n.opened.length,0);
 n.active(0); await n.runtime.install(); assert.deepEqual(n.opened,["install"]);
+assert.equal(n.updater.installDirectory, 'D:\\aporiax');
+for (const directory of ['D:\\aporiax', 'D:\\我的软件\\Aporia X', 'C:\\Program Files\\AporiaX', '\\\\server\\apps\\AporiaX']) {
+  const install = fixture({ portable: false, execPath: directory + '\\AporiaX.exe' });
+  // Simulate another installation already being registered on C:.
+  install.updater.installDirectory = 'C:\\Users\\old\\AppData\\Local\\Programs\\AporiaX';
+  await install.runtime.check(); await install.runtime.download(); await install.runtime.install();
+  assert.equal(install.updater.installDirectory, directory);
+  assert.deepEqual(install.opened, ['install']);
+  const spawned = [];
+  // Exercise the actual dependency's argument builder without starting any
+  // installer. /D must be a single final argument, including spaces/Unicode.
+  const fake = { installerPath: 'C:\\cache\\setup.exe', installDirectory: install.updater.installDirectory,
+    downloadedUpdateHelper: null, spawnLog: async (...args) => spawned.push(args) };
+  assert.equal(nsisModule.NsisUpdater.prototype.doInstall.call(fake, { isSilent: false, isForceRunAfter: true }), true);
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(spawned[0][1], ['--updated', '--force-run', `/D=${directory}`]);
+}
+for (const execPath of ['', 'AporiaX.exe', 'D:AporiaX.exe', 'D:\\AporiaX.exe', 'D:\\app\\bad".exe', 'D:\\app\\bad\n.exe']) {
+  const invalid = fixture({portable: false, execPath});
+  await invalid.runtime.check(); await invalid.runtime.download(); await invalid.runtime.install();
+  assert.equal(invalid.runtime.snapshot().phase, 'downloaded');
+  assert.equal(invalid.runtime.snapshot().error, 'INVALID_UPDATE_INSTALL_DIRECTORY');
+  assert.equal(invalid.opened.length, 0);
+}
+assert.equal(updateInstallDirectory({channel: 'portable', platform: 'win32', execPath: 'bad'}), undefined);
+assert.equal(updateInstallDirectory({channel: 'dev', platform: 'win32', execPath: 'bad'}), undefined);
+assert.equal(updateInstallDirectory({channel: 'nsis', platform: 'linux', execPath: '/usr/app'}), undefined);
 const fallback = fixture({portable:false,downloadFail:'ECONNRESET'}); await fallback.runtime.check();
 await Promise.all([fallback.runtime.download(),fallback.runtime.download()]);
 assert.equal(fallback.downloads.length,2); assert.match(fallback.downloads[1],/cloud.example.invalid/);
@@ -81,3 +110,4 @@ assert.equal(core.sameUpdateAsset({version:'1',path:'x',sha512:'a'.repeat(86)+'=
 assert.equal(core.sameUpdateAsset({version:'1',path:'x',sha512:'a'.repeat(86)+'==',size:1},{version:'1',path:'x',sha512:'a'.repeat(86)+'==',size:2}),false);
 console.log("PASS update runtime: SemVer, every launch, concurrent coalescing, bounded offline retry, trusted mirror, beta, latest channel, task-safe install");
 console.log('PASS download fallback: coalesced retry, same asset only, checksum/certificate rejection, failed sources, metadata race, portable mirror, IPC source allowlist');
+console.log('PASS install destination: running copy overrides old location; spaces, Unicode, UNC, real NSIS arguments; invalid targets remain uninstalled');
