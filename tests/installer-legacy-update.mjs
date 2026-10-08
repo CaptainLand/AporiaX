@@ -20,8 +20,12 @@ if (process.platform !== 'win32') {
 }
 
 const cache = join(process.env.LOCALAPPDATA, 'electron-builder/Cache');
+const cacheEntries = await readdir(cache).catch(error => {
+  if (error.code === 'ENOENT') return [];
+  throw error;
+});
 let nsis;
-for (const version of (await readdir(cache)).filter(v => /^nsis-\d/.test(v))) {
+for (const version of cacheEntries.filter(v => /^nsis-\d/.test(v))) {
   for (const folder of await readdir(join(cache, version))) {
     const candidate = join(cache, version, folder, 'makensis.exe');
     try { execFileSync(candidate, ['/VERSION'], {stdio:'pipe'}); nsis = candidate; break; } catch {}
@@ -34,7 +38,7 @@ if (!nsis && !process.argv.includes('--native')) {
 }
 assert(nsis, 'A cached Windows NSIS compiler is required for the native fixture');
 let plugins;
-for (const version of (await readdir(cache)).filter(v => /^nsis-resources-/.test(v))) {
+for (const version of cacheEntries.filter(v => /^nsis-resources-/.test(v))) {
   for (const folder of await readdir(join(cache, version))) {
     const candidate = join(cache, version, folder, 'plugins/x86-unicode');
     try { await access(join(candidate, 'UAC.dll')); await access(join(candidate, 'StdUtils.dll')); plugins = candidate; break; } catch {}
