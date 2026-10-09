@@ -3,21 +3,21 @@
 <p align="center"><em>Every problem begins with an aporia.</em></p>
 
 <p align="center">
-  <strong><a href="https://aporiax.cloud">官网 · aporiax.cloud</a></strong> · <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1">下载 RC5.1</a> · <a href="https://aporiax.cloud/guide/">使用教程</a> · <a href="https://aporiax.cloud/account">账户中心</a>
+  <strong><a href="https://aporiax.cloud">官网 · aporiax.cloud</a></strong> · <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.2">下载 RC5.2</a> · <a href="https://aporiax.cloud/guide/">使用教程</a> · <a href="https://aporiax.cloud/account">账户中心</a>
 </p>
 <p align="center"><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1"><img alt="1.0.0-rc.5.1" src="https://img.shields.io/badge/release-1.0.0--rc.5.1-59a9cf"></a>
-  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.1"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.2"><img alt="1.0.0-rc.5.2" src="https://img.shields.io/badge/release-1.0.0--rc.5.2-59a9cf"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.2"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
   <a href="LICENSE"><img alt="AporiaX Source Available License" src="https://img.shields.io/badge/License-Source_Available-59a9cf.svg"></a>
 </p>
 
 AporiaX 是 Windows 上的本地优先桌面 Agent。在授权范围内改代码、运行命令、生成 Word / PPT / Excel；对话、文件、浏览器、终端和 Git 放在同一窗口，保留执行记录、证据和回退入口。
 
 > [!IMPORTANT]
-> 当前版本为 **1.0.0-rc.5.1**（候选版），不是 1.0.0 正式版。[发行说明](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1) · [对应源码](https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.1)。
+> 当前版本为 **1.0.0-rc.5.2**（候选版），不是 1.0.0 正式版。[发行说明](https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.2) · [对应源码](https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.2)。
 > 桌面登录、账户中心、Cloud 网关与国内下载统一接入 **[aporiax.cloud](https://aporiax.cloud)**。旧地址凭据不会自动转发；升级后可能需要重新登录。
-> RC5.1 已进入默认更新渠道。Windows 安装包仍未具备可信代码签名，可能出现系统安全提示。
+> RC5.2 已进入默认更新渠道。Windows 安装包仍未具备可信代码签名，可能出现系统安全提示。
 
 ## RC5 更新重点
 
@@ -34,13 +34,13 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。在授权范围内改代码
 
 [官网](https://aporiax.cloud) · [GitHub Latest](https://github.com/CaptainLand/AporiaX/releases/latest) · [历史版本](https://github.com/CaptainLand/AporiaX/releases)
 
-| Windows x64 · RC5.1 | 国内下载 | GitHub |
+| Windows x64 · RC5.2 | 国内下载 | GitHub |
 | --- | --- | --- |
-| 安装版（推荐） | [官网下载](https://aporiax.cloud/downloads/AporiaX-Setup-1.0.0-rc.5.1-x64.exe) | [GitHub 下载](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.1/AporiaX-Setup-1.0.0-rc.5.1-x64.exe) |
-| 便携版 | [官网下载](https://aporiax.cloud/downloads/AporiaX-Portable-1.0.0-rc.5.1-x64.exe) | [GitHub 下载](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.1/AporiaX-Portable-1.0.0-rc.5.1-x64.exe) |
-| SHA-256 校验值 | [官网校验文件](https://aporiax.cloud/downloads/SHA256SUMS-1.0.0-rc.5.1.txt) | [GitHub 校验文件](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.1/SHA256SUMS-1.0.0-rc.5.1.txt) |
+| 安装版（推荐） | [官网下载](https://aporiax.cloud/downloads/AporiaX-Setup-1.0.0-rc.5.2-x64.exe) | [GitHub 下载](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.2/AporiaX-Setup-1.0.0-rc.5.2-x64.exe) |
+| 便携版 | [官网下载](https://aporiax.cloud/downloads/AporiaX-Portable-1.0.0-rc.5.2-x64.exe) | [GitHub 下载](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.2/AporiaX-Portable-1.0.0-rc.5.2-x64.exe) |
+| SHA-256 校验值 | [官网校验文件](https://aporiax.cloud/downloads/SHA256SUMS-1.0.0-rc.5.2.txt) | [GitHub 校验文件](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.0-rc.5.2/SHA256SUMS-1.0.0-rc.5.2.txt) |
 
-旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版需下载新文件替换。RC5.1 被设为 Latest 供更新发现，不表示已完成正式版验收。
+旧版可在「设置 → 关于 → 检查更新」手动刷新。安装版可在应用内下载并重启安装；便携版需下载新文件替换。RC5.2 被设为 Latest 供更新发现，不表示已完成正式版验收。
 
 ## 主要能力
 
@@ -120,10 +120,10 @@ AporiaX 是 Windows 上的本地优先桌面 Agent。在授权范围内改代码
 
 ## 从源码运行
 
-需要 **Node.js 22.12.0 或更高版本**。以下命令检出与安装包对应的 RC5.1 标签，避免把开发中的 main 当成发布源码。
+需要 **Node.js 22.12.0 或更高版本**。以下命令检出与安装包对应的 RC5.2 标签，避免把开发中的 main 当成发布源码。
 
 ```powershell
-git clone --branch v1.0.0-rc.5.1 --single-branch https://github.com/CaptainLand/AporiaX.git
+git clone --branch v1.0.0-rc.5.2 --single-branch https://github.com/CaptainLand/AporiaX.git
 cd AporiaX
 npm install
 npm run dev
