@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1"><img alt="1.0.0-rc.5.1" src="https://img.shields.io/badge/release-1.0.0--rc.5.1-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.1"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
+  <a href="LICENSE"><img alt="AporiaX Source Available License" src="https://img.shields.io/badge/License-Source_Available-59a9cf.svg"></a>
 </p>
 
 AporiaX 是 Windows 上的本地优先桌面 Agent。在授权范围内改代码、运行命令、生成 Word / PPT / Excel；对话、文件、浏览器、终端和 Git 放在同一窗口，保留执行记录、证据和回退入口。
@@ -147,4 +147,8 @@ Docker Desktop 仅 Isolated 模式需要；Direct 与 Safe 可不安装 Docker�
 
 ## 参与贡献与许可
 
-[贡献指南](CONTRIBUTING.md) · [安全问题](SECURITY.md) · [MIT License](LICENSE) © 2026 CaptainLand
+[贡献指南](CONTRIBUTING.md) · [安全问题](SECURITY.md) · [源码可用许可](LICENSE) © 2026 CaptainLand 及相应权利人。
+
+当前开发源码允许个人使用、企业内部使用、独立成果商用、修改和免费 Fork。未经书面授权，不允许出售原版或换皮版本、收费解锁，或对外提供收费的软件实质功能访问；修改版须标明非官方。商业授权可通过 [GitHub Issues](https://github.com/CaptainLand/AporiaX/issues) 联系维护者。
+
+此许可不是 OSI 意义上的开源许可，不取消独立取得的历史 MIT 或第三方授权。已发布 RC5.2 及其他 MIT 副本保持原许可，此次仅同步源码许可声明，不修改版本号、不重发旧包。范围见 [licenses/NOTICE.txt](licenses/NOTICE.txt)，历史原文见 [licenses/LEGACY-MIT.txt](licenses/LEGACY-MIT.txt)。

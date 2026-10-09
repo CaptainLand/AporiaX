@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0-rc.5.1"><img alt="1.0.0-rc.5.1" src="https://img.shields.io/badge/release-1.0.0--rc.5.1-59a9cf"></a>
   <a href="https://github.com/CaptainLand/AporiaX/tree/v1.0.0-rc.5.1"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-202830?logo=windows"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-59a9cf.svg"></a>
+  <a href="LICENSE"><img alt="AporiaX Source Available License" src="https://img.shields.io/badge/License-Source_Available-59a9cf.svg"></a>
 </p>
 
 AporiaX is a local-first Windows desktop agent for code, commands and Word / PowerPoint / Excel files. Conversation, files, browser, terminal and Git share one window, with execution records, evidence and rollback controls.
@@ -147,4 +147,8 @@ Automatic continuation requires a live app process. Exit/crashes, provider outag
 
 ## Contributing and license
 
-[Contribution guide](CONTRIBUTING.md) · [Security reports](SECURITY.md) · [MIT License](LICENSE) © 2026 CaptainLand
+[Contribution guide](CONTRIBUTING.md) · [Security reports](SECURITY.md) · [Source Available License](LICENSE) © 2026 CaptainLand and the respective rights holders. The Chinese license text governs.
+
+The current development source permits personal and internal business use, commercial use of independent outputs, modifications and free forks. Software resale, rebranded paid derivatives, paid unlocking and paid third-party access to the software's substantive functionality require separate written permission. Modified distributions must be identified as unofficial. Contact the maintainer through [GitHub Issues](https://github.com/CaptainLand/AporiaX/issues) for commercial permission.
+
+This is source-available, not an OSI-approved open-source license. Independently granted historical MIT and third-party rights remain intact, including published RC5.2 copies. This source declaration change does not change app versions or reissue any release. See [licenses/NOTICE.txt](licenses/NOTICE.txt) and the preserved [MIT text](licenses/LEGACY-MIT.txt).

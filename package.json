@@ -3,7 +3,7 @@
   "productName": "AporiaX",
   "description": "A local desktop coding agent with reviewable tools and honest, agent-led verification.",
   "author": "SeaLandX",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/CaptainLand/AporiaX#readme",
   "repository": {
     "type": "git",
@@ -186,6 +186,8 @@
       "build/icon.ico",
       "build/icon-dark.ico",
       "package.json",
+      "LICENSE",
+      "licenses/**/*",
       "config/cloud-endpoints.json",
       "shared/**/*"
     ],

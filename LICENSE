@@ -1,21 +1,99 @@
-MIT License
+AporiaX 源码可用许可 1.0
+AporiaX Source Available License 1.0
 
-Copyright (c) 2026 CaptainLand
+Copyright (c) 2026 CaptainLand。其他内容的版权归其相应权利人所有。
+项目维护者的公开标识为 CaptainLand，项目地址为
+https://github.com/CaptainLand/AporiaX。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+本文件规定随附开发源码的授权条件，不是 OSI 批准的开源许可证。
+许可版本号不等于应用版本号。此次授权声明调整日期为 2026-10-09，
+不修改应用版本，不重发安装包，不改变已发布副本的许可。
+历史授权及第三方范围说明见 licenses/NOTICE.txt；该说明是本许可的一部分。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. 适用范围
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+“许可方”指对相关原创内容拥有本许可所需授权权利的版权人。
+“软件”仅指随本许可提供、由许可方有权如此授权且未受独立历史或
+第三方授权覆盖的 AporiaX 原创代码、文档及相关修改。
+第三方组件、其他贡献者的独立权利和合法获得的历史 MIT 内容除外。
+将旧代码包含于当前工作树，不会使其既有授权失效。
+
+“衍生版本”指包含或改编上述受保护内容的版本，包括改名、换 Logo、
+修改界面、封装接口、移植或将实质功能嵌入其他产品的情况。
+仅采用相同想法、独立实现相似功能或普通使用软件产生独立成果，
+不因此自动构成衍生版本，具体以适用法律认定的受保护表达为准。
+
+2. 允许的免费使用
+
+遵守本许可时，许可方授予全球性、非独占、免许可费的复制、安装、
+运行、研究、修改和依第 4 条免费再分发的权利。
+允许个人使用、学习、企业和组织内部使用、自用部署与内部修改。
+允许使用软件编程、制作文档、咨询或完成收费项目；独立工作成果
+可以商用，其权利不因本许可转让给许可方，也不被本许可要求开源。
+交付物实际包含受本许可保护的软件代码时，该部分仍受本许可约束。
+许可持续至相关版权保护期届满，违反本许可时依第 7 条处理。
+
+3. 商业转售和收费功能访问
+
+未经有权许可方另行书面授权，不得出售、出租、付费分发、收费许可
+或收费解锁软件或其衍生版本；不得将实质软件功能捆入付费产品、
+会员或套餐以规避本条。更换产品名称、标识或界面不改变此限制。
+
+未经另行书面授权，不得经营向第三方收取软件实质功能访问费用的
+托管、SaaS、网页、远程桌面或 API 服务，包括订阅、席位、账号、
+调用次数、积分、Token 等收费方式。通过关联方收费、将强制访问
+费用称作维护费或算力成本，不因此成为免费使用。
+用户自行向独立模型供应商支付 API 费用，不属于软件提供者收费。
+一般业务收入及独立成果销售，不被本条视为收费软件访问。
+
+4. 免费再分发和服务
+
+允许免费分享源码、二进制及修改版，或提供真正免费的功能访问，但须：
+保留完整许可、适用版权及来源声明、历史和第三方许可通知；明确标注
+修改及修改者，说明修改版为非官方版本，不冒充官方或暗示官方背书。
+不得向接收者授予自己不具有的商业许可，也不得以必付捐赠、下载口令
+或强制购买其他商品的方式变相收费。
+本许可不额外要求公开自用修改或免费修改版的源码；第三方许可证
+另有要求时仍须遵守。它不表示所有闭源使用均被禁止。
+
+可接受不附带软件获取、功能、额度或优先访问权益的自愿捐赠。
+独立培训、咨询、客户自有环境安装和维护的劳动收费允许，但软件
+副本及访问权须可独立免费取得；不能用此例外经营收费多租户服务。
+
+5. 品牌和商业授权
+
+本许可不另行授予 AporiaX 名称、Logo 或其他标识的商标使用权，
+不声称这些标识已经注册。必要的真实来源说明不受本条禁止。
+不得删除适用版权和许可通知；改名不能规避第 3 条。
+
+许可方可就其有权授权的内容自行商业化或提供单独商业授权。
+商业授权申请可通过项目 GitHub Issues 联系维护者；只有有权许可方
+明确出具的书面授权才构成商业许可，普通联系、贡献或付款不构成许可。
+
+6. 历史授权 第三方内容和贡献
+
+本许可不撤销或收紧已经合法授予的 MIT 或其他许可。
+包括 v1.0.0-rc.5.2 在内已按 MIT 发布的版本、对应旧源码和安装包，
+仍按其发布时的许可办理；其内容可以继续依据独立取得的 MIT 授权使用。
+历史 MIT 原文保留在 licenses/LEGACY-MIT.txt。
+
+依赖、随附 Skills、素材、字体和其他独立许可内容继续适用各自条款。
+本许可不会为它们增加限制，也不会免除其版权及通知保留要求。
+贡献者保留未转让的版权；不追溯更改既有贡献授权，新增贡献的发布
+及商业再许可权限须由贡献者另行明确，不能仅凭 Git 提交者推定权属。
+
+7. 违反和纠正
+
+第 3 条禁止的商业行为不在本许可授权范围内。
+对于其他可以纠正的不合规行为，许可方应指出问题并给予收到书面
+通知后 30 日的纠正期；完全纠正则许可继续，未纠正则相关许可终止。
+这不追溯授权此前的商业经营，也不取消你独立享有的历史许可、
+第三方许可、法定权利或个人资料及独立成果的权利。
+
+8. 保证与责任
+
+在适用法律允许的范围内，软件按现状提供，不保证适销性、特定用途
+适用性、不侵权或 AI 输出的独占性。许可方不承担法律允许排除的责任；
+依法不得排除的责任、消费者权利或其他法定权利不受此条限制。
+个别条款无效时，其余条款在法律允许的范围内继续适用。
+本许可中文条款为解释文本；简短摘要不取代条款或第三方许可。
