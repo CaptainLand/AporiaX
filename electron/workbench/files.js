@@ -61,7 +61,7 @@ export async function searchWorkbenchFiles(workspacePath, query) {
       if (item.isSymbolicLink() || ignore.has(item.name)) continue;
       const path = dir === "." ? item.name : `${dir}/${item.name}`;
       if (item.isDirectory()) queue.push(path);
-      else if (item.isFile() && path.toLowerCase().includes(needle)) entries.push({ path, name: item.name, type: "file" });
+      if ((item.isFile() || item.isDirectory()) && path.toLowerCase().includes(needle)) entries.push({ path, name: item.name, type: item.isDirectory() ? "directory" : "file" });
       if (entries.length >= 200) break;
     }
   }

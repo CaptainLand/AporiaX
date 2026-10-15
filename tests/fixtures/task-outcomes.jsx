@@ -9,6 +9,18 @@ const statuses = ["partial", "needs_input", "blocked", "completed", "failed", "i
 const task = { id: "fixture", messages: statuses.map((status) => ({ id: status, role: "assistant", status,
   content: status === "completed" ? "已交付 [成果](https://example.invalid/result)" : "状态测试", steps: [], changes: [],
   ...(status === "completed" ? { selfCheck: { delivery: { status: "unverified" } } } : {}) })) };
+// Reply identity is independent of verification outcomes; those remain in
+// execution records. Keep all old completion variants and the elapsed badge.
+const completedReplies = [
+  { delivery: { status: "unverified" } },
+  { delivery: { status: "unavailable" } },
+  { delivery: { status: "failed" } },
+  { verification: { waived: true } },
+  { delivery: { status: "passed" } },
+  undefined,
+].map((selfCheck, index) => ({ id: `reply-${index}`, role: "assistant", status: "completed", selfCheck,
+  content: index === 0 ? "你好，有什么我可以帮你的吗？" : `完成回复 ${index}`,
+  createdAt: "2026-10-06T00:00:00Z", completedAt: "2026-10-06T00:00:17Z", changes: [], steps: [] }));
 const failure = { id: "old-failure", role: "assistant", status: "failed", error: true, prompt: "Create a document",
   sandbox: { recoveries: [{ directory: "D:/recovery/snapshot-1" }] },
   content: "Failed to deserialize the JSON body into the target type: messages[55]: missing field `content`",
@@ -33,5 +45,6 @@ function RetryFixture() {
 }
 createRoot(document.getElementById("root")).render(<I18nProvider>
   <section id="static-outcomes">{task.messages.map((message) => <Conversation key={message.id} task={{ id: message.id, messages: [message] }} />)}</section>
+  <section id="completed-headings">{completedReplies.map((message) => <Conversation key={message.id} task={{ id: message.id, messages: [message] }} />)}</section>
   <RetryFixture />
 </I18nProvider>);

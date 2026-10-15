@@ -68,9 +68,9 @@ export function deliveryNotice(assessment, hasChanges, language = "zh-CN") {
   if (!hasChanges) return "";
   const en = language === "en";
   const messages = {
-    unverified: en ? "Delivered · Unverified: no complete executable verification of the current version." : "已交付·未验证：当前版本尚未完成运行验证。",
-    unavailable: en ? "Delivered · Verification unavailable: implementation is preserved; execution environment could not complete the checks." : "已交付·验证不可用：实现已保存，执行环境未能完成检查。",
-    failed: en ? "Delivered · Checks failed: failure evidence is preserved; this is not a verified delivery." : "已交付·验证未通过：失败记录已保留，不能视为通过验收。",
+    unverified: en ? "Verification note: the current version has not had a complete executable check." : "验证说明：当前版本尚未完成运行验证。",
+    unavailable: en ? "Verification note: implementation is preserved; the execution environment could not complete the checks." : "验证说明：实现已保存，执行环境未能完成检查。",
+    failed: en ? "Verification note: some checks failed; their evidence is retained in the execution records." : "验证说明：部分检查未通过，具体失败记录已保留在执行记录中。",
   };
   const notices = [messages[assessment.status]];
   if (assessment.findings.length) notices.push(en ? "Review findings remain unresolved." : "仍有审查问题未解决。" );

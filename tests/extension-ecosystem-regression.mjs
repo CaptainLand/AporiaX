@@ -139,7 +139,7 @@ try {
   await writeFile(join(workspaceRoot, "pixel.png"), png);
   const generated = await execute({ toolName: "create_word_document", workspaceRoot, input });
   assert.equal(generated.modelResult.artifact.imageCount, 1);
-  await assert.rejects(execute({ toolName: "create_word_document", workspaceRoot, input: { ...input, blocks: [{ type: "image", path: "../private.png" }] } }), /outside workspace/);
+  await assert.rejects(execute({ toolName: "create_word_document", workspaceRoot, input: { ...input, blocks: [{ type: "image", path: "../private.png" }] } }), error => error.code === "FILE_ACCESS_DENIED");
   assert.equal((await execute({ toolName: "read_skill_resource", ...options, input: { skill: "hermes-docx", path: "scripts/docx_common.py" } })).modelResult.source, "skill-resource");
   const originalFetch = globalThis.fetch;
   let modelCalls = 0;

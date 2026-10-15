@@ -81,8 +81,13 @@ export function pendingWorkerReviews(records) {
 // model-facing tool receipt (which is not retained by all history views).
 export function workerSummary(record) {
   return { agentId: record.agentId, role: record.role, task: record.task,
+    profileId: record.input?.profileId, profileName: record.input?.profile?.name, phase: record.phase,
+    dependsOn: record.input?.dependsOn || [], scope: record.input?.scope, systemOwned: record.systemOwned,
+    configuration: record.configuration, budget: record.session?.roleBudget, elapsedMs: record.session?.roleElapsedMs,
+    usage: record.result?.usage, cost: null,
+    changedFiles: (record.result?.changes || []).map(change => ({ path: change.path, additions: change.additions, deletions: change.deletions })),
     status: record.status, background: record.background,
     reportId: record.result?.reportId, acceptance: record.result?.acceptance,
     integrated: record.result?.integrated, summary: record.result?.summary,
-    activations: record.session?.activationSequence || 0 };
+    rounds: record.session?.roleRounds, activations: record.session?.activationSequence || 0 };
 }

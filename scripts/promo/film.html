@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AporiaX Promo</title>
+<style>
+  /* Deterministic film: window.render(t) paints the frame at t seconds. */
+  :root {
+    --paper: #f7f9fc; --ink: #1c2833; --muted: #5d7383;
+    --lake: #2c85ad; --lake-bright: #49abc7; --lake-soft: #8fd0e8;
+    --line: rgba(44, 133, 173, .16);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--paper); }
+  body { font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: var(--ink); }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+
+  /* Brand gradient field (matches the aporiax.cloud hero). */
+  .field { position: absolute; inset: -45%; background:
+      radial-gradient(60% 55% at 72% 22%, rgba(150, 168, 255, .78), transparent 70%),
+      radial-gradient(55% 60% at 18% 78%, rgba(238, 170, 214, .72), transparent 70%),
+      radial-gradient(50% 50% at 48% 52%, rgba(210, 190, 250, .9), transparent 72%),
+      linear-gradient(135deg, #c9cdfa 0%, #e6c9ef 48%, #c7dcfb 100%);
+    filter: saturate(1.05); will-change: transform; }
+  .grain { position: absolute; inset: 0; opacity: .22; mix-blend-mode: soft-light; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .paper { position: absolute; inset: 0; background: var(--paper); }
+  .paper::before { content: ""; position: absolute; inset: 0; background:
+      radial-gradient(70% 60% at 85% 0%, rgba(143, 208, 232, .22), transparent 60%),
+      radial-gradient(60% 50% at 0% 100%, rgba(214, 190, 245, .18), transparent 60%); }
+
+  .layer { position: absolute; inset: 0; opacity: 0; will-change: opacity, transform; }
+
+  /* Logo + type */
+  .logo { position: absolute; left: 50%; top: 150px; width: 330px; height: 330px; margin-left: -165px; background: url("../../output/promo/assets/logo.png") center/contain no-repeat; filter: drop-shadow(0 30px 60px rgba(44, 80, 170, .28)); }
+  .shine { position: absolute; inset: 0; -webkit-mask: url("../../output/promo/assets/logo.png") center/contain no-repeat; mask: url("../../output/promo/assets/logo.png") center/contain no-repeat; background: linear-gradient(110deg, transparent 35%, rgba(255,255,255,.85) 50%, transparent 65%); background-size: 300% 100%; }
+  .wordmark { position: absolute; left: 0; right: 0; top: 540px; text-align: center; font: 600 112px/1 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: -.035em; color: var(--ink); }
+  .tagline { position: absolute; left: 0; right: 0; top: 690px; text-align: center; font-size: 40px; font-weight: 400; color: #33485a; letter-spacing: .01em; }
+  .tagline small { display: block; margin-top: 18px; font-size: 26px; color: #4f6577; letter-spacing: .02em; }
+
+  /* Feature scenes */
+  .copy { position: absolute; left: 120px; top: 110px; width: 640px; }
+  .kicker { display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.7); color: var(--lake); font: 600 18px/1.4 "Cascadia Code", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+  .kicker i { width: 8px; height: 8px; border-radius: 50%; background: var(--lake-bright); }
+  .headline { margin: 28px 0 0; font-size: 64px; font-weight: 700; line-height: 1.18; letter-spacing: -.01em; color: var(--ink); }
+  .sub { margin: 24px 0 0; font-size: 26px; line-height: 1.6; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+  .chips span { padding: 6px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #33485a; font: 500 20px/1.4 "Cascadia Code", Consolas, monospace; }
+
+  .shot { position: absolute; border-radius: 18px; overflow: hidden; background: #fff; box-shadow: 0 2px 6px rgba(28, 40, 51, .06), 0 40px 90px rgba(28, 52, 92, .22); border: 1px solid rgba(28, 40, 51, .08); will-change: transform; }
+  .shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+  .shot.wide { left: 820px; top: 150px; width: 1260px; height: 709px; }
+  /* The settings panel sits at the right edge of the app: show it at native size. */
+  #perm-shot img { object-fit: none; object-position: right top; }
+  .shot.full { left: 50%; top: 50%; width: 1440px; height: 810px; margin: -405px 0 0 -720px; }
+
+  /* Focus ring that draws attention to a region of a shot. */
+  .focus { position: absolute; border: 3px solid var(--lake-bright); border-radius: 14px; box-shadow: 0 0 0 9999px rgba(247, 249, 252, .0); opacity: 0; }
+
+  /* Office cards */
+  .files { position: absolute; left: 860px; top: 250px; display: grid; gap: 26px; }
+  .file { display: flex; align-items: center; gap: 26px; width: 860px; padding: 30px 34px; border: 1px solid rgba(28,40,51,.08); border-radius: 20px; background: #fff; box-shadow: 0 30px 70px rgba(28, 52, 92, .16); }
+  .file b { display: grid; place-items: center; width: 92px; height: 108px; border-radius: 12px; color: #fff; font: 700 26px/1 "Segoe UI", sans-serif; letter-spacing: .02em; }
+  .file .docx { background: linear-gradient(160deg, #3b7bd6, #2557a8); }
+  .file .pptx { background: linear-gradient(160deg, #e0763c, #b9502a); }
+  .file .xlsx { background: linear-gradient(160deg, #2f9a64, #1d6e45); }
+  .file div { flex: 1; }
+  .file strong { display: block; font-size: 30px; font-weight: 600; }
+  .file small { display: block; margin-top: 8px; color: var(--muted); font: 20px/1.4 "Cascadia Code", Consolas, monospace; }
+  .file em { padding: 8px 16px; border-radius: 999px; background: rgba(47, 154, 100, .12); color: #1d6e45; font-style: normal; font-size: 20px; font-weight: 600; }
+
+  /* Resilience scene */
+  .status { position: absolute; left: 860px; top: 330px; width: 860px; padding: 40px 44px; border: 1px solid rgba(28,40,51,.08); border-radius: 22px; background: #fff; box-shadow: 0 30px 70px rgba(28, 52, 92, .16); }
+  .status h4 { margin: 0; color: var(--muted); font-size: 22px; font-weight: 500; }
+  .status .state { display: flex; align-items: center; gap: 18px; margin-top: 18px; font-size: 46px; font-weight: 600; }
+  .status .dot { width: 18px; height: 18px; border-radius: 50%; }
+  .status .bar { height: 10px; margin-top: 34px; border-radius: 999px; background: #e7eef4; overflow: hidden; }
+  .status .bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--lake), var(--lake-bright)); }
+  .status ul { display: flex; gap: 12px; margin: 30px 0 0; padding: 0; list-style: none; }
+  .status li { padding: 8px 16px; border: 1px solid var(--line); border-radius: 8px; color: #33485a; font: 500 20px/1.4 "Cascadia Code", Consolas, monospace; }
+
+  /* End card */
+  .end-logo { position: absolute; left: 50%; top: 250px; width: 230px; height: 230px; margin-left: -115px; background: url("../../output/promo/assets/logo.png") center/contain no-repeat; filter: drop-shadow(0 24px 50px rgba(44, 80, 170, .26)); }
+  .end-word { position: absolute; left: 0; right: 0; top: 515px; text-align: center; font: 600 92px/1 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: -.035em; }
+  .end-line { position: absolute; left: 0; right: 0; top: 640px; text-align: center; font-size: 34px; color: #33485a; }
+  .ctas { position: absolute; left: 0; right: 0; top: 740px; display: flex; justify-content: center; gap: 22px; }
+  .cta { display: inline-flex; align-items: center; gap: 12px; height: 76px; padding: 0 40px; border-radius: 999px; font-size: 28px; font-weight: 600; }
+  .cta.primary { background: #1c2833; color: #fff; box-shadow: 0 18px 40px rgba(28, 40, 51, .25); }
+  .cta.ghost { border: 1px solid rgba(28,40,51,.14); background: rgba(255,255,255,.78); color: #1c2833; }
+  .url { position: absolute; left: 0; right: 0; top: 870px; text-align: center; color: #4f6577; font: 500 26px/1 "Cascadia Code", Consolas, monospace; letter-spacing: .04em; }
+
+  /* Progress ticks across the feature section. */
+  .ticks { position: absolute; left: 120px; bottom: 80px; display: flex; gap: 10px; }
+  .ticks i { width: 44px; height: 4px; border-radius: 2px; background: rgba(28,40,51,.12); overflow: hidden; }
+  .ticks i b { display: block; height: 100%; width: 0; background: var(--lake); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="paper" id="paper"></div>
+  <div class="layer" id="brand"><div class="field" id="field"></div><div class="grain"></div></div>
+
+  <!-- 0: opening -->
+  <div class="layer" id="s-open">
+    <div class="logo" id="open-logo"><div class="shine" id="open-shine"></div></div>
+    <div class="wordmark" id="open-word">AporiaX</div>
+    <div class="tagline" id="open-tag">每个答案，都始于一个尚未解开的疑问。<small>本地优先的桌面 Agent · 写代码，也交付 Office 文件</small></div>
+  </div>
+
+  <!-- 1: one screen -->
+  <div class="layer" id="s-screen">
+    <div class="copy"><span class="kicker"><i></i>同屏工作台</span><h2 class="headline">对话、执行与文件<br>在同一块屏幕上</h2><p class="sub">Agent 打开的文件、网页和执行记录，就在对话旁边。</p></div>
+    <div class="shot wide" id="screen-shot"><img src="../../output/promo/shots/01-conversation.png"></div>
+  </div>
+
+  <!-- 2: multi agent -->
+  <div class="layer" id="s-agents">
+    <div class="copy"><span class="kicker"><i></i>多 Agent 协作</span><h2 class="headline">主 Agent 分工<br>Builder 并行修改</h2><p class="sub">Explore、Review、Verify 按需委派，合并前检查冲突。</p><div class="chips"><span>Main</span><span>Explore</span><span>Verify</span><span>Builder ×2</span></div></div>
+    <div class="shot wide" id="agents-shot"><img id="agents-img" src="../../output/promo/shots/02-activity.png"><img id="agents-img2" src="../../output/promo/shots/03-builders.png" style="position:absolute;inset:0;opacity:0"></div>
+  </div>
+
+  <!-- 3: office -->
+  <div class="layer" id="s-office">
+    <div class="copy"><span class="kicker"><i></i>Office 交付</span><h2 class="headline">不只是代码<br>交付真实的文件</h2><p class="sub">生成 Word、PPT 与 Excel，并做结构化复核。</p></div>
+    <div class="files">
+      <div class="file" id="f1"><b class="docx">DOC</b><div><strong>本周进展周报</strong><small>docs/周报.docx · 6 页</small></div><em>结构已复核</em></div>
+      <div class="file" id="f2"><b class="pptx">PPT</b><div><strong>季度汇报</strong><small>reports/Q3.pptx · 12 张</small></div><em>结构已复核</em></div>
+      <div class="file" id="f3"><b class="xlsx">XLS</b><div><strong>商品目录数据</strong><small>data/catalog.xlsx · 3 个工作表</small></div><em>结构已复核</em></div>
+    </div>
+  </div>
+
+  <!-- 4: visible + reversible -->
+  <div class="layer" id="s-trace">
+    <div class="copy"><span class="kicker"><i></i>Witness · Diff · Anchor</span><h2 class="headline">每一步可见<br>每处修改可回退</h2><p class="sub">失败不隐藏；交付区分已验证、未验证与验证失败。</p></div>
+    <div class="shot wide" id="trace-shot"><img id="trace-img" src="../../output/promo/shots/04-failure.png"><img id="trace-img2" src="../../output/promo/shots/05-diff.png" style="position:absolute;inset:0;opacity:0"></div>
+  </div>
+
+  <!-- 5: permissions -->
+  <div class="layer" id="s-perm">
+    <div class="copy"><span class="kicker"><i></i>Smart Permission</span><h2 class="headline">三档权限<br>边界由你决定</h2><p class="sub">Isolated 没有 Docker 时直接拒绝，不会静默降级。</p><div class="chips"><span id="c-direct">Direct</span><span id="c-safe">Safe</span><span id="c-iso">Isolated</span></div></div>
+    <div class="shot wide" id="perm-shot"><img id="perm-a" src="../../output/promo/shots/06a-direct.png"><img id="perm-b" src="../../output/promo/shots/06b-safe.png" style="position:absolute;inset:0;opacity:0"><img id="perm-c" src="../../output/promo/shots/06c-isolated.png" style="position:absolute;inset:0;opacity:0"></div>
+  </div>
+
+  <!-- 6: knowledge -->
+  <div class="layer" id="s-know">
+    <div class="copy"><span class="kicker"><i></i>项目知识</span><h2 class="headline">经验沉淀下来<br>下次任务按需读取</h2><p class="sub">每条知识都带来源文件，可查、可回退。</p></div>
+    <div class="shot wide" id="know-shot"><img id="know-a" src="../../output/promo/shots/07a-knowledge.png"><img id="know-b" src="../../output/promo/shots/07b-knowledge-detail.png" style="position:absolute;inset:0;opacity:0"></div>
+  </div>
+
+  <!-- 7: resilience -->
+  <div class="layer" id="s-resume">
+    <div class="copy"><span class="kicker"><i></i>中断与长任务</span><h2 class="headline">断网、睡眠、长对话<br>都能接着做</h2><p class="sub">结果未知的操作不会盲目重放。</p></div>
+    <div class="status">
+      <h4>任务状态</h4>
+      <div class="state"><span class="dot" id="r-dot"></span><span id="r-label">执行中</span></div>
+      <div class="bar"><span id="r-bar"></span></div>
+      <ul><li>自动续跑</li><li>回执核对</li><li>长对话压缩</li></ul>
+    </div>
+  </div>
+
+  <!-- 8: end card -->
+  <div class="layer" id="s-end">
+    <div class="end-logo" id="end-logo"></div>
+    <div class="end-word">AporiaX</div>
+    <div class="end-line">每一步可见，每处修改可回退。</div>
+    <div class="ctas"><span class="cta primary">下载 Windows 版 ↗</span><span class="cta ghost">创建 Aporia 账号 →</span></div>
+    <div class="url">aporiax.cloud</div>
+  </div>
+
+  <div class="ticks" id="ticks"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const out = (x) => 1 - Math.pow(1 - clamp(x), 3);
+const span = (t, a, b) => clamp((t - a) / (b - a));
+
+// Timeline (seconds). Each scene: [start, end]. Crossfades are 0.5s.
+const SCENES = window.SCENES = {
+  open: [0, 5], screen: [5, 10], agents: [10, 15], office: [15, 19.5], trace: [19.5, 24.5],
+  perm: [24.5, 29], know: [29, 33.5], resume: [33.5, 37.5], end: [37.5, 43],
+};
+window.DURATION = 43;
+const FADE = .5;
+const FEATURES = ["screen", "agents", "office", "trace", "perm", "know", "resume"];
+
+function visibility(t, [a, b]) {
+  if (t < a - FADE || t > b + FADE) return 0;
+  return Math.min(span(t, a - FADE, a + FADE * 0.2), 1 - span(t, b - FADE * 0.2, b + FADE));
+}
+
+// Feature scene entrance: copy rises, shot slides in and slowly pushes.
+function feature(id, t, shotId) {
+  const [a, b] = SCENES[id];
+  const v = visibility(t, SCENES[id]);
+  const layer = $("s-" + id);
+  layer.style.opacity = v;
+  const enter = out(span(t, a - .2, a + .9));
+  const copy = layer.querySelector(".copy");
+  copy.style.transform = `translateY(${(1 - enter) * 34}px)`;
+  copy.style.opacity = enter;
+  if (shotId) {
+    const s = $(shotId);
+    const push = 1 + .04 * span(t, a, b);
+    s.style.transform = `translateX(${(1 - enter) * 120}px) scale(${push})`;
+    s.style.transformOrigin = "30% 30%";
+  }
+  return span(t, a, b);
+}
+
+window.render = function render(t) {
+  // Brand field drifts slowly; it is visible during the opening and end card.
+  const brand = Math.max(visibility(t, SCENES.open), visibility(t, SCENES.end));
+  $("brand").style.opacity = brand;
+  $("field").style.transform = `translate(${Math.sin(t * .35) * 3}%, ${Math.cos(t * .28) * 2.5}%) rotate(${t * .35}deg)`;
+
+  // Opening: logo resolves from blur, shine sweeps, then type.
+  const o = visibility(t, SCENES.open);
+  $("s-open").style.opacity = o;
+  const lg = out(span(t, .1, 1.8));
+  $("open-logo").style.opacity = lg;
+  $("open-logo").style.filter = `blur(${(1 - lg) * 18}px) drop-shadow(0 30px 60px rgba(44,80,170,.28))`;
+  $("open-logo").style.transform = `scale(${.86 + lg * .14}) translateY(${(1 - lg) * 20}px)`;
+  $("open-shine").style.backgroundPosition = `${100 - ease(span(t, 1.4, 2.8)) * 100}% 0`;
+  const w = out(span(t, 1.6, 2.6));
+  $("open-word").style.opacity = w; $("open-word").style.transform = `translateY(${(1 - w) * 24}px)`;
+  $("open-word").style.letterSpacing = `${-.035 + (1 - w) * .04}em`;
+  const tg = out(span(t, 2.4, 3.4));
+  $("open-tag").style.opacity = tg; $("open-tag").style.transform = `translateY(${(1 - tg) * 18}px)`;
+
+  // Features.
+  feature("screen", t, "screen-shot");
+
+  const ag = feature("agents", t, "agents-shot");
+  $("agents-img2").style.opacity = ease(span(ag, .45, .62));
+
+  const of = feature("office", t);
+  ["f1", "f2", "f3"].forEach((id, i) => {
+    const e = out(span(of, .06 + i * .12, .26 + i * .12));
+    $(id).style.opacity = e;
+    $(id).style.transform = `translateX(${(1 - e) * 80}px)`;
+  });
+
+  const tr = feature("trace", t, "trace-shot");
+  $("trace-img2").style.opacity = ease(span(tr, .5, .66));
+
+  const pm = feature("perm", t, "perm-shot");
+  $("perm-b").style.opacity = ease(span(pm, .33, .42));
+  $("perm-c").style.opacity = ease(span(pm, .62, .71));
+  const mode = pm < .375 ? 0 : pm < .665 ? 1 : 2;
+  ["c-direct", "c-safe", "c-iso"].forEach((id, i) => {
+    const on = i === mode;
+    $(id).style.background = on ? "#1c2833" : "#fff";
+    $(id).style.color = on ? "#fff" : "#33485a";
+    $(id).style.borderColor = on ? "#1c2833" : "";
+  });
+
+  const kn = feature("know", t, "know-shot");
+  $("know-b").style.opacity = ease(span(kn, .45, .6));
+
+  const rs = feature("resume", t);
+  const phase = rs < .3 ? "run" : rs < .62 ? "wait" : "back";
+  $("r-label").textContent = phase === "wait" ? "等待网络恢复" : phase === "back" ? "已恢复 · 继续执行" : "执行中";
+  $("r-dot").style.background = phase === "wait" ? "#c6a86c" : "#49abc7";
+  $("r-dot").style.boxShadow = phase === "wait" ? "none" : `0 0 0 ${6 + Math.sin(t * 6) * 4}px rgba(73,171,199,.18)`;
+  const prog = phase === "run" ? span(rs, 0, .3) * .46 : phase === "wait" ? .46 : .46 + span(rs, .62, 1) * .5;
+  $("r-bar").style.width = `${prog * 100}%`;
+  $("r-bar").style.opacity = phase === "wait" ? .45 : 1;
+
+  // End card.
+  const e = visibility(t, SCENES.end);
+  $("s-end").style.opacity = e;
+  const el = out(span(t, SCENES.end[0], SCENES.end[0] + 1.2));
+  $("end-logo").style.transform = `scale(${.9 + el * .1})`;
+  $("end-logo").style.opacity = el;
+
+  // Section progress ticks.
+  const featureVis = Math.max(...FEATURES.map((id) => visibility(t, SCENES[id])));
+  $("ticks").style.opacity = featureVis;
+  [...$("ticks").children].forEach((tick, i) => {
+    const [a, b] = SCENES[FEATURES[i]];
+    tick.firstChild.style.width = `${span(t, a, b) * 100}%`;
+  });
+};
+window.render(0);
+</script>
+</body>
+</html>

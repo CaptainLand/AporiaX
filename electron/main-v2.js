@@ -1,16 +1,21 @@
 import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
+import { roleSettingsStore } from './harness/role-settings.js';
+import { effectiveRoleSettings } from '../shared/professional-roles.js';
 import "./gpu-guard.js";
 import { app, dialog, ipcMain } from "electron";
 import { join } from "node:path";
+import { readWorkbenchMention } from "./workbench/runtime-provider.js";
+import { createFrozenBrowserMentionReader } from "./workbench/mention-snapshots.js";
 import { registerBlobScheme } from "./blob-protocol.js";
 
 registerBlobScheme();
 import "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
 import { installAppUpdate } from "./app-update.js";
-import { showApprovalToast } from "./approval-toast.js";
+import { showApprovalToast, showClarificationToast, closeClarificationToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { createHarnessCoreServer } from "./harness/core-server.js";
+import { createDesktopLocalControl, desktopControlBridgePath, createControlActivityTracker } from "./control/desktop-runtime.js";
 import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
 import {
   capabilityAvailability,
@@ -41,7 +46,7 @@ import {
   loadMcpConfiguration,
   publicMcpServerSummary,
 } from "./mcp-config.js";
-import { selectMentionedMcpServers } from "./mcp-mentions.js";
+import { selectMentionedMcpServers, installMcpSteeringProvider, selectConfiguredMcpServers } from "./mcp-mentions.js";
 import {
   extensionLibrarySnapshot,
   importMcpConfiguration,
@@ -62,8 +67,10 @@ handleTrustedIpc(ipcMain, "core:library:install-online-skill", (_event, request 
 handleTrustedIpc(ipcMain, "core:library:verify-skill", (_event, request = {}) => verifyInstalledSkill({ userDataDirectory: app.getPath("userData"), name: request.name }));
 
 const desktopBackground = installDesktopBackground();
+const externalActivity = createControlActivityTracker();
+const desktopRuns = () => externalActivity.combined(kernel?.taskRuntime?.listActiveRuns() || []);
 installAppUpdate({
-  getActiveRunCount: () => kernel?.taskRuntime?.listActiveRuns().length || 0,
+  getActiveRunCount: () => desktopRuns().length,
 });
 const activeRunMetadata = new Map();
 let kernel = null;
@@ -143,7 +150,13 @@ async function prepareHarnessRunRequest(event, request = {}) {
   const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
   const seededRequest = seedSkillOriginalContent(request);
   const visionPreparedRequest = await prepareVisionProxyRequest(seededRequest);
-  const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest);
+  const mentionPreparedRequest = await prepareWorkspaceMentionRequest(visionPreparedRequest, {
+    readContext: createFrozenBrowserMentionReader({
+      directory: join(app.getPath("userData"), "browser-mention-snapshots"),
+      taskId: request.taskId, workspacePath, retry: Boolean(request.retry || request.recoveryRunId),
+      readContext: (token) => readWorkbenchMention({ taskId: request.taskId, workspacePath }, token),
+    }),
+  });
   const skillPreparedRequest = extensionSourceEnabled(policy, "skill")
     ? await prepareSkillRequest(
         mentionPreparedRequest,
@@ -180,6 +193,14 @@ async function prepareHarnessRunRequest(event, request = {}) {
   };
 }
 
+installMcpSteeringProvider(async (request, currentServers) => {
+  const workspacePath = String(request.workspacePath || "");
+  const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
+  if (!extensionSourceEnabled(policy, "mcp")) return { servers: [], unresolved: [], retryServerIds: [] };
+  const configuration = await loadMcpConfiguration(mcpConfigurationOptions(workspacePath));
+  return selectConfiguredMcpServers(request, currentServers, configuration.servers);
+});
+
 const nativeHandle = ipcMain.handle.bind(ipcMain);
 const originalHandle = ipcMain.handle;
 ipcMain.handle = function budgetAwareHandle(channel, listener) {
@@ -198,13 +219,18 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
       const runId = String(request?.runId || "").trim();
       const metadata = activeRunMetadata.get(runId);
       const workspacePath = metadata?.workspacePath || kernel?.taskRuntime?.getActiveRun(runId)?.workspacePath || "";
-      if (!workspacePath || !request?.message) {
+      if (!request?.message) {
         return listener(event, request);
       }
       const policy = await loadExtensionPolicy(extensionPolicyOptions(workspacePath));
       const mentionedMessage = await prepareWorkspaceMentionMessage(
         request.message,
         workspacePath,
+        { readContext: createFrozenBrowserMentionReader({
+          directory: join(app.getPath("userData"), "browser-mention-snapshots"),
+          taskId: metadata?.taskId, workspacePath,
+          readContext: (token) => readWorkbenchMention({ taskId: metadata?.taskId, workspacePath }, token),
+        }) },
       );
       const message = extensionSourceEnabled(policy, "skill")
         ? await prepareSkillMessage(
@@ -236,7 +262,11 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
   if (channel !== "harness:run") return nativeHandle(channel, listener);
   return nativeHandle(channel, async (event, request) => {
     assertTrustedIpcSender(event);
-    const budget = planAgentBudget(request || {});
+    const roleDefaults = (await roleSettingsStore(app.getPath('userData'))).snapshot();
+    const settings = effectiveRoleSettings(roleDefaults, { ...request?.professionalRoles,
+      builderLimit: request?.professionalRoles?.builderLimit ?? request?.builderLimit ?? roleDefaults.builderLimit });
+    const budget = planAgentBudget({ ...request, builderLimit: settings.builderLimit,
+      agentBudget: { ...request?.agentBudget, maxActiveSubagents: Math.min(request?.agentBudget?.maxActiveSubagents ?? settings.maxActive, settings.maxActive) } });
     const runId = String(request?.runId || "").trim();
     const workspacePath = String(request?.workspacePath || "").trim();
     desktopBackground.runStarted(runId);
@@ -267,14 +297,57 @@ kernel = createHarnessKernel({
   taskRuntime: desktopMain.harnessTaskRuntime,
 });
 setDefaultHarnessEventBus(kernel.events);
-desktopBackground.setRunSource(() => desktopMain.harnessTaskRuntime.listActiveRuns());
+desktopMain.setDesktopExternalRunSource(() => externalActivity.listRuns());
+desktopBackground.setRunSource(desktopRuns);
 desktopMain.harnessTaskRuntime.subscribeActiveRuns(() => desktopBackground.refresh());
+const notifiedQuestions = new Set();
+const remindClarification = (event) => {
+  const question = event.questions?.find(item => item.status === "pending");
+  if (!question) { closeClarificationToast(event.runId); return; }
+  const key = event.runId + ":" + question.id;
+  if (notifiedQuestions.has(key)) return;
+  notifiedQuestions.add(key);
+  if (notifiedQuestions.size > 200) notifiedQuestions.delete(notifiedQuestions.values().next().value);
+  showClarificationToast({ question, theme: desktopMain.getDesktopWindowTheme?.() || "light",
+    onOpen: () => {
+      const window = desktopMain.getDesktopMainWindow?.();
+      if (!window || window.isDestroyed()) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      const external = desktopMain.harnessTaskRuntime.getActiveRun(event.runId)?.clientId?.startsWith("external:");
+      if (external) window.webContents.send("control:event", { type: "open", runId: event.runId });
+      else window.webContents.send("desktop:task-requested", { taskId: question.taskId, clarificationId: question.id });
+    },
+  });
+};
+kernel.events.on("clarification.required", remindClarification);
+kernel.events.on("clarification.updated", remindClarification);
+let clarificationActiveRuns = new Set();
+desktopMain.harnessTaskRuntime.subscribeActiveRuns(() => {
+  const runs = desktopMain.harnessTaskRuntime.listActiveRuns();
+  const next = new Set(runs.map(run => run.runId));
+  for (const runId of clarificationActiveRuns) if (!next.has(runId)) closeClarificationToast(runId);
+  clarificationActiveRuns = next;
+  if (!runs.some(run => run.clarifications?.some(q => q.status === "pending"))) closeClarificationToast();
+});
 kernel.events.on("approval.required", (event) => {
   const approval = event.approval || {};
   showApprovalToast({
     approval,
     theme: desktopMain.getDesktopWindowTheme?.() || "light",
     onDecide: (approved) => {
+      if (approved && approval.kind === 'agent-role-change') {
+        // The compact toast cannot show the full role diff. Open the review
+        // surface instead of granting a hidden persistent settings change.
+        const window = desktopMain.getDesktopMainWindow?.();
+        if (window && !window.isDestroyed()) {
+          if (window.isMinimized()) window.restore();
+          window.show(); window.focus();
+          window.webContents.send('desktop:task-requested', { taskId: event.taskId || desktopMain.harnessTaskRuntime.getActiveRun(event.runId)?.taskId });
+        }
+        return;
+      }
       const accepted = desktopMain.harnessTaskRuntime.respondApproval(event.runId, approval.id, {
         approved,
         scope: "once",
@@ -301,6 +374,25 @@ desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
   );
 });
 const coreServer = createHarnessCoreServer({ kernel });
+const localControlReady = app.whenReady().then(async () => createDesktopLocalControl({
+  fileAccessSettings: await desktopMain.fileAccessSettingsReady,
+  dataDirectory: app.getPath("userData"), taskRuntime: desktopMain.harnessTaskRuntime,
+  startHarnessTask: desktopMain.startHarnessTask, listProviders: desktopMain.listDesktopProviders,
+  listWorkspaces: desktopMain.listDesktopWorkspaces,
+  capabilityRegistry: kernel.capabilitiesRegistry, execPath: process.execPath,
+  bridgePath: desktopControlBridgePath({ isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
+  onEvent: (payload) => {
+    externalActivity.observe(payload);
+    if (payload.run) desktopBackground.refresh();
+    const window = desktopMain.getDesktopMainWindow?.();
+    if (window && !window.isDestroyed()) window.webContents.send("control:event", payload);
+  },
+}));
+// Keep startup failures observable through the settings IPC without producing
+// an unhandled rejection before the user opens the panel.
+localControlReady.catch(() => undefined);
+handleTrustedIpc(ipcMain, "control:request", async (_event, request) => (await localControlReady).request(request));
 
 handleTrustedIpc(ipcMain, "core:status", () => ({
   running: Boolean(coreServer.url),
@@ -470,6 +562,7 @@ handleTrustedIpc(ipcMain, "desktop:background-status", () => desktopBackground.s
 app.whenReady().then(() => coreServer.listen()).catch(() => undefined);
 app.on("before-quit", () => {
   coreServer.close().catch(() => undefined);
+  localControlReady.then(control => control.shutdown()).catch(() => undefined);
 });
 
 export {

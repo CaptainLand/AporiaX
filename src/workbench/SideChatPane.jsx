@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { remarkAutolinkBoundary } from "../conversation/remark-autolink-boundary.js";
 import remarkGfm from "remark-gfm";
 import hljs from "highlight.js/lib/common";
-import { ArrowUp, ArrowUpRight, Check, ChevronDown, Copy, Info, MessagesSquare, Square, Trash2 } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Check, ChevronDown, Copy, Info, Square, Activity, Bug, FileText, Lightbulb, PenLine, MessageCircle } from "lucide-react";
 import { messageLinkUrl } from "../../electron/link-target.js";
 import { taskSnapshot } from "../../electron/side-chat/context.js";
 import { useI18n } from "../i18n";
@@ -11,6 +11,11 @@ import { getAvailableModels } from "../models/model-catalog.js";
 import { SideChatModelPicker, sideChatModelLabel } from "./SideChatModelPicker.jsx";
 import { SideChatDialog } from "./SideChatDialog.jsx";
 import "./side-chat.css";
+import { ConversationSelectionMenu, appendConversationQuote } from "../conversation/ConversationSelectionMenu.jsx";
+import { ScrollFadeSurface } from '../components/ScrollFadeSurface.jsx';
+import { SideChatMoreMenu } from './SideChatMoreMenu.jsx';
+import { RoleRobot } from '../settings/RoleRobot.jsx';
+import { hasTaskReply, latestVisibleAssistant } from '../state/task-outcome-view.js';
 
 const states = { running: "运行中", paused: "已暂停", completed: "已完成", failed: "发生错误", stopped: "已停止", interrupted: "已中断", idle: "未运行", waiting: "等待中", thinking: "等待模型" };
 const activities = { "response.activity": "收到模型流式数据", "response.delta": "模型正在输出", "response.retry": "模型请求重试", "tool.started": "正在执行工具", "tool.completed": "工具执行结束", "subagent.started": "子 Agent 开始工作", "turn.completed": "本轮结束" };
@@ -78,6 +83,7 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
   const running = messages.findLast((m) => m.status === "running");
   const busy = Boolean(pending || running);
   const snapshot = useMemo(() => taskSnapshot(task, { isRunning, isPaused, ...(activity || {}) }), [task, isRunning, isPaused, activity]);
+  const resultDelivered = !isRunning && hasTaskReply(latestVisibleAssistant(task.messages));
 
   useEffect(() => {
     setActivity(null);
@@ -201,21 +207,33 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
     try { await navigator.clipboard.writeText(message.content); setCopied(message.id); }
     catch (failure) { setError(failure.message); }
   };
+  const suggestions = mode === 'task' ? [
+    [tr('现在做到哪了？', 'How is it going?'), Activity], [tr('解释最近的错误', 'Explain the latest error'), Bug], [tr('总结当前改动', 'Summarize the changes'), FileText],
+  ] : [[tr('帮我梳理一个想法', 'Explore an idea'), Lightbulb], [tr('把这段话写得更好', 'Improve my writing'), PenLine], [tr('一起聊聊', 'Let’s chat'), MessageCircle]];
   return <section className="side-chat" aria-label={tr("侧边聊天", "Side chat")}>
     <header className="side-chat-heading">
+      <div className="side-chat-toolbar">
       <div className="side-chat-modes" role="group" aria-label={tr("侧聊模式", "Side chat mode")}>
         {[{ id: "task", label: tr("当前任务", "Task"), title: tr("关联当前任务", "Current task"), hint: tr("读取当前任务公开记录，不打断主任务", "Read public task records without interrupting it") }, { id: "general", label: tr("普通聊天", "Chat"), title: tr("普通聊天", "General chat"), hint: tr("独立历史，不读取任务或 Understanding", "Separate history, no task or Understanding context") }].map((item) => <button key={item.id} type="button" aria-label={item.title} title={item.hint} aria-pressed={mode === item.id} disabled={busy || loading} onClick={() => { setMode(item.id); closeDialog(); workbench.saveDraft("sidechat:mode", item.id); }}>{item.label}</button>)}
       </div>
       <div className="side-chat-heading-actions">
-        {mode === "task" && <button type="button" className="side-chat-status-trigger" aria-label={tr("查看任务状态", "View task status")} aria-haspopup="dialog" aria-expanded={dialog?.kind === "status"} title={(task.title || tr("当前任务", "Current task")) + " · " + (states[snapshot.status] || snapshot.status)} onClick={() => showDialog({ kind: "status" })}><span className={"side-chat-status-dot " + (isRunning ? "live" : snapshot.status)} /><span>{states[snapshot.status] || snapshot.status}</span><ChevronDown size={12} /></button>}
-        <button type="button" className="side-chat-icon" aria-label={tr("清空侧聊历史", "Clear side chat history")} title={tr("清空当前模式的侧聊历史", "Clear this mode's side-chat history")} disabled={busy || loading || !messages.length} onClick={() => showDialog({ kind: "clear" })}><Trash2 size={14} /></button>
+        {mode === "task" && resultDelivered && <button type="button" className="side-chat-status-trigger" aria-label={tr("查看任务状态", "View task status")} aria-haspopup="dialog" aria-expanded={dialog?.kind === "status"} title={(task.title || tr("当前任务", "Current task")) + " · " + tr("已完成", "Completed")} onClick={() => showDialog({ kind: "status" })}><span className="side-chat-status-dot completed" /><span>{tr('已完成', 'Completed')}</span><ChevronDown size={12} /></button>}
+        <SideChatMoreMenu key={viewKey} canClear={!busy && !loading && !!messages.length} onStatus={mode === 'task' ? () => showDialog({ kind: 'status' }) : undefined} onClear={() => showDialog({ kind: 'clear' })} />
+      </div>
       </div>
     </header>
-    <div className="side-chat-messages" ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }}>
+    <ScrollFadeSurface key={viewKey} scrollRef={scrollRef} fadeBottom={false} className="side-chat-scroll-surface">
+    <ConversationSelectionMenu key={viewKey} onQuote={(text) => {
+      const next = appendConversationQuote(draft, text);
+      if (next.length > 8000) { setError(tr("引用后超过侧聊 8000 字符上限，请缩短选区或草稿。", "The quote exceeds the 8,000-character side-chat limit. Shorten the selection or draft.")); return; }
+      updateDraft(next); inputRef.current?.focus();
+    }}>
+    <div className="side-chat-messages" data-empty={!messages.length && !loading} ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }}>
       {!messages.length && !loading && <div className="side-chat-welcome">
-        <MessagesSquare size={27} strokeWidth={1.4} /><h3>{tr("在旁边聊，不打断工作", "Ask without interrupting")}</h3>
-        <p>{mode === "task" ? tr("可以询问进度、解释错误，或讨论下一步。", "Ask about progress, errors or next steps.") : tr("问任何问题，不携带主任务的上下文。", "Ask without including the main task context.")}</p>
-        {mode === "task" && <div className="side-chat-suggestions">{["现在做到哪了？", "解释最近的错误", "总结当前改动"].map((q) => <button key={q} onClick={() => updateDraft(q)}>{q}</button>)}</div>}
+        <div className="side-chat-welcome-mark"><RoleRobot template="main" className="side-chat-companion" badge={false} /></div>
+        <h3>{tr('有什么需要我帮你看看？', 'What can I help you with?')}</h3>
+        <p>{mode === "task" ? tr('基于当前任务记录，聊进度、错误和下一步。', 'Use current task records to discuss progress, errors and next steps.') : tr('聊点别的，不读取主任务内容。', 'Chat about anything, without reading the main task.')}</p>
+        <div className="side-chat-suggestions">{suggestions.map(([question, Icon]) => <button key={question} type="button" onClick={() => { updateDraft(question); inputRef.current?.focus(); }}><Icon size={14} aria-hidden="true" />{question}</button>)}</div>
       </div>}
       {loading && <p className="side-chat-meta">{tr("正在读取侧聊历史…", "Loading side chat…")}</p>}
       {messages.map((message) => <article className={"side-chat-message " + message.role} key={message.id}>
@@ -234,12 +252,14 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
       </article>)}
       {pending && !running && <p className="side-chat-meta">{tr("正在连接侧聊模型…", "Connecting…")}</p>}
     </div>
+    </ConversationSelectionMenu>
+    </ScrollFadeSurface>
     {error && <div className="side-chat-error" role="alert">{error}<button disabled={busy} onClick={() => { setError(""); setRetryLoad((n) => n + 1); }}>{tr("刷新", "Refresh")}</button></div>}
     <form className="side-chat-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
       <textarea ref={inputRef} rows={1} aria-label={tr("侧聊输入", "Side chat input")} placeholder={tr("问问 AporiaX…", "Message AporiaX…")} maxLength={8000} value={draft} onChange={(e) => updateDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
       <div className="side-chat-composer-footer">
-        <SideChatModelPicker options={options} choice={choice} disabled={busy} onManageProviders={onManageProviders} onSelect={(value) => {
+        <SideChatModelPicker providers={providers} options={options} choice={choice} disabled={busy} onManageProviders={onManageProviders} onSelect={(value) => {
           setSelected(value); try { localStorage.setItem(scope + ":sidechat-model", value); } catch { setError("模型选择无法保存：本地存储不可用。"); }
         }} />
         {busy ? <button type="button" className="side-chat-submit" aria-label={tr("停止侧聊", "Stop side chat")} onClick={() => void cancel()}><Square size={14} /></button>
@@ -262,7 +282,7 @@ export function SideChatPane({ task, workbench, providers = [], isRunning = fals
         {dialog.record.path && <button type="button" onClick={() => void openTarget(() => workbench.openFile(dialog.record.path))}>{dialog.record.path}<ArrowUpRight size={13} /></button>}
       </div>}
       {dialog.kind === "status" && <div className="side-chat-status">
-        <dl><dt>{tr("任务状态", "Status")}</dt><dd>{states[snapshot.status] || snapshot.status}</dd>
+        <dl>{resultDelivered && <><dt>{tr("任务状态", "Status")}</dt><dd>{tr("已完成", "Completed")}</dd></>}
           <dt>{tr("主任务模型", "Main model")}</dt><dd>{snapshot.modelId || tr("未报告", "Not reported")}</dd>
           <dt>{tr("当前阶段", "Stage")}</dt><dd>{snapshot.phase || "—"}</dd>
           <dt>{tr("最近活动", "Last activity")}</dt><dd>{clock(snapshot.lastActivityAt)} {activities[snapshot.activity] || ""}</dd></dl>

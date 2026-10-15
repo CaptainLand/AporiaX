@@ -1,0 +1,8 @@
+.role-change-details { max-height: 360px; overflow: auto; margin: 12px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-app); }
+.role-change-details section { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.role-change-details section:last-child { border: 0; }
+.role-change-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 6px; }
+.role-change-values small { color: var(--text-3); }
+.role-change-details pre, .role-change-raw { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--font-sans); margin: 4px 0 0; color: var(--text-1); }
+.role-change-raw { max-height: 360px; overflow: auto; }
+@media (max-width: 620px) { .role-change-values { grid-template-columns: minmax(0, 1fr); } }

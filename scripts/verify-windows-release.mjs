@@ -23,13 +23,26 @@ async function files(root) {
   }
   return result;
 }
-const sources = [...await files("electron"), ...await files("dist"), "build/icon.ico", "build/icon-dark.ico"];
+const sources = [...await files("electron"), ...await files("shared"), ...await files("dist"), "build/icon.ico", "build/icon-dark.ico", "LICENSE", "docs/LOCAL_CONTROL.md", `docs/RELEASE_NOTES_v${version}.md`];
+try { await stat("config/cloud-endpoints.json"); sources.push("config/cloud-endpoints.json"); } catch (error) { if (error.code !== "ENOENT") throw error; }
 for (const file of sources) assert.equal(hash(packagedFile(file)), hash(await readFile(file)), `Stale/missing packaged source: ${file}`);
+assert.equal(hash(await readFile(join(output, "win-unpacked/resources/control-bridge.cjs"))),
+  hash(await readFile("build/control-bridge.cjs")), "Stale/missing standalone MCP and CLI bridge");
 for (const name of ["@xterm/addon-search", "docx-preview", "node-pty"]) {
   const installed = JSON.parse(await readFile(`node_modules/${name}/package.json`, "utf8"));
   assert.equal(JSON.parse(packagedFile(`node_modules/${name}/package.json`)).version, installed.version);
 }
 const entries = listPackage(archive).map((path) => path.replaceAll("\\", "/").replace(/^\//, ""));
+for (const name of ["builder-util-runtime", "graceful-fs", "js-yaml", "lazy-val", "zod", "jszip"]) {
+  assert.ok(entries.includes("node_modules/" + name + "/package.json"), "Missing packaged runtime dependency: " + name);
+}
+for (const file of ["electron/account/remote-file-broker.js", "electron/account/remote-command-inbox.js", "src/account/remote-sync.js"]) {
+  assert.ok(!entries.includes(file), `Retired mobile channel must not ship: ${file}`);
+}
+const retiredChannel = /\/remote\/(?:desktop|mobile)|account:(?:sync-tasks|remote-commands|set-remote-enabled|set-remote-file-access|claim-remote-command|ack-remote-command|execute-remote-file-command)|buildRemoteTaskSyncPayload|uploadRemoteCommandFile|createRemoteCommandInbox|MOBILE_COMPANION_ENABLED|remoteServiceSupported/;
+for (const file of entries.filter((path) => /^(?:electron|dist|shared)\/.*\.(?:js|cjs|mjs)$/.test(path))) {
+  assert.doesNotMatch(packagedFile(file).toString("utf8"), retiredChannel, `Retired mobile channel in package: ${file}`);
+}
 assert.ok(entries.some((path) => /node-pty\/.*pty\.node$/.test(path)), "Missing native PTY module");
 const natives = entries.filter((path) => /node-pty\/.*\.(node|dll|exe)$/.test(path));
 for (const path of natives) {
@@ -44,7 +57,7 @@ const channel = version.includes("-") ? version.split("-")[1].split(".")[0] : "l
 // Local --publish never builds can still emit latest.yml for a prerelease,
 // depending on the configured publisher. Validate its exact version below.
 const updateFile = (await readdir(output)).includes(channel + ".yml") ? channel + ".yml" : "latest.yml";
-const names = [setup, portable, setup + ".blockmap", updateFile];
+const names = [...new Set([setup, portable, setup + ".blockmap", updateFile, "latest.yml"])];
 const blobs = new Map();
 for (const name of names) blobs.set(name, await readFile(join(output, name)));
 for (const name of [setup, portable]) {
@@ -52,6 +65,7 @@ for (const name of [setup, portable]) {
   assert.ok(blobs.get(name).length > 50_000_000, `Suspiciously small package: ${name}`);
 }
 const metadata = yaml.load(blobs.get(updateFile).toString());
+assert.deepEqual(yaml.load(blobs.get("latest.yml").toString()), metadata, "Default update channel must match the release");
 assert.equal(metadata.version, version); assert.equal(metadata.path, setup);
 assert.equal(metadata.sha512, hash(blobs.get(setup), "sha512", "base64"));
 const installer = metadata.files.find((file) => file.url === setup);

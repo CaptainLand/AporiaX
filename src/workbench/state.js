@@ -1,5 +1,6 @@
 export const BUILTINS = ["route", "workspace", "understanding"];
 export const TAB_KINDS = [
+  "teamchat",
   "sidechat",
   "git",
   "route",
@@ -63,6 +64,10 @@ function normalizeTab(tab) {
     kind: tab.kind,
     title: String(tab.title || tab.kind).slice(0, 160),
   };
+  if (tab.kind === 'teamchat') {
+    next.roomId = tab.roomId === 'group' || /^role:[\w.-]{1,100}$/.test(tab.roomId || '') ? tab.roomId : '';
+    next.revision = Number(tab.revision) || 0;
+  }
   if (tab.kind === "file") {
     next.path = String(tab.path || "").replaceAll("\\", "/").slice(0, 1000);
     next.line = Math.max(1, Number(tab.line) || 1);

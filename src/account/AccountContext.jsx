@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { useAccountAvatar } from './useAccountAvatar.js';
 
 const AccountContext = createContext(null);
 const unavailable = { account: { status: "unavailable" }, busy: false, error: "", api: null, setAccount: () => {}, setError: () => {}, signIn: async () => null, refresh: async () => null, signOut: async () => null };
@@ -9,6 +10,7 @@ export function AccountProvider({ children }) {
   const [account, setAccount] = useState({ status: "booting" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const avatar = useAccountAvatar(account.status === 'authenticated' ? account.profile?.id : null);
   const revision = useRef(0), pending = useRef(false);
   useEffect(() => {
     let active = true;
@@ -38,7 +40,32 @@ export function AccountProvider({ children }) {
       return null;
     } finally { pending.current = false; setBusy(false); }
   };
-  return <AccountContext.Provider value={{ account, busy, error, api, setAccount, setError, signIn: () => perform("signIn"), refresh: () => perform("refresh"), signOut: () => perform("signOut") }}>{children}</AccountContext.Provider>;
+  const refreshOnFocus = useRef(() => {}), lastFocusRefresh = useRef(0);
+  refreshOnFocus.current = (force = false) => {
+    if (account.status !== "authenticated" || pending.current || (!force && Date.now() - lastFocusRefresh.current < 30000)) return;
+    lastFocusRefresh.current = Date.now();
+    void perform("refresh");
+  };
+  useEffect(() => {
+    const focus = () => refreshOnFocus.current();
+    const visible = () => { if (document.visibilityState === "visible") refreshOnFocus.current(); };
+    let billingTimer;
+    const unsubscribe = window.desktop?.harness?.onEvent?.((event) => {
+      if (!/(?:^|\.)response\.(?:cloud\.billing|quota\.paused)$/.test(event?.type || "")) return;
+      clearTimeout(billingTimer);
+      billingTimer = setTimeout(() => refreshOnFocus.current(true), 200);
+    });
+    const interval = setInterval(visible, 30000);
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", visible);
+      clearTimeout(billingTimer); clearInterval(interval);
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, [api]);
+  return <AccountContext.Provider value={{ account, busy, error, api, setAccount, setError, ...avatar, signIn: () => perform("signIn"), refresh: () => perform("refresh"), signOut: () => perform("signOut") }}>{children}</AccountContext.Provider>;
 }
 
 export const useAccount = () => useContext(AccountContext) || unavailable;

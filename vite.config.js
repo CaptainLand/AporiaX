@@ -30,5 +30,14 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Keep the optional office renderer out of chat's startup path.
+        manualChunks(id) {
+          const path = id.replace(/\\/g, "/");
+          if (path.includes("/node_modules/three/")) return path.endsWith("/three.core.js") ? "office-three-core" : "office-three";
+        },
+      },
+    },
   },
 });

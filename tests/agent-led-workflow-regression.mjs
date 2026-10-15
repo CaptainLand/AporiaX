@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { configureNativeFileAccess } from "../electron/runtime/file-access-policy.js";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -100,6 +101,8 @@ try {
   assert.ok(parallelRead.result.selfCheck.reviewedFiles.includes("a.js"), "parallel reads must record evidence without waiting for selfCheck.started");
 
   const external = join(root, "external.txt"); await writeFile(external, "outside read-only reference");
+  // The desktop global grant and per-tool approval are independent requirements.
+  configureNativeFileAccess(() => ({ enabled: true }));
   const read = await scenario("external", [call("read_external_file", { path: external, reason: "Read the user reference" })], { permissions: { read_external_file: "ask" } });
   assert.equal(read.approvals, 1, JSON.stringify(read.receipts)); assert.match(JSON.stringify(read.receipts), /outside read-only reference/);
   const denied = await scenario("external-denied", [call("read_external_file", { path: external, reason: "Read reference" })], { approve: false, permissions: { read_external_file: "ask" } });
@@ -107,16 +110,17 @@ try {
   const policyDenied = await scenario("external-policy-deny", [call("read_external_file", { path: external, reason: "Read reference" })], { permissions: { read_external_file: "deny" } });
   assert.equal(policyDenied.approvals, 0);
   assert.doesNotMatch(JSON.stringify(policyDenied.receipts), /outside read-only reference/);
+  configureNativeFileAccess(() => ({ enabled: false }));
   const invalid = await scenario("invalid-path", [
     call("read_file", { path: "../external.txt" }),
     call("read_file", { path: "package.json" }),
   ]);
-  assert.match(JSON.stringify(invalid.receipts[0]), /PROJECT_INSTRUCTIONS_UNAVAILABLE/);
+  assert.match(JSON.stringify(invalid.receipts[0]), /FILE_ACCESS_DENIED/);
   assert.match(JSON.stringify(invalid.receipts[1]), /unrelated-test/);
   const invalidParallel = await scenario("invalid-path-parallel", [
     [call("read_file", { path: "../external.txt" }), call("read_file", { path: "package.json" })],
   ]);
-  assert.match(JSON.stringify(invalidParallel.receipts.find(item => item.error)), /PROJECT_INSTRUCTIONS_UNAVAILABLE/);
+  assert.match(JSON.stringify(invalidParallel.receipts.find(item => item.error)), /FILE_ACCESS_DENIED/);
   assert.match(JSON.stringify(invalidParallel.receipts.find(item => item.content || item.text || JSON.stringify(item).includes("unrelated-test"))), /unrelated-test/);
 
   // Instruction discovery commits only when the complete load succeeds.
@@ -197,4 +201,4 @@ try {
   assert.equal(fake.result.selfCheck.verification.passed, false, "required:false completed must not be shown as a test pass");
 
   console.log("Agent-led workflow, real receipts, external path/approval and multimodal budget: PASS (" + scenarios + " runtime scenarios)");
-} finally { globalThis.fetch = originalFetch; await rm(root, { recursive: true, force: true }); }
+} finally { configureNativeFileAccess(() => ({ enabled: false })); globalThis.fetch = originalFetch; await rm(root, { recursive: true, force: true }); }

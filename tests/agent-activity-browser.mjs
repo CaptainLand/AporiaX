@@ -36,6 +36,7 @@ try {
   await page.locator('.ra-state').filter({ hasText: '执行中' }).waitFor();
   assert.match(await page.getByTestId('builder-capacity').innerText(), /2 \/ 4/);
   assert.match(await page.getByTestId('builder-capacity').innerText(), /排队 1/);
+  await page.getByRole('button', { name: '展开时间线', exact: true }).click();
   await page.evaluate(() => window.routeFixture.emit({ type: 'subagent.completed', agentId: 'builder-2', activationId: 'builder-2:1', status: 'completed', acceptance: { status: 'pending' } }));
   await page.locator('.ra-event-meta').getByText('待验收', { exact: true }).waitFor();
   await page.evaluate(() => window.routeFixture.emit({ type: 'subagent.reviewed', agentId: 'builder-2', acceptance: { status: 'accepted', reason: '已核对实现，测试未运行。' } }));

@@ -15,7 +15,7 @@ export function IconButton({ label, className = "", children, ...props }) {
   );
 }
 
-export function ModelChoice({ model, selected, onSelect, compact = false }) {
+export function ModelChoice({ model, selected, onSelect, compact = false, option = false }) {
   const { tr } = useI18n();
   const ModelIcon = model.icon;
 
@@ -25,6 +25,9 @@ export function ModelChoice({ model, selected, onSelect, compact = false }) {
       disabled={Boolean(model.disabled)}
       onClick={() => { if (!model.disabled) onSelect(model); }}
       type="button"
+      role={option ? "option" : undefined}
+      aria-selected={option ? Boolean(selected && !model.disabled) : undefined}
+      title={`${model.providerName || ""} · ${model.id}`}
     >
       <span className="model-choice-icon">
         <ModelIcon size={17} />

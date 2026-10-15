@@ -24,6 +24,19 @@ assert.equal(isNewerVersion("0.8.4", "0.8.4"), false);
 assert.equal(isNewerVersion("0.8.3", "0.8.4"), false);
 assert.equal(isNewerVersion("1.0.0-preview", "0.9.9"), true);
 assert.equal(isNewerVersion("1.0.0-preview", "1.0.0-preview"), false);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0-preview"), true);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0-preview.2"), true);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0-preview.2.beta.1"), true);
+assert.equal(isNewerVersion("1.0.0", "1.0.0-preview.3"), true);
+assert.equal(isNewerVersion("1.0.0-preview.3", "1.0.0"), false);
+assert.equal(compareVersions("1.0.0+build.4", "1.0.0+build.5"), 0);
+assert.equal(compareVersions("1.0.0-preview.10", "1.0.0-preview.3"), 1);
+assert.equal(compareVersions("1.0.0-rc.1", "1.0.0-preview.7"), 1);
+assert.equal(compareVersions("1.0.0-rc.2", "1.0.0-rc.1"), 1);
+assert.equal(compareVersions("1.0.0", "1.0.0-rc.1"), 1);
+assert.equal(isNewerVersion("1.0.0-preview.7", "1.0.0-rc.1"), false);
+assert.equal(isNewerVersion("1.0.0-rc.1", "1.0.0"), false);
+assert.throws(() => compareVersions("invalid", "1.0.0-preview.3"), /INVALID_UPDATE_VERSION/);
 
 assert.equal(isPortableBuild({}), false);
 assert.equal(isPortableBuild({ PORTABLE_EXECUTABLE_FILE: "D:\\AporiaX.exe" }), true);
@@ -87,16 +100,21 @@ assert.match(updater, /autoDownload = false/);
 assert.match(updater, /autoInstallOnAppQuit = false/);
 assert.match(updater, /quitAndInstall\(false, true\)/);
 assert.match(mainV2, /installAppUpdate\(/);
-// The kernel is the authoritative source, including paused and starting tasks.
-// Exercise the real wiring rather than matching the removed tray snapshot API.
+// Runtime tasks and accepted external tasks both block update installation,
+// including external preparation before the task reaches the runtime.
+const { createControlActivityTracker } = await import("../electron/control/desktop-runtime.js");
 const updateWiring = mainV2.match(/installAppUpdate\(\{[\s\S]*?\}\);/)?.[0];
+const runSourceWiring = mainV2.match(/const desktopRuns = [^;]+;/)?.[0];
 assert(updateWiring, "Missing updater wiring");
-for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) {
+assert(runSourceWiring, "Missing desktop task source");
+for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) for (const preparing of [false, true]) {
   let options;
-  const kernel = states === null ? null : { taskRuntime: { listActiveRuns: () => states.map((status) => ({ status })) } };
-  runInNewContext(updateWiring, { kernel, installAppUpdate: (value) => { options = value; } });
+  const kernel = states === null ? null : { taskRuntime: { listActiveRuns: () => states.map((status, index) => ({ runId: `runtime-${index}`, status })) } };
+  const externalActivity = createControlActivityTracker();
+  if (preparing) externalActivity.observe({ type: "run.created", runId: "external-queued", run: { runId: "external-queued", status: "queued" } });
+  runInNewContext(`${runSourceWiring}\n${updateWiring}`, { kernel, externalActivity, installAppUpdate: (value) => { options = value; } });
   const count = options.getActiveRunCount();
-  assert.equal(count, states?.length || 0);
+  assert.equal(count, (states?.length || 0) + Number(preparing));
   const decision = installUpdateDecision({ channel: "nsis", downloaded: true, activeRuns: count });
   assert.equal(decision.ok, count === 0);
   if (count > 0) assert.equal(decision.code, "TASK_RUNNING");
@@ -108,5 +126,14 @@ assert.match(about, /重启安装/);
 assert.equal(pkg.build.publish.provider, "github");
 assert.equal(pkg.build.publish.owner, "CaptainLand");
 assert.equal(pkg.dependencies["electron-updater"] != null, true);
+assert.equal(pkg.build.nsis.include, "build/installer.nsh");
+const installerHook = await readFile(new URL("../build/installer.nsh", import.meta.url), "utf8");
+for (const link of ["newStartMenuLink", "newDesktopLink"]) {
+  const guardedRepair = '${if} ${FileExists} "$' + link + '"';
+  assert.ok(installerHook.includes(guardedRepair), "Only repair existing shortcuts: " + link);
+  assert.ok(installerHook.includes('CreateShortCut "$' + link + '" "$appExe"'));
+  assert.ok(installerHook.includes('WinShell::SetLnkAUMI "$' + link + '" "${APP_ID}"'));
+}
+assert.ok(installerHook.includes('${ifNot} ${isNoDesktopShortcut}'));
 
 console.log("app update smoke: PASS");

@@ -3,7 +3,7 @@
   "productName": "AporiaX",
   "description": "A local desktop coding agent with reviewable tools and honest, agent-led verification.",
   "author": "SeaLandX",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/CaptainLand/AporiaX#readme",
   "repository": {
     "type": "git",
@@ -13,19 +13,21 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0-preview",
+  "version": "1.0.0",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
+    "test:clarification": "node --experimental-sqlite tests/user-clarification.mjs && node --experimental-sqlite tests/user-clarification-runtime.mjs && node tests/user-clarification-browser.mjs && electron tests/user-clarification-toast.cjs",
     "test:suspension": "node --experimental-sqlite tests/automatic-task-suspension.mjs",
     "test:0.9.7": "node --experimental-sqlite tests/release097-git.mjs && node --experimental-sqlite tests/release097-builders.mjs && node --experimental-sqlite tests/release097-ocr.mjs && node --experimental-sqlite tests/release097-browser.mjs && electron tests/release097-electron.cjs && electron tests/release097-asar.cjs",
     "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
     "dev:electron": "wait-on http://127.0.0.1:5173 && electron . --dev",
-    "build": "vite build",
-    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "build": "vite build && npm run build:control-bridge",
+    "dist:win": "npm run build && node scripts/build-public-release.mjs",
     "preview": "vite preview",
     "start": "electron .",
+    "start:cloud-preview": "node scripts/start-private-cloud.mjs",
     "browser:install": "playwright-core install chromium",
     "test:runtime": "node --experimental-sqlite tests/runtime-smoke.mjs",
     "test:priority-one": "node --experimental-sqlite tests/priority-one-runtime-smoke.mjs",
@@ -36,7 +38,7 @@
     "test:task-runtime-rpc": "node --experimental-sqlite tests/task-runtime-rpc-smoke.mjs",
     "test:critical-reliability": "node --experimental-sqlite tests/approval-response-regression.mjs && node --experimental-sqlite tests/builder-merge-regression.mjs && node --experimental-sqlite tests/builder-merge-crash.mjs",
     "test:context-reliability": "node --experimental-sqlite tests/context-continuation-regression.mjs && node --experimental-sqlite tests/mcp-deferred-catalog.mjs && node --experimental-sqlite tests/understanding-lock-recovery.mjs",
-    "test:reliability-batch3": "node --experimental-sqlite tests/reliability-storage.mjs && node --experimental-sqlite tests/remote-command-inbox.mjs && node --experimental-sqlite tests/project-script-trust.mjs && node --experimental-sqlite tests/human-constraints.mjs && node --experimental-sqlite tests/release-source.mjs",
+    "test:reliability-batch3": "node --experimental-sqlite tests/reliability-storage.mjs && node --experimental-sqlite tests/privacy-no-sync.mjs && node --experimental-sqlite tests/project-script-trust.mjs && node --experimental-sqlite tests/human-constraints.mjs && node --experimental-sqlite tests/release-source.mjs",
     "test:agent-runtime-broker": "node --experimental-sqlite tests/agent-runtime-broker-smoke.mjs",
     "test:p0": "node --experimental-sqlite tests/p0-model-smoke.mjs",
     "test:cache": "node --experimental-sqlite tests/deepseek-cache-smoke.mjs",
@@ -107,7 +109,12 @@
     "test:audit-suite": "node --experimental-sqlite scripts/run-audit-checks.mjs",
     "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs",
     "test:goal-loop": "node --experimental-sqlite tests/goal-brief-acceptance.mjs && node --experimental-sqlite tests/goal-process-strategy.mjs && node --experimental-sqlite tests/goal-native-provider.mjs && node --experimental-sqlite tests/goal-loop-integration.mjs",
-    "test:goal-ui": "node tests/goal-ui-browser.mjs"
+    "test:goal-ui": "node tests/goal-ui-browser.mjs",
+    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs && node --experimental-sqlite tests/cloud-outer-recovery.mjs",
+    "build:control-bridge": "node scripts/build-control-bridge.mjs",
+    "control": "node electron/control/bridge/entry.js",
+    "test:local-control": "node --experimental-sqlite tests/control-runtime-storage.mjs && node --experimental-sqlite tests/local-control-workspaces.mjs && node --experimental-sqlite tests/local-control-desktop-workspaces.mjs && node --experimental-sqlite tests/local-control-policy.mjs && node --experimental-sqlite tests/local-control-service.mjs && node --experimental-sqlite tests/local-control-http.mjs && node --experimental-sqlite tests/local-control-desktop.mjs && node --experimental-sqlite tests/local-control-mcp.mjs",
+    "test:local-control-ui": "node tests/local-control-ui-browser.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -146,6 +153,8 @@
     "concurrently": "^9.2.1",
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3",
+    "esbuild": "0.25.12",
+    "three": "0.186.1",
     "typescript": "^5.9.3",
     "vite": "^6.1.0",
     "wait-on": "^8.0.3"
@@ -183,7 +192,14 @@
       "electron/**/*",
       "build/icon.ico",
       "build/icon-dark.ico",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "licenses/**/*",
+      "docs/RELEASE_NOTES_v1.0.0.md",
+      "docs/INSTALLATION_ORGANIZER.zh-CN.md",
+      "config/cloud-endpoints.json",
+      "shared/**/*",
+      "docs/LOCAL_CONTROL.md"
     ],
     "win": {
       "icon": "icon-dark.ico",
@@ -203,6 +219,7 @@
       ]
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "artifactName": "AporiaX-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -217,7 +234,13 @@
       "provider": "github",
       "owner": "CaptainLand",
       "repo": "AporiaX"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/control-bridge.cjs",
+        "to": "control-bridge.cjs"
+      }
+    ]
   },
   "engines": {
     "node": ">=22.12.0"

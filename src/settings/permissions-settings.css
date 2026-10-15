@@ -1,0 +1,21 @@
+.permissions-settings { max-width: 780px; color: var(--text-1); }
+.permissions-settings h3 { margin: 0 0 8px; font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+.permissions-settings p { margin: 5px 0 0; color: var(--text-2); font-size: var(--text-xs); line-height: 1.6; }
+.permissions-settings header { margin-bottom: 24px; }
+.permissions-settings section { margin-bottom: 20px; border-top: 1px solid var(--border); }
+.permission-setting-row { display: flex; gap: 24px; align-items: center; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.permission-setting-row > div { min-width: 0; }
+.permission-setting-row label, .permission-setting-row strong { font-size: var(--text-base); font-weight: var(--weight-medium); }
+.permission-setting-row button:not(.switch), .permission-environment button, .permission-risk-confirm button { flex-shrink: 0; min-height: 32px; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app); color: var(--text-1); font: inherit; font-size: var(--text-sm); }
+.permission-choices { display: flex; flex: 0 0 auto; padding: 3px; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--gray-3); }
+.permission-choices button:not(.switch) { border-color: transparent; background: transparent; white-space: nowrap; }
+.permission-choices button[aria-pressed="true"] { color: var(--accent-11); background: var(--bg-app); box-shadow: var(--shadow-xs); }
+.permission-setting-row > .switch { flex-shrink: 0; }
+.permission-risk-confirm { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-subtle); font-size: var(--text-sm); }
+.permission-risk-confirm > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.permission-risk-confirm button:last-child { color: var(--accent-11); }
+.permission-setting-row:has(.permission-choices) { flex-wrap: wrap; }
+.permission-setting-row :disabled, .permission-environment button:disabled { opacity: .5; cursor: not-allowed; }
+.permission-environment { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 0; font-size: var(--text-xs); color: var(--text-2); }
+.permissions-settings summary { font-size: var(--text-xs); color: var(--text-2); cursor: pointer; }
+@media (max-width: 680px) { .permission-setting-row { gap: 12px; align-items: flex-start; flex-wrap: wrap; } }

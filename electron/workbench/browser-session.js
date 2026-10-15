@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { isBrowserConsoleShortcut } from '../../shared/browser-shortcuts.js';
 import {
   isAllowedBrowserNavigation,
   isNavigationAbort,
@@ -62,8 +63,10 @@ function inspectPage(input = {}, operation = "snapshot") {
 export class WorkbenchBrowserSession {
   constructor({ taskId, workspacePath, owner = "user", publish = () => {} }) {
     this.id = `browser_${randomUUID()}`;
+    this.kind = "browser";
     this.taskId = taskId; this.workspacePath = workspacePath; this.owner = owner;
     this.publish = publish; this.entries = []; this.problems = [];
+    this.consoleToggleSeq = 0;
     this.status = "ready"; this.pending = Promise.resolve(); this.action = ""; this.closed = false; this.agentUsed = owner === "agent";
     this.view = new WebContentsView({ webPreferences: {
       partition: `workbench-${randomUUID()}`, nodeIntegration: false, contextIsolation: true,
@@ -112,7 +115,14 @@ export class WorkbenchBrowserSession {
       return this.applyViewport();
     });
     // A user cannot type/click the agent-owned native view by accident.
-    this.wc.on("before-input-event", (event) => { if (this.owner !== "user" && !this.dispatchingInput) event.preventDefault(); });
+    this.wc.on("before-input-event", (event, input) => {
+      if (this.owner !== "user" && !this.dispatchingInput) { event.preventDefault(); return; }
+      if (!this.dispatchingInput && isBrowserConsoleShortcut(input)) {
+        event.preventDefault();
+        this.consoleToggleSeq++;
+        this.changed();
+      }
+    });
     this.wc.on("before-mouse-event", (event) => { if (this.owner !== "user" && !this.dispatchingInput) event.preventDefault(); });
     this.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
   }
@@ -146,7 +156,7 @@ export class WorkbenchBrowserSession {
   state() { return { id: this.id, kind: "browser", taskId: this.taskId, workspacePath: this.workspacePath,
     title: this.closed ? "已结束的浏览器" : this.wc.getTitle() || "Browser", url: this.closed ? "" : this.wc.getURL(),
     owner: this.owner, agentUsed: Boolean(this.agentUsed), status: this.closed ? "closed" : this.status, action: this.action,
-    present: Boolean(this.present) }; }
+    present: Boolean(this.present), consoleToggleSeq: this.consoleToggleSeq }; }
   changed() { this.publish(this.state()); }
   claimForAgent() {
     this.agentUsed = true;
@@ -179,6 +189,12 @@ export class WorkbenchBrowserSession {
     if (this.owner === "user" || this.owner === "handoff") throw new Error("BROWSER_USER_CONTROL: User is operating privately. Wait for control to be returned, then take a fresh snapshot.");
     return { active: true, browser: "AporiaX Workbench", browserSessionId: this.id,
       ...(await this.evaluate({}, "snapshot")), consoleErrors: this.entries.slice(-20), networkProblems: this.problems.slice(-20) };
+  }
+  async mentionSnapshot() {
+    // A one-shot user-selected reference does not transfer browser control.
+    await this.ready;
+    const page = await this.evaluate({}, "snapshot");
+    return { source: "explicit-browser-mention", browserSessionId: this.id, ...page };
   }
   async actionRun(name, fn) {
     if (this.owner !== "agent") throw new Error("BROWSER_USER_CONTROL: User has this browser. Do other work until control returns; do not retry this action repeatedly.");

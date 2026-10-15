@@ -1,15 +1,21 @@
 import { REPLAN_TOOL } from "./strategy-history.js";
+import { CLARIFICATION_TOOL } from "./user-clarification.js";
 import { TASK_BRIEF_TOOL } from "./task-brief.js";
 import { ToolRegistry } from "../agent-core.js";
-import { SKILL_RESOURCE_TOOL } from "../skill-resources.js";
+import { SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL } from "../skill-resources.js";
 import { HISTORY_TOOL } from "./conversation-history.js";
 import { OFFICE_TOOL_DEFINITIONS } from "../office-tools.js";
 import { BROWSER_TOOL_DEFINITIONS, BROWSER_TOOL_RISKS } from "../browser-runtime.js";
 import { MAX_SUBAGENT_ROUNDS } from "./subagent-model.js";
+import { AGENT_ROLE_TOOLS } from './agent-role-tools.js';
+import { APPEARANCE_TOOLS } from './appearance-tools.js';
 
 export const MAX_SEARCH_RESULTS = 200;
 
 export const TOOL_DEFINITIONS = [
+  ...AGENT_ROLE_TOOLS,
+  ...APPEARANCE_TOOLS,
+  CLARIFICATION_TOOL,
   TASK_BRIEF_TOOL,
   REPLAN_TOOL,
   { type: "function", function: {
@@ -23,6 +29,7 @@ export const TOOL_DEFINITIONS = [
     }, required: ["process_id"], additionalProperties: false },
   } },
   SKILL_RESOURCE_TOOL,
+  SKILL_SEARCH_TOOL,
   {
     type: "function",
     function: {
@@ -57,7 +64,6 @@ export const TOOL_DEFINITIONS = [
         properties: {
           role: {
             type: "string",
-            enum: ["explore", "review", "verify", "curator", "builder"],
             description:
               "explore searches, review inspects, verify runs checks, curator extracts knowledge. builder implements a scoped change in an isolated Git worktree; requires write_scopes, cannot recursively delegate or run shell commands. Main/verify handles validation after integration.",
           },
@@ -66,6 +72,7 @@ export const TOOL_DEFINITIONS = [
             description:
               "A self-contained task with the question, expected evidence, and completion criteria.",
           },
+            depends_on: { type: "array", maxItems: 12, items: { type: "string" }, description: "Existing worker IDs in this run. Waits without model calls until their reports are accepted. Dependencies always run in background. Failed dependencies block this worker." },
           scope: {
             type: "array",
             maxItems: 12,
@@ -252,7 +259,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "list_directory",
       description:
-        "List direct children of a directory inside the authorized workspace.",
+        "List direct children of an authorized directory. Outside-workspace paths require the user's global file-access setting.",
       parameters: {
         type: "object",
         properties: {
@@ -272,7 +279,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "read_file",
       description:
-        "Read a UTF-8 text file or extract text from a PDF inside the authorized workspace. Supports line ranges and character continuation for large files. Scanned PDFs may require OCR.",
+        "Read an authorized UTF-8 text file or PDF. Outside-workspace paths require the user's global file-access setting. Supports line ranges and character continuation; scanned PDFs may require OCR.",
       parameters: {
         type: "object",
         properties: {
@@ -363,7 +370,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "write_file",
       description:
-        "Create or replace a UTF-8 text file inside the authorized workspace. Only available when workspace write permission is enabled.",
+        "Create or replace an authorized UTF-8 text file. Requires task write permission; external paths additionally require the user's global file-access setting and affect the host directly.",
       parameters: {
         type: "object",
         properties: {
@@ -375,8 +382,25 @@ export const TOOL_DEFINITIONS = [
             type: "string",
             description: "Complete UTF-8 file content to write.",
           },
+          temporary_self_check: {
+            type: "boolean",
+            description: "Mark a NEW workspace script as disposable self-check scaffolding (not a deliverable). Only registered, unchanged files can later be removed by cleanup_temporary_check without a deletion prompt. Never mark user files or existing scripts.",
+          },
         },
         required: ["path", "content"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cleanup_temporary_check",
+      description: "Recoverably remove ONE unchanged temporary self-check script created by write_file with temporary_self_check=true in this active task. No shell, recursive deletion, user files, external files, or unregistered scripts. Explicit deny/ask policies and uncertain recovery still apply.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string", description: "Exact workspace-relative path returned by write_file." } },
+        required: ["path"],
         additionalProperties: false,
       },
     },
@@ -861,7 +885,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "read_external_file",
       description:
-        "Read a user-approved UTF-8 text file or PDF outside the workspace. Every call requires explicit approval and never grants write access.",
+        "Read a user-approved UTF-8 text file or PDF outside the workspace. Requires the user's global file-access setting as well as the configured approval. Never grants write access.",
       parameters: {
         type: "object",
         properties: {
@@ -923,8 +947,14 @@ export const TOOL_DEFINITIONS = [
 ];
 
 export const TOOL_RISKS = {
+  list_aporiax_themes: 'read',
+  create_aporiax_theme: 'control',
+  list_agent_roles: "read",
+  manage_agent_role: "control",
+  request_user_input: "control",
   read_conversation_history: "read",
   read_skill_resource: "read",
+  search_skills: "read",
   finish_task: "control",
   followup_subagent: "control",
   cancel_subagent: "control",
@@ -956,6 +986,7 @@ export const TOOL_RISKS = {
   github_auth_status: "read",
   inspect_office_file: "read",
   write_file: "write",
+  cleanup_temporary_check: "write",
   apply_patch: "write",
   lsp: "read",
   lsp_install: "control",

@@ -265,6 +265,36 @@ export function createWitnessMonitor({
     let meaningful = true;
 
     switch (event.type) {
+      case 'response.quota.low':
+      case 'subagent.response.quota.low': {
+        const daily = event.source === 'daily';
+        const key = daily ? 'quota-low:daily' : 'quota-low:weekly';
+        if (!recordIndex.has(key)) addRecord({ key, timestamp, kind: 'warning', status: 'completed',
+          eventType: daily ? 'response.quota.low.daily' : 'response.quota.low.weekly',
+          detail: daily ? '全站今日已结算剩余额度不超过 5%，本轮开始收尾：保存已有进度，不再启动新子任务。'
+            : '个人周额度不超过 5%，本轮开始收尾：保存已有进度，不再启动新子任务。' });
+        break;
+      }
+      case "response.cloud.queued":
+      case "subagent.response.cloud.queued": {
+        if (!event.agentId) closeThinkingRecords(timestamp);
+        addRecord({ key: `cloud-queue:${event.agentId || 'main'}`, timestamp, kind: "queue",
+          eventType: "response.cloud.queued", status: "waiting", actor: event.agentId ? "subagent" : "main", agentId: event.agentId, role: event.role,
+          detail: event.reason === "provider-budget" ? "等待 Cloud 全站在途费用结算，尚未开始本次生成；不预占个人额度。" : event.reason === "quota" ? "等待其他 Cloud 请求结算并释放额度，尚未开始本次生成。" : Number.isSafeInteger(event.limit) ? `Cloud 模型并发上限 ${event.limit}；等待可用槽位，尚未开始本次生成。` : "等待 Cloud 可用槽位，尚未开始本次生成。" });
+        break;
+      }
+      case "response.cloud.admitted":
+      case "subagent.response.cloud.admitted": {
+        finishRecord(`cloud-queue:${event.agentId || 'main'}`, { ...event, type: "response.cloud.admitted" });
+        if (!event.agentId) addRecord({ key: `thinking:${recordCounter + 1}`, timestamp, kind: "thinking", eventType: "response.reset", status: "running" });
+        break;
+      }
+      case "response.attempt.completed":
+      case "subagent.response.attempt.completed": {
+        const record = recordIndex.get(`cloud-queue:${event.agentId || 'main'}`);
+        if (record?.status === "waiting") finishRecord(record.key, { ...event, type: "response.cloud.queue-ended" }, event.status === "completed");
+        break;
+      }
       case "response.activity":
       case "response.delta":
       case "subagent.activity": {
@@ -568,6 +598,17 @@ export function createWitnessMonitor({
       case "self_check.completed":
         finishRecord("self-check", event, true);
         break;
+      case "clarification.required":
+      case "clarification.updated":
+        for (const question of event.questions || []) {
+          const key = "clarification:" + question.id;
+          const state = question.status === "pending" ? "waiting" : question.status === "answered" ? "completed" : "interrupted";
+          const detail = question.question + (question.answer ? "\n" + question.answer.text : "");
+          const existing = recordIndex.get(key);
+          if (existing) Object.assign(existing, { eventType: event.type, status: state, detail: clipped(detail), completedAt: state === "waiting" ? null : isoTime(timestamp) });
+          else addRecord({ key, timestamp, kind: "checkpoint", eventType: event.type, status: state, detail });
+        }
+        break;
       case "approval.required":
         status = "waiting";
         addRecord({
@@ -588,7 +629,7 @@ export function createWitnessMonitor({
           timestamp,
           kind: "status",
           eventType: "control.paused",
-          detail: pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : "用户暂停",
+          detail: pauseReasons.includes("clarification") ? "等待你的回答：上下文已保留" : pauseReasons.includes("no-progress") ? "重复规划或读取：已暂停付费调用，进度已保存，请检查后继续" : pauseReasons.includes("sleep") ? "系统暂停：唤醒后自动继续" : pauseReasons.includes("network") ? "等待网络恢复：保留上下文，自动重连" : pauseReasons.includes("provider-budget-wait") ? "等待 Cloud 全站费用结算：自动继续，不预占个人额度" : pauseReasons.includes("daily-budget") ? "Cloud 今日额度已达上限：进度已保存" : pauseReasons.includes("quota") ? "Cloud 额度不足：补充后可继续，进度已保存" : pauseReasons.includes("quota-wait") ? "等待其他 Cloud 请求结算：自动继续" : "用户暂停",
           status: "completed",
         });
         break;

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   APPROVAL_TOAST_TIMEOUT_MS,
   approvalToastCopy,
+  clarificationToastCopy,
 } from "./approval-toast-state.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
@@ -53,10 +54,13 @@ export function showApprovalToast({
   theme = "light",
   onDecide,
   timeoutMs = APPROVAL_TOAST_TIMEOUT_MS,
+  kind = "approval",
+  runId = "",
+  copy: customCopy = null,
 } = {}) {
   bindIpc();
   closeApprovalToast();
-  const copy = approvalToastCopy(approval, language);
+  const copy = customCopy || approvalToastCopy(approval, language);
   const window = new BrowserWindow({
     width: 396,
     height: 204,
@@ -89,6 +93,8 @@ export function showApprovalToast({
     window,
     timer,
     approvalId: String(approval?.id || ""),
+    kind,
+    runId,
     onDecide,
   };
   window.on("closed", () => {
@@ -107,5 +113,17 @@ export function showApprovalToast({
 }
 
 export function approvalToastApprovalId() {
-  return active?.approvalId || "";
+  return active?.kind === "approval" ? active.approvalId : "";
+}
+
+// Same local reminder surface; neither dismissal nor timeout submits an answer.
+export function showClarificationToast({ question, language, theme, onOpen }) {
+  return showApprovalToast({ kind: "clarification", runId: question.runId,
+    copy: clarificationToastCopy(question, language), theme,
+    onDecide: (open) => { if (open) onOpen?.(); },
+  });
+}
+
+export function closeClarificationToast(runId) {
+  if (active?.kind === "clarification" && (!runId || active.runId === runId)) closeApprovalToast();
 }

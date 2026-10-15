@@ -71,7 +71,7 @@ jobs:
       - name: Verify packaged source, binaries and update hashes
         run: node scripts/verify-windows-release.mjs release
 
-      - name: Upload packages and publish preview release
+      - name: Upload packages and publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,9 +93,10 @@ jobs:
             "release/SHA256SUMS-$version.txt" `
             --repo $env:RELEASE_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw "Release asset upload failed; release was not published." }
+          $title = if ($env:RELEASE_PRERELEASE -eq "true") { "AporiaX $tag — Preview" } else { "AporiaX $version" }
           gh release edit $tag `
             --repo $env:RELEASE_REPOSITORY `
-            --title "AporiaX $tag — Preview" `
+            --title $title `
             --notes-file $notes `
             --prerelease=$env:RELEASE_PRERELEASE `
             --draft=false

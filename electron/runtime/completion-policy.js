@@ -14,7 +14,7 @@ export function normalizeLoopPolicy(value = {}) {
   return Object.freeze({ requireVerifiedChanges: value.requireVerifiedChanges === true,
     strategyMode,
     maxCompletionContinuations: integer("maxCompletionContinuations", 1, 0, 3),
-    maxRepeatedEvidence: integer("maxRepeatedEvidence", 0, 0, 64),
+    maxRepeatedEvidence: integer("maxRepeatedEvidence", 6, 0, 64),
     maxStrategyInterventions: integer("maxStrategyInterventions", 2, 0, 4),
     maxBriefSummaries: integer("maxBriefSummaries", 1, 0, 2) });
 }

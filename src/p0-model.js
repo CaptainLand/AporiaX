@@ -30,6 +30,8 @@ export const ROUTE_STAGE_META = {
 };
 
 const ROUTE_TOOL_META = {
+  list_agent_roles: { stage: "lens", zh: "查看专业角色", en: "Inspect professional roles" },
+  manage_agent_role: { stage: "route", zh: "管理自定义角色", en: "Manage custom role" },
   delegate_subagent: { stage: "lens", zh: "委派子 Agent", en: "Delegate subagent" },
   collect_subagents: { stage: "lens", zh: "收集子 Agent 结果", en: "Collect subagent results" },
   review_subagent_result: { stage: "lens", zh: "验收子任务成果", en: "Review subagent result" },
@@ -673,11 +675,16 @@ export function collectTaskRouteRuns(task) {
       return {
         id: message.id,
         messageId: message.id,
+        runId: message.runId,
+        subagents: message.subagents || [],
         prompt,
         summary: summarizeRoutePrompt(prompt),
         createdAt: message.createdAt || sourceMessage?.createdAt || null,
         completedAt: message.completedAt || null,
         status: message.status || "completed",
+        content: message.content || "",
+        error: Boolean(message.error),
+        replyDelivered: message.replyDelivered,
         entries,
         rawEntries: message.route || [],
         changes: message.changes || [],

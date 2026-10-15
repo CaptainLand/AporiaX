@@ -1,0 +1,119 @@
+/* Embedded office: all visual rules are scoped to this view. The app owns theme. */
+.thread-body.office-mode { overflow: hidden; }
+.thread-view-panel.office-panel { height: 100%; min-height: 0; overflow: hidden; }
+.agent-office {
+  --ao-text: var(--text-1); --ao-muted: var(--text-2);
+  --ao-panel: var(--bg-app); --ao-line: var(--border); --ao-hover: var(--gray-3);
+  --ao-accent: var(--accent-11);
+  display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; height: 100%;
+  color: var(--ao-text); background: var(--ao-panel); container-type: inline-size;
+}
+.agent-office button { font: inherit; color: inherit; cursor: pointer; background: transparent; border: 1px solid transparent; }
+.agent-office button:hover { background: var(--ao-hover); }
+.agent-office button:disabled { opacity: .4; cursor: default; }
+.agent-office button:focus-visible { outline: 2px solid var(--ao-accent); outline-offset: 2px; }
+.agent-office button svg { flex-shrink: 0; }
+.agent-office .ao-toolbar { min-height: 46px; padding: 8px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--ao-line); flex-shrink: 0; }
+.agent-office .ao-toolbar > div { display: flex; align-items: center; gap: 8px; }
+.agent-office .ao-toolbar strong { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.agent-office .ao-toolbar small { color: var(--ao-muted); font-size: 11px; white-space: nowrap; }
+.agent-office .ao-toolbar button { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 7px; border-radius: 6px; white-space: nowrap; }
+.agent-office .ao-view { position: relative; flex: 1; min-height: 0; isolation: isolate; overflow: hidden; background: #f5f2eb; }
+:root[data-theme="dark"] .agent-office .ao-view { background: #202a30; }
+.agent-office .ao-scene { position: absolute; inset: 0; overflow: hidden; opacity: 0; transition: opacity .25s; }
+.agent-office .ao-scene.ready { opacity: 1; }
+.agent-office .ao-scene canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.agent-office .ao-scene canvas:active { cursor: grabbing; }
+.agent-office .ao-scene canvas:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--ao-accent); }
+.agent-office .ao-overview { position: absolute; top: 14px; left: 18px; z-index: 1; display: flex; gap: 16px; color: #626d66; font-size: 11px; pointer-events: none; }
+:root[data-theme="dark"] .agent-office .ao-overview { color: #b2bfc0; }
+.agent-office .ao-camera { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 3px; padding: 5px; background: var(--ao-panel); border: 1px solid var(--ao-line); border-radius: 10px; }
+.agent-office .ao-camera button { width: 29px; height: 29px; padding: 0; display: grid; place-items: center; border-radius: 6px; }
+.agent-office .ao-camera output { font-size: 11px; width: 36px; text-align: center; font-variant-numeric: tabular-nums; }
+.agent-office .ao-camera i { height: 16px; width: 1px; background: var(--ao-line); margin: 0 3px; }
+.agent-office .ao-camera button[aria-pressed="true"] { color: var(--ao-accent); background: var(--ao-hover); }
+.agent-office .ao-zones { position: absolute; top: 8px; right: 12px; z-index: 2; display: flex; align-items: center; gap: 5px; font-size: 11px; background: var(--ao-panel); padding: 3px; border-radius: 7px; border: 1px solid var(--ao-line); }
+.agent-office .ao-zones button { padding: 3px; display: grid; place-items: center; border-radius: 4px; }
+.agent-office .agent-label { position: absolute; top: 0; left: 0; display: flex; gap: 5px; align-items: center; height: 24px; max-width: 230px; padding: 0 7px; background: var(--ao-panel); border: 1px solid var(--ao-line); border-radius: 7px; font-size: 10px; white-space: nowrap; }
+.agent-office .agent-label span { max-width: 105px; text-overflow: ellipsis; overflow: hidden; }
+.agent-office .agent-label small { color: var(--ao-muted); font-size: 9px; }
+.agent-office .agent-label i, .agent-office .ao-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #899493; flex-shrink: 0; }
+.agent-office .agent-label[data-state="working"] i, .agent-office .ao-dot.working { background: #62a17d; }
+.agent-office .agent-label[data-state="waiting"] i, .agent-office .ao-dot.waiting { background: #509cce; }
+.agent-office .agent-label[data-state="error"] i, .agent-office .ao-dot.error { background: #e37878; }
+.agent-office .agent-label[data-state="attention"] i, .agent-office .ao-dot.attention { background: #cbab69; }
+.agent-office .agent-label:hover, .agent-office .agent-label[data-selected="true"] { border-color: var(--ao-accent); }
+.agent-office .sleep-bubble { position: absolute; top: 0; left: 0; font: italic 14px Georgia, serif; letter-spacing: 3px; color: #527789; pointer-events: none; }
+:root[data-theme="dark"] .agent-office .sleep-bubble { color: #b3d0d6; }
+.agent-office .ao-loading { position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 13px; text-align: center; background: var(--ao-panel); padding: 15px; border-radius: 10px; max-width: 90%; }
+.agent-office .ao-loading button { color: var(--ao-accent); padding: 6px 14px; border-color: var(--ao-line); border-radius: 6px; }
+.agent-office .ao-warning { margin: 0; padding: 6px 18px; font-size: 12px; color: var(--ao-accent); border-bottom: 1px solid var(--ao-line); overflow-wrap: anywhere; max-height: 70px; overflow-y: auto; }
+.agent-office .ao-roster { display: flex; align-items: center; gap: 5px; padding: 10px 14px; min-height: 74px; flex-shrink: 0; border-top: 1px solid var(--ao-line); overflow-x: auto; }
+.agent-office .ao-roster > button { display: flex; flex-shrink: 0; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; text-align: left; }
+.agent-office .ao-roster > button[aria-pressed="true"] { border-color: var(--ao-line); background: var(--ao-hover); }
+.agent-office .ao-roster b { display: block; font-size: 12px; font-weight: 500; max-width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.agent-office .ao-roster small { display: block; font-size: 10px; margin-top: 4px; color: var(--ao-muted); }
+.agent-office .ao-avatar { width: 36px; height: 36px; border-radius: 11px; }
+.agent-office .ao-detail { position: absolute; z-index: 3; top: 44px; right: 14px; width: 305px; max-width: calc(100% - 28px); max-height: calc(100% - 112px); overflow-y: auto; border: 1px solid var(--ao-line); border-radius: 12px; background: var(--ao-panel); padding: 16px; box-shadow: 0 8px 24px #10212815; }
+.agent-office .ao-detail-heading { display: flex; align-items: center; gap: 12px; }
+.agent-office .ao-detail-heading > div { min-width: 0; }
+.agent-office .ao-detail-heading h3 { font-size: 16px; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
+.agent-office .ao-detail-heading small { font-size: 11px; color: var(--ao-muted); }
+.agent-office .ao-detail-heading > button { margin-left: auto; padding: 3px; display: grid; place-items: center; align-self: flex-start; border-radius: 5px; }
+.agent-office .ao-description, .agent-office .ao-detail-text, .agent-office .ao-assignment { font-size: 12px; line-height: 1.7; margin: 12px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-office .ao-description { color: var(--ao-muted); }
+.agent-office .ao-status { display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--ao-line); padding-top: 12px; margin: 12px 0; font-size: 12px; }
+.agent-office .ao-assignment { padding: 9px; background: var(--ao-hover); border-radius: 6px; }
+.agent-office .ao-detail dl { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; font-size: 12px; }
+.agent-office .ao-detail dt { color: var(--ao-muted); font-size: 11px; }
+.agent-office .ao-detail dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.agent-office .ao-detail dl > div:first-child { grid-column: 1 / -1; }
+.agent-office .ao-detail textarea { display: block; width: 100%; resize: vertical; max-height: 130px; background: var(--ao-panel); border: 1px solid var(--ao-line); border-radius: 6px; padding: 8px; color: var(--ao-text); font: inherit; font-size: 12px; }
+.agent-office .ao-detail textarea:focus { outline: none; border-color: var(--text-2); }
+.agent-office .ao-actions { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.agent-office .ao-actions button { display: flex; align-items: center; gap: 4px; padding: 5px 7px; border: 1px solid var(--ao-line); border-radius: 6px; font-size: 11px; }
+.agent-office .ao-actions button[type="submit"] { color: var(--ao-accent); }
+.agent-office .ao-link { display: flex; align-items: center; gap: 7px; padding: 7px 0; font-size: 12px; color: var(--ao-accent); }
+.agent-office .ao-notice { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+@container (max-width: 530px) {
+  .agent-office .ao-toolbar { padding: 7px 10px; gap: 6px; }
+  .agent-office .ao-toolbar button span, .agent-office .ao-toolbar small { display: none; }
+  .agent-office .ao-roster { padding: 8px; }
+  .agent-office .ao-roster > button { padding: 6px; gap: 7px; }
+  .agent-office .ao-overview { left: 10px; gap: 9px; font-size: 10px; }
+  .agent-office .ao-detail { top: 38px; right: 10px; max-width: calc(100% - 20px); }
+}
+@media (prefers-reduced-motion: reduce) { .agent-office .ao-scene { transition: none; } }
+
+/* Small workbench polish; scene, seat positions and panel layout stay fixed. */
+.agent-office .ao-toolbar { border:0; padding-block:10px; }
+.agent-office .ao-toolbar > div:first-child > svg { color:var(--ao-muted); }
+.agent-office .ao-toolbar button { padding:6px 9px; border-radius:10px; color:var(--ao-muted); }
+.agent-office .ao-toolbar button:hover { color:var(--ao-text); }
+.agent-office .ao-view { margin:0 8px; border-radius:20px; background:var(--gray-2); }
+:root[data-theme="dark"] .agent-office .ao-view { background:var(--gray-2); }
+.agent-office .ao-camera { padding:6px; border:0; border-radius:16px; background:color-mix(in srgb,var(--ao-panel) 94%,transparent); box-shadow:var(--shadow-sm); backdrop-filter:blur(12px); }
+.agent-office .ao-camera button { border-radius:10px; }
+.agent-office .ao-camera i { background:transparent; width:4px; margin:0; }
+.agent-office .ao-zones { border:0; border-radius:12px; padding:5px; gap:8px; }
+.agent-office .ao-zones button { border-radius:8px; }
+.agent-office .agent-label { border:0; border-radius:9px; padding:0 9px; box-shadow:var(--shadow-xs); }
+.agent-office .agent-label:hover, .agent-office .agent-label[data-selected="true"] { background:var(--gray-3); color:var(--ao-accent); }
+.agent-office .agent-label[data-selected="true"] { box-shadow:0 0 0 1px var(--accent-7); }
+.agent-office .ao-warning { border:0; background:var(--gray-2); margin:4px 12px 8px; border-radius:10px; }
+.agent-office .ao-roster { border:0; gap:6px; }
+.agent-office .ao-roster > button { border-radius:14px; }
+.agent-office .ao-roster > button[aria-pressed="true"] { border-color:transparent; background:var(--ao-hover); }
+.agent-office .ao-roster > button[aria-pressed="true"] b { color:var(--ao-accent); }
+.agent-office .ao-detail { border:0; border-radius:22px; padding:18px; background:color-mix(in srgb,var(--ao-panel) 96%,transparent); box-shadow:var(--shadow-lg); backdrop-filter:blur(16px); }
+.agent-office .ao-detail-heading > button { border-radius:50%; width:26px; height:26px; background:var(--ao-hover); }
+.agent-office .ao-status { border:0; padding:10px 12px; background:var(--ao-hover); border-radius:12px; }
+.agent-office .ao-assignment { border-radius:12px; padding:12px; }
+.agent-office .ao-detail dl { padding:12px; border-radius:14px; background:var(--gray-2); }
+.agent-office .ao-detail textarea { background:var(--ao-hover); border-color:transparent; border-radius:12px; padding:10px; }
+.agent-office .ao-detail textarea:focus-visible { outline:2px solid var(--accent-8); outline-offset:2px; }
+.agent-office .ao-actions { gap:6px; }
+.agent-office .ao-actions button { border-color:transparent; border-radius:9px; padding:7px 9px; background:var(--ao-hover); }
+.agent-office .ao-actions button[type="submit"] { background:var(--accent-3); }
+.agent-office .ao-link { color:var(--ao-muted); border-radius:9px; padding-inline:5px; }
+.agent-office .ao-link:hover { color:var(--ao-accent); }

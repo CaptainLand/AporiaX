@@ -1,7 +1,12 @@
 import { configureTrustedIpc, isTrustedAppUrl } from "./security/trusted-ipc.js";
 import { handleTrustedIpc, assertTrustedIpcSender } from "./security/trusted-ipc.js";
+import { roleSettingsStore } from './harness/role-settings.js';
+import { appearanceRequest, appearanceStore } from './appearance/runtime.js';
+import { effectiveRoleSettings } from '../shared/professional-roles.js';
+import { controlWorker } from './runtime/worker-controls.js';
 import {
   BrowserWindow,
+  Menu,
   Notification,
   net,
   powerMonitor,
@@ -14,8 +19,20 @@ import {
   shell,
 } from "electron";
 import { handleDesktopLink } from "./desktop-links.js";
+import { registerWorkspaceFileMenu } from './workspace-file-menu.js';
 import { registerWorkbench } from "./workbench/service.js";
+import { createFileAccessSettings } from "./runtime/file-access-settings.js";
+import { configureNativeFileAccess } from "./runtime/file-access-policy.js";
+import { configureModelResponseDiagnostics } from "./runtime/model-response-diagnostics.js";
+
+export const fileAccessSettingsReady = app.whenReady().then(async () => {
+  const settings = await createFileAccessSettings({ dataDirectory: app.getPath("userData") });
+  configureNativeFileAccess(settings.policy);
+  return settings;
+});
+fileAccessSettingsReady.catch(() => undefined);
 import { createSideChatService } from "./side-chat/service.js";
+import { createTeamChatService } from './team-chat/service.js';
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
 import {
   lstat,
@@ -59,6 +76,7 @@ import { monitorTaskEnvironment } from "./runtime/environment-monitor.js";
 import { createProjectUnderstandingStore } from "./project-understanding.js";
 import { createKnowledgeWorkspace } from "./knowledge-projects.js";
 import { setDesktopTrayImage } from "./desktop-background.js";
+import { windowThemePalette } from "./window-theme.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDirectory, "..");
@@ -71,6 +89,9 @@ const workbench = registerWorkbench(() => mainWindow);
 let completionFlashTimer = null;
 let currentWindowTheme = "light";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (hasSingleInstanceLock && process.argv.includes("--capture-next-model-response")) {
+  configureModelResponseDiagnostics({ dataDirectory: () => app.getPath("userData"), requests: 1 });
+}
 
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -97,6 +118,11 @@ function approvalGrantKey(details = {}) {
     : "";
 }
 
+let externalRunSource = () => [];
+export function setDesktopExternalRunSource(source) {
+  externalRunSource = typeof source === "function" ? source : () => [];
+}
+
 const harnessTaskRuntime = createHarnessTaskRuntime({
   dataDirectory: () => app.getPath("userData"),
   approvalGrantKey,
@@ -106,6 +132,7 @@ const harnessTaskRuntime = createHarnessTaskRuntime({
         process.platform !== "darwin" &&
         app.isReady() &&
         !harnessTaskRuntime.hasActiveRuns() &&
+        externalRunSource().length === 0 &&
         (!mainWindow || mainWindow.isDestroyed())
       ) {
         app.quit();
@@ -131,6 +158,26 @@ handleTrustedIpc(ipcMain, "side-chat:request", (event, input) => {
   return sideChat.request(input);
 });
 app.on("before-quit", () => sideChat.dispose());
+
+const teamChat = createTeamChatService({
+  dataDirectory: () => app.getPath('userData'), resolveProvider,
+  loadTask: id => getTaskHistoryStore().loadTask(id),
+  loadTasks: () => getTaskHistoryStore().loadTasks(),
+  loadRoles: async () => (await roleSettingsStore(app.getPath('userData'))).snapshot(),
+  loadLive: async task => {
+    const run = harnessTaskRuntime.listActiveRuns().find(run => run.taskId === task.id);
+    if (!run) return null;
+    let workers = [];
+    try { workers = await controlWorker('list', { taskId: task.id, runId: run.runId }); }
+    catch (error) { if (harnessTaskRuntime.getActiveRun(run.runId)?.phase !== 'preparing') return null; }
+    return { ...run, workers };
+  },
+  publish: payload => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send('team-chat:event', payload);
+  },
+});
+handleTrustedIpc(ipcMain, 'team-chat:request', (_event, input) => teamChat.request(input));
+app.on('before-quit', () => teamChat.dispose());
 
 function getCredentialPath() {
   return join(app.getPath("userData"), "deepseek-credentials.json");
@@ -282,6 +329,15 @@ async function resolveProvider(providerId) {
       ...publicAporiaCloudProvider(),
       authenticatedFetch: (path, init) =>
         account.fetchModelGateway(path, init),
+      getCloudQuota: async (modelId, signal) => {
+        const response = await account.fetchModelGateway('/v1/capabilities', {
+          signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(5_000)]),
+        });
+        if (!response.ok) { await response.body?.cancel(); return null; }
+        const capabilities = await response.json();
+        if (capabilities?.protocolVersion !== 1 || capabilities.modelGateway?.quotaAdmission !== 'actual-usage-v1') return null;
+        return capabilities.models?.find(model => model.id === modelId)?.quota || null;
+      },
     };
   }
 
@@ -405,6 +461,11 @@ async function saveTasks(tasks) {
     : getTaskHistoryStore().saveTasks(tasks?.tasks, { expectedRevision: tasks?.expectedRevision, deletedTaskIds: tasks?.deletedTaskIds });
 }
 
+export async function listDesktopWorkspaces() {
+  return ((await loadTasks()) || []).filter(task => typeof task.workspacePath === "string" && task.workspacePath)
+    .map(task => ({ path: task.workspacePath, label: task.workspaceName || "" }));
+}
+
 async function hydrateHarnessMessages(messages) {
   try {
     return await getTaskHistoryStore().hydrateMessages(messages);
@@ -446,24 +507,24 @@ function themedNativeIcon(_theme) {
 }
 
 function applyWindowTheme(theme) {
-  const normalizedTheme = theme === "dark" ? "dark" : "light";
+  const normalizedTheme = (typeof theme === 'object' ? theme?.base : theme) === "dark" ? "dark" : "light";
   currentWindowTheme = normalizedTheme;
   const image = themedNativeIcon(normalizedTheme);
   if (!image.isEmpty()) {
     setDesktopTrayImage(image);
   }
   if (!mainWindow || mainWindow.isDestroyed()) return normalizedTheme;
-  const dark = normalizedTheme === "dark";
+  const palette = windowThemePalette(theme);
   if (!image.isEmpty()) mainWindow.setIcon(image);
-  mainWindow.setBackgroundColor(dark ? "#15111b" : "#eef3f7");
+  mainWindow.setBackgroundColor(palette.backgroundColor);
   if (
     process.platform !== "darwin" &&
     typeof mainWindow.setTitleBarOverlay === "function"
   ) {
     mainWindow.setTitleBarOverlay({
-      color: dark ? "#1b1622" : "#edf2f6",
-      symbolColor: dark ? "#f0edf3" : "#303438",
-      height: 38,
+      color: palette.color,
+      symbolColor: palette.symbolColor,
+      height: palette.height,
     });
   }
   return normalizedTheme;
@@ -520,6 +581,7 @@ function notifyTaskCompleted(payload) {
 }
 
 function createMainWindow() {
+  const palette = windowThemePalette(currentWindowTheme);
   mainWindow = new BrowserWindow({
     title: "AporiaX",
     width: 1500,
@@ -531,9 +593,9 @@ function createMainWindow() {
     ...(process.platform !== "darwin"
       ? {
           titleBarOverlay: {
-            color: "#edf2f6",
-            symbolColor: "#303438",
-            height: 38,
+            color: palette.color,
+            symbolColor: palette.symbolColor,
+            height: palette.height,
           },
         }
       : {}),
@@ -541,7 +603,7 @@ function createMainWindow() {
     maximizable: true,
     minimizable: true,
     icon: themedNativeIcon(currentWindowTheme),
-    backgroundColor: "#eef3f7",
+    backgroundColor: palette.backgroundColor,
     webPreferences: {
       preload: join(currentDirectory, "preload.cjs"),
       contextIsolation: true,
@@ -591,7 +653,8 @@ function createMainWindow() {
 
 async function startHarnessTask(
   request,
-  { clientId = "", onEvent = null, detached = false } = {},
+  { clientId = "", onEvent = null, onResult = null, detached = false, signal: startupSignal = null,
+    transformResult = null, strictProvider = false } = {},
 ) {
   const runId = typeof request?.runId === "string" ? request.runId : "";
   if (!runId || runId.length > 100) {
@@ -602,6 +665,10 @@ async function startHarnessTask(
   }
 
   const provider = await resolveProvider(request?.providerId);
+  await fileAccessSettingsReady;
+  if (strictProvider && provider.id !== request?.providerId) {
+    throw new Error("The authorized Provider is no longer configured.");
+  }
   const messages = await hydrateHarnessMessages(request?.messages);
   let recoveryContext = null;
   if (request?.recoveryRunId) {
@@ -624,6 +691,7 @@ async function startHarnessTask(
     }
   }
 
+  startupSignal?.throwIfAborted();
   return harnessTaskRuntime.start({
     runId,
     taskId: request?.taskId || "",
@@ -639,25 +707,60 @@ async function startHarnessTask(
       modelId: request?.modelId,
     },
     onEvent,
-    execute: ({ signal, control, emit, requestApproval }) =>
-      runHarness({
-        ...request,
-        messages,
-        provider,
-        memoryDirectory: join(app.getPath("userData"), "project-memory"),
-        sandboxDataDirectory: app.getPath("userData"),
-        userSkillsDirectory: join(app.getPath("userData"), "skills"),
-        understandingDirectory: getProjectUnderstandingDirectory(),
-        recoveryContext,
-        signal,
-        control,
-        onEvent: emit,
-        requestApproval,
-        onNativeVisionRejected: ({ providerId, modelId }) =>
-          disableProviderNativeVision(providerId, modelId),
-      }),
+    onResult,
+    execute: async ({ signal, control, emit, requestApproval, clarification }) => {
+      let result;
+      try {
+        const roleStore = await roleSettingsStore(app.getPath('userData'));
+        const roleDefaults = roleStore.snapshot();
+        const roleSettings = { ...effectiveRoleSettings(roleDefaults, {
+          ...request.professionalRoles, builderLimit: request.professionalRoles?.builderLimit ?? request.builderLimit ?? roleDefaults.builderLimit,
+        }), ...(roleDefaults.error ? { error: roleDefaults.error } : {}) };
+        result = await runHarness({
+          ...request,
+          roleSettings,
+          roleManagement: { ownerRunId: runId, store: roleStore, overrides: request.professionalRoles || {} },
+          themeManagement: { ownerRunId: runId, store: await appearanceStore() },
+          builderLimit: roleSettings.builderLimit,
+          resolveAgentModel: async (selection) => {
+            let pair;
+            try { pair = JSON.parse(selection); } catch { pair = [provider.id, selection]; }
+            if (!Array.isArray(pair) || pair.length !== 2 || !pair.every(value => typeof value === 'string')) throw new Error('角色模型配置无效。');
+            const target = await resolveProvider(pair[0]);
+            if (target.id !== pair[0]) throw new Error('角色使用的 Provider 已不存在。');
+            const modelConfig = target.models.find(model => model.id === pair[1]);
+            if (!modelConfig) throw new Error('角色使用的模型已不存在。');
+            return { provider: target, modelId: modelConfig.id, modelConfig };
+          },
+          messages,
+          provider,
+          memoryDirectory: join(app.getPath("userData"), "project-memory"),
+          sandboxDataDirectory: app.getPath("userData"),
+          userSkillsDirectory: join(app.getPath("userData"), "skills"),
+          understandingDirectory: getProjectUnderstandingDirectory(),
+          recoveryContext,
+          signal: startupSignal ? AbortSignal.any([signal, startupSignal]) : signal,
+          control,
+          onEvent: emit,
+          requestApproval,
+          clarification,
+          onNativeVisionRejected: ({ providerId, modelId }) =>
+            disableProviderNativeVision(providerId, modelId),
+        });
+      } catch (error) {
+        if (!transformResult) throw error;
+        result = { status: signal.aborted || startupSignal?.aborted ? "interrupted" : "failed",
+          content: error?.message || "Harness run failed.", error: error?.code || "harness_failed", changes: [] };
+      }
+      return transformResult ? transformResult(result) : result;
+    },
   });
 }
+
+handleTrustedIpc(ipcMain, 'agent-profiles:get', async () => (await roleSettingsStore(app.getPath('userData'))).snapshot());
+handleTrustedIpc(ipcMain, 'appearance:request', (_event, input) => appearanceRequest(input, mainWindow));
+handleTrustedIpc(ipcMain, 'agent-profiles:save', async (_event, value) => (await roleSettingsStore(app.getPath('userData'))).save(value));
+for (const action of ['list', 'steer', 'stop']) handleTrustedIpc(ipcMain, `harness:agents:${action}`, (_event, value) => controlWorker(action, value));
 
 handleTrustedIpc(ipcMain, "desktop:minimize", (event) => {
   assertTrustedSender(event);
@@ -772,6 +875,7 @@ handleTrustedIpc(ipcMain, "workspace:save-text", async (event, request) => {
   assertTrustedSender(event);
   return saveWorkspaceTextFile(request);
 });
+registerWorkspaceFileMenu({ handle: (channel, listener) => handleTrustedIpc(ipcMain, channel, listener), Menu, BrowserWindow, shell, clipboard, dialog });
 
 handleTrustedIpc(ipcMain, "workspace:revert", async (event, request) => {
   assertTrustedSender(event);
@@ -838,12 +942,16 @@ handleTrustedIpc(ipcMain, "attachments:store", async (event, request) => {
   });
 });
 
-handleTrustedIpc(ipcMain, "providers:list", async (event) => {
-  assertTrustedSender(event);
+export async function listDesktopProviders() {
   return [
     publicAporiaCloudProvider(),
     ...(await loadProviderRecords()).map(publicProviderSummary),
   ];
+}
+
+handleTrustedIpc(ipcMain, "providers:list", async (event) => {
+  assertTrustedSender(event);
+  return listDesktopProviders();
 });
 
 handleTrustedIpc(ipcMain, "providers:discover", async (event, request) => {
@@ -973,6 +1081,11 @@ handleTrustedIpc(ipcMain, "harness:active-runs", (event) => {
   return harnessTaskRuntime.listActiveRuns();
 });
 
+handleTrustedIpc(ipcMain, "harness:clarification-response", (event, { runId, questionId, answer } = {}) => {
+  assertTrustedSender(event);
+  return harnessTaskRuntime.respondClarification(runId, questionId, answer, { clientId: String(event.sender.id) });
+});
+
 handleTrustedIpc(ipcMain, "harness:recoverable-runs", async (event) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.listRecoverableRuns();
@@ -1003,7 +1116,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns()) {
+  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns() && externalRunSource().length === 0) {
     app.quit();
   }
 });

@@ -1,0 +1,6 @@
+.pr-robot { display: inline-block; vertical-align: middle; position: relative; flex: 0 0 68px; width: 68px; height: 80px; }
+.pr-robot > .pr-portrait { width: 100%; height: auto; aspect-ratio: 1; margin-top: 6px; border-radius: 20px; }
+.pr-robot > svg { display: block; width: 100%; height: 100%; }
+.pr-robot-shell { fill: color-mix(in srgb, var(--robot-skin) 15%, #f5f5ee); stroke: color-mix(in srgb, var(--robot-skin) 50%, #f5f5ee); stroke-width: 1.5px; }
+.pr-robot-shadow { fill: var(--text-1); opacity: .06; }
+.pr-robot-badge { position: absolute; bottom: 14px; right: 0; display: grid; place-items: center; width: 23px; height: 23px; border-radius: 8px; border: 1px solid var(--gray-5); background: var(--bg-app); color: var(--text-2); }

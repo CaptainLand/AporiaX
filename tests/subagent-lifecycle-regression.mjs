@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runSubagentTask } from '../electron/runtime/subagent-loop.js';
@@ -11,7 +11,8 @@ import { createAgentActivityTracker } from '../electron/harness/agent-activity.j
 import { planAgentBudget, runWithAgentBudget, withAgentBudgetAdmission, enforceAgentBudgetEvent } from '../electron/harness/agent-budget.js';
 import { createProjectUnderstandingStore } from '../electron/project-understanding.js';
 
-const root = await mkdtemp(join(tmpdir(), 'aporia-worker-lifecycle-'));
+// The Harness verifies realpath; seed knowledge against that same physical root.
+const root = await realpath(await mkdtemp(join(tmpdir(), 'aporia-worker-lifecycle-')));
 const originalFetch = globalThis.fetch;
 const tool = (id, name, input) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(input) } });
 const finish = (status = 'completed') => ({ message: { tool_calls: [tool('done', 'finish_subagent', { status, summary: 'Updated requirements respected; tests were not run.' })] } });

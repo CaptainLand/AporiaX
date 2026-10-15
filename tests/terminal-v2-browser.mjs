@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { themeTokens } from '../shared/appearance.js';
 const server = await createServer({ server: { host: "127.0.0.1", port: 0, open: false, watch: null } });
 let browser, page;
 try {
@@ -22,6 +23,75 @@ try {
   console.log("terminal UI: initial prompt");
   assert.equal(await page.locator(".workbench-xterm").evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(255, 255, 255)");
   assert.equal(await page.locator(".workbench-terminal-state").count(), 0);
+  const verifyTheme = async (theme) => {
+    const background = theme === "dark" ? "#0f1114" : "#ffffff";
+    const foreground = theme === "dark" ? "#eaedf2" : "#302a37";
+    await page.waitForFunction(({ theme, background }) =>
+      document.querySelector(".terminal-pane")?.dataset.terminalTheme === theme &&
+      window.terminal()?.term.options.theme.background === background,
+    { theme, background });
+    const colors = await page.evaluate(() => {
+      const elements = [".terminal-pane", ".workbench-xterm", ".terminal-session-screen", ".xterm", ".xterm-viewport"];
+      const rgb = hex => `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
+      const palette = window.terminal().term.options.theme;
+      return { background: rgb(palette.background), foreground: rgb(palette.foreground),
+        layers: elements.map(selector => {
+          const style = getComputedStyle(document.querySelector(selector));
+          return { selector, background: style.backgroundColor, color: style.color };
+        }) };
+    });
+    for (const layer of colors.layers) {
+      if (layer.selector !== ".terminal-session-screen") assert.equal(layer.background, colors.background, `${theme}: ${layer.selector} matches xterm, including padded edges`);
+      if (layer.selector === ".workbench-xterm") assert.equal(layer.color, colors.foreground, `${theme}: cursor/text match xterm`);
+    }
+    assert.equal(await page.evaluate(() => window.terminal().term.options.theme.foreground), foreground);
+  };
+  await verifyTheme("light");
+  const themeSession = await page.evaluate(() => { window.themeSession = window.terminal(); return window.terminal().term.buffer.active.length; });
+  const themeBounds = await page.locator(".terminal-pane").boundingBox();
+  await page.evaluate(() => document.documentElement.dataset.theme = "dark");
+  await verifyTheme("dark");
+  assert.deepEqual(await page.locator(".terminal-pane").boundingBox(), themeBounds, "Theme switching keeps terminal geometry");
+  await menu(); await button("浅色").click(); await page.keyboard.press("Escape");
+  await verifyTheme("light"); // Explicit light must stay light inside a dark app.
+  await page.evaluate(() => document.documentElement.dataset.theme = "light");
+  await verifyTheme("light");
+  await menu(); await button("深色").click(); await page.keyboard.press("Escape");
+  await verifyTheme("dark"); // Explicit dark must stay dark inside a light app.
+  await menu(); await button("跟随").click(); await page.keyboard.press("Escape");
+  await verifyTheme("light");
+  assert.equal(await page.evaluate(() => window.terminal() === window.themeSession), true, "Palette changes preserve the live session");
+  assert.equal(await page.evaluate(() => window.terminal().term.buffer.active.length), themeSession, "Palette changes preserve existing output");
+  console.log("terminal UI: auto/light/dark palette and padded-edge parity, stable geometry/session/output");
+  const customLength = await page.evaluate(() => window.terminal().term.buffer.active.length);
+  let customKeys = [];
+  for (const [background, accent] of [['#0a1410', '#31c48d'], ['#11160c', '#a3c457']]) {
+    const tokens = themeTokens({ base: 'dark', colors: { background, accent, panel: '#12201a', text: '#e6f2e8' } });
+    customKeys = Object.keys(tokens);
+    await page.evaluate(tokens => {
+      const root = document.documentElement; root.dataset.theme = 'dark'; root.dataset.customTheme = 'fixture';
+      for (const [key, value] of Object.entries(tokens)) root.style.setProperty(key, value);
+    }, tokens);
+    await page.waitForFunction(background => window.terminal().term.options.theme.background === background, background);
+    const layers = await page.evaluate(() => ['.terminal-pane', '.workbench-xterm', '.xterm-viewport'].map(selector => getComputedStyle(document.querySelector(selector)).backgroundColor));
+    const rgb = `rgb(${[1, 3, 5].map(i => parseInt(background.slice(i, i + 2), 16)).join(', ')})`;
+    assert.ok(layers.every(value => value === rgb), JSON.stringify(layers));
+    assert.equal(await page.evaluate(() => window.terminal().term.options.theme.foreground), '#e6f2e8');
+    assert.equal(await page.evaluate(() => window.terminal().term.options.theme.red), '#ff8b92', 'ANSI warning colors remain intact');
+  }
+  await mkdir('.tmp/qa', { recursive: true });
+  await page.screenshot({ path: '.tmp/qa/terminal-custom-theme.png' });
+  await menu(); await button('浅色').click(); await page.keyboard.press('Escape'); await verifyTheme('light');
+  await menu(); await button('跟随').click(); await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.terminal().term.options.theme.background === '#11160c');
+  await page.evaluate(keys => {
+    delete document.documentElement.dataset.customTheme; document.documentElement.dataset.theme = 'light';
+    for (const key of keys) document.documentElement.style.removeProperty(key);
+  }, customKeys);
+  await verifyTheme('light');
+  assert.equal(await page.evaluate(() => window.terminal() === window.themeSession), true);
+  assert.equal(await page.evaluate(() => window.terminal().term.buffer.active.length), customLength);
+  console.log('terminal UI: custom themes update live padded edges and text; explicit overrides, ANSI colors, session and output preserved');
   // Reproduce input on an idle/legacy immediate-read transport, including an
   // asynchronous shell echo that arrives after the write IPC has completed.
   await page.waitForTimeout(1050);

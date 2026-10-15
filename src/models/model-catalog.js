@@ -1,4 +1,5 @@
 import { Brain, Zap } from "lucide-react";
+import { claudeReasoningProfile } from "../../shared/model-reasoning.js";
 
 export const EMPTY_MODEL = {
   id: "",
@@ -23,7 +24,7 @@ export const DEFAULT_TASK_OPTIONS = {
   permission: "workspace-write",
   approvalMode: "full-auto",
   executionMode: "direct",
-  builderLimit: 2,
+  builderLimit: null,
 };
 
 const MODEL_SOURCE_GROUPS = [
@@ -86,13 +87,14 @@ export function getAvailableModels(providers) {
     );
     return (provider.models || []).map((model) => ({
       ...model,
+      ...(claudeReasoningProfile(model.id) ? { ...claudeReasoningProfile(model.id), supportsThinking: true } : {}),
       providerId: provider.id,
       providerName: provider.name,
       providerKind: provider.kind,
       source,
       billing,
       managed: Boolean(provider.managed),
-      disabled: Boolean(model.disabled || provider.disabled || (source === "aporia-cloud" && provider.accountStatus !== "authenticated")),
+      disabled: Boolean(model.disabled || provider.disabled || (source === "aporia-cloud" && (provider.accountStatus !== "authenticated" || provider.cloudCatalogVerified !== true))),
       disabledReasonZh: source === "aporia-cloud" && provider.accountStatus !== "authenticated"
         ? provider.accountStatus === "booting" ? "正在检查登录状态…" : "登录 Aporia Cloud 后可用"
         : model.disabledReasonZh || provider.disabledReasonZh,
@@ -136,6 +138,7 @@ export function getDefaultTaskConfig(providers) {
   return {
     ...DEFAULT_TASK_OPTIONS,
     thinking: Boolean(model.supportsThinking),
+    effort: model.defaultEffort || DEFAULT_TASK_OPTIONS.effort,
     providerId: model.providerId || "",
     modelId: model.id || "",
   };

@@ -24,7 +24,7 @@ send({ type: 'subagent.tool.started', agentId: 'verify', role: 'verify', callId:
 witness = send({ type: 'response.reset', round: 2 });
 let run = { status: 'running', witness };
 assert.equal(activeRouteRecords(routeActivityRecords(run)).length, 3, 'One current tool per agent, plus main response');
-assert.equal(activityActor({ actor: 'subagent', role: 'builder' }), '构建 Agent');
+assert.equal(activityActor({ actor: 'subagent', role: 'builder' }), '搭匠');
 assert.equal(activityActor({ actor: 'subagent', role: 'planner' }), 'planner Agent');
 assert.equal(describeRouteRecord({ kind: 'tool', tool: 'run_command' }).title, '运行命令');
 assert.equal(describeRouteRecord({ kind: 'tool', tool: 'custom', capability: { stage: 'lens', titleZh: '查询目录', titleEn: 'Query catalog' } }).title, '查询目录');
@@ -45,10 +45,12 @@ witness = send({ type: 'control.paused' });
 assert.ok(activeRouteRecords(routeActivityRecords({ status: 'running', witness })).every((r) => r.status === 'paused'));
 send({ type: 'control.resumed' });
 witness = send({ type: 'turn.completed', status: 'partial' });
-assert.equal(routeRunLabel({ status: 'running', witness }), '部分完成');
+assert.equal(routeRunLabel({ status: 'running', witness, content: '已保留结果，仍有一项未处理。' }), '已完成');
 assert.equal(activeRouteRecords(routeActivityRecords({ status: 'partial', witness })).length, 0);
-assert.equal(routeRunLabel({ status: 'completed', selfCheck: { delivery: { status: 'unverified' } } }), '已交付 · 未验证');
-assert.equal(routeRunLabel({ status: 'interrupted', witness: { status: 'running' } }), '已停止');
+assert.equal(routeRunLabel({ status: 'completed', content: '结果已输出', selfCheck: { delivery: { status: 'unverified' } } }), '已完成');
+assert.equal(routeRunLabel({ status: 'interrupted', witness: { status: 'running' } }), '');
+assert.equal(routeRunLabel({ status: 'completed', content: '' }), '', 'No output must not be presented as completed');
+assert.equal(routeRunLabel({ status: 'failed', error: true, content: 'Provider unavailable' }), '');
 assert.equal(routeActivityRecords({ status: 'completed', witness: { records: [{ id: 'stale', kind: 'tool', eventType: 'tool.started', status: 'completed' }] } })[0].status, 'unknown');
 assert.equal(activeRouteRecords(routeActivityRecords({ status: 'completed', witness: { records: [{ id: 'stale', status: 'running' }] } })).length, 0);
 
@@ -75,7 +77,7 @@ reduce({ type: 'tool.started', tool: 'run_command', callId: 'three', command: 'n
 route = reduce({ type: 'tool.completed', tool: 'run_command', callId: 'three', success: true });
 assert.equal(route[0].status, 'recovered');
 route = reduce({ type: 'subagent.tool.started', agentId: 'b', role: 'builder', tool: 'write_file', callId: 'sub' });
-assert.match(route.at(-1).title, /Builder/);
+assert.match(route.at(-1).title, /搭匠/);
 route = reduce({ type: 'subagent.tool.completed', agentId: 'b', tool: 'write_file', callId: 'sub', success: false, error: 'EACCES' });
 assert.equal(route.at(-1).error, 'EACCES');
 

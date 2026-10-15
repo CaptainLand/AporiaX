@@ -1,0 +1,84 @@
+/* Finish the remaining settings pages without changing their structure or
+ * behavior. Calendar cells, theme swatches and semantic warnings retain their
+ * colors; ordinary grouping uses quiet workbench surfaces. */
+:root[data-theme] .application-settings-modal > .application-settings-header,
+:root[data-theme] .application-settings-modal .application-settings-nav { border-color:transparent; }
+:root[data-theme] .application-settings-modal :is(.account-settings,.personalization-settings,.professional-roles,.permissions-settings) h3 { font-size:20px; font-weight:600; letter-spacing:-.4px; }
+:root[data-theme] .application-settings-modal :is(.account-settings,.personalization-settings,.professional-roles,.permissions-settings) :is(input:not([type="color"]):not([type="checkbox"]):not([type="range"]),select,textarea) { border-color:transparent; border-radius:10px; background:var(--gray-3); color:var(--text-1); }
+:root[data-theme] .application-settings-modal :is(.account-settings,.personalization-settings,.professional-roles,.permissions-settings) :is(input,select,textarea):focus-visible { outline:2px solid var(--accent-8); outline-offset:2px; }
+
+/* Account: keep the same statistics and history, soften their containers. */
+:root[data-theme] .application-settings-modal .account-settings button:not(.account-activity-grid button,.account-avatar-picker button),
+:root[data-theme] .application-settings-modal .account-settings select { border-color:transparent; border-radius:10px; background:var(--gray-3); }
+.application-settings-modal .account-settings-profile { padding:16px; border-radius:18px; background:var(--gray-2); }
+.application-settings-modal .account-settings-quota { padding:16px; border-radius:16px; background:var(--gray-2); }
+.application-settings-modal .account-settings-usage,
+.application-settings-modal .account-settings-activity,
+.application-settings-modal .account-settings-history { border:0; padding-top:18px; }
+.application-settings-modal .account-settings-stats { gap:10px; }
+.application-settings-modal .account-settings-stats > div { padding:12px; border-radius:13px; background:var(--gray-2); }
+.application-settings-modal .account-settings-stats span { font-size:11px; }
+.application-settings-modal .account-settings-activity { padding:16px; border-radius:18px; background:var(--gray-2); margin:8px 0; }
+.application-settings-modal .account-request-row { border:0; margin:6px 0; border-radius:12px; background:var(--gray-2); }
+.application-settings-modal .account-request-row summary { padding-inline:10px; border-radius:12px; }
+.application-settings-modal .account-request-row dl { margin:0 6px 6px; border-radius:10px; }
+.application-settings-modal .account-settings-bottom { border:0; padding-top:10px; }
+
+/* Personalization: preserve the miniature previews and real color swatches. */
+:root[data-theme] .application-settings-modal .personalization-settings button:not(.switch) { border-color:transparent; border-radius:10px; background:var(--gray-3); }
+:root[data-theme] .application-settings-modal .personalization-settings .theme-presets > button { border-radius:18px; padding:8px; background:var(--gray-2); }
+:root[data-theme] .application-settings-modal .personalization-settings .theme-presets > button[aria-pressed="true"] { box-shadow:0 0 0 1px var(--accent-7); }
+.application-settings-modal .personalization-toggle { padding:16px; margin-top:18px; border:0; border-radius:16px; background:var(--gray-2); }
+.application-settings-modal .personalization-theme-list { display:grid; gap:8px; }
+.application-settings-modal .personalization-theme-row { padding:12px; border:0; border-radius:14px; background:var(--gray-2); }
+.application-settings-modal .personalization-theme-swatches { border:0; border-radius:10px; }
+.application-settings-modal .personalization-editor { border:0; border-radius:18px; background:var(--gray-2); padding:18px; }
+.application-settings-modal .personalization-base { border-radius:10px; padding:3px; background:var(--gray-3); }
+:root[data-theme] .application-settings-modal .personalization-settings .personalization-base button[aria-pressed="true"] { background:var(--bg-app); color:var(--accent-11); }
+.application-settings-modal .personalization-advanced { border:0; border-radius:13px; padding:14px; background:var(--gray-3); }
+.application-settings-modal .personalization-delete { border:0; border-radius:14px; background:var(--gray-2); padding:14px; }
+:root[data-theme] .application-settings-modal .personalization-settings .personalization-save { background:var(--accent-3); color:var(--accent-11); }
+
+/* Roles: retain gallery/edit/advanced hierarchy and built-in protections. */
+:root[data-theme] .application-settings-modal .professional-roles button:not(.switch) { border-color:transparent; border-radius:10px; background:var(--gray-3); font-size:12px; }
+:root[data-theme] .application-settings-modal .professional-roles button.pr-role-card { border:0; border-radius:18px; background:var(--gray-2); }
+:root[data-theme] .application-settings-modal .professional-roles button.pr-role-card:hover:not(:disabled) { background:var(--gray-3); }
+:root[data-theme] .application-settings-modal .professional-roles button.pr-role-card[aria-pressed="true"] { background:var(--gray-3); box-shadow:inset 0 0 0 1px var(--accent-7); }
+.application-settings-modal .pr-editor { border:0; border-radius:18px; background:var(--gray-2); }
+.application-settings-modal .pr-capabilities,
+.application-settings-modal .pr-advanced { border:0; padding:14px; border-radius:13px; background:var(--gray-3); }
+.application-settings-modal .pr-capabilities { margin-top:14px; background:var(--gray-2); }
+.application-settings-modal .pr-builder-limit { border:0; border-radius:14px; padding:14px; background:var(--gray-2); }
+.application-settings-modal .pr-scheduling { border-radius:14px; padding:14px; background:var(--gray-2); }
+.application-settings-modal .pr-footer { border:0; padding-top:12px; }
+
+/* Permissions: make each existing row a soft group; no approval changes. */
+.application-settings-modal .permissions-settings section { border:0; margin-bottom:16px; }
+.application-settings-modal .permission-setting-row { border:0; padding:16px; margin:8px 0; border-radius:16px; background:var(--gray-2); gap:16px; }
+.application-settings-modal .permission-setting-row strong { font-size:13px; font-weight:500; }
+.application-settings-modal .permission-setting-row p { font-size:11px; line-height:1.65; }
+.application-settings-modal .permission-choices { border:0; border-radius:12px; padding:4px; background:var(--gray-3); }
+:root[data-theme] .application-settings-modal .permission-choices button:not(.switch) { border:0; border-radius:9px; background:transparent; font-size:12px; }
+:root[data-theme] .application-settings-modal .permission-choices button[aria-pressed="true"] { background:var(--bg-app); color:var(--accent-11); }
+:root[data-theme] .application-settings-modal .permission-setting-row > button:not(.switch),
+:root[data-theme] .application-settings-modal .permission-environment button,
+:root[data-theme] .application-settings-modal .permission-risk-confirm button { border-color:transparent; border-radius:10px; background:var(--gray-3); }
+.application-settings-modal .permission-environment { padding:12px 16px; border-radius:12px; background:var(--gray-2); }
+.application-settings-modal .permission-risk-confirm { border:0; padding:16px; border-radius:16px; background:var(--gray-3); }
+.application-settings-modal .permissions-settings > details { padding:14px 16px; border-radius:14px; background:var(--gray-2); }
+
+/* About: keep its centered identity, typography and update actions. */
+.application-settings-modal .application-about { padding-inline:8px; }
+.application-settings-modal .application-about h3 { font-size:26px; }
+.application-settings-modal .application-about-principles { margin-top:26px; gap:10px; }
+:root[data-theme] .application-settings-modal .application-about-principles > div { border:0; border-radius:16px; background:var(--gray-2); }
+:root[data-theme] .application-settings-modal .application-about-principles strong { color:var(--text-1); font-size:14px; }
+:root[data-theme] .application-settings-modal .application-about-update { border:0; border-radius:18px; background:var(--gray-2); }
+:root[data-theme] .application-settings-modal .application-about-update .secondary-button,
+:root[data-theme] .application-settings-modal .application-about .tutorial-link { border-color:transparent; border-radius:10px; background:var(--gray-3); color:var(--text-2); }
+.application-settings-modal .application-about-update .primary-button { border-radius:10px; }
+@media (max-width:720px) {
+  .application-settings-modal .account-settings-stats > div { padding:10px; }
+  .application-settings-modal .account-settings-profile { gap:10px; flex-wrap:wrap; }
+  .application-settings-modal .account-settings-profile > .account-avatar-picker { flex:0 0 auto; }
+}

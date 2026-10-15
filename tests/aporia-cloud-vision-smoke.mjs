@@ -9,19 +9,17 @@ const [visionProxy, visionCore, mainV2, accountRuntime, providerConfig] = await 
   readFile(new URL("../electron/provider-config.js", import.meta.url), "utf8"),
 ]);
 
-assert.match(visionProxy, /aporia-cloud-vision/);
+assert.doesNotMatch(visionProxy, /aporia-cloud-vision|callAporiaCloudVision|prepareAporiaCloudVisionRequest/);
 assert.doesNotMatch(visionProxy, /Qwen3\.5 Flash Vision/);
 assert.match(visionProxy, /getCloudVisionCapability/);
 assert.match(visionProxy, /capability\.status !== "ready"/);
 assert.match(visionProxy, /getDesktopAccountRuntime/);
 assert.match(visionProxy, /fetchModelGateway/);
-assert.match(visionProxy, /callModelProviderOnce/);
-assert.match(visionProxy, /max_completion_tokens:\s*APORIA_CLOUD_VISION_OUTPUT_TOKENS/);
+assert.doesNotMatch(visionProxy, /callModelProviderOnce/);
 assert.match(visionProxy, /mergeVisionObservation/);
-assert.match(visionProxy, /billing:\s*"weekly-quota"/);
+assert.match(providerConfig, /billing:\s*"weekly-quota"/);
 
 assert.match(visionCore, /APORIA_CLOUD_PROVIDER_ID\s*=\s*"aporia-cloud"/);
-assert.match(visionCore, /APORIA_CLOUD_VISION_MODEL_ID\s*=\s*"aporia-cloud-vision"/);
 assert.match(visionCore, /supportsImageProxy/);
 assert.match(visionCore, /nativeSupportsImages/);
 
@@ -34,7 +32,9 @@ assert.match(accountRuntime, /fetchModelGateway/);
 assert.match(accountRuntime, /Authorization/);
 assert.match(accountRuntime, /accessToken/);
 assert.match(accountRuntime, /modelGatewayBaseUrl/);
-assert.match(accountRuntime, /APORIAX_MODEL_GATEWAY_URL/);
+const endpointSource = await readFile(new URL("../electron/account/cloud-endpoints.js", import.meta.url), "utf8");
+assert.match(accountRuntime, /loadCloudEndpoints/);
+assert.match(endpointSource, /APORIAX_MODEL_GATEWAY_URL/);
 
 const desktopSources = [visionProxy, visionCore, mainV2, accountRuntime, providerConfig].join("\n");
 assert.doesNotMatch(desktopSources, /QWEN_VISION_API_KEY/);
@@ -43,7 +43,7 @@ assert.doesNotMatch(desktopSources, /qwen-ci-key/i);
 
 // The first-party vision model is deliberately hidden behind the managed
 // Aporia Account/Gateway path; Desktop must never carry a Qwen provider secret.
-assert.match(visionProxy, /kind:\s*"aporia-cloud"/);
-assert.match(visionProxy, /authenticatedFetch/);
+assert.match(providerConfig, /kind:\s*"aporia-cloud"/);
+assert.match(visionProxy, /return request/);
 
 console.log("Aporia Cloud vision security smoke: ok");

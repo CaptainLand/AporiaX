@@ -14,6 +14,7 @@ import { createWorkbenchGitService } from "./git-service.js";
 import { getGitHubAuthStatus, githubLoginCommand } from "./git-setup.js";
 import { appendTerminalOutput, readTerminalOutput, waitForTerminalOutput, wakeTerminalReaders } from "./terminal-buffer.js";
 import { interactiveTerminalEnvironment } from "./terminal-environment.js";
+import { readMentionContext } from "./mention-context.js";
 
 const require = createRequire(import.meta.url);
 export function createWorkbenchService({ getWindow, confirmExternalRead = async (path) => {
@@ -273,6 +274,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   async function request(input = {}) {
     if (!input.taskId || typeof input.taskId !== "string" || input.taskId.length > 200) throw new Error("缺少任务标识。");
     const context = { taskId: input.taskId, workspacePath: String(input.workspacePath || "") };
+    if (input.action === "mention") return readMentionContext(context, input.token, { resources, git });
     if (input.action === "list") {
       const root = resolve(context.workspacePath || ".");
       return [...resources.values()]

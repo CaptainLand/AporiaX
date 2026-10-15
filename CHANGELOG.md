@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.0.0 — 2026-10-15
+
+- Ship the unified light/dark workbench, flat conversation and Witness surfaces, refined settings, model reasoning selection and theme-aware terminal/calendar/quota UI.
+- Add six specialist identities and portraits, a 2.5D agent office, team/private messages and confirmed transfer of chat suggestions into main-agent work.
+- Support reusable custom roles, AI-assisted role/theme design, per-role controlled capabilities and mandatory confirmation for custom role changes; built-ins remain protected.
+- Add account usage history, token totals, a daily activity calendar, avatar selection, experimental personalization and centralized permissions.
+- Preserve useful final explanations for bounded no-progress stops without granting more tool calls or hiding execution evidence.
+- Deliver legacy-directory update fixes and stable interactive installation organization with explicit confirmation, recoverable program-file backups, protected user data and automatic AporiaX child-directory selection.
+- Refresh README, official website links and synthetic light/dark screenshots. Source-available terms apply without revoking historical MIT grants.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0.md)
+
+## 1.0.0-rc.4 — 2026-10-06
+
+Windows release candidate, not final 1.0.0. MIT remains in effect; existing Cloud billing, server security and minimum client version are unchanged.
+
+- Share daylight layout geometry with dark mode, preserve conversation reading position on theme switches, and unify scrollbar styling.
+- Flatten project/task rows, match ordinary conversation typography, remove duplicate labels and generic hints, and use neutral search focus.
+- Align main/side-chat composer heights and bottom edges, including real running/paused notices; retain multiline growth and a small Witness gap.
+- Reuse one model picker for main/side chat while retaining independent side-chat selection and main-task reasoning controls.
+- Correct Claude relay capability/effort mapping without changing protocol; pause repeated no-progress planning/evidence loops after the default six-repeat budget.
+- Add recoverable cleanup for registered, unchanged self-check scripts created by the active task. Ordinary deletion permissions remain unchanged.
+- Add explicit one-request local response diagnostics, OFF by default; readable provider-returned reasoning only, with no request credentials or Cloud upload.
+- Include conversation selection actions, desktop account/heading refinements, Git/workspace UI updates and refreshed Windows shell icons.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-rc.4.md)
+
+## 1.0.0-rc.2 — 2026-09-30
+
+Windows release candidate on the default GitHub update channel; not final 1.0.0. This release does not deploy Web / Cloud or raise the minimum client version. MIT remains in effect.
+
+- Add bounded same-model rolling summaries for long main-agent conversations, local original-history readback, durable summary reuse and protection against duplicate paid summary requests after interrupted recovery.
+- Preserve current user requirements, explicit long-term constraints and recent complete tool groups; failed or interrupted summaries never overwrite original history or switch providers.
+- Recognize HTTP 413 as request-size failure, budget serialized request bytes as well as tokens, and permit only bounded, demonstrably smaller safe recovery attempts. Oversized protected attachments still receive an actionable error.
+- Disable Cloud model selection when confirmed personal or fresh shared quota is exhausted; refresh availability after billing events and distinguish quota failures from vision readiness errors.
+- Include the locally integrated Control API / MCP bridge and global file-access control. External access remains opt-in, bound to existing desktop workspaces; global outside-workspace access is off by default and requires explicit risk confirmation.
+- Retain removed mobile-sync channels, hidden avatar UI, existing permissions and Cloud billing protections.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-rc.2.md)
+
+## 1.0.0-rc.1 — 2026-09-26
+
+Windows release candidate on the default update channel; not final 1.0.0. MIT remains in effect for this RC; the proposed new license is reserved for the final stable release after review.
+
+- Freeze the current desktop feature set for release-candidate testing; Cloud remains an independently operated beta.
+- Complete the Skill / MCP / mention loop, including explicit MCP steering, durable selection recovery, bounded reconnect and uncertain-operation replay protection.
+- Freeze browser references per user message; retries cannot silently capture a subsequently navigated page. Load mention catalogs independently so slow files or MCP cannot block explicit Skill selection.
+- Correct 32K context headroom without dropping user constraints or removing hard context limits.
+- Include the existing clarification, quota wind-down, startup updater and privacy-channel-removal work in the current local source.
+- Add Preview → RC → Stable update-order checks and package the current license and RC notes.
+- Keep clean-machine installation, upgrade, live-model soak and external-user acceptance as release gates, not implied by local regression results.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-rc.1.md)
+
+## 1.0.0-preview.2 — 2026-09-23
+
+Local build of **1.0.0 Preview v2**; not yet uploaded as a GitHub Release.
+
+- Integrate the Cloud v1 compatibility contract, explicit endpoint configuration,
+  endpoint-scoped login sessions, and request identity across outer task recovery.
+- Align Cloud Flash availability and native image support with server capabilities;
+  retain BYOK when public Cloud is not configured.
+- Include the in-app guide entry and existing 1.0 Preview task continuity/workspace improvements.
+- Update the companion Web account center for available/reserved quota, unresolved
+  usage, unsupported remote controls, retryable service outages, and opt-in demo isolation.
+- The companion Web is built separately; it is not bundled in the desktop installer.
+  ICP/HTTPS/public endpoint rollout remains pending.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.0-preview.2.md)
+
 ## 1.0.0-preview — 2026-09-22
 
 Preview of task continuity, clearer multi-agent collaboration, and a simpler workspace UI. This is a prerelease, not the final 1.0.0 release.

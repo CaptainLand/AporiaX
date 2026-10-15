@@ -42,9 +42,28 @@ app.whenReady().then(async () => {
   }
   await service.request({ ...context, id, action: "takeover" });
   console.log("native: takeover");
+  const browserSession = service.resources.get(id);
+  const shortcuts = [
+    { type: 'keyDown', key: 'F12' },
+    { type: 'keyDown', key: 'I', control: true, shift: true },
+    { type: 'keyDown', key: 'j', control: true, shift: true },
+  ];
+  for (const shortcut of shortcuts) {
+    const before = browserSession.state().consoleToggleSeq;
+    let prevented = false;
+    browserSession.wc.emit('before-input-event', { preventDefault: () => { prevented = true; } }, shortcut);
+    assert.equal(prevented, true);
+    assert.equal(browserSession.state().consoleToggleSeq, before + 1);
+    assert.equal(browserSession.owner, 'user');
+    assert.equal(browserSession.wc.debugger.isAttached(), true, 'console shortcut must not detach the Agent debugger');
+  }
+  console.log('native: F12 / Ctrl+Shift+I / Ctrl+Shift+J publish scoped console toggles without changing ownership or debugger');
   await assert.rejects(run.browserRuntime.click({ text: "Apply" }), /USER_CONTROL/);
   await service.resources.get(id).wc.executeJavaScript("document.querySelector('input').value='test-456'; document.querySelector('button').click()");
   await service.request({ ...context, id, action: "release" });
+  const lockedConsole = browserSession.state().consoleToggleSeq;
+  browserSession.wc.emit('before-input-event', { preventDefault() {} }, shortcuts[0]);
+  assert.equal(browserSession.state().consoleToggleSeq, lockedConsole, 'agent-owned native view remains input-locked');
   assert.match((await run.browserRuntime.snapshot()).visibleText, /test-456/);
   await service.request({ ...context, action: "hide" });
   assert.match((await run.browserRuntime.snapshot()).visibleText, /test-456/);

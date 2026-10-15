@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { applyProfessionalAgentEvent } from '../conversation/professional-agent-events.js';
 import { taskSuspensionLabel } from "../state/task-suspension.js";
 import { splitSteeredReply } from "../state/steering-messages.js";
 import {
@@ -109,8 +110,18 @@ export function useHarnessEvents({
       complete_self_check: tr("正在提交自检报告", "Submitting self-check report"),
     };
     const unsubscribe = window.desktop.harness.onEvent((event) => {
+      if (event.type === 'agent.roles.changed') window.dispatchEvent(new CustomEvent('aporiax:roles-updated', { detail: event }));
       const run = runsRef.current.get(event.runId);
       if (!run) return;
+      if (event.type.startsWith('subagent.') && event.agentId) setTasks(current => updateRunAssistant(current, run,
+        message => ({ ...message, runId: event.runId, subagents: applyProfessionalAgentEvent(message.subagents, event) })));
+      if (event.type === "clarification.required" || event.type === "clarification.updated") {
+        flushPendingDeltas();
+        setTasks(current => updateRunAssistant(current, run, message => ({ ...message, clarifications: event.questions || [] })));
+        const pending = event.questions?.find(item => item.status === "pending");
+        if (pending) setRunStatus({ title: tr("等待你的回答", "Waiting for your answer"), detail: pending.question });
+        return;
+      }
       if (event.type === "knowledge.project.selected") {
         setTasks((current) => current.map((task) => task.id === run.taskId && normalizeWorkspacePath(task.workspacePath) === normalizeWorkspacePath(event.workspaceRoot || run.workspacePath) && !task.knowledgeProjectId ? { ...task, knowledgeProjectId: event.knowledgeProjectId } : task));
         return;

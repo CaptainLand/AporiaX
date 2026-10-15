@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 const tests = [
-  "reliability-storage", "remote-command-inbox", "project-script-trust", "human-constraints", "release-source",
+  "reliability-storage", "privacy-no-sync", "project-script-trust", "human-constraints", "release-source",
   "context-continuation-regression", "mcp-deferred-catalog", "understanding-lock-recovery",
   "approval-response-regression", "builder-merge-regression", "builder-merge-crash",
   "harness-long-task-reliability", "runtime-worker-continuation", "runtime-context-recovery",

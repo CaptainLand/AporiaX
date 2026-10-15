@@ -20,8 +20,7 @@ const deltaBranch = hook.slice(
 );
 assert.doesNotMatch(deltaBranch, /setTasks\(/);
 
-// Remote sync has its own effect between these two effects; adjacency is not
-// a performance contract. Keep checking synchronous ref refresh and debounce.
+// Keep checking synchronous ref refresh and debounced local persistence.
 assert.match(main, /tasksRef\.current = tasks;\r?\n  \}, \[tasks\]\);/);
 assert.match(main, /const timeout = window\.setTimeout\(\(\) => \{\s*cacheTasksLocally\(tasks\);\s*\}, 750\);\s*return \(\) => window\.clearTimeout\(timeout\);\s*\}, \[tasks\]\);/);
 

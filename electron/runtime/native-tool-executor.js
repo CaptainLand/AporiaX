@@ -1,10 +1,11 @@
 import { readTextPage } from "./text-reader.js";
 import { mutateWorkspaceFiles } from "./workspace-mutations.js";
-import { readSkillResource } from "../skill-resources.js";
+import { cleanupTemporaryCheck, registerTemporaryCheck, validateTemporaryCheckCreation } from "./temporary-check-files.js";
+import { readSkillResource, searchSkills } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { extname, isAbsolute, relative } from "node:path";
+import { lstat, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { extname, isAbsolute, relative, join } from "node:path";
 import { applyPatch as applyUnifiedPatch, parsePatch } from "diff";
 import {
   MAX_OFFICE_FILE_BYTES,
@@ -22,6 +23,7 @@ import {
 import { installLanguageServer as defaultInstallLanguageServer } from "./lsp-installer.js";
 import { toWorkspaceRelativePath } from "./workspace-runtime.js";
 import { getGitHubAuthStatus } from "../workbench/git-setup.js";
+import { NATIVE_FILE_TOOLS, verifyNativeFileTarget, verifyExternalFileTarget, filePathInside, outsideFileAccessEnabled, requiresGuardedFileSearch } from "./file-access-policy.js";
 
 function countExactOccurrences(content, searchText) {
   let count = 0;
@@ -130,8 +132,8 @@ function normalizeGitHubRepoName(value) {
 }
 
 export function createNativeToolExecutor({
-  verifyExistingTarget,
-  verifyWritableTarget,
+  verifyExistingTarget: workspaceVerifyExisting,
+  verifyWritableTarget: workspaceVerifyWritable,
   searchWorkspaceText,
   calculateLineChanges,
   runGitCommand,
@@ -140,8 +142,8 @@ export function createNativeToolExecutor({
   limits = {},
 } = {}) {
   for (const [name, value] of Object.entries({
-    verifyExistingTarget,
-    verifyWritableTarget,
+    verifyExistingTarget: workspaceVerifyExisting,
+    verifyWritableTarget: workspaceVerifyWritable,
     searchWorkspaceText,
     calculateLineChanges,
     runGitCommand,
@@ -177,11 +179,28 @@ export function createNativeToolExecutor({
     processManager = null,
     lspManager = null,
     workbenchPresent = null,
+    roleTools = null,
+    appearanceTools = null,
   }) {
     throwIfAborted(signal);
+    if (["list_aporiax_themes", "create_aporiax_theme"].includes(toolName)) {
+      if (!appearanceTools) throw new Error('外观工具仅限桌面主 Agent。');
+      return { modelResult: await appearanceTools(toolName, input) };
+    }
+    if (["list_agent_roles", "manage_agent_role"].includes(toolName)) {
+      if (!roleTools) throw new Error('角色管理仅限当前桌面主 Agent。');
+      return { modelResult: await roleTools(toolName, input) };
+    }
+    const verifyExistingTarget = NATIVE_FILE_TOOLS.has(toolName)
+      ? (root, path) => verifyNativeFileTarget(root, path) : workspaceVerifyExisting;
+    const verifyWritableTarget = NATIVE_FILE_TOOLS.has(toolName)
+      ? (root, path) => verifyNativeFileTarget(root, path, { writable: true }) : workspaceVerifyWritable;
 
     if (toolName === "read_skill_resource") {
       return { modelResult: await readSkillResource({ workspaceRoot, userSkillsDirectory }, input) };
+    }
+    if (toolName === "search_skills") {
+      return { modelResult: await searchSkills({ workspaceRoot, userSkillsDirectory }, input) };
     }
 
     if (isBrowserToolName(toolName)) {
@@ -245,7 +264,7 @@ export function createNativeToolExecutor({
       }
       const generated = await createOfficeArtifact(toolName, { ...input, _wordImages: wordImages });
       throwIfAborted(signal);
-      await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: input.path, before: created ? null : previousBuffer, after: generated.buffer }] });
+      await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: created ? null : previousBuffer, after: generated.buffer }] });
       return {
         modelResult: {
           path: generated.path,
@@ -295,14 +314,7 @@ export function createNativeToolExecutor({
       }
       let filePath;
       if (toolName === "read_external_file") {
-        if (!isAbsolute(input.path) || input.path.includes("\0")) {
-          throw new Error("External file path must be absolute.");
-        }
-        const lexicalStats = await lstat(input.path);
-        if (lexicalStats.isSymbolicLink()) {
-          throw new Error("External symbolic links are not accepted.");
-        }
-        filePath = await realpath(input.path);
+        filePath = await verifyExternalFileTarget(workspaceRoot, input.path);
       } else {
         filePath = await verifyExistingTarget(workspaceRoot, input.path);
       }
@@ -329,7 +341,7 @@ export function createNativeToolExecutor({
             ...pdf,
             ...page,
             sha256: sha256(pdfBuffer),
-            external: toolName === "read_external_file",
+            external: toolName === "read_external_file" || !filePathInside(workspaceRoot, filePath),
             content: pdf.requiresOcr
               ? `${page.content}\n\n[系统提示：该 PDF 没有可提取文本，可能是扫描件，需要 OCR。]`
               : page.content,
@@ -337,17 +349,20 @@ export function createNativeToolExecutor({
         };
       }
       const page = await readTextPage(filePath, input, maxFileReadChars, signal);
-      return { modelResult: { path: input.path, ...page, external: toolName === "read_external_file" } };
+      return { modelResult: { path: input.path, ...page, external: toolName === "read_external_file" || !filePathInside(workspaceRoot, filePath) } };
     }
 
     if (toolName === "search_text") {
+      const searchPath = await verifyExistingTarget(workspaceRoot, input.path || ".");
+      const external = !filePathInside(workspaceRoot, searchPath);
       const maxResults = Number.isInteger(input.max_results)
         ? Math.min(maxSearchResults, Math.max(1, input.max_results))
         : 80;
-      return {
-        modelResult: await searchWorkspaceText({
-          workspaceRoot,
-          requestedPath: input.path || ".",
+      const guarded = await requiresGuardedFileSearch(workspaceRoot, searchPath);
+      const result = await searchWorkspaceText({
+          workspaceRoot: external ? searchPath : workspaceRoot,
+          requestedPath: external ? "." : input.path || ".",
+          authorizePath: guarded ? path => verifyNativeFileTarget(workspaceRoot, path) : null,
           query: input.query,
           caseSensitive: Boolean(input.case_sensitive),
           maxResults,
@@ -355,8 +370,16 @@ export function createNativeToolExecutor({
           includeGlobs: input.include_glob || [],
           excludeGlobs: input.exclude_glob || [],
           signal,
-        }),
-      };
+        });
+      return { modelResult: { ...result, path: input.path || ".", external,
+        results: external ? result.results.map(entry => ({ ...entry, path: join(searchPath, entry.path) })) : result.results } };
+    }
+
+    if (toolName === "cleanup_temporary_check") {
+      const result = await cleanupTemporaryCheck(workspaceRoot, input.path, { signal });
+      const { beforeContent, ...modelResult } = result;
+      return { modelResult, change: { path: input.path, beforeContent, afterContent: "", beforeMissing: false,
+        afterMissing: true, deleted: true, ...calculateLineChanges(beforeContent, "") } };
     }
 
     if (toolName === "write_file") {
@@ -377,14 +400,17 @@ export function createNativeToolExecutor({
       } catch (error) {
         if (error?.code !== "ENOENT") throw error;
       }
+      if (input.temporary_self_check === true) await validateTemporaryCheckCreation(workspaceRoot, input.path, { created, content: input.content });
       const lineChanges = calculateLineChanges(previousContent, input.content);
       throwIfAborted(signal);
-      await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: input.path, before: created ? null : Buffer.from(previousContent), after: Buffer.from(input.content) }] });
+      await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: created ? null : Buffer.from(previousContent), after: Buffer.from(input.content) }] });
+      if (input.temporary_self_check === true) await registerTemporaryCheck(workspaceRoot, input.path, input.content);
       return {
         modelResult: {
           path: input.path,
           bytesWritten: Buffer.byteLength(input.content, "utf8"),
           created,
+          ...(input.temporary_self_check === true ? { temporarySelfCheck: true, cleanupTool: "cleanup_temporary_check" } : {}),
           ...lineChanges,
         },
         change: {
@@ -412,7 +438,7 @@ export function createNativeToolExecutor({
         const prepared = [];
         for (const filePatch of filePatches) {
           const path = unifiedPatchPath(filePatch);
-          if (!path || isAbsolute(path) || path.split("/").includes("..")) {
+          if (!path || (!outsideFileAccessEnabled() && (isAbsolute(path) || path.split("/").includes("..")))) {
             throw new Error(`Unsafe unified patch path: ${path || "unknown"}`);
           }
           const filePath = await verifyWritableTarget(workspaceRoot, path);
@@ -458,7 +484,7 @@ export function createNativeToolExecutor({
         }
         if (!input.dry_run) {
           await mutateWorkspaceFiles({ workspaceRoot, signal, edits: prepared.map((item) => ({
-            path: item.path,
+            path: item.filePath,
             before: item.created ? null : Buffer.from(item.previousContent),
             after: item.deleted ? null : Buffer.from(item.nextContent),
           })) });
@@ -513,7 +539,7 @@ export function createNativeToolExecutor({
       const lineChanges = calculateLineChanges(previousContent, nextContent);
       if (!input.dry_run) {
         throwIfAborted(signal);
-        await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: input.path, before: Buffer.from(previousContent), after: Buffer.from(nextContent) }] });
+        await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: Buffer.from(previousContent), after: Buffer.from(nextContent) }] });
       }
       return {
         modelResult: {

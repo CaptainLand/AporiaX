@@ -29,7 +29,7 @@ const authorizationUrl = new URL(buildDesktopAuthorizationUrl({
   platform: "win32",
   appVersion: "0.6.5",
 }));
-assert.equal(authorizationUrl.origin, "https://aporiax-preview-ecutg2r-d0gdndswo0a18e7b3.webapps.tcloudbase.com");
+assert.equal(authorizationUrl.origin, "https://aporiax.cloud");
 assert.equal(authorizationUrl.pathname, "/");
 assert.equal(authorizationUrl.searchParams.get("desktop_authorize"), "1");
 assert.equal(authorizationUrl.searchParams.get("client_id"), APORIAX_DESKTOP_CLIENT_ID);
@@ -38,7 +38,8 @@ assert.equal(authorizationUrl.searchParams.get("code_challenge_method"), "S256")
 assert.equal(authorizationUrl.searchParams.get("state"), pkce.state);
 assert.match(DEFAULT_APORIAX_CLOUD_API_URL, /^https:\/\//);
 assert.doesNotMatch(DEFAULT_APORIAX_CLOUD_API_URL, /(?:localhost|127\.0\.0\.1)/);
-assert.equal(DEFAULT_APORIAX_MODEL_GATEWAY_URL, "http://127.0.0.1:4200");
+assert.equal(DEFAULT_APORIAX_CLOUD_API_URL, "https://aporiax.cloud/api");
+assert.equal(DEFAULT_APORIAX_MODEL_GATEWAY_URL, "https://aporiax.cloud/gateway");
 
 const callback = parseDesktopLoopbackCallback(
   `${redirectUri}?code=${"a".repeat(43)}&state=${pkce.state}`,

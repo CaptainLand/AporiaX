@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { createAporiaxMascot } from '../src/office/aporiax-mascot.js';
+const scene = new THREE.Group(), actor = createAporiaxMascot(scene);
+assert.equal(actor.modelKind, 'aporiax-folded-wing-v1');
+assert.equal(actor.eyes.length, 2); assert.equal(actor.arms.length, 2);
+actor.animateFace(0,'sleeping');assert(actor.eyes.every(eye=>!eye.visible));
+assert(actor.head.getObjectByName('closed-lid-1').visible);
+actor.animateFace(0,'working');assert(actor.eyes.every(eye=>eye.visible));
+assert(!actor.head.getObjectByName('closed-lid-1').visible);
+for (const name of ['head-shell', 'ear--1', 'ear-1', 'folded-wing--1', 'folded-wing-1', 'tail-blue-inlay']) assert(scene.getObjectByName(name), name);
+let meshes = 0, triangles = 0;
+scene.traverse(object => {
+  if (!object.isMesh) return;
+  meshes++;
+  const positions = object.geometry.attributes.position;
+  assert([...positions.array].every(Number.isFinite), `Valid geometry: ${object.name}`);
+  triangles += (object.geometry.index?.count || positions.count) / 3;
+  assert(!object.material.map, 'The mascot is a solid mesh, not a portrait billboard');
+});
+const bounds = new THREE.Box3().setFromObject(scene), size = bounds.getSize(new THREE.Vector3());
+assert(size.x < 2 && size.y < 2.1 && size.z < 1, 'Fits the existing workstation');
+assert(meshes < 40 && triangles < 6000, 'Keep the prototype inexpensive');
+const geometries = new Set(), materials = new Set();
+scene.traverse(object => { if (object.geometry) geometries.add(object.geometry); if (object.material) materials.add(object.material); });
+geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose());
+console.log(`PASS folded-wing 3D geometry: ears, blue eyes, folded wings and tail; ${meshes} meshes / ${triangles} triangles; fits existing desk and disposal ownership.`);

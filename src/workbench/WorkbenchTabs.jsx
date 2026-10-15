@@ -21,6 +21,7 @@ const TITLES = {
   process: "Process",
   file: "File",
   sidechat: "侧边聊天",
+  teamchat: "团队消息",
   git: "Git",
 };
 
@@ -128,6 +129,9 @@ export function WorkbenchTabs({
         </button>
         {plusOpen ? (
           <div className="workbench-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => { onOpen('teamchat'); setPlusOpen(false); }}>
+              <MessagesSquare size={14} /> {tr('团队消息', 'Team messages')}
+            </button>
             <button type="button" role="menuitem" onClick={() => { onOpen("sidechat"); setPlusOpen(false); }}>
               <MessagesSquare size={14} /> {tr("侧边聊天", "Side chat")}
             </button>

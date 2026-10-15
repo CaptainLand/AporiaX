@@ -136,7 +136,7 @@ await test("cancellation drains active workers without starting remaining calls"
   assert.deepEqual(started, [0, 1]); assert.equal(settled.length, 2);
 });
 await test("volatile result references do not hide repeated evidence", () => {
-  const guard = new ToolProgressGuard(); let warnings = 0;
+  const guard = new ToolProgressGuard({ maxRepeatedEvidence: 0 }); let warnings = 0;
   for (let i = 0; i < 12; i++) if (guard.observe({ tool: "search_text", input: { query: "same" }, result: { matches: [], resultRef: { id: "unique-" + i } } })) warnings++;
   assert.equal(warnings, 4); assert.equal(guard.lastDecision.action, "replan"); guard.assertBudget();
 });

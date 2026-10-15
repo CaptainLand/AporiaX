@@ -1,5 +1,6 @@
 import { getRouteToolMeta } from '../p0-model.js';
-import { taskSuspensionLabel } from '../state/task-suspension.js';
+import { hasTaskReply } from '../state/task-outcome-view.js';
+import { AGENT_IDENTITIES, agentDisplayName, agentName } from '../../shared/agent-identity.js';
 
 const ACTIVE = new Set(['running', 'waiting']);
 const FINAL = new Set(['completed', 'failed', 'interrupted', 'partial', 'blocked', 'needs_input']);
@@ -7,10 +8,9 @@ const text = (language, zh, en) => language === 'en' ? en : zh;
 
 export function activityActor(record, language = 'zh-CN') {
   if (record.actor === 'witness') return 'Witness';
-  if (record.actor !== 'subagent' && !record.agentId) return text(language, '主 Agent', 'Main agent');
-  const roles = { builder: ['构建 Agent', 'Builder agent'], explore: ['探索 Agent', 'Explore agent'], review: ['审查 Agent', 'Review agent'], verify: ['验证 Agent', 'Verify agent'], curator: ['知识整理 Agent', 'Curator agent'] };
-  const role = roles[record.role];
-  return role ? text(language, ...role) : record.role ? `${record.role} Agent` : text(language, '子 Agent', 'Subagent');
+  if (record.actor !== 'subagent' && !record.agentId) return agentName('main', language);
+  if (record.profileId || record.profileName || AGENT_IDENTITIES[record.role]) return agentDisplayName({ profileId: record.profileId, role: record.role, profileName: record.profileName }, language);
+  return record.role ? `${record.role} Agent` : text(language, '子 Agent', 'Subagent');
 }
 
 export function activityStatus(status, language = 'zh-CN') {
@@ -47,6 +47,7 @@ export function routeAgentActivity(run) {
 }
 
 export function activityRecordStatus(record, language = 'zh-CN') {
+  if (record?.kind === 'queue' && record.status === 'waiting') return text(language, '排队中', 'Queued');
   if (record?.kind === 'agent' && record.status === 'completed') {
     const labels = { pending: ['待验收', 'Awaiting review'], accepted: ['已接受', 'Accepted'], needs_changes: ['需返工', 'Changes needed'], consumer_review: ['已返回', 'Returned'] };
     return text(language, ...(labels[record.acceptance?.status] || ['已返回', 'Returned']));
@@ -55,15 +56,7 @@ export function activityRecordStatus(record, language = 'zh-CN') {
 }
 
 export function routeRunLabel(run, language = 'zh-CN') {
-  const status = routeRunStatus(run);
-  if (status === 'paused') return taskSuspensionLabel(run?.witness?.pauseReasons, language);
-  if (status === 'completed') {
-    const delivery = run?.selfCheck?.delivery?.status;
-    if (delivery === 'unverified' || run?.selfCheck?.verification?.waived) return text(language, '已交付 · 未验证', 'Delivered · Unverified');
-    if (delivery === 'unavailable') return text(language, '已交付 · 验证不可用', 'Delivered · Verification unavailable');
-    if (delivery === 'failed') return text(language, '已交付 · 验证未通过', 'Delivered · Checks failed');
-  }
-  return activityStatus(status, language);
+  return hasTaskReply({ ...run, status: routeRunStatus(run) }) ? text(language, '已完成', 'Completed') : '';
 }
 
 function callKey(record) {
@@ -113,12 +106,13 @@ export function routeActivityRecords(run) {
 export function activeRouteRecords(records) {
   const active = records.filter((record) => ACTIVE.has(record.status) || record.status === 'paused');
   // An agent's lifetime is a container, not a second action alongside its tool.
-  return active.filter((record) => record.kind !== 'agent' || !active.some((other) => other.kind === 'tool' && other.agentId === record.agentId));
+  return active.filter((record) => record.kind !== 'agent' || !active.some((other) => ['tool', 'queue'].includes(other.kind) && other.agentId === record.agentId));
 }
 
 export function describeRouteRecord(record, language = 'zh-CN') {
   const t = (zh, en) => text(language, zh, en);
   if (!record) return { title: t('等待执行记录', 'Waiting for activity'), detail: '' };
+  if (record.kind === 'queue') return { title: record.status === 'waiting' ? t('等待 Cloud 模型槽位', 'Waiting for a Cloud model slot') : t('Cloud 排队记录', 'Cloud queue'), detail: record.detail || '' };
   if (record.kind === 'tool' || record.tool) {
     const meta = getRouteToolMeta(record.tool, record.phase, language, record.capability);
     const title = record.tool === 'run_command' && !record.capability ? t('运行命令', 'Run command') : meta.title;
@@ -126,9 +120,12 @@ export function describeRouteRecord(record, language = 'zh-CN') {
   }
   if (record.kind === 'thinking') return { title: ACTIVE.has(record.status) ? t('等待模型响应', 'Waiting for model response') : t('模型响应阶段', 'Model response phase'), detail: t('仅显示响应活动，不推测模型的内部思考。', 'Only response activity is shown; internal reasoning is not inferred.') };
   const titles = {
+    'clarification.required': ['等待你的回答', 'Waiting for your answer'], 'clarification.updated': ['提问状态已更新', 'Question updated'],
     'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],
     'turn.failed': ['任务运行失败', 'Run failed'], 'turn.cancelled': ['任务已停止', 'Run stopped'],
     'response.retry': ['模型请求重试', 'Model request retry'],
+    'response.quota.low.daily': ['全站额度 ≤5% · 正在收尾', 'Shared daily allowance ≤5% · Winding down'],
+    'response.quota.low.weekly': ['周额度 ≤5% · 正在收尾', 'Weekly allowance ≤5% · Winding down'],
     'plan.updated': ['计划已更新', 'Plan updated'], 'parallel_batch.started': ['并行动作已开始', 'Parallel actions started'],
     'subagent.started': ['执行子任务', 'Working on subtask'], 'subagent.completed': ['子任务已返回', 'Subtask returned'], 'subagent.failed': ['子任务失败', 'Subtask failed'],
     'subagent.cancelled': ['子任务已停止', 'Subtask stopped'], 'subagent.reviewed': ['子任务验收记录', 'Subtask acceptance review'],

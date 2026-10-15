@@ -28,14 +28,10 @@ try {
   assert.equal(await page.locator(".workbench-shell").count(), 0);
   assert.equal(await page.locator(".thread-model-badge").count(), 0);
 
-  await page.getByRole("button", { name: "Builder 数量" }).click();
-  await page.getByRole("menuitemradio", { name: "无" }).click();
-  assert.equal(await page.getByRole("button", { name: "Builder 数量" }).innerText(), "无");
-  assert.equal(await page.evaluate(() => window.fixtureTask.builderLimit), 0);
-
-  await page.getByRole("button", { name: "Builder 数量" }).click();
-  await page.getByRole("menuitemradio", { name: "4" }).click();
-  assert.match(await page.getByRole("button", { name: "Builder 数量" }).innerText(), /4/);
+  // Builder concurrency lives in Professional Roles now (covered by
+  // professional-roles-browser.mjs), not in the chat composer.
+  assert.equal(await page.getByRole("button", { name: "Builder 数量" }).count(), 0);
+  assert.equal(await page.evaluate(() => window.fixtureTask.builderLimit), 2, 'opening the composer does not alter task role limits');
 
   await page.locator('input[accept*="image/png"]').setInputFiles({
     name: "shot.png",

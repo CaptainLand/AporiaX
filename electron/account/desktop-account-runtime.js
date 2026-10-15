@@ -1,27 +1,22 @@
-import { app, dialog, safeStorage, shell } from "electron";
+import { cloudModelAvailability, cloudVisionAvailability } from "../../shared/cloud-availability.js";
+import { loadCloudEndpoints, sessionMatchesEndpoints } from "./cloud-endpoints.js";
+import { compareVersions } from "../app-update-core.js";
+import { app, safeStorage, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createRemoteCommandInbox, remoteOwnerKey } from "./remote-command-inbox.js";
+import { cleanupLegacyMobileData } from "./legacy-mobile-cleanup.js";
+import { createCloudModelQueue } from "./cloud-model-queue.js";
+import { historyQuery, projectRequestHistory } from "./request-history.js";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
-  DEFAULT_APORIAX_ACCOUNT_WEB_URL,
-  DEFAULT_APORIAX_CLOUD_API_URL,
-  DEFAULT_APORIAX_MODEL_GATEWAY_URL,
   buildDesktopAuthorizationUrl,
   createDesktopPkce,
-  normalizeHttpBaseUrl,
   parseDesktopLoopbackCallback,
   projectAccountSnapshot,
 } from "./desktop-account-core.js";
-import {
-  executeRemoteFileCommand as executeFileBrokerCommand,
-  readRemoteFileSettings,
-  writeRemoteFileSettings,
-} from "./remote-file-broker.js";
-
 const REQUEST_TIMEOUT_MS = 15_000;
 const LOGIN_TIMEOUT_MS = 150_000;
 const INSTALLATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -59,37 +54,28 @@ async function parseJson(response) {
 }
 
 export function createDesktopAccountRuntime(options = {}) {
-  const apiBaseUrl = normalizeHttpBaseUrl(
-    options.apiBaseUrl || process.env.APORIAX_CLOUD_API_URL,
-    DEFAULT_APORIAX_CLOUD_API_URL,
-  );
-  const webBaseUrl = normalizeHttpBaseUrl(
-    options.webBaseUrl || process.env.APORIAX_ACCOUNT_WEB_URL,
-    DEFAULT_APORIAX_ACCOUNT_WEB_URL,
-  );
-  const modelGatewayBaseUrl = normalizeHttpBaseUrl(
-    options.modelGatewayBaseUrl || process.env.APORIAX_MODEL_GATEWAY_URL,
-    DEFAULT_APORIAX_MODEL_GATEWAY_URL,
-  );
+  const endpoints = loadCloudEndpoints(options);
+  const { accountApiUrl: apiBaseUrl, accountWebUrl: webBaseUrl, modelGatewayUrl: modelGatewayBaseUrl } = endpoints;
   const userDataPath = app.getPath("userData");
   const sessionPath = join(userDataPath, "aporiax-account-session.json");
   const installationPath = join(userDataPath, "aporiax-installation.json");
-  const remoteFileSettingsPath = join(userDataPath, "aporiax-remote-file-access.json");
-  let inbox = null;
-  const commandInbox = () => inbox ||= createRemoteCommandInbox(join(userDataPath, "aporiax-remote-commands.sqlite3"));
-  let commandPoll = null;
-  const fileExecutions = new Set();
-
+  // Only obsolete companion caches are removed; task history is never touched.
+  const legacyCleanup = cleanupLegacyMobileData(userDataPath);
   let accessToken = "";
   let currentSnapshot = emptySnapshot();
   let bootstrapPromise = null;
   let refreshPromise = null;
   let loginPromise = null;
+  let accountPagePromise = null;
   let activeServer = null;
   let installationIdPromise = null;
+  let historyEpoch = 0;
+  const modelQueue = createCloudModelQueue();
 
   async function request(path, { method = "GET", body, token = "", timeout = REQUEST_TIMEOUT_MS } = {}) {
+    await options.ensureConnection?.();
     const headers = new Headers({ Accept: "application/json" });
+    headers.set("X-Aporia-Desktop-Version", app.getVersion());
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (token) headers.set("Authorization", `Bearer ${token}`);
     const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -143,6 +129,7 @@ export function createDesktopAccountRuntime(options = {}) {
   async function readStoredRefreshToken() {
     try {
       const record = JSON.parse(await readFile(sessionPath, "utf8"));
+      if (!sessionMatchesEndpoints(record, endpoints)) return "";
       return decryptStoredRefresh(record);
     } catch (error) {
       if (error?.code === "ENOENT") return "";
@@ -162,12 +149,13 @@ export function createDesktopAccountRuntime(options = {}) {
     await mkdir(dirname(sessionPath), { recursive: true });
     await writeFile(
       sessionPath,
-      JSON.stringify({ version: 1, encryptedRefreshToken }),
+      JSON.stringify({ version: 2, endpointScope: endpoints.sessionScope, encryptedRefreshToken }),
       "utf8",
     );
   }
 
   async function clearStoredSession() {
+    historyEpoch += 1;
     accessToken = "";
     currentSnapshot = emptySnapshot();
     try {
@@ -224,6 +212,7 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   async function authenticatedFetch(baseUrl, path, init = {}, retry = true) {
+    await options.ensureConnection?.();
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
       throw new Error("APORIAX_AUTHENTICATED_PATH_INVALID");
     }
@@ -232,6 +221,7 @@ export function createDesktopAccountRuntime(options = {}) {
       if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
     }
     const headers = new Headers(init.headers || {});
+    headers.set("X-Aporia-Desktop-Version", app.getVersion());
     headers.set("Authorization", `Bearer ${accessToken}`);
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
@@ -250,166 +240,68 @@ export function createDesktopAccountRuntime(options = {}) {
     return response;
   }
 
-  function fetchModelGateway(path, init = {}) {
+  async function fetchModelGateway(path, init = {}) {
+    if (!endpoints.configured) throw new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED");
+    // This authenticated transport is for inference and billing reconciliation,
+    // not a generic Cloud upload/remote-control tunnel.
+    if (!["/v1/chat/completions", "/v1/capabilities", "/v1/capabilities/vision"].includes(path)
+      && !/^\/v1\/requests\/[a-f0-9-]{36}$/i.test(path)) {
+      throw new Error("APORIAX_MODEL_GATEWAY_PATH_NOT_ALLOWED");
+    }
+    if (path === "/v1/chat/completions") {
+      await bootstrap();
+      if (Date.now() - (currentSnapshot.availabilityCheckedAt || 0) > 30_000) await refreshAvailability();
+      const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
+      const imageInput = body.messages?.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url"));
+      const state = imageInput && body.model === "aporia-cloud-default"
+        ? cloudVisionAvailability(currentSnapshot) : cloudModelAvailability(currentSnapshot, body.model);
+      if (!state.available) throw Object.assign(new Error(state.reason), { code: state.reason, retryable: false });
+      const headers = new Headers(init.headers);
+      if (!headers.has("Idempotency-Key")) headers.set("Idempotency-Key", randomUUID());
+      init = { ...init, headers };
+      const { onCloudQueue, ...wireInit } = init;
+      const owner = currentSnapshot.profile?.id;
+      return modelQueue.run(() => {
+        if (owner !== currentSnapshot.profile?.id) throw new Error("DESKTOP_ACCOUNT_CHANGED");
+        return authenticatedFetch(modelGatewayBaseUrl, path, wireInit, true);
+      }, { signal: init.signal, onQueue: onCloudQueue,
+        getLimits: () => currentSnapshot.gatewayCapabilities?.modelGateway?.concurrency });
+    }
     return authenticatedFetch(modelGatewayBaseUrl, path, init, true);
   }
-
-  async function setRemoteEnabled(enabled) {
-    const snapshot = await bootstrap();
-    const deviceId = snapshot?.device?.id;
-    if (!deviceId) throw new Error("DESKTOP_DEVICE_REQUIRED");
-    const device = await authenticatedRequest(`/devices/${encodeURIComponent(deviceId)}`, {
-      method: "PATCH",
-      body: { remoteEnabled: Boolean(enabled) },
-    });
-    const remoteFiles = enabled
-      ? await readRemoteFileSettings(remoteFileSettingsPath)
-      : await writeRemoteFileSettings(remoteFileSettingsPath, false);
-    currentSnapshot = { ...currentSnapshot, device, remoteFiles, error: "" };
-    bootstrapPromise = Promise.resolve(currentSnapshot);
-    return currentSnapshot;
+  let availabilityPromise;
+  async function readAvailability() {
+    const [models, quota, capabilities, gateway] = await Promise.all([
+      authenticatedRequest("/models").catch(() => null),
+      authenticatedRequest("/quota/weekly").catch(() => null),
+      authenticatedRequest("/capabilities").catch(() => null),
+      authenticatedFetch(modelGatewayBaseUrl, "/v1/capabilities", { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+        .then(async response => ({ status: response.status, body: response.ok ? await parseJson(response) : null }))
+        .catch(() => ({ status: 0, body: null })),
+    ]);
+    return { models, quota, capabilities,
+      gatewayCapabilities: gateway.body?.protocolVersion === 1 && Array.isArray(gateway.body.models) ? gateway.body : null,
+      gatewayStatus: gateway.status === 404 ? "legacy" : gateway.body?.protocolVersion === 1 && Array.isArray(gateway.body.models) ? "verified" : "unavailable",
+      availabilityCheckedAt: Date.now() };
   }
-
-  async function setRemoteFileAccess(enabled) {
-    const snapshot = await bootstrap();
-    if (snapshot?.status !== "authenticated") throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
-    if (enabled && !snapshot?.device?.remoteEnabled) throw new Error("REMOTE_SYNC_REQUIRED");
-    const remoteFiles = await writeRemoteFileSettings(remoteFileSettingsPath, Boolean(enabled));
-    currentSnapshot = { ...currentSnapshot, remoteFiles, error: "" };
-    bootstrapPromise = Promise.resolve(currentSnapshot);
-    return currentSnapshot;
-  }
-
-  async function syncRemoteTasks(payload) {
-    const snapshot = await bootstrap();
-    if (snapshot?.status !== "authenticated") return { enabled: false, reason: "SIGNED_OUT" };
-    if (!snapshot?.device?.remoteEnabled) return { enabled: false, reason: "REMOTE_SYNC_DISABLED" };
-    const result = await authenticatedRequest("/remote/desktop/tasks", {
-      method: "PUT",
-      body: payload,
-      timeout: 20_000,
-    });
-    return { enabled: true, ...result };
-  }
-
-  async function pollRemoteCommands() {
-    if (commandPoll) return commandPoll;
-    commandPoll = pollCommandsOnce().finally(() => { commandPoll = null; });
-    return commandPoll;
-  }
-
-  function commandOwner(snapshot = currentSnapshot) {
-    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) throw new Error("REMOTE_SYNC_DISABLED");
-    return remoteOwnerKey(apiBaseUrl, snapshot.profile?.id, snapshot.device?.id);
-  }
-
-  async function flushCommandReceipts(owner) {
-    for (const receipt of commandInbox().receipts(owner)) {
-      if (commandOwner() !== owner) return;
-      try {
-        await authenticatedRequest(`/remote/desktop/commands/${encodeURIComponent(receipt.id)}`, {
-          method: "PATCH", body: { status: receipt.status, result: receipt.result },
-        });
-        commandInbox().acknowledge(owner, receipt.id);
-      } catch { break; } // The durable outbox will retry; never re-execute the command.
-    }
-  }
-
-  async function pollCommandsOnce() {
-    const snapshot = await bootstrap();
-    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) return [];
-    const owner = commandOwner(snapshot);
-    await flushCommandReceipts(owner);
-    const commands = await authenticatedRequest("/remote/desktop/commands", { timeout: 12_000 });
-    if (commandOwner() !== owner) return [];
-    commandInbox().ingest(owner, Array.isArray(commands) ? commands : []);
-    return commandInbox().pending(owner);
-  }
-
-  async function claimRemoteCommand(commandId, consumerId) {
-    await bootstrap();
-    return commandInbox().claim(commandOwner(), commandId, consumerId);
-  }
-
-  async function acknowledgeRemoteCommand(commandId, status, result = "", claim) {
-    if (!commandId) throw new Error("REMOTE_COMMAND_ID_REQUIRED");
-    const owner = commandOwner();
-    commandInbox().complete(owner, commandId, claim, status, result);
-    fileExecutions.delete(`${owner}:${commandId}`);
-    await flushCommandReceipts(owner);
-    return { saved: true };
-  }
-
-  async function uploadRemoteCommandFile(commandId, file) {
-    const headers = new Headers({
-      "Content-Type": "application/octet-stream",
-      "X-AporiaX-File-Type": file.mime || "application/octet-stream",
-      "X-AporiaX-File-Name": encodeURIComponent(file.name || "download"),
-      "X-AporiaX-File-Size": String(file.size || file.buffer?.length || 0),
-    });
-    const response = await authenticatedFetch(
-      apiBaseUrl,
-      `/remote/desktop/commands/${encodeURIComponent(commandId)}/file`,
-      { method: "PUT", headers, body: file.buffer, signal: AbortSignal.timeout(60_000) },
-    );
-    const payload = await parseJson(response);
-    if (!response.ok) throw responseError(payload, response.status, "REMOTE_FILE_UPLOAD_FAILED");
-    return payload;
-  }
-
-  async function executeRemoteFileCommand(command) {
-    if (!command?.id) throw new Error("REMOTE_COMMAND_ID_REQUIRED");
-    const snapshot = await bootstrap();
-    if (snapshot?.status !== "authenticated" || !snapshot?.device?.remoteEnabled) {
-      throw new Error("REMOTE_SYNC_DISABLED");
-    }
-    const owner = commandOwner(snapshot);
-    const saved = commandInbox().executing(owner, command.id, command.claim);
-    const executionKey = `${owner}:${command.id}`;
-    if (fileExecutions.has(executionKey)) throw new Error("REMOTE_COMMAND_ALREADY_EXECUTING");
-    fileExecutions.add(executionKey);
-    return await executeFileBrokerCommand(saved, {
-      configPath: remoteFileSettingsPath,
-      confirm: async ({ action, path: targetPath }) => {
-        const verb = action === "preview" ? "预览" : "下载";
-        const result = await dialog.showMessageBox({
-          type: "warning",
-          title: `允许手机${verb}文件？`,
-          message: `AporiaX Mobile 请求${verb}此文件`,
-          detail: `${targetPath}\n\n仅本次允许。文件内容会通过 AporiaX Cloud 临时传输，最多保留 10 分钟。`,
-          buttons: ["允许一次", "拒绝"],
-          defaultId: 1,
-          cancelId: 1,
-          noLink: true,
-        });
-        return result.response === 0;
-      },
-      upload: (file) => {
-        if (commandOwner() !== owner) throw new Error("REMOTE_IDENTITY_CHANGED");
-        commandInbox().executing(owner, saved.id, command.claim);
-        return uploadRemoteCommandFile(saved.id, file);
-      },
-    });
+  async function refreshAvailability() {
+    return availabilityPromise ||= readAvailability().then(info => { currentSnapshot = { ...currentSnapshot, ...info }; return currentSnapshot; })
+      .finally(() => { availabilityPromise = null; });
   }
 
   async function hydrateAccount() {
-    const [me, quota, models, usage, devices, remoteFiles] = await Promise.all([
-      authenticatedRequest("/me"),
-      authenticatedRequest("/quota/weekly"),
-      authenticatedRequest("/models"),
-      authenticatedRequest("/usage/summary?days=7"),
+    const [me, availability, usage, devices] = await Promise.all([
+      authenticatedRequest("/me"), readAvailability(),
+      authenticatedRequest("/usage/summary?days=7").catch(() => null),
       authenticatedRequest("/devices"),
-      readRemoteFileSettings(remoteFileSettingsPath),
     ]);
-    currentSnapshot = {
-      ...projectAccountSnapshot({ me, quota, models, usage, devices }),
-      remoteFiles,
-      error: "",
-    };
+    currentSnapshot = { ...projectAccountSnapshot({ me, ...availability, usage, devices }),
+      ...availability, endpointSource: endpoints.source, error: "" };
     return currentSnapshot;
   }
 
   async function bootstrap() {
+    await legacyCleanup;
     if (bootstrapPromise) return bootstrapPromise;
     bootstrapPromise = (async () => {
       try {
@@ -513,8 +405,17 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   async function startBrowserLogin() {
+    if (!endpoints.configured) throw new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED");
     if (loginPromise) return loginPromise;
+    historyEpoch += 1;
     loginPromise = (async () => {
+      await options.ensureConnection?.();
+      const beta = await request("/beta/status").catch(error => {
+        if (error?.status === 404) return null;
+        throw error;
+      });
+      const minimum = beta?.desktopUpdate?.minimumVersion;
+      if (minimum && compareVersions(app.getVersion(), minimum) < 0) throw new Error("DESKTOP_UPDATE_REQUIRED");
       const installationId = await getOrCreateInstallationId();
       const { codeVerifier, codeChallenge, state } = createDesktopPkce();
       const callback = await waitForBrowserCallback({ state, codeChallenge });
@@ -550,6 +451,46 @@ export function createDesktopAccountRuntime(options = {}) {
     return loginPromise;
   }
 
+  function openAccountCenter() {
+    if (!endpoints.configured) return Promise.reject(new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED"));
+    if (accountPagePromise) return accountPagePromise;
+    accountPagePromise = (async () => {
+      await options.ensureConnection?.();
+      // Fixed trusted route; never accept renderer URLs or put credentials in links.
+      const url = new URL("account", `${webBaseUrl}/`);
+      await shell.openExternal(url.toString());
+      return { opened: true };
+    })().finally(() => { accountPagePromise = null; });
+    return accountPagePromise;
+  }
+
+  async function getRequestHistory(input) {
+    const path = historyQuery(input);
+    const epoch = historyEpoch;
+    const assertOwner = () => {
+      if (epoch !== historyEpoch || currentSnapshot.status !== 'authenticated'
+        || currentSnapshot.profile?.id !== input.accountId) throw new Error('ACCOUNT_HISTORY_SESSION_CHANGED');
+    };
+    assertOwner();
+    try {
+      let payload;
+      try { payload = await request(path, { token: accessToken }); }
+      catch (error) {
+        assertOwner();
+        if (error?.status !== 401) throw error;
+        await rotateRefreshToken();
+        assertOwner();
+        payload = await request(path, { token: accessToken });
+      }
+      assertOwner();
+      return projectRequestHistory(payload);
+    } catch (error) {
+      // Do not leak upstream response bodies or messages through Electron IPC.
+      assertOwner();
+      throw new Error(error?.status === 404 ? 'ACCOUNT_HISTORY_UNAVAILABLE' : 'ACCOUNT_HISTORY_LOAD_FAILED');
+    }
+  }
+
   async function refresh() {
     const refreshed = await rotateRefreshToken();
     if (!refreshed) {
@@ -562,6 +503,7 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   async function signOut() {
+    historyEpoch += 1;
     try {
       if (accessToken) {
         await request("/auth/logout", { method: "POST", token: accessToken });
@@ -570,7 +512,6 @@ export function createDesktopAccountRuntime(options = {}) {
       // Local credential removal is authoritative for user-requested sign-out.
     }
     bootstrapPromise = null;
-    await writeRemoteFileSettings(remoteFileSettingsPath, false);
     await clearStoredSession();
     return currentSnapshot;
   }
@@ -581,17 +522,11 @@ export function createDesktopAccountRuntime(options = {}) {
     modelGatewayBaseUrl,
     getSnapshot: bootstrap,
     startBrowserLogin,
-    setRemoteEnabled,
-    setRemoteFileAccess,
-    syncRemoteTasks,
-    pollRemoteCommands,
-    claimRemoteCommand,
-    abandonRemoteCommands: (consumerId) => inbox?.abandon(consumerId),
-    acknowledgeRemoteCommand,
-    executeRemoteFileCommand,
+    openAccountCenter,
+    getRequestHistory,
     fetchModelGateway,
     refresh,
     signOut,
-    close: () => { closeActiveServer(); inbox?.close(); inbox = null; },
+    close: () => { closeActiveServer(); return options.closeConnection?.(); },
   };
 }

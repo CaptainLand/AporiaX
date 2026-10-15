@@ -29,14 +29,84 @@ async function fixture(handler, options = {}) {
     let result;
     if (options.durable) {
       const runtime = createHarnessTaskRuntime({ dataDirectory: data });
-      result = await runtime.start({ runId: id, taskId, metadata: { workspacePath: workspace },
-        execute: ({ signal, control, emit }) => runHarness({ ...settings, signal, control, onEvent: (event) => { events.push(event); emit(event); } }) });
+      result = await runtime.start({ runId: id, taskId, metadata: { workspacePath: workspace }, onEvent: event => { if (event.type.startsWith("control.")) events.push(event); },
+        execute: ({ signal, control, emit }) => runHarness({ ...settings, signal, control, onEvent: (event) => { events.push(event); emit(event); options.onRuntimeEvent?.(event, { runtime, runId: id, requests: () => requests }); } }) });
     } else result = await runHarness(settings);
     return { result, events, requests, workspace, runId: id };
   } finally { clearTimeout(timer); }
 }
 const toolResult = (body, id) => JSON.parse(body.messages.find((message) => message.tool_call_id === id).content);
 try {
+  await test("default no-progress budget stops tool execution and returns one useful explanation", async () => {
+    const run = await fixture((body, n) => {
+      if (n <= 6) return tools(call(`same-${n}`, "list_directory", { path: "." }));
+      assert.equal(body.tools, undefined, 'Result summary must not advertise tools');
+      return sse({ content: 'Inspected the workspace. Implementation remains unfinished because repeated inspection found no new evidence.' });
+    });
+    assert.equal(run.requests, 7);
+    assert.equal(run.result.status, "blocked");
+    assert.match(run.result.content, /Inspected the workspace/);
+    assert.match(run.result.content, /Remaining work/);
+    assert.equal(run.result.steps.length, 6);
+    assert.equal(await readFile(join(run.workspace, "a.txt"), "utf8"), "ORIGINAL");
+  });
+  await test("durable exhausted planning guard permits only a final explanation, including after recovery", async () => {
+    const run = await fixture((body, n) => n <= 6 ? tools(call(`plan-${n}`, "update_plan", {
+      explanation: `wording-${n}`, steps: [{ title: `Inspect sources ${n}`, status: "in_progress" }, { title: "Implement", status: "pending" }],
+    })) : (() => { assert.equal(body.tools, undefined); return sse({ content: "No files were edited. Repeated planning did not reach implementation." }); })(), { durable: true });
+    assert.equal(run.requests, 7);
+    assert.equal(run.result.status, "blocked", run.result.content);
+    assert(!run.events.some(event => event.type === "runtime.no_progress.paused"));
+    const saved = await getRunRecoveryContext(data, run.runId);
+    assert.equal(saved.contexts[run.runId].toolProgress.planning, 6);
+    assert.equal(saved.contexts[run.runId].conversation.filter(message => message.role === "tool").length, 6);
+    const recovered = await fixture(body => {
+      assert.equal(body.tools, undefined, 'Recovered exhausted execution must not regain tools');
+      return sse({ content: "Retained the recorded planning; implementation remains unfinished." });
+    }, {
+      durable: true, recoveryContext: saved, workspacePath: run.workspace,
+    });
+    assert.equal(recovered.requests, 1);
+    assert.equal(recovered.result.status, "blocked", recovered.result.content);
+    assert.equal(recovered.result.steps.length, 0, 'No tool execution after recovering the exhausted guard');
+  });
+  await test("relay Claude uses the selected effort in the actual main request", async () => {
+    const run = await fixture(body => {
+      assert.equal(body.reasoning_effort, "xhigh");
+      assert.equal(body.thinking, undefined);
+      return sse({ content: "Fixture complete." });
+    }, { provider: { ...provider, vendor: "openai-compatible", models: [{ id: "claude-opus-5-5", supportsThinking: false, thinkingMode: "none", supportsTools: true }] }, modelId: "claude-opus-5-5", thinking: false, effort: "xhigh" });
+    assert.equal(run.result.status, "completed", run.result.content);
+  });
+  await test("genuine file progress may continue beyond six model rounds", async () => {
+    const run = await fixture((_body, n) => n <= 9 ? tools(
+      call(`write-${n}`, "write_file", { path: "a.txt", content: `VERSION-${n}` }),
+      call(`plan-${n}`, "update_plan", { steps: [{ title: `Finish iteration ${n}`, status: "completed" }] }),
+    ) : sse({ content: "Delivered actual file changes without a false verification claim." }));
+    assert.equal(run.requests, 10);
+    assert.equal(run.result.status, "completed", run.result.content);
+    assert.equal(await readFile(join(run.workspace, "a.txt"), "utf8"), "VERSION-9");
+    assert(!run.events.some(event => event.type === "runtime.no_progress.paused"));
+  });
+  await test("child Claude loop keeps low effort and stops repeated evidence at six calls", async () => {
+    const workspace = join(root, "claude-child"); await mkdir(workspace); await writeFile(join(workspace, "a.txt"), "SOURCE");
+    const model = { id: "claude-opus-5-5", supportsThinking: false, thinkingMode: "none", supportsTools: true };
+    const config = { ...provider, vendor: "openai-compatible", models: [model] };
+    let requests = 0;
+    globalThis.fetch = async (_url, init) => {
+      assert.equal(JSON.parse(init.body).reasoning_effort, "low");
+      assert(++requests <= 6);
+      return tools(call(`read-${requests}`, "read_file", { path: "a.txt" }));
+    };
+    const result = await runSubagentTask({ __kernelRouted: true, agentId: "claude-child", input: { role: "explore", task: "Inspect", background: false, scope: ["."], maxRounds: 8 },
+      provider: createOpenAICompatibleProvider({ config, model }), modelId: model.id, modelConfig: model,
+      thinking: false, effort: "low", workspaceRoot: workspace, parentPermissionPolicy: { "*": "allow" }, approvalMode: "manual",
+      signal: AbortSignal.timeout(12000), language: "en", emit: () => {}, toolRegistry: TOOL_REGISTRY, parseToolArguments: item => JSON.parse(item.function.arguments), session: {},
+      executeAuthorizedTool: async ({ toolCall }) => { assert.equal(toolCall.function.name, "read_file"); return { modelResult: { path: "a.txt", content: await readFile(join(workspace, "a.txt"), "utf8") } }; } });
+    assert.equal(requests, 6);
+    assert.equal(result.status, "failed");
+    assert.match(result.summary, /LOOP_NO_PROGRESS/);
+  });
   await test("real loop records source-backed decisions and recovers them from SQLite", async () => {
     const first = await fixture((body, n) => {
       if (n === 1) return tools(call("read-source", "read_file", { path: "a.txt" }));
@@ -164,19 +234,20 @@ try {
     assert.equal(run.result.status, "completed", run.result.content); assert.equal(run.requests, 2);
     assert(!JSON.stringify(run.events).includes("SYNTHETIC_PRIVATE")); assert(!JSON.stringify(run.result).includes("FIXTURE_SIGNATURE"));
   });
-  await test("automatic public-decision summary runs once before pressure compaction and keeps original user constraints", async () => {
+  await test("automatic rolling summary is bounded before pressure compaction and keeps original user constraints", async () => {
     let summaryCalls = 0;
     const history = [{ role: "user", content: "Do not delete the original file; preserve KEEP_USER_CONSTRAINT." }, ...Array.from({ length: 45 }, (_, i) => ({ role: "assistant", content: i === 0 ? "We rejected deletion because the old file is the only recovery source." : `old-${i} ` + "中".repeat(1400) }))];
     const run = await fixture((body) => {
-      if (body.messages[0].content.startsWith("Summarize only explicit decisions")) {
+      if (body.messages[0].content.startsWith("You are compressing historical conversation")) {
         summaryCalls++; const request = JSON.parse(body.messages[1].content);
-        return sse({ content: JSON.stringify({ expected_revision: request.expected_revision, entries: [{ kind: "rejected", summary: "Keep old recovery source", source_id: request.sources[0].id, quote: "the old file is the only recovery source" }] }) });
+        return sse({ content: JSON.stringify({ revision: request.revision, covered_ids: request.sources.map(source => source.id),
+          summary: "Keep old recovery source. Deletion was rejected because it is the only recovery source. Later evidence is historical, not proof.", constraints: [] }) });
       }
       assert(body.messages.some((message) => message.content === "Do not delete the original file; preserve KEEP_USER_CONSTRAINT."));
       assert(body.messages.some((message) => message.content?.includes("Keep old recovery source")));
       return sse({ content: "Continued with a source-backed summary." });
     }, { messages: [...history, { role: "user", content: "Continue" }], provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 32000 }] }, loopPolicy: { maxBriefSummaries: 1 } });
-    assert.equal(run.result.status, "completed", run.result.content); assert.equal(summaryCalls, 1); assert.equal(run.result.taskBrief.entries[0].origin, "bounded-public-summary");
+    assert.equal(run.result.status, "completed", run.result.content); assert(summaryCalls > 0 && summaryCalls <= 8); assert.equal(run.result.rollingContext.revision, summaryCalls);
   });
   await test("actual child loop records scoped evidence and continues the same durable decision session", async () => {
     const session = {}, events = []; let n = 0;

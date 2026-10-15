@@ -1,0 +1,22 @@
+/* Shared settings chrome, with the General page using neutral soft groups. */
+:root[data-theme] .application-settings-modal:has(.general-section) > .application-settings-header,
+:root[data-theme] .application-settings-modal:has(.general-section) .application-settings-nav { border-color:transparent; }
+:root[data-theme] .application-settings-modal .general-section { display:flex; flex-direction:column; gap:14px; }
+:root[data-theme] .application-settings-modal .general-section .application-settings-intro { margin:0 0 6px; }
+:root[data-theme] .application-settings-modal .general-section .application-settings-intro h3 { margin:0; font-size:20px; font-weight:600; letter-spacing:-.4px; }
+:root[data-theme] .application-settings-modal .general-section .preference-card { margin:0; padding:18px; border:0; border-radius:18px; background:var(--gray-2); gap:16px; min-height:88px; }
+:root[data-theme] .application-settings-modal .general-section .preference-card-heading { gap:12px; align-items:flex-start; }
+:root[data-theme] .application-settings-modal .general-section .preference-card-heading > span { border-radius:11px; color:var(--text-2); background:var(--gray-3); }
+:root[data-theme] .application-settings-modal .general-section .preference-card-heading strong { color:var(--text-1); font-size:13px; font-weight:500; }
+:root[data-theme] .application-settings-modal .general-section .preference-card-heading p { color:var(--text-2); font-size:11px; line-height:1.65; }
+:root[data-theme] .application-settings-modal .general-section .language-switch { padding:4px; border:0; border-radius:12px; background:var(--gray-3); flex-shrink:0; }
+:root[data-theme] .application-settings-modal .general-section .language-switch button { border:0; border-radius:9px; box-shadow:none; font-size:11px; }
+:root[data-theme] .application-settings-modal .general-section .language-switch button.active { color:var(--text-1); background:var(--bg-app); box-shadow:var(--shadow-xs); }
+:root[data-theme] .application-settings-modal .general-section .appearance-options { gap:10px; }
+:root[data-theme] .application-settings-modal .general-section .appearance-options button { height:44px; border:0; border-radius:12px; background:var(--gray-3); color:var(--text-2); }
+:root[data-theme] .application-settings-modal .general-section .appearance-options button.active { color:var(--accent-11); background:var(--accent-3); box-shadow:none; }
+:root[data-theme] .application-settings-modal .general-section .preference-action { padding:7px 10px; height:auto; border:0; border-radius:10px; background:var(--gray-3); color:var(--text-1); font-weight:400; }
+:root[data-theme] .application-settings-modal .general-section .preference-status { border-radius:9px; background:var(--gray-3); color:var(--text-2); font-size:10px; font-weight:400; }
+@media (max-width:760px) {
+  :root[data-theme] .application-settings-modal .general-section .preference-card:not(.appearance-preference) { flex-wrap:wrap; }
+}

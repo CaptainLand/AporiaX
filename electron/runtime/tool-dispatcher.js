@@ -3,6 +3,8 @@ import { executeDurableTool, waitForRuntimeResume } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
 import { requireToolResult } from "./task-conversation.js";
 import { projectScriptFingerprint } from "./project-script-trust.js";
+import { assertLocalControlTool, localControlToolRequiresApproval } from "../control/policy.js";
+import { assertNativeFileTool, verifyExternalFileTarget, withNativeFileScope } from "./file-access-policy.js";
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -52,7 +54,12 @@ export async function dispatchNativeTool({
   }
 
   const input = parseArguments(toolCall);
-  const permissionAction = getToolPermission(permissionPolicy, toolName);
+  if (["list_aporiax_themes", "create_aporiax_theme"].includes(toolName) && typeof executeContext.appearanceTools !== 'function') throw new Error('外观工具仅限当前桌面主 Agent。');
+  if (["list_agent_roles", "manage_agent_role"].includes(toolName) && typeof executeContext.roleTools !== 'function') throw new Error('角色管理仅限当前桌面主 Agent。');
+  await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
+  await assertNativeFileTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
+  const configuredPermission = getToolPermission(permissionPolicy, toolName);
+  const permissionAction = configuredPermission !== "deny" && localControlToolRequiresApproval(toolName) ? "ask" : configuredPermission;
   const decision = resolveToolExecutionPermission({
     toolName,
     permissionAction,
@@ -65,7 +72,9 @@ export async function dispatchNativeTool({
     throw new Error(`Permission denied for tool: ${toolName}`);
   }
 
-  if (decision.requiresApproval) {
+  // Role changes have their own mandatory, revision-bound approval containing
+  // the full diff. Never replace it with a generic/rememberable tool grant.
+  if (decision.requiresApproval && toolName !== "manage_agent_role") {
     if (typeof requestApproval !== "function") {
       throw new Error(`Tool ${toolName} requires approval.`);
     }
@@ -98,7 +107,9 @@ export async function dispatchNativeTool({
 
   if (toolName === "read_external_file") {
     await waitForRuntimeResume(signal);
-    const directoryResult = await tryReadExternalDirectory(input?.path, {
+    await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot, count: false });
+    const directoryPath = await verifyExternalFileTarget(executeContext.workspaceRoot, input?.path);
+    const directoryResult = await tryReadExternalDirectory(directoryPath, {
       signal,
     });
     if (directoryResult) {
@@ -107,7 +118,12 @@ export async function dispatchNativeTool({
     }
   }
 
-  const result = await executeDurableTool(toolName, input, () => executeAuthorized({
+  const result = await executeDurableTool(toolName, input, async () => {
+    // Revalidate after human approval/durable reconciliation; neither can
+    // broaden the client grant or authorize a newly redirected symlink.
+    await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot, count: false });
+    await assertNativeFileTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
+    return withNativeFileScope(toolName, executeContext.workspaceRoot, () => executeAuthorized({
     ...executeContext,
     toolCall,
     toolName,
@@ -115,7 +131,8 @@ export async function dispatchNativeTool({
     input,
     signal,
     permissionDecision: decision,
-  }), requestApproval, { scope: executeContext.durableScope });
+    }));
+  }, requestApproval, { scope: executeContext.durableScope });
   assertNotAborted(signal);
   return requireToolResult(result, toolName);
 }

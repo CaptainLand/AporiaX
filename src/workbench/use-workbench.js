@@ -154,7 +154,7 @@ export function useWorkbench(task) {
         kind,
         title:
           value.title ||
-          ({ route: "Route", workspace: "Workspace", understanding: "Understanding", sidechat: "侧边聊天", git: "Git" }[kind]) ||
+          ({ route: "Route", workspace: "Workspace", understanding: "Understanding", sidechat: "侧边聊天", teamchat: "团队消息", git: "Git" }[kind]) ||
           kind,
         ...value,
       }),

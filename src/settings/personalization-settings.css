@@ -1,0 +1,79 @@
+.personalization-settings { max-width: 780px; color: var(--text-1); font-family: var(--font-sans); font-size: 14px; }
+.personalization-settings h3 { margin: 0; font-size: 18px; font-weight: 600; }
+.personalization-settings h4 { margin: 0; font-size: 14px; font-weight: 500; }
+.personalization-settings header { margin-bottom: 20px; }
+.personalization-settings p { margin: 6px 0 0; color: var(--text-2); font-size: 12px; line-height: 1.6; }
+.personalization-settings button, .personalization-settings input, .personalization-settings select { font: inherit; }
+.personalization-settings button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-app); color: var(--text-1); cursor: pointer; font-size: 12px; }
+.personalization-settings button:hover:not(:disabled) { background: var(--gray-3); }
+.personalization-settings button:disabled { cursor: default; opacity: .5; }
+.theme-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.theme-presets > button { display: block; padding: 6px; text-align: left; border-radius: 12px; }
+.theme-presets > button[aria-pressed="true"] { border-color: var(--accent-9); }
+.theme-presets > button > span { display: flex; align-items: center; gap: 7px; padding: 10px 6px 4px; }
+.theme-presets > button > span > svg:last-child:not(:first-child) { margin-left: auto; color: var(--accent-11); }
+.theme-preview { height: 112px; border: 1px solid color-mix(in srgb, var(--preview-text) 12%, var(--preview-bg)); border-radius: 8px; overflow: hidden; background: var(--preview-bg); }
+.theme-preview-bar { display: flex; align-items: center; gap: 4px; height: 15px; padding-left: 8px; background: var(--preview-panel); }
+.theme-preview-bar i { width: 3px; height: 3px; border-radius: 50%; background: var(--preview-text); opacity: .3; }
+.theme-preview-body { display: flex; height: calc(100% - 15px); }
+.theme-preview-nav { display: flex; flex-direction: column; gap: 7px; padding: 12px 7px; width: 24%; background: var(--preview-panel); }
+.theme-preview-nav b { display: block; height: 4px; border-radius: 4px; background: var(--preview-text); opacity: .12; }
+.theme-preview-nav b:nth-child(2) { background: var(--preview-accent); opacity: .7; }
+.theme-preview-chat { position: relative; flex: 1; padding: 14px 18px; background-size: cover; background-position: center; }
+.theme-preview-chat > i { display: block; width: 24%; height: 6px; background: var(--preview-accent); border-radius: 3px; margin-bottom: 12px; opacity: .7; }
+.theme-preview-chat > span { display: block; width: 80%; height: 4px; background: var(--preview-text); border-radius: 3px; opacity: .2; margin-bottom: 6px; }
+.theme-preview-chat > span:nth-child(3) { width: 60%; }
+.theme-preview-chat footer { position: absolute; bottom: 8px; left: 12px; right: 12px; height: 17px; border: 1px solid color-mix(in srgb, var(--preview-text) 15%, transparent); border-radius: 4px; background: var(--preview-bg); }
+.theme-preview-chat footer i { display: block; width: 4px; height: 4px; border-radius: 2px; background: var(--preview-accent); position: absolute; left: 5px; bottom: 4px; }
+.theme-preview-chat footer i:last-child { left: auto; right: 4px; }
+.personalization-toggle { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 22px 0; border-bottom: 1px solid var(--border); }
+.personalization-toggle strong { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+.personalization-toggle strong small { font-size: 10px; font-weight: 400; color: var(--text-2); padding: 2px 5px; border-radius: 5px; background: var(--gray-3); }
+.personalization-settings .personalization-toggle .switch { padding: 0; min-height: 0; flex-shrink: 0; }
+.personalization-list-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 18px 0 12px; }
+.personalization-list-heading > div { display: flex; gap: 6px; }
+.personalization-theme-row { display: flex; align-items: center; gap: 12px; min-height: 60px; border-bottom: 1px solid var(--border); padding: 10px 0; }
+.personalization-theme-swatches { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; flex-shrink: 0; }
+.personalization-theme-swatches i { width: 14px; height: 30px; }
+.personalization-theme-name { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.personalization-theme-name strong { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.personalization-theme-name small { color: var(--text-2); font-size: 11px; }
+.personalization-theme-actions { display: flex; gap: 5px; }
+.personalization-theme-actions button { padding: 5px 7px; }
+.personalization-empty { padding: 20px 0; }
+.personalization-editor { margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-app); }
+.personalization-editor .personalization-list-heading { margin-top: 0; }
+.personalization-editor-basic { display: grid; grid-template-columns: minmax(120px, 1fr) auto auto; gap: 14px; margin-bottom: 16px; }
+.personalization-editor label, .personalization-editor-basic > div { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-2); }
+.personalization-editor input:not([type="color"]):not([type="range"]), .personalization-editor select { min-width: 0; width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-app); color: var(--text-1); font-size: 13px; }
+.personalization-base { display: flex; gap: 4px; }
+.personalization-base button[aria-pressed="true"] { color: var(--accent-11); background: var(--gray-3); }
+.personalization-editor input[type="color"] { width: 34px; height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 3px; cursor: pointer; background: var(--bg-app); }
+.personalization-editor > .theme-preview { height: 150px; }
+.personalization-editor > .theme-preview.is-preview { box-shadow: 0 0 0 2px var(--accent-7); }
+.personalization-background { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.personalization-background > div { display: flex; flex-direction: column; gap: 5px; }
+.personalization-background strong { font-size: 12px; font-weight: 500; }
+.personalization-background small { font-size: 10px; color: var(--text-2); }
+.personalization-image-choice { margin-top: 12px; }
+.personalization-advanced { margin: 16px 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.personalization-advanced summary { cursor: pointer; color: var(--text-2); font-size: 12px; }
+.personalization-advanced > div { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin: 14px 0; }
+.personalization-advanced code { font-size: 10px; color: var(--text-2); }
+.personalization-advanced > label { flex-direction: row; align-items: center; gap: 12px; margin-top: 14px; }
+.personalization-advanced input[type="range"] { flex: 1; min-width: 60px; accent-color: var(--accent-9); }
+.personalization-editor-footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 16px; }
+.personalization-editor-footer > button:first-child { margin-right: auto; }
+.personalization-settings .personalization-save { color: var(--accent-11); border-color: var(--accent-8); }
+.personalization-settings .personalization-reset { margin-top: 20px; }
+.personalization-settings .personalization-error { color: var(--red-11); }
+.personalization-settings .personalization-note { font-size: 11px; }
+.personalization-delete { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; }
+.personalization-delete > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+@media (max-width: 720px) {
+  .personalization-editor-basic { grid-template-columns: 1fr auto; }
+  .personalization-editor-basic > label:first-child { grid-column: 1 / -1; }
+  .personalization-theme-row { flex-wrap: wrap; }
+  .personalization-theme-actions { margin-left: auto; }
+  .personalization-background { flex-wrap: wrap; }
+}

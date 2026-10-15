@@ -1,11 +1,15 @@
+import { projectCloudProvider } from "../shared/cloud-availability.js";
 import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ScrollFadeSurface } from './components/ScrollFadeSurface.jsx';
 import { ProjectUnderstandingPanel } from "./understanding/ProjectUnderstandingPanel.jsx";
 import { TaskKnowledgeControls } from "./understanding/TaskKnowledgeControls.jsx";
-import { AppUpdateControls, AppUpdateToast, updateToastKey } from "./settings/AppUpdateControls.jsx";
+import { AppUpdateControls, AppUpdateToast, AppUpdateSidebar, updateToastKey } from "./settings/AppUpdateControls.jsx";
 import { buildAnchorRestoreNotice } from "../electron/anchor-restore-notice.js";
 import { taskApprovalMode } from "./state/approval-mode.js";
+import { hasTaskReply } from './state/task-outcome-view.js';
 import { taskExecutionMode } from "./state/execution-mode.js";
+import { reasoningState } from './models/reasoning-state.js';
 import { providerModelsById, buildProviderModels } from "./state/provider-models.js";
 import { ModelVisionSettings } from "./settings/ModelVisionSettings.jsx";
 import { createRoot } from "react-dom/client";
@@ -34,6 +38,7 @@ import {
   Info,
   KeyRound,
   Languages,
+  Link2,
   LoaderCircle,
   LockKeyhole,
   MessageSquare,
@@ -55,6 +60,7 @@ import {
   Sun,
   Trash2,
   Undo2,
+  Users,
   X,
   Zap,
 } from "lucide-react";
@@ -85,16 +91,24 @@ import {
   isImageAttachment,
 } from "./composer/Composer.jsx";
 import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
+import { ConversationSelectionMenu } from "./conversation/ConversationSelectionMenu.jsx";
 import { WorkbenchLayout } from "./workbench/WorkbenchLayout.jsx";
 import { WorkspaceFilePreview } from "./workbench/WorkspaceFilePreview.jsx";
 import { CollapsedDropRail } from "./workbench/CollapsedDropRail.jsx";
 import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
+import { PermissionsSettings } from "./settings/PermissionsSettings.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
+import { ProfessionalRolesSettings } from './settings/ProfessionalRolesSettings.jsx';
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
+import { AccountSettings } from './settings/AccountSettings.jsx';
+import { PersonalizationSettings } from './settings/PersonalizationSettings.jsx';
+import './settings/dark-settings.css';
+import { useAppearance } from './appearance/useAppearance.js';
+import { ExternalControlPanel } from "./control/ExternalControlPanel.jsx";
 import { AccountProvider, useAccount } from "./account/AccountContext.jsx";
 import { ModelSetupActions } from "./models/ModelSetupActions.jsx";
-import { buildRemoteTaskSyncPayload } from "./account/remote-sync.js";
+import { TutorialLink } from "./help/TutorialLink.jsx";
 import { IconButton, SegmentedControl, Switch } from "./components/Controls.jsx";
 import {
   getAvailableModels,
@@ -116,11 +130,18 @@ import {
 import { useTaskStore } from "./state/useTaskStore.js";
 import { useHarnessEvents } from "./hooks/useHarnessEvents.js";
 import "./styles.css";
+import "./settings/provider-workbench.css";
+import "./settings/general-workbench.css";
+import "./settings/settings-finishing.css";
+
+const AgentOffice = React.lazy(() => import('./office/AgentOffice.jsx'));
 
 const STORAGE_KEY = "aporiax.tasks.v1";
 const SIDEBAR_COLLAPSED_KEY = "aporiax.sidebar-collapsed.v1";
 const SESSION_UI_KEY = "aporiax.session-ui.v1";
 const SETTINGS_PANEL_WIDTH_KEY = "aporiax.settings-panel-width.v1";
+// Keep the legacy panel implementation, but do not expose it in the UI.
+const TASK_SETTINGS_SIDEBAR_ENABLED = false;
 const FILES_PANEL_WIDTH_KEY = "aporiax.files-panel-width.v1";
 const THEME_STORAGE_KEY = "aporiax.theme.v2";
 const WORKSPACE_ANCHOR_VISIBLE_KEY = "aporiax.workspace-anchor-visible.v1";
@@ -129,6 +150,7 @@ const SESSION_VIEWS = new Set([
   "route",
   "workspace",
   "understanding",
+  "office",
 ]);
 const DEFAULT_SETTINGS_PANEL_WIDTH = 320;
 const DEFAULT_FILES_PANEL_WIDTH = 520;
@@ -150,6 +172,7 @@ function AppGlyph() {
         alt=""
         aria-hidden="true"
       />
+      <span className="app-glyph-themed" aria-hidden="true" />
     </>
   );
 }
@@ -190,6 +213,7 @@ function mergeRecoverableRuns(tasks, records, tr) {
           sourceUserId:
             messages[existingIndex].sourceUserId || record.sourceUserId,
           recoverable: recovery,
+          clarifications: record.clarifications?.length ? record.clarifications : messages[existingIndex].clarifications,
         };
         continue;
       }
@@ -205,6 +229,7 @@ function mergeRecoverableRuns(tasks, records, tr) {
         steps: [],
         changes: [],
         recoverable: recovery,
+        clarifications: record.clarifications || [],
         createdAt: record.startedAt || new Date().toISOString(),
       });
     }
@@ -378,7 +403,7 @@ function buildWorkspaceProjects(tasks) {
   return [...projects.values()];
 }
 
-function AppTitlebar({ onOpenSettings }) {
+function AppTitlebar({ onOpenSettings, onOpenControl }) {
   const { tr } = useI18n();
   return (
     <header className="titlebar">
@@ -393,6 +418,10 @@ function AppTitlebar({ onOpenSettings }) {
           <AppGlyph />
         </span>
         <span>AporiaX</span>
+      </button>
+      <button className="titlebar-control-entry" type="button" onClick={onOpenControl}>
+        <Link2 size={14} />
+        {tr("外部连接", "External connections")}
       </button>
       <div className="titlebar-drag" />
     </header>
@@ -422,6 +451,7 @@ function Sidebar({
   );
   const searchRef = useRef(null);
   const contextMenuRef = useRef(null);
+  const taskListRef = useRef(null);
   const filteredTasks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return tasks;
@@ -526,8 +556,8 @@ function Sidebar({
         )}
       </div>
 
-      <div className="task-list">
-        <div className="section-label">{tr("项目", "Projects")}</div>
+      <ScrollFadeSurface scrollRef={taskListRef} className="task-list-surface">
+      <div className="task-list" ref={taskListRef}>
         {projects.length ? (
           projects.map((project) => {
             const collapsed = collapsedProjects.has(project.id) && !query;
@@ -537,6 +567,7 @@ function Sidebar({
                   <button
                     className="sidebar-project-toggle"
                     type="button"
+                    aria-expanded={!collapsed}
                     onClick={() =>
                       setCollapsedProjects((current) => {
                         const next = new Set(current);
@@ -548,21 +579,15 @@ function Sidebar({
                     title={project.path || project.name}
                   >
                     {collapsed ? (
-                      <ChevronRight size={13} />
+                      <Folder size={14} aria-hidden="true" />
                     ) : (
-                      <ChevronDown size={13} />
-                    )}
-                    {collapsed ? (
-                      <Folder size={15} />
-                    ) : (
-                      <FolderOpen size={15} />
+                      <FolderOpen size={14} aria-hidden="true" />
                     )}
                     <span>
                       {project.path
                         ? project.name
                         : tr("无工作区", "No workspace")}
                     </span>
-                    <small>{project.tasks.length}</small>
                   </button>
                   <button
                     className="sidebar-project-add"
@@ -584,6 +609,8 @@ function Sidebar({
                       <button
                         key={task.id}
                         className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
+                        title={task.title}
+                        aria-current={task.id === activeTaskId ? "page" : undefined}
                         onClick={() => {
                           setContextMenu(null);
                           onSelectTask(task.id);
@@ -604,7 +631,6 @@ function Sidebar({
                           });
                         }}
                       >
-                        <MessageSquare size={14} />
                         <span className="task-item-copy">
                           <span className="task-item-title">{task.title}</span>
                         </span>
@@ -626,6 +652,8 @@ function Sidebar({
           </div>
         )}
       </div>
+      </ScrollFadeSurface>
+      <AppUpdateSidebar />
       <LocalAccountPanel />
       {contextTask && contextMenu && (
         <div
@@ -1387,6 +1415,9 @@ function AnchorHistory({
 
 function TaskWorkspace({
   task,
+  roleCreationRequest,
+  onRoleCreationConsumed,
+  clarificationFocus,
   providers,
   sidebarCollapsed,
   onToggleSidebar,
@@ -1435,6 +1466,14 @@ function TaskWorkspace({
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [viewMenu, setViewMenu] = useState(null);
+  const [quoteRequest, setQuoteRequest] = useState(null);
+  useEffect(() => {
+    if (!roleCreationRequest || roleCreationRequest.taskId !== task.id) return;
+    setActiveView('dialogue');
+    setQuoteRequest(roleCreationRequest);
+    onRoleCreationConsumed();
+  }, [roleCreationRequest, task.id]);
+  const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [routeDialogOpen, setRouteDialogOpen] = useState(false);
   const [anchorVisible, setAnchorVisible] = useState(() => {
@@ -1649,6 +1688,7 @@ function TaskWorkspace({
   };
 
   const showSettingsPanel = () => {
+    if (!TASK_SETTINGS_SIDEBAR_ENABLED) return;
     if (!settingsOpen) onToggleSettings();
     setMoreMenuOpen(false);
   };
@@ -1683,6 +1723,17 @@ function TaskWorkspace({
     try { localStorage.setItem(WORKSPACE_ANCHOR_VISIBLE_KEY, String(next)); }
     catch { onNotice(tr("显示设置未能保存，重启后会恢复默认。", "Display preference could not be saved; it will reset after restart.")); }
   };
+
+  useEffect(() => {
+    if (clarificationFocus?.taskId !== task.id) return;
+    setActiveView("dialogue");
+    const frame = requestAnimationFrame(() => {
+      const card = document.getElementById("clarification-" + clarificationFocus.questionId);
+      card?.scrollIntoView({ block: "center" });
+      card?.querySelector("input, textarea, button")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [clarificationFocus, task.id]);
   const anchorToggle = <button className="workspace-anchor-toggle" type="button" aria-pressed={anchorVisible} aria-label={anchorVisible ? tr("隐藏 Anchor 快照", "Hide Anchor snapshots") : tr("显示 Anchor 快照", "Show Anchor snapshots")} title={anchorVisible ? tr("隐藏 Anchor 快照", "Hide Anchor snapshots") : tr("显示 Anchor 快照", "Show Anchor snapshots")} onClick={toggleAnchor}><History size={14} /><span>Anchor</span></button>;
 
   const workbenchBuiltins = {
@@ -1702,16 +1753,10 @@ function TaskWorkspace({
     ),
     workspace: (
       <div className="workspace-view-stack workspace-tree-only">
-        {anchorVisible && <AnchorHistory
-          task={task}
-          isRunning={isRunning}
-          onRestore={onRestoreAnchor}
-        />}
         <FileExplorerPanel
           key={workbench.key}
           workspacePath={task.workspacePath}
           embedded
-          headerActions={anchorToggle}
           initialPath={workspaceFocusPath}
           onNotice={onNotice}
           onOpenFile={(path) => workbench.openFile(path)}
@@ -1732,7 +1777,10 @@ function TaskWorkspace({
   };
 
   return (
-    <WorkbenchContext.Provider value={workbench}>
+    <WorkbenchContext.Provider value={{ ...workbench, addFileToChat: path => {
+      setActiveView('dialogue');
+      setQuoteRequest({ taskId: task.id, kind: 'file', path });
+    } }}>
     <div className={`task-workspace${workbench.layout.open ? " workbench-open" : ""}`}>
       <section className="thread">
         <header className="thread-header">
@@ -1755,6 +1803,9 @@ function TaskWorkspace({
                   : tr("绑定工作目录", "Bind workspace")
               }
               className={`thread-header-button thread-folder-button ${activeView === "workspace" ? "active" : ""}`}
+              title={task.workspacePath
+                ? `${task.workspaceName || getFolderName(task.workspacePath)}\n${task.workspacePath}`
+                : tr("绑定工作目录", "Bind workspace")}
               onClick={() => {
                 if (!task.workspacePath) {
                   onSelectWorkspace();
@@ -1771,7 +1822,6 @@ function TaskWorkspace({
             </IconButton>
             <div className="thread-heading-copy">
               <h1>{task.title}</h1>
-              <span>{task.workspaceName}</span>
             </div>
           </div>
           <div className="thread-actions">
@@ -1797,7 +1847,7 @@ function TaskWorkspace({
             >
               <PanelRight size={17} />
             </IconButton>
-            <IconButton
+            {TASK_SETTINGS_SIDEBAR_ENABLED && <IconButton
               label={settingsOpen ? tr("关闭任务设置", "Close task settings") : tr("打开任务设置", "Open task settings")}
               className={settingsOpen ? "active" : ""}
               onClick={() => {
@@ -1805,7 +1855,7 @@ function TaskWorkspace({
               }}
             >
               <Settings2 size={18} />
-            </IconButton>
+            </IconButton>}
             <div className="task-more-menu-wrap" ref={moreMenuRef}>
               <IconButton
                 label={tr("更多操作", "More actions")}
@@ -1838,10 +1888,10 @@ function TaskWorkspace({
                     <Files size={15} />
                     {tr("文件与代码", "Files and code")}
                   </button>
-                  <button type="button" role="menuitem" onClick={showSettingsPanel}>
+                  {TASK_SETTINGS_SIDEBAR_ENABLED && <button type="button" role="menuitem" onClick={showSettingsPanel}>
                     <Settings2 size={15} />
                     {tr("任务设置", "Task settings")}
-                  </button>
+                  </button>}
                   <div className="task-more-menu-divider" />
                   <button
                     type="button"
@@ -1889,6 +1939,7 @@ function TaskWorkspace({
             { id: "route", label: tr("执行记录", "Route") },
             { id: "workspace", label: tr("工作区", "Workspace") },
             { id: "understanding", label: tr("项目知识", "Understanding") },
+            { id: "office", label: tr("Agent 工位", "Agent office") },
           ].map((view) => (
             <button
               className={activeView === view.id ? "active" : ""}
@@ -1905,7 +1956,7 @@ function TaskWorkspace({
                 switchView(view.id);
               }}
               onContextMenu={(event) => {
-                if (view.id === "dialogue") return;
+                if (["dialogue", "office"].includes(view.id)) return;
                 event.preventDefault();
                 if (
                   ["workspace", "understanding"].includes(view.id) &&
@@ -1940,6 +1991,7 @@ function TaskWorkspace({
           </div>
         ) : null}
 
+        <ScrollFadeSurface scrollRef={threadBodyRef} enabled={activeView === 'dialogue'} fadeBottom={false} className="thread-scroll-surface">
         <div
           ref={threadBodyRef}
           className={`thread-body ${activeView}-mode`}
@@ -1958,6 +2010,7 @@ function TaskWorkspace({
             }`}
             aria-hidden={activeView !== "dialogue"}
           >
+            <ConversationSelectionMenu key={task.id} onNotice={onNotice} onOpenChange={setSelectionMenuOpen} onQuote={(text) => setQuoteRequest({ taskId: task.id, text })}>
             <Conversation
               task={task}
               isRunning={isRunning}
@@ -1971,6 +2024,7 @@ function TaskWorkspace({
               onSaveChanges={onSaveChanges}
               onNotice={onNotice}
             />
+            </ConversationSelectionMenu>
           </div>
           <div
             className={`thread-view-panel route-panel ${
@@ -2033,11 +2087,21 @@ function TaskWorkspace({
               }}
             />
           </div>
+          {activeView === "office" && <div className="thread-view-panel office-panel active">
+            <React.Suspense fallback={<p role="status">{tr("正在打开工位…", "Opening the office…")}</p>}>
+              <AgentOffice key={task.id} task={task} isRunning={isRunning} isPaused={isPaused} approval={approval} theme={theme}
+                onChat={roleId => workbench.open('teamchat', { roomId: roleId ? `role:${roleId}` : '', revision: Date.now() })}
+                onBack={() => switchView("dialogue")} onRoute={() => switchView("route")}
+                onSend={onSend} onStop={onStop} onPause={onPause} onResume={onResume} />
+            </React.Suspense>
+          </div>}
         </div>
+        </ScrollFadeSurface>
 
         {activeView === "understanding" && <div className="knowledge-return"><span>{isRunning ? tr("任务仍在运行，可随时返回对话", "Task is running. Return to chat at any time.") : tr("按知识项目独立保存，任务按需读取", "Saved per project; read by tasks on demand")}</span><button type="button" onClick={() => switchView("dialogue")}><MessageSquare size={14} />{tr("返回对话", "Back to chat")}</button></div>}
         <Composer
-          collapsed={activeView === "understanding"}
+          quoteRequest={quoteRequest}
+          collapsed={["understanding", "office"].includes(activeView)}
           task={task}
           providers={providers}
           onSend={onSend}
@@ -2063,7 +2127,7 @@ function TaskWorkspace({
       {workbench.layout.open ? (
         <WorkbenchLayout
           workbench={workbench}
-          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu) || knowledgeDialogOpen || routeDialogOpen}
+          overlaying={coverBrowser || settingsOpen || renameOpen || deleteOpen || moreMenuOpen || Boolean(viewMenu) || selectionMenuOpen || knowledgeDialogOpen || routeDialogOpen}
           onNotice={onNotice}
           onNeedWorkspace={onSelectWorkspace}
           builtins={workbenchBuiltins}
@@ -2073,7 +2137,7 @@ function TaskWorkspace({
         <CollapsedDropRail workbench={workbench} onNotice={onNotice} />
       )}
 
-      {settingsOpen ? (
+      {TASK_SETTINGS_SIDEBAR_ENABLED && settingsOpen ? (
         <>
           <PanelResizer
             panelName="settings"
@@ -2393,7 +2457,7 @@ function ProviderManagerModal({
       }
     >
       <form
-        className={`provider-manager-modal ${embedded ? "embedded" : ""}`}
+        className={`provider-manager-modal provider-workbench ${embedded ? "embedded" : ""}`}
         onSubmit={submit}
       >
         {!embedded && (
@@ -2408,14 +2472,12 @@ function ProviderManagerModal({
           </div>
         )}
 
+        {embedded && <header className="provider-workbench-header">
+          <div><h3>{tr("模型与 API", "Models & APIs")}</h3><small>{tr("{count} 个自定义服务", "{count} custom service(s)", { count: customProviders.length })}</small></div>
+          <ModelSetupActions compact />
+        </header>}
         <div className="provider-manager-body">
-          <aside className="provider-list">
-            {embedded && (
-              <div className="provider-list-heading">
-                <span>Providers</span>
-                <small>{customProviders.length}</small>
-              </div>
-            )}
+          <aside className="provider-list" aria-label={tr("模型服务", "Model services")}>
             <button
               className={!form.id ? "active add-provider" : "add-provider"}
               type="button"
@@ -2432,6 +2494,7 @@ function ProviderManagerModal({
                 className={form.id === provider.id ? "active" : ""}
                 type="button"
                 key={provider.id}
+                aria-pressed={form.id === provider.id}
                 onClick={() => {
                   setForm(providerToForm(provider));
                   setError("");
@@ -2441,13 +2504,13 @@ function ProviderManagerModal({
                   <strong>{provider.name}</strong>
                   <small>{tr("{count} 个模型", "{count} model(s)", { count: provider.models?.length || 0 })}</small>
                 </span>
-                <ChevronDown size={13} />
+                {form.id === provider.id && <Check size={14} />}
               </button>
             ))}
           </aside>
 
           <div className="provider-editor">
-            <ModelSetupActions compact />
+            {!embedded && <ModelSetupActions compact />}
             {!editingProvider && (
               <div className="provider-presets">
                 <span>{tr("常用服务", "Common services")}</span>
@@ -2478,6 +2541,8 @@ function ProviderManagerModal({
               </div>
             )}
 
+            <section className="provider-section provider-connection">
+            <h4>{tr("连接配置", "Connection")}</h4>
             <div className="provider-form-grid">
               <label>
                 <span>{tr("名称（可选）", "Name (optional)")}</span>
@@ -2536,7 +2601,9 @@ function ProviderManagerModal({
                 />
               </label>
             </div>
+            </section>
 
+            <section className="provider-section provider-model-section">
             <div className="provider-model-heading">
               <div>
                 <strong>{tr("模型 ID", "Model IDs")}</strong>
@@ -2573,6 +2640,7 @@ function ProviderManagerModal({
             </div>
             <ModelVisionSettings modelIds={modelIds} modelsById={form.modelsById}
               onChange={(modelsById) => setForm((current) => ({ ...current, modelsById }))} />
+            </section>
             {error && <p className="api-key-error">{error}</p>}
           </div>
         </div>
@@ -2619,12 +2687,19 @@ function ProviderManagerModal({
 }
 
 function ApplicationSettingsModal({
+  task,
+  onUpdateTask,
+  onCreateRoleWithAgent,
+  onCreateThemeWithAgent,
+  appearance,
   initialSection = "general",
   startAddingProvider = false,
   theme,
   onThemeChange,
   providers,
   sandboxStatus,
+  sandboxPreparing,
+  onPrepareSandbox,
   workspacePath = "",
   onProvidersChanged,
   onProviderSaved,
@@ -2694,6 +2769,12 @@ function ApplicationSettingsModal({
               <KeyRound size={16} />
               {tr("模型与 API", "Models & APIs")}
             </button>
+            <button type="button" className={section === 'account' ? 'active' : ''} onClick={() => setSection('account')}>
+              <Users size={16} />{tr('账户', 'Account')}
+            </button>
+            <button type="button" className={section === 'personalization' ? 'active' : ''} onClick={() => setSection('personalization')}>
+              <Palette size={16} />{tr('个性化', 'Personalization')}
+            </button>
             <button
               type="button"
               className={section === "extensions" ? "active" : ""}
@@ -2701,6 +2782,12 @@ function ApplicationSettingsModal({
             >
               <Zap size={16} />
               {tr("扩展与能力", "Extensions")}
+            </button>
+            <button type="button" className={section === 'agents' ? 'active' : ''} onClick={() => setSection('agents')}>
+              <Users size={16} />{tr('专业角色', 'Professional roles')}
+            </button>
+            <button type="button" className={section === 'permissions' ? 'active' : ''} onClick={() => setSection('permissions')}>
+              <ShieldCheck size={16} />{tr('权限与审批', 'Permissions & approvals')}
             </button>
             <button
               type="button"
@@ -2713,11 +2800,14 @@ function ApplicationSettingsModal({
           </nav>
 
           <main className={`application-settings-content ${section}-section`}>
-            {section === "general" ? (
+            {section === 'personalization' ? <PersonalizationSettings appearance={appearance} theme={theme} onCreateWithAgent={onCreateThemeWithAgent} /> : section === 'account' ? <AccountSettings /> : section === "permissions" ? (
+              <PermissionsSettings task={task} onUpdateTask={onUpdateTask} sandboxStatus={sandboxStatus} sandboxPreparing={sandboxPreparing} onPrepareSandbox={onPrepareSandbox} />
+            ) : section === "agents" ? (
+              <ProfessionalRolesSettings task={task} providers={providers} onUpdateTask={onUpdateTask} onCreateWithAgent={onCreateRoleWithAgent} />
+            ) : section === "general" ? (
               <>
                 <div className="application-settings-intro">
-                  <span>{tr("通用", "General")}</span>
-                  <h3>{tr("让 AporiaX 以你的方式工作。", "Make AporiaX work your way.")}</h3>
+                  <h3>{tr("通用", "General")}</h3>
                 </div>
 
                 <section className="preference-card">
@@ -2891,6 +2981,7 @@ function ApplicationSettingsModal({
                     )}
                   </strong>
                 </div>
+                <TutorialLink />
                 <AppUpdateControls />
                 <span className="application-preview-label">
                   {tr("本地优先 · Preview", "Local-first · Preview")}
@@ -2908,12 +2999,23 @@ function App() {
   const { language, tr } = useI18n();
   const [tasks, setTasks] = useTaskStore(readSavedTasks);
   const [sessionUi] = useState(readSessionUi);
+  const [clarificationFocus, setClarificationFocus] = useState(null);
   const [activeTaskId, setActiveTaskId] = useState(
     () => chooseRestoredTaskId(tasks, sessionUi?.taskId),
   );
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [externalControlOpen, setExternalControlOpen] = useState(false);
+  const [externalControlRunId, setExternalControlRunId] = useState("");
+  useEffect(() => {
+    const unsubscribe = window.desktop?.control?.subscribe?.((event) => {
+      if (event?.type !== "open") return;
+      setExternalControlRunId(event.runId || "");
+      setExternalControlOpen(true);
+    });
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1",
   );
@@ -2922,8 +3024,7 @@ function App() {
   const [completionNotice, setCompletionNotice] = useState(null);
   const [providerRecords, setProviders] = useState([]);
   const { account } = useAccount();
-  const providers = useMemo(() => providerRecords.map((provider) => provider.id === "aporia-cloud" || provider.source === "aporia-cloud" || provider.kind === "aporia-cloud"
-    ? { ...provider, accountStatus: account.status } : provider), [providerRecords, account.status]);
+  const providers = useMemo(() => providerRecords.map(provider => projectCloudProvider(provider, account)), [providerRecords, account]);
   const [startAddingProvider, setStartAddingProvider] = useState(false);
   const [providersReady, setProvidersReady] = useState(false);
   const [resumeNewTaskAfterProvider, setResumeNewTaskAfterProvider] =
@@ -2932,6 +3033,7 @@ function App() {
     useState(false);
   const [applicationSettingsSection, setApplicationSettingsSection] =
     useState("general");
+  const [roleCreationRequest, setRoleCreationRequest] = useState(null);
   const [sandboxStatus, setSandboxStatus] = useState(null);
   const [sandboxPreparing, setSandboxPreparing] = useState(false);
   const [runningTaskIds, setRunningTaskIds] = useState(() => new Set());
@@ -2944,6 +3046,7 @@ function App() {
   const [approvalResponding, setApprovalResponding] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
   const [theme, setTheme] = useState(readSavedTheme);
+  const appearance = useAppearance(theme, setTheme);
   const [welcomeOpen, setWelcomeOpen] = useState(
     () => FORCE_WELCOME_EACH_LAUNCH || !sessionUi?.welcomeDismissed,
   );
@@ -2951,7 +3054,6 @@ function App() {
   const dismissedUpdateKeyRef = useRef("");
   const runsRef = useRef(new Map());
   const tasksRef = useRef(tasks);
-  const remoteSyncSignatureRef = useRef("");
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
   const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
@@ -3053,29 +3155,6 @@ function App() {
 
 
   useEffect(() => {
-    if (!storageReady || !window.desktop?.account?.syncTasks) return undefined;
-    let disposed = false;
-    let interval = null;
-    const sync = async (force = false) => {
-      const payload = buildRemoteTaskSyncPayload(tasks, { runningTaskIds, pausedTaskIds });
-      const signature = JSON.stringify(payload);
-      if (!force && signature === remoteSyncSignatureRef.current) return;
-      try {
-        const result = await window.desktop.account.syncTasks(payload);
-        if (!disposed && result?.enabled) remoteSyncSignatureRef.current = signature;
-      } catch {
-        // Account, network, and opt-in errors remain non-blocking for local tasks.
-      }
-    };
-    const timeout = window.setTimeout(() => void sync(false), 1_400);
-    interval = window.setInterval(() => void sync(true), 20_000);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timeout);
-      if (interval) window.clearInterval(interval);
-    };
-  }, [storageReady, tasks, runningTaskIds, pausedTaskIds]);
-  useEffect(() => {
     // localStorage is only a startup cache. Serializing the entire task history
     // synchronously for every streamed token can block the renderer. Keep the
     // cache reasonably fresh without putting it on the hot response.delta path.
@@ -3100,9 +3179,8 @@ function App() {
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute(
         "content",
-        theme === "dark" ? "#14191f" : "#eef3f7",
+        theme === "dark" ? "#14161a" : "#f3f4f6",
       );
-    void window.desktop?.theme?.set(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -3263,9 +3341,10 @@ function App() {
     if (!window.desktop?.notifications?.onTaskRequested) {
       return undefined;
     }
-    return window.desktop.notifications.onTaskRequested(({ taskId }) => {
+    return window.desktop.notifications.onTaskRequested(({ taskId, clarificationId }) => {
       if (!tasksRef.current.some((task) => task.id === taskId)) return;
       setActiveTaskId(taskId);
+      if (clarificationId) setClarificationFocus({ taskId, questionId: clarificationId, at: Date.now() });
       writeSessionUi({ welcomeDismissed: true, taskId });
       setWelcomeOpen(false);
     });
@@ -3278,17 +3357,22 @@ function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (welcomeOpen || !window.desktop?.update?.check) return undefined;
-    const timeout = window.setTimeout(() => {
-      void window.desktop.update.check({ force: false });
-    }, 8_000);
-    return () => window.clearTimeout(timeout);
-  }, [welcomeOpen]);
+    if (!window.desktop?.update?.check) return undefined;
+    const check = () => { void window.desktop.update.check({ force: false }).catch(() => {}); };
+    const timeout = window.setTimeout(check, 2_000);
+    const interval = window.setInterval(check, 30 * 60_000);
+    window.addEventListener("online", check);
+    window.addEventListener("focus", check);
+    return () => {
+      window.clearTimeout(timeout); window.clearInterval(interval);
+      window.removeEventListener("online", check); window.removeEventListener("focus", check);
+    };
+  }, []);
 
   useEffect(() => {
     if (!window.desktop?.update?.subscribe) return undefined;
     return window.desktop.update.subscribe((next) => {
-      if (next?.phase !== "available" && next?.phase !== "downloaded") return;
+      if (next?.phase !== "available" && next?.phase !== "downloaded") { setUpdateNotice(null); return; }
       const key = updateToastKey(next);
       if (!key || dismissedUpdateKeyRef.current === key) return;
       setUpdateNotice(next);
@@ -3514,7 +3598,9 @@ function App() {
 
     const selectedModel = getModel(providers, targetTask.providerId, targetTask.modelId);
     if (!selectedModel.id || selectedModel.disabled) {
-      setNotice(tr("请先登录 Aporia Cloud，或在模型选择中添加自己的 API。输入内容已保留。", "Sign in to Aporia Cloud or add your own API in the model picker. Your draft is kept."));
+      setNotice(selectedModel.disabledReasonZh || selectedModel.disabledReasonEn
+        ? `${tr(selectedModel.disabledReasonZh || "模型暂不可用", selectedModel.disabledReasonEn || "Model unavailable")}${tr("。输入内容已保留。", ". Your draft is kept.")}`
+        : tr("请先登录 Aporia Cloud，或在模型选择中添加自己的 API。输入内容已保留。", "Sign in to Aporia Cloud or add your own API in the model picker. Your draft is kept."));
       return false;
     }
 
@@ -3558,6 +3644,7 @@ function App() {
         };
     const assistantMessage = {
       id: assistantId,
+      runId,
       role: "assistant",
       status: "running",
       content: "",
@@ -3639,6 +3726,7 @@ function App() {
       .then(() => window.desktop.harness.run({
         runId,
         recoveryRunId: recoveryRunId || undefined,
+        retry: Boolean(retryAssistantId || recoveryRunId),
         taskId: targetTask.id,
         assistantId,
         sourceUserId: userMessage.id,
@@ -3648,17 +3736,15 @@ function App() {
         knowledgeProjectId: targetTask.knowledgeProjectId || "",
         providerId: selectedModel.providerId,
         modelId: selectedModel.id,
-        thinking: targetTask.thinking,
-        effort: targetTask.effort,
+        thinking: reasoningState(selectedModel, targetTask).thinking,
+        effort: reasoningState(selectedModel, targetTask).effort,
         permission: targetTask.permission,
         taskContract: targetTask.taskContract,
         loopPolicy: targetTask.loopPolicy,
         executionMode: taskExecutionMode(targetTask.executionMode),
         approvalMode: taskApprovalMode(targetTask.approvalMode),
-        builderLimit: normalizeBuilderCount(
-          targetTask.builderLimit,
-          DEFAULT_BUILDER_LIMIT,
-        ),
+        builderLimit: normalizeBuilderCount(targetTask.builderLimit, null),
+        professionalRoles: targetTask.professionalRoles,
         language,
         messages: [
           ...targetTask.messages.filter(
@@ -3687,6 +3773,7 @@ function App() {
                           ...message,
                           status: result.status || "completed",
                           error: Boolean(result.error),
+                          replyDelivered: result.replyDelivered,
                            content: result.content,
                           steps: result.steps || [],
                           changes: result.changes || [],
@@ -3700,6 +3787,7 @@ function App() {
                              result,
                            ),
                           usage: result.usage || null,
+                          subagents: result.subagents || message.subagents || [],
                           instructionFiles:
                             result.instructionFiles || [],
                           permissionConfigFile:
@@ -3713,6 +3801,7 @@ function App() {
                           tools: result.tools || [],
                           selfCheck: result.selfCheck || null,
                           taskBrief: result.taskBrief || null,
+                          rollingContext: result.rollingContext || null,
                           acceptance: result.acceptance || null,
                           strategy: result.strategy || null,
                           loopMetrics: result.loopMetrics || null,
@@ -3732,17 +3821,11 @@ function App() {
               : task,
           ),
         );
-        if (result.status === "blocked") {
-          setNotice(tr("任务受阻，请查看具体原因", "Task blocked; see the reported reason"));
-        } else if (result.status === "partial") {
-          setNotice(tr("任务部分完成，可以继续处理剩余工作", "Partially complete; remaining work can be continued"));
-        } else if (result.status === "needs_input") {
-          setNotice(tr("需要你补充信息后继续", "Your input is needed to continue"));
-        } else if (result.status === "failed") {
+        // Explain unfinished work in the reply, not another automatic warning.
+        // Actual runtime/storage failures remain visible.
+        if (result.error || result.status === "failed") {
           setNotice(tr("Harness 运行失败", "Harness run failed"));
-        } else if (result.status === "interrupted") {
-          setNotice(tr("任务已停止，已保留文件检查点", "Task stopped; file checkpoints were preserved"));
-        } else if (result.status === "completed") {
+        } else if (result.status === "completed" && hasTaskReply(result)) {
           const summary = summarizeCompletionContent(
             result.content,
             tr(
@@ -3877,86 +3960,25 @@ function App() {
   };
 
 
-  useEffect(() => {
-    if (!storageReady || !window.desktop?.account?.claimRemoteCommand) return undefined;
-    let disposed = false;
-    let timer = null;
-    const poll = async () => {
-      try {
-        const commands = await window.desktop.account.remoteCommands();
-        for (const candidate of Array.isArray(commands) ? commands : []) {
-          if (disposed) break;
-          if (!candidate?.id) continue;
-          const command = await window.desktop.account.claimRemoteCommand(candidate.id);
-          if (!command) continue;
-          const acknowledge = (id, status, result = "") =>
-            window.desktop.account.acknowledgeRemoteCommand(id, status, result, command.claim);
-          if (disposed) {
-            await acknowledge(command.id, "failed", "Desktop view changed before dispatch; this command was not executed.");
-            break;
-          }
-          try {
-            if (["files_roots", "files_list", "file_preview", "file_download"].includes(command.type)) {
-              if (!window.desktop.account.executeRemoteFileCommand) {
-                throw new Error("Desktop file access is unavailable in this build.");
-              }
-              const result = await window.desktop.account.executeRemoteFileCommand(command);
-              await acknowledge(command.id, "completed", JSON.stringify(result));
-              continue;
-            }
-            const task = tasksRef.current.find((candidate) => candidate.id === command.localTaskId);
-            if (!task) {
-              await acknowledge(command.id, "failed", "Task is no longer available on Desktop.");
-              continue;
-            }
-            if (command.type === "prompt") {
-              const prompt = String(command.payload?.prompt || "").trim();
-              if (!prompt || !sendMessage(prompt, [], { taskId: task.id })) {
-                throw new Error("Remote prompt could not be queued.");
-              }
-              await acknowledge(command.id, "accepted", "Prompt queued on Desktop.");
-              continue;
-            }
-            const runId = activeRunIdsByTask[task.id];
-            if (!runId) throw new Error("Task is not currently running.");
-            if (command.type === "pause") await window.desktop.harness.pause(runId);
-            else if (command.type === "resume") await window.desktop.harness.resume(runId);
-            else if (command.type === "stop") await window.desktop.harness.interrupt(runId);
-            else throw new Error("Unsupported remote command.");
-            await acknowledge(command.id, "completed", `${command.type} applied on Desktop.`);
-          } catch (error) {
-            await acknowledge(command.id, "failed", String(error?.message || "Remote command failed."));
-          }
-        }
-      } catch {
-        // Remote control is optional and must never block the local Harness.
-      } finally {
-        if (!disposed) timer = window.setTimeout(poll, 2_500);
-      }
-    };
-    timer = window.setTimeout(poll, 800);
-    return () => {
-      disposed = true;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, [storageReady, activeRunIdsByTask]);
-
   const stopActiveRun = async () => {
-    if (!activeRunId || !window.desktop?.harness?.interrupt) return;
+    if (!activeRunId || !window.desktop?.harness?.interrupt) return false;
     setRunStatus({
       title: tr("正在停止任务", "Stopping task"),
       detail: tr("等待当前操作安全退出", "Waiting for the current operation to exit safely"),
     });
     if (activeTaskId) setTaskApproval(activeTaskId, null);
     try {
-      await window.desktop.harness.interrupt(activeRunId);
+      const accepted = await window.desktop.harness.interrupt(activeRunId);
+      if (!accepted) throw new Error("Run is no longer active.");
+      return true;
     } catch {
       setNotice(tr("无法停止任务，请稍后重试", "Unable to stop the task. Try again shortly."));
+      return false;
     }
   };
 
   const pauseActiveRun = async () => {
-    if (!activeRunId || !window.desktop?.harness?.pause) return;
+    if (!activeRunId || !window.desktop?.harness?.pause) return false;
     setRunStatus({
       title: tr("正在暂停任务", "Pausing task"),
       detail: tr(
@@ -3967,18 +3989,22 @@ function App() {
     try {
       const accepted = await window.desktop.harness.pause(activeRunId);
       if (!accepted) throw new Error("Run is no longer active.");
+      return true;
     } catch {
       setNotice(tr("无法暂停任务，请稍后重试", "Unable to pause the task. Try again shortly."));
+      return false;
     }
   };
 
   const resumeActiveRun = async () => {
-    if (!activeRunId || !window.desktop?.harness?.resume) return;
+    if (!activeRunId || !window.desktop?.harness?.resume) return false;
     try {
       const accepted = await window.desktop.harness.resume(activeRunId);
       if (!accepted) throw new Error("Run is no longer active.");
+      return true;
     } catch {
       setNotice(tr("无法继续任务，请稍后重试", "Unable to resume the task. Try again shortly."));
+      return false;
     }
   };
 
@@ -4472,7 +4498,10 @@ function App() {
 
   return (
     <div className="app-shell" data-theme={theme}>
-      <AppTitlebar onOpenSettings={() => openApplicationSettings("general")} />
+      <AppTitlebar onOpenSettings={() => openApplicationSettings("general")} onOpenControl={() => {
+        setExternalControlRunId("");
+        setExternalControlOpen(true);
+      }} />
       {!welcomeOpen && <div className="app-content">
         {!sidebarCollapsed && (
           <Sidebar
@@ -4513,14 +4542,16 @@ function App() {
           {activeTask ? (
             <TaskWorkspace
               task={activeTask}
+              roleCreationRequest={roleCreationRequest}
+              onRoleCreationConsumed={() => setRoleCreationRequest(null)}
               providers={providers}
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={() =>
                 setSidebarCollapsed((current) => !current)
               }
               settingsOpen={settingsOpen}
-              coverBrowser={applicationSettingsOpen || newTaskOpen}
-              onToggleSettings={() => setSettingsOpen((open) => !open)}
+              coverBrowser={applicationSettingsOpen || newTaskOpen || externalControlOpen}
+              onToggleSettings={() => { if (TASK_SETTINGS_SIDEBAR_ENABLED) setSettingsOpen((open) => !open); }}
               onSend={sendMessage}
               onStop={stopActiveRun}
               onPause={pauseActiveRun}
@@ -4551,12 +4582,9 @@ function App() {
               onNotice={setNotice}
               onDeleteTask={deleteTask}
               theme={theme}
-              onToggleTheme={() =>
-                setTheme((current) =>
-                  current === "dark" ? "light" : "dark",
-                )
-              }
+              onToggleTheme={appearance.toggle}
               restoredSession={sessionUi}
+              clarificationFocus={clarificationFocus}
               onPersistSession={writeSessionUi}
               storageReady={storageReady}
             />
@@ -4578,13 +4606,27 @@ function App() {
       )}
       {applicationSettingsOpen && (
         <ApplicationSettingsModal
+          task={activeTask}
+          onUpdateTask={updateActiveTask}
+          onCreateRoleWithAgent={() => {
+            if (!activeTask) return;
+            setRoleCreationRequest({ id: crypto.randomUUID(), taskId: activeTask.id, kind: 'role-create' });
+            setApplicationSettingsOpen(false);
+          }}
+          onCreateThemeWithAgent={activeTask ? () => {
+            setRoleCreationRequest({ id: crypto.randomUUID(), taskId: activeTask.id, kind: 'theme-create' });
+            setApplicationSettingsOpen(false);
+          } : null}
+          appearance={appearance}
           key={`${applicationSettingsSection}:${startAddingProvider}`}
           initialSection={applicationSettingsSection}
           startAddingProvider={startAddingProvider}
           theme={theme}
-          onThemeChange={setTheme}
+          onThemeChange={appearance.selectPreset}
           providers={providers}
           sandboxStatus={sandboxStatus}
+          sandboxPreparing={sandboxPreparing}
+          onPrepareSandbox={() => void prepareCommandSandbox()}
           workspacePath={activeTask?.workspacePath || ""}
           onProvidersChanged={reloadProviders}
           onProviderSaved={({ providers: nextProviders }) => {
@@ -4611,6 +4653,10 @@ function App() {
         />
       )}
       {welcomeOpen && <WelcomeOverlay onContinue={dismissWelcome} />}
+      {externalControlOpen && <ExternalControlPanel initialRunId={externalControlRunId} onClose={() => {
+        setExternalControlOpen(false);
+        setExternalControlRunId("");
+      }} />}
       <AppUpdateToast
         status={updateNotice}
         onClose={() => {

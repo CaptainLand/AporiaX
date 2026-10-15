@@ -3,13 +3,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import { mixColor } from '../../shared/appearance.js';
 
 export const TERMINAL_THEMES = {
   light: { background: "#ffffff", foreground: "#302a37", cursor: "#302a37", cursorAccent: "#ffffff", selectionBackground: "#d6e7ef", selectionForeground: "#302a37",
     black: "#302a37", red: "#b43d45", green: "#28704f", yellow: "#98660c", blue: "#3269a1", magenta: "#845492", cyan: "#147b8a", white: "#74707b",
     brightBlack: "#80798a", brightRed: "#b82a34", brightGreen: "#217147", brightYellow: "#966008", brightBlue: "#2866a5", brightMagenta: "#87549a", brightCyan: "#147281", brightWhite: "#302a37" },
-  dark: { background: "#17141d", foreground: "#e0dce8", cursor: "#e0dce8", cursorAccent: "#17141d", selectionBackground: "#384856", selectionForeground: "#ffffff",
-    black: "#5a5460", red: "#ff8b92", green: "#9ece6a", yellow: "#e0af68", blue: "#8bb4ff", magenta: "#d0b4ff", cyan: "#7dcfff", white: "#e0dce8",
+  dark: { background: "#0f1114", foreground: "#eaedf2", cursor: "#eaedf2", cursorAccent: "#0f1114", selectionBackground: "#384856", selectionForeground: "#ffffff",
+    black: "#5a5460", red: "#ff8b92", green: "#9ece6a", yellow: "#e0af68", blue: "#8bb4ff", magenta: "#d0b4ff", cyan: "#7dcfff", white: "#eaedf2",
     brightBlack: "#aaa3b7", brightRed: "#ffb0b5", brightGreen: "#c6f08a", brightYellow: "#f4d08a", brightBlue: "#adc8ff", brightMagenta: "#e2ccff", brightCyan: "#b4f0ff", brightWhite: "#ffffff" },
 };
 const sessions = new Map();
@@ -85,7 +86,15 @@ function createSession({ scope, id, resource, request, openHref, tr }) {
     paste(text) { if (snapshot.status === "running") { term.focus(); term.paste(text); } },
     style(preferences, appTheme) {
       const theme = preferences.theme === "auto" ? appTheme : preferences.theme;
-      term.options.theme = TERMINAL_THEMES[theme] || TERMINAL_THEMES.light;
+      const palette = TERMINAL_THEMES[theme] || TERMINAL_THEMES.light;
+      if (preferences.theme === 'auto' && document.documentElement.dataset.customTheme) {
+        const style = getComputedStyle(document.documentElement);
+        const color = (key, fallback) => { const value = style.getPropertyValue(key).trim(); return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback; };
+        const background = color('--gray-1', palette.background), foreground = color('--gray-12', palette.foreground);
+        const accent = color('--accent-9', palette.blue);
+        term.options.theme = { ...palette, background, foreground, cursor: foreground, cursorAccent: background,
+          selectionBackground: mixColor(background, accent, .25), selectionForeground: foreground };
+      } else term.options.theme = palette;
       if (term.options.fontSize !== preferences.fontSize) { term.options.fontSize = preferences.fontSize; resize(); }
     },
     attach(host, callbacks) {

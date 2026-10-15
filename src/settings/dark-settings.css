@@ -1,0 +1,60 @@
+/* Reserve the theme accent for selection, focus and primary actions. */
+:root[data-theme="dark"] section.application-settings-modal {
+  border-color: var(--gray-6);
+}
+:root[data-theme="dark"] .application-settings-modal .application-settings-header,
+:root[data-theme="dark"] .application-settings-modal .application-settings-nav,
+:root[data-theme="dark"] .application-settings-modal .modal-footer,
+:root[data-theme="dark"] .application-settings-modal .provider-list {
+  border-color: var(--gray-5);
+}
+:root[data-theme="dark"] .application-settings-modal .preference-card,
+:root[data-theme="dark"] .application-settings-modal .application-about-principles div {
+  border-color: var(--gray-5);
+  background: var(--gray-2);
+}
+:root[data-theme="dark"] .application-settings-modal .preference-card-heading > span {
+  color: var(--gray-11);
+  background: var(--gray-3);
+}
+:root[data-theme="dark"] .application-settings-modal .application-settings-intro > span,
+:root[data-theme="dark"] .application-settings-modal .application-about-kicker {
+  color: var(--gray-10);
+}
+:root[data-theme="dark"] .application-settings-modal .application-about-principles strong {
+  color: var(--gray-12);
+}
+:root[data-theme="dark"] .application-settings-modal .application-settings-nav button:hover:not(.active),
+:root[data-theme="dark"] .application-settings-modal .provider-list > button:hover:not(.active) {
+  color: var(--gray-12);
+  background: var(--gray-3);
+}
+:root[data-theme="dark"] section.application-settings-modal .language-switch,
+:root[data-theme="dark"] section.application-settings-modal .segmented-control,
+:root[data-theme="dark"] section.application-settings-modal .appearance-options button:not(.active),
+:root[data-theme="dark"] section.application-settings-modal .provider-presets button:not(.active),
+:root[data-theme="dark"] section.application-settings-modal .secondary-button {
+  border-color: var(--gray-6);
+}
+:root[data-theme="dark"] .application-settings-modal .provider-presets button:not(.active) {
+  color: var(--gray-11);
+}
+:root[data-theme="dark"] .application-settings-modal .provider-editor .text-field:not(:focus),
+:root[data-theme="dark"] .application-settings-modal .provider-models-input:not(:focus) {
+  border-color: var(--gray-6);
+}
+:root[data-theme="dark"] section.application-settings-modal .preference-action {
+  color: var(--gray-12);
+  background: var(--gray-3);
+}
+:root[data-theme="dark"] section.application-settings-modal .preference-action:hover,
+:root[data-theme="dark"] section.application-settings-modal .secondary-button:hover {
+  border-color: var(--gray-7);
+  color: var(--gray-12);
+  background: var(--gray-4);
+}
+:root[data-theme="dark"] section.application-settings-modal .preference-status,
+:root[data-theme="dark"] .application-settings-modal .provider-list-heading small {
+  color: var(--gray-11);
+  background: var(--gray-3);
+}

@@ -20,6 +20,7 @@ import { useI18n } from "../i18n";
 import { Switch } from "../components/Controls.jsx";
 import { ExtensionDiscovery } from "./ExtensionDiscovery.jsx";
 import "./extensions.css";
+import "./extensions-workbench.css";
 
 const MANAGED_SOURCES = ["browser", "skill", "mcp", "plugin"];
 const EMPTY_MCP = {
@@ -285,14 +286,9 @@ export function ExtensionsSettings({ workspacePath = "", onNotice = () => {} }) 
   };
 
   return (
-    <section className="extensions-center">
+    <section className="extensions-center extensions-workbench">
       <div className="application-settings-intro extensions-heading">
-        <span>Extensions Library</span>
-        <h3>{tr("给 AporiaX 安装新的方法，而不是新的权限。", "Install new methods for AporiaX, not new privileges.")}</h3>
-        <p>{tr(
-          "Skill 是可审阅的工作流说明；MCP 是需要信任的外部工具。导入不执行脚本；本地 MCP 进程不等于被操作系统沙箱隔离。",
-          "Skills are reviewable workflows; MCP servers are trusted external tools. Importing runs no scripts. A local MCP process is not an OS sandbox.",
-        )}</p>
+        <h3>{tr("Skills 和 MCP", "Skills & MCP")}</h3>
       </div>
 
       <nav className="extensions-tabs" aria-label="Extensions library">

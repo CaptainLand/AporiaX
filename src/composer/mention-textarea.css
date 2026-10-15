@@ -1,0 +1,12 @@
+.mention-textarea { position: relative; min-width: 0; }
+.mention-textarea-overlay { display: none; position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.mention-textarea.has-mentions .mention-textarea-overlay { display: block; }
+.mention-textarea-mirror { box-sizing: border-box; white-space: pre-wrap; overflow-wrap: break-word; color: var(--gray-12); }
+.mention-textarea-token { color: var(--accent-11); background: color-mix(in srgb, var(--accent-9) 8%, transparent); border-radius: 3px; }
+.mention-textarea.has-mentions > textarea { position: relative; color: transparent !important; -webkit-text-fill-color: transparent; caret-color: var(--gray-12); background: transparent !important; }
+.mention-textarea.has-mentions > textarea::placeholder { -webkit-text-fill-color: var(--gray-10); }
+.mention-textarea.has-mentions > textarea::selection { background: color-mix(in srgb, var(--accent-9) 25%, transparent); }
+@media (forced-colors: active) {
+  .mention-textarea.has-mentions .mention-textarea-overlay { display: none; }
+  .mention-textarea.has-mentions > textarea { color: CanvasText !important; -webkit-text-fill-color: CanvasText; caret-color: CanvasText; }
+}

@@ -1,0 +1,55 @@
+.professional-roles { max-width: 780px; color: var(--text-1); font: 14px/1.5 var(--font-sans); min-width: 0; container-type: inline-size; }
+.professional-roles button, .professional-roles input, .professional-roles select, .professional-roles textarea { font: inherit; color: inherit; }
+.pr-heading, .pr-role-heading, .pr-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pr-heading h3 { font-size: 18px; font-weight: 600; margin: 0; }
+.pr-heading { scroll-margin-top: 30px; }
+.professional-roles button:where(:not(.switch)) { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-app); padding: 5px 9px; cursor: pointer; }
+.professional-roles button:not(.switch):hover { background: var(--bg-subtle); }
+.professional-roles :focus { outline: none; }
+.professional-roles :focus-visible { outline: 2px solid var(--text-3); outline-offset: 2px; }
+.pr-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 18px 0 8px; }
+.pr-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; margin: 0 0 12px; }
+.pr-field input, .pr-field select, .pr-field textarea, .pr-heading select { width: 100%; min-width: 0; border: 1px solid var(--border); background: var(--bg-app); border-radius: 6px; padding: 6px 8px; box-sizing: border-box; }
+.pr-heading select { width: auto; }
+.pr-field textarea { resize: vertical; }
+.pr-note, .pr-field small, .pr-footer, .pr-check small { color: var(--text-3); font-size: 12px; }
+.pr-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0 20px; }
+.professional-roles .pr-role-card { min-width: 0; padding: 16px 12px; gap: 12px; border-radius: 16px; border-color: var(--gray-5); background: var(--gray-2); text-align: left; align-items: center; }
+.professional-roles .pr-role-card:hover:not(:disabled) { background: var(--gray-3); border-color: var(--gray-7); }
+.professional-roles .pr-role-card[aria-pressed="true"] { border-color: var(--accent-8); background: var(--gray-3); }
+.pr-card-content { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; flex: 1; }
+.pr-card-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.pr-card-title strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.pr-card-title small { border-radius: 5px; padding: 1px 5px; background: var(--gray-4); color: var(--text-2); font-size: 10px; flex-shrink: 0; }
+.pr-card-description { color: var(--text-2); font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.pr-card-status { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-3); }
+.pr-card-status i { width: 5px; height: 5px; border-radius: 50%; background: var(--gray-9); }
+.pr-card-status i[data-enabled="true"] { background: var(--accent-9); }
+.pr-editor { padding: 18px; margin-bottom: 20px; border: 1px solid var(--gray-6); border-radius: 16px; background: var(--bg-app); }
+.pr-editor .pr-field > span { font-size: 12px; color: var(--text-2); }
+.pr-role-heading { min-height: 32px; margin-bottom: 12px; }
+.pr-role-heading > div { display: flex; gap: 4px; }
+.pr-check { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.pr-check input { width: 15px; height: 15px; margin: 0; }
+.pr-capabilities { border-top: 1px solid var(--border); padding-top: 12px; }
+.pr-capabilities summary { cursor: pointer; margin-bottom: 12px; }
+.pr-capabilities fieldset { border: 0; padding: 0; margin: 8px 0 18px; }
+.pr-capabilities legend { margin-bottom: 8px; }
+.pr-footer { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 20px; }
+.professional-roles [role=alert] { color: var(--red-11); overflow-wrap: anywhere; }
+.pr-intro { margin: 6px 0 18px; color: var(--text-2); }
+.pr-builder-limit { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-block: 1px solid var(--border); flex-wrap: wrap; }
+.pr-builder-limit .pr-field { flex-direction: row; align-items: center; gap: 12px; margin: 0; }
+.pr-builder-limit input { width: 64px; }
+.pr-scheduling { margin-top: 10px; font-size: var(--text-xs); color: var(--text-2); }
+.pr-scheduling summary, .pr-advanced summary { cursor: pointer; }
+.pr-create-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pr-create-actions button { font-size: 12px; min-height: 32px; }
+.pr-create-actions button:last-child { color: var(--accent-11); }
+.pr-enabled { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 16px; }
+.pr-advanced { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pr-advanced > summary { font-size: var(--text-sm); margin-bottom: 16px; }
+.pr-advanced > summary > span { margin-left: 10px; color: var(--text-3); font-size: var(--text-xs); }
+.professional-roles button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 620px) { .pr-gallery { grid-template-columns: minmax(0, 1fr); } .pr-heading { flex-wrap: wrap; } .pr-role-heading { align-items: flex-start; flex-wrap: wrap; } .pr-role-heading strong { overflow-wrap: anywhere; } .pr-advanced > summary > span { display: block; margin: 4px 0 0; } }
+@container (max-width: 480px) { .pr-gallery { grid-template-columns: minmax(0, 1fr); } }

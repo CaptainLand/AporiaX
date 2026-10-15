@@ -3,6 +3,7 @@ import {
   getRouteToolMeta,
   updateRunAssistant,
 } from "../p0-model.js";
+import { agentDisplayName } from '../../shared/agent-identity.js';
 
 export const PURE_TASK_EVENT_TYPES = new Set([
   "mcp.server.failed",
@@ -150,16 +151,7 @@ export function reduceHarnessTaskEvent(
       language,
       event.capability,
     );
-    const roleLabel =
-      event.role === "review"
-        ? tr("审查", "Review")
-        : event.role === "verify"
-          ? tr("验证", "Verify")
-          : event.role === "builder"
-            ? tr("构建", "Builder")
-            : event.role === "explore" || !event.role
-              ? tr("探索", "Explore")
-              : event.role;
+    const roleLabel = agentDisplayName({ role: event.role || 'explore', profileId: event.profileId, profileName: event.profileName }, language);
     const startedAt = now();
     return updateRunAssistant(tasks, run, (message) => ({
       ...message,

@@ -1,0 +1,6 @@
+.conversation-selection-scope { display: contents; }
+.conversation-selection-menu { position: fixed; z-index: 240; width: min(244px, calc(100vw - 16px)); padding: 5px; border: 1px solid var(--gray-6); border-radius: var(--radius-md); background: var(--bg-app); color: var(--text-1); box-shadow: var(--shadow-lg); font: var(--text-sm)/1.5 var(--font-sans); }
+.conversation-selection-menu button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; padding: 7px 10px; text-align: left; color: inherit; background: transparent; border-radius: var(--radius-sm); cursor: pointer; }
+.conversation-selection-menu button:hover, .conversation-selection-menu button:focus-visible { background: var(--gray-3); }
+.conversation-selection-menu small { display: block; margin: 5px 10px; color: var(--text-3); font-size: var(--text-xs); }
+.conversation-selection-menu p { margin: 6px 10px; color: var(--red-11); font-size: var(--text-xs); }

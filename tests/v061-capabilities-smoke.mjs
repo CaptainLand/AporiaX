@@ -35,7 +35,9 @@ try {
     second = manager.read({ processId: started.processId, cursor: first.cursor });
   }
   assert.match(second.output, /echo:hello/);
-  assert.equal((await manager.kill(started.processId)).status, "stopping");
+  assert(["stopping", "exited"].includes((await manager.kill(started.processId)).status));
+  for (let attempt = 0; attempt < 40 && manager.read({ processId: started.processId }).status !== "exited"; attempt++) await wait(30);
+  assert.equal(manager.read({ processId: started.processId }).status, "exited", "killed process must actually exit");
 } finally {
   await manager.closeAll();
 }

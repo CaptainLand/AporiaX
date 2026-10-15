@@ -4,14 +4,30 @@ import { resolve } from "node:path";
 
 const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
+export const runtimeRequestTrace = () => storage.getStore()?.requestTrace || {};
 export const runtimeRunControl = () => storage.getStore()?.control || null;
+// Shared by async child workers, never by unrelated runs or accounts.
+export function runtimeRunState(key, initialize) {
+  const context = storage.getStore();
+  if (!context) return null;
+  context.runState ||= new Map();
+  if (!context.runState.has(key)) context.runState.set(key, initialize());
+  return context.runState.get(key);
+}
+export function runtimeRecoveryCheckpoint(scopeId) {
+  const checkpoints = storage.getStore()?.requestCheckpoints;
+  const value = checkpoints?.[scopeId];
+  if (checkpoints) delete checkpoints[scopeId]; // Restore once; new loop requests need new identities.
+  return value;
+}
+export const runtimeRecoveryContext = (scopeId) => storage.getStore()?.recoveryContexts?.[scopeId];
 export async function waitForRuntimeResume(signal = storage.getStore()?.signal) {
   await runtimeRunControl()?.waitIfPaused(signal);
 }
 export const runtimeRecoveryDirectory = () => storage.getStore()?.recoveryDirectory || null;
 export const runtimeEvidenceStore = () => storage.getStore()?.evidenceStore || null;
 export async function saveRuntimeCheckpoint(checkpoint) {
-  await storage.getStore()?.checkpoint(checkpoint);
+  await storage.getStore()?.checkpoint?.(checkpoint);
 }
 export async function saveRuntimeContext(scopeId, state) {
   const context = storage.getStore();
@@ -22,7 +38,8 @@ export async function saveRuntimeContext(scopeId, state) {
   await context.contextGate;
 }
 // Unknown tools, MCP calls and process tools are conservatively effectful.
-const READ_ONLY = new Set(["read_skill_resource", "read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "wait_process", "present_to_user", "read_conversation_history", "mcp_search_tools", "mcp_read_result", "task_brief", "replan_strategy"]);
+const READ_ONLY = new Set(["search_skills", "read_skill_resource", "read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "wait_process", "present_to_user", "read_conversation_history", "mcp_search_tools", "mcp_read_result", "task_brief", "replan_strategy"]);
+READ_ONLY.add('list_agent_roles');
 export const isReadOnlyNativeTool = (name) => READ_ONLY.has(name);
 function stableInput(value) {
   if (Array.isArray(value)) return value.map(stableInput);
@@ -33,7 +50,7 @@ function stableInput(value) {
 // file mutation. They remain journaled and keep normal tool permissions.
 const REPLAY_SAFE = new Set(["browser_open", "browser_close"]);
 export const isReplaySafeNativeTool = (name) => REPLAY_SAFE.has(name);
-const FILE_MUTATIONS = new Set(["write_file", "apply_patch", "delete_file", "create_directory"]);
+const FILE_MUTATIONS = new Set(["write_file", "apply_patch", "cleanup_temporary_check", "delete_file", "create_directory"]);
 function sameTarget(previous, tool, input, context, scope) {
   if ((previous.scope || null) !== (scope || null)) return false;
   if (!FILE_MUTATIONS.has(previous.tool) || !FILE_MUTATIONS.has(tool) || !previous.target || !input?.path) return false;
@@ -126,8 +143,8 @@ export async function executeDurableTool(tool, input, execute, requestApproval, 
   }
   const value = result?.modelResult ?? result;
   const receipt = { ...intent,
-    state: value?.error || value?.timedOut ? (REPLAY_SAFE.has(tool) ? "failed" : "uncertain") : "confirmed",
-    outcome: { path: value?.path, exitCode: value?.exitCode, error: value?.error, sha256: value?.sha256,
+    state: value?.error || value?.timedOut || value?.isError === true ? (REPLAY_SAFE.has(tool) ? "failed" : "uncertain") : "confirmed",
+    outcome: { path: value?.path, exitCode: value?.exitCode, error: value?.error || (value?.isError === true ? "MCP_TOOL_ERROR" : undefined), sha256: value?.sha256,
       processId: value?.processId, sessionId: value?.sessionId,
       summary: String(value?.summary || value?.message || value?.stdout || "").slice(0, 1000) },
   };

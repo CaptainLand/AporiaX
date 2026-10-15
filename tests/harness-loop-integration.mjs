@@ -67,14 +67,37 @@ try {
     }, { permission: "read-only" });
     assert.equal(result.status, "completed", result.content); assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD");
   });
-  await test("real main loop stops at an explicit repeated-evidence budget", async () => {
+  await test("repeated-evidence budget closes tools but allows one final result explanation", async () => {
     const { result, requests, events } = await fixture((_body, request) => toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]), { loopPolicy: { maxRepeatedEvidence: 6 } });
-    assert.equal(result.status, "blocked", result.content); assert.match(result.content, /LOOP_NO_PROGRESS/);
-    assert.equal(requests, 6); assert.equal(events.filter((event) => event.type === "tool.completed").length, 6);
+    assert.equal(result.status, "blocked", result.content); assert.match(result.content, /Repeated actions/);
+    assert.equal(requests, 7); assert.equal(events.filter((event) => event.type === "tool.completed").length, 6);
+    assert.equal(events.filter((event) => event.type === "completion.summary").length, 1);
   });
-  await test("default progress policy remains advisory rather than cancelling work", async () => {
-    const { result, requests } = await fixture((_body, request) => request <= 12 ? toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]) : sse({ content: "No new evidence; report blocker." }));
+  await test("explicit zero progress budget keeps the advisory opt-out", async () => {
+    const { result, requests } = await fixture((_body, request) => request <= 12 ? toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]) : sse({ content: "No new evidence; report blocker." }), { loopPolicy: { maxRepeatedEvidence: 0 } });
     assert.equal(result.status, "completed", result.content); assert.equal(requests, 13); assert.equal(result.loopMetrics.noProgressWarnings, 4);
+  });
+  await test("a provider cannot bypass the result-only boundary by fabricating a write", async () => {
+    const { result, requests, workspace } = await fixture((body, request) => {
+      if (request <= 2) return toolResponse([call('repeat-' + request, 'read_file', { path: 'a.txt' })]);
+      assert.equal(request, 3, 'Only one result-only request is allowed');
+      assert.equal(body.tools, undefined);
+      return toolResponse([call('forbidden-write', 'write_file', { path: 'a.txt', content: 'FORBIDDEN' })]);
+    }, { loopPolicy: { maxRepeatedEvidence: 2 } });
+    assert.equal(requests, 3); assert.equal(result.status, 'blocked');
+    assert.equal(result.replyDelivered, true); assert.equal(result.steps.length, 2);
+    assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'OLD');
+    assert.match(result.content, /Remaining work/);
+  });
+  await test("a real provider error during result-only delivery remains an error without more execution", async () => {
+    const { result, requests, workspace } = await fixture((body, request) => {
+      if (request <= 2) return toolResponse([call('repeat-' + request, 'read_file', { path: 'a.txt' })]);
+      assert.equal(body.tools, undefined); assert.equal(request, 3);
+      return new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), { status: 401, headers: { 'content-type': 'application/json' } });
+    }, { loopPolicy: { maxRepeatedEvidence: 2 } });
+    assert.equal(result.status, 'failed'); assert.equal(result.error, true); assert.equal(result.replyDelivered, false);
+    assert.equal(requests, 3); assert.equal(result.steps.length, 2);
+    assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'OLD');
   });
   await test("real main loop preserves both parts of a bounded output continuation", async () => {
     const { result, requests } = await fixture((_body, request) => request === 1 ? sse({ content: "FIRST_PART" }, "length") : sse({ content: "SECOND_PART" }));
@@ -83,7 +106,9 @@ try {
   });
   await test("truncated side-effecting calls never reach the native executor", async () => {
     const { result, workspace, requests } = await fixture(() => sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a.txt","content":' } }] }, "length"));
-    assert.equal(result.status, "failed"); assert.equal(requests, 1);
+    // A complete stream with truncated tool JSON gets one inference repair;
+    // neither incomplete call may reach the executor, even if repair truncates.
+    assert.equal(result.status, "failed"); assert.equal(requests, 2);
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD"); assert.equal(result.steps.length, 0);
   });
   await test("invalid terminated call is corrected once before normal tool execution", async () => {
@@ -96,15 +121,21 @@ try {
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "VALID");
   });
   await test("real context recovery shrinks old history without removing user constraints", async () => {
-    const sizes = [];
+    const sizes = []; let summaries = 0;
     const messages = [{ role: "user", content: "MUST_NOT_UPLOAD", aporiaSource: "human", aporiaPinned: true }, ...Array.from({ length: 30 }, (_, i) => ({ role: "assistant", content: "old-" + i + "中".repeat(900) })), { role: "user", content: "continue" }];
-    const { result, requests } = await fixture((body, request) => {
+    const { result, requests } = await fixture((body) => {
+      if (body.messages[0]?.content.includes("compressing historical conversation")) {
+        summaries++;
+        const data = JSON.parse(body.messages[1].content);
+        return sse({ content: JSON.stringify({ revision: data.revision, covered_ids: data.sources.map(source => source.id),
+          summary: "Historical evidence retained as reference; no upload or other operation was authorized.", constraints: [] }) });
+      }
       sizes.push(JSON.stringify(body.messages).length);
       assert(body.messages.some((message) => message.content === "MUST_NOT_UPLOAD"));
-      if (request === 1) return new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 });
+      if (sizes.length === 1) return new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 });
       return sse({ content: "Finished with original constraints." });
-    }, { messages });
-    assert.equal(result.status, "completed", result.content); assert.equal(requests, 2); assert(sizes[1] < sizes[0]);
+    }, { messages, provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 128000 }] } });
+    assert.equal(result.status, "completed", result.content); assert.equal(sizes.length, 2); assert.equal(requests, 2 + summaries); assert(summaries > 0); assert(sizes[1] < sizes[0]);
     assert.equal(result.loopMetrics.recoveries, 1);
     return { mockProvider: true, requestCharactersBefore: sizes[0], requestCharactersAfter: sizes[1], requests };
   });

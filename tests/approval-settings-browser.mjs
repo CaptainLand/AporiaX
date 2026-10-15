@@ -34,6 +34,25 @@ try {
         await page.goto(server.resolvedUrls.local[0] + `tests/fixtures/approval-settings.html?width=${width}&lang=${lang}&theme=${theme}`);
         const approval = page.locator('[aria-label="' + (lang === "en" ? "Approval mode" : "审批模式") + '"]');
         await approval.locator("button").first().waitFor();
+        if (theme === "dark") {
+          const appearance = await page.locator(".settings-panel").evaluate(panel => {
+            const root = getComputedStyle(document.documentElement);
+            const resolveColor = variable => {
+              const probe = document.createElement("span"); probe.style.color = root.getPropertyValue(variable);
+              panel.appendChild(probe); const color = getComputedStyle(probe).color; probe.remove(); return color;
+            };
+            return { background: getComputedStyle(panel).backgroundColor, expected: resolveColor("--bg-app"),
+              groups: [...panel.querySelectorAll(".settings-group")].map(group => getComputedStyle(group).backgroundColor),
+              controls: [...panel.querySelectorAll(".segmented-control")].map(control => ({ background: getComputedStyle(control).backgroundColor,
+                activeBackground: getComputedStyle(control.querySelector("button.active")).backgroundColor,
+                activeColor: getComputedStyle(control.querySelector("button.active")).color })),
+              subtle: resolveColor("--bg-subtle"), selected: resolveColor("--gray-3"), accent: resolveColor("--accent-11"),
+            };
+          });
+          assert.equal(appearance.background, appearance.expected, "Dark task settings match the main panel rather than a gray sheet");
+          assert(appearance.groups.every(color => color === appearance.expected), "Task setting groups keep a flat surface");
+          assert(appearance.controls.every(control => control.background === appearance.subtle && control.activeBackground === appearance.selected && control.activeColor === appearance.accent), "Subtle segmented surfaces with a clear selected state");
+        }
         const layout = await approval.evaluate((el) => ({
           direction: getComputedStyle(el).flexDirection,
           width: el.getBoundingClientRect().width,

@@ -1,0 +1,35 @@
+.scroll-fade-surface {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  --fade-edge-height: 18px;
+  --fade-edge-color: var(--bg-app);
+}
+.task-list-surface {
+  --fade-edge-height: 16px;
+  --fade-edge-color: var(--bg-navigation);
+}
+.scroll-fade-surface::before,
+.scroll-fade-surface::after {
+  position: absolute;
+  z-index: 4;
+  right: 12px;
+  left: 0;
+  height: min(var(--fade-edge-height), 15%);
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+}
+.scroll-fade-surface::before {
+  top: 0;
+  background: linear-gradient(to bottom, var(--fade-edge-color), transparent);
+}
+.scroll-fade-surface::after {
+  bottom: 0;
+  background: linear-gradient(to top, var(--fade-edge-color), transparent);
+}
+.scroll-fade-surface[data-fade-top="true"]::before,
+.scroll-fade-surface[data-fade-bottom="true"]::after { opacity: 1; }

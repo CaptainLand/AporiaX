@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { useI18n } from "./i18n";
 import { attachmentImageSrc } from "./attachments.js";
+import { RoleChangeApproval } from './settings/RoleChangeApproval.jsx';
+import { useFileContextMenu } from './workbench/use-file-context-menu.js';
 
 const CODE_EXTENSIONS = new Set([
   "c",
@@ -249,8 +251,9 @@ export function ApprovalCard({ approval, onRespond, responding }) {
       </header>
       <div className="approval-command">
         <code>{approval.command}</code>
-        <span>{tr("工作目录 {path}", "Working directory {path}", { path: approval.cwd || "." })}</span>
+        <span>{approval.kind === 'agent-role-change' ? tr('设置 · 全局专业角色', 'Settings · Global professional roles') : tr("工作目录 {path}", "Working directory {path}", { path: approval.cwd || "." })}</span>
       </div>
+      {approval.kind === 'agent-role-change' && <RoleChangeApproval description={approval.description} />}
       {approval.kind === "recovery-reconciliation" && approval.unresolved?.length > 0 && (
         <div className="approval-warning">
           <div>
@@ -273,7 +276,9 @@ export function ApprovalCard({ approval, onRespond, responding }) {
         ) : (
           <AlertTriangle size={14} />
         )}
-        {approval.kind === "execute"
+        {approval.kind === 'agent-role-change'
+          ? tr('更改将长期保存，并用于后续新委派；正在运行的 Agent 和历史记录保留。不会扩大父任务权限。每次更改都需要单独确认。', 'Changes persist for future delegations. Running agents and history are kept. Parent permissions stay unchanged. Each change needs its own confirmation.')
+          : approval.kind === "execute"
           ? approval.sandbox?.available
             ? tr(
                 "命令将在一次性 OS 容器中运行：默认断网、根文件系统只读，仅当前工作区可写。",
@@ -818,6 +823,7 @@ export function FileExplorerPanel({
   onOpenFile,
   renderPreview,
   headerActions,
+  onAddToChat,
 }) {
   const { tr } = useI18n();
   const [entriesByDirectory, setEntriesByDirectory] = useState({});
@@ -842,6 +848,8 @@ export function FileExplorerPanel({
       !preview.truncated,
   );
   const dirty = editable && editorContent !== savedContent;
+  const fileContextMenu = useFileContextMenu({ workspacePath, onNotice, onAddToChat,
+    onOpenFile: path => onOpenFile ? onOpenFile(path) : void openFile({ path, type: 'file' }) });
 
   const loadDirectory = async (directory = ".", { reset = false } = {}) => {
     if (!workspacePath || !window.desktop?.workspace) {
@@ -1074,9 +1082,12 @@ export function FileExplorerPanel({
       }}
     >
       <header>
-        <div>
-          <span>{tr("工作区", "Workspace")}</span>
-          <strong>{tr("文件与代码", "Files and code")}</strong>
+        <div className="workspace-browser-heading">
+          <span className="workspace-browser-mark"><FolderOpen size={18} /></span>
+          <div className="workspace-browser-copy">
+            <strong>{tr("工作区", "Workspace")}</strong>
+            <span title={workspacePath}>{workspacePath || tr("尚未选择工作区", "No workspace selected")}</span>
+          </div>
         </div>
         <div>
           {headerActions}
@@ -1111,6 +1122,12 @@ export function FileExplorerPanel({
               <button
                 className={entry.path === selectedPath ? "active" : ""}
                 key={entry.path}
+                aria-expanded={entry.type === "directory" ? expandedDirectories.has(entry.path) : undefined}
+                aria-pressed={entry.type === "file" ? entry.path === selectedPath : undefined}
+                onContextMenu={event => void fileContextMenu(event, entry)}
+                onKeyDown={event => {
+                  if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') void fileContextMenu(event, entry);
+                }}
                 style={{ paddingLeft: `${12 + entry.depth * 13}px` }}
                 type="button"
                 title={

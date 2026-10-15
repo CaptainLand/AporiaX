@@ -43,8 +43,8 @@ try {
       assert.equal(approvals, 0, "full auto must reach the executor without asking the user");
       assert.equal(await readFile(join(root, "core.js"), "utf8"), "export const ready = true;\n");
       assert.ok(reviews >= 2, "skipping executable tests must retain independent static review");
-      if (waived) { assert.match(result.content, /已交付·未验证/); assert.equal(result.selfCheck.verification.waived, true); assert.equal(result.selfCheck.verification.passed, false); }
-      else { assert.match(result.content, /已交付·验证不可用/); assert.equal(result.selfCheck.verification.passed, false); assert.equal(result.selfCheck.verification.results.length, 1); }
+      if (waived) { assert.match(result.content, /验证说明：当前版本尚未完成运行验证/); assert.equal(result.selfCheck.verification.waived, true); assert.equal(result.selfCheck.verification.passed, false); }
+      else { assert.match(result.content, /验证说明：实现已保存，执行环境未能完成检查/); assert.equal(result.selfCheck.verification.passed, false); assert.equal(result.selfCheck.verification.results.length, 1); }
     } finally { clearTimeout(timeout); controller.abort(); }
   }
   console.log("Actual runtime full-auto wiring, saved work on unavailable verification, explicit unverified delivery with static review: PASS");

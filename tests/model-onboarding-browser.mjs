@@ -24,7 +24,7 @@ try {
     localStorage.setItem("aporiax.language.v1", "zh-CN");
     localStorage.setItem("aporiax.session-ui.v1", JSON.stringify({ welcomeDismissed: true }));
     const signedIn = { status: "authenticated", profile: { displayName: "测试账号", email: "test@example.invalid" }, quota: { remainingRatio: .8 }, models: cloud.models, device: { remoteEnabled: false } };
-    window.fixture = { providers: [cloud], calls: [], savedTasks: [], loginMode: "success", account: { status: "anonymous" } };
+    window.fixture = { providers: [cloud], calls: [], savedTasks: [], listeners: [], loginMode: "success", account: { status: "anonymous" } };
     const state = window.fixture;
     window.desktop = {
       theme: { set: async () => {} },
@@ -39,7 +39,7 @@ try {
         refresh: async () => state.account,
       },
       tasks: { load: async () => [], save: async (tasks) => { state.savedTasks = tasks; } },
-      harness: { run: async (input) => { state.calls.push({ type: "run", input }); return { content: "完成", status: "completed", steps: [], changes: [], route: [] }; }, onEvent: () => () => {}, recoverableRuns: async () => [] },
+      harness: { run: async (input) => { state.calls.push({ type: "run", input }); return { content: "完成", status: "completed", steps: [], changes: [], route: [] }; }, onEvent: (listener) => { state.listeners.push(listener); return () => { state.listeners = state.listeners.filter(item => item !== listener); }; }, recoverableRuns: async () => [] },
       sandbox: { status: async () => ({ localAvailable: true }) },
       workbench: { request: async ({ action }) => action === "list" ? [] : true, subscribe: () => () => {} },
       sideChat: { request: async ({ action }) => action === "load" ? { messages: [] } : {}, subscribe: () => () => {} },
@@ -60,7 +60,8 @@ try {
     assert.equal(await page.locator(".model-menu .model-choice.selected").count(), 1);
     console.log("REPRODUCED 0.9.9 baseline: anonymous new task auto-selects Cloud and both Cloud models are enabled.");
   } else {
-    assert.equal(await choices.count(), 2);
+    assert.equal(await choices.count(), 1);
+    assert.match(await choices.first().innerText(), /V4\.1 Flash/);
     assert.equal(await choices.first().isDisabled(), true);
     assert.equal(await choices.last().isDisabled(), true);
     assert.equal(await page.locator(".model-menu .model-choice.selected").count(), 0);
@@ -104,6 +105,64 @@ try {
     assert.match(await page.locator(".model-choice.selected").innerText(), /own-model/, "Login must not change a custom selection");
     await choices.first().click();
     await page.keyboard.press("Escape");
+    // A successful login is independent from a usable server model catalog.
+    const refreshAccount = async () => {
+      await page.locator(".local-account-profile").click();
+      await page.getByRole("button", { name: "刷新", exact: true }).click();
+      // The separately configured Account center action can stay disabled.
+      // Wait for Refresh itself, not whichever action happens to be first.
+      await page.waitForFunction(() => !document.querySelector(".local-account-actions button:not(.local-account-web)").disabled);
+      assert.equal(await page.locator(".local-account-remote").count(), 0);
+      await page.locator(".local-account-profile").click();
+      await page.getByRole("button", { name: "选择模型", exact: true }).click();
+    };
+    await page.evaluate(() => { window.fixture.catalog = window.fixture.account.models; window.fixture.account = { ...window.fixture.account, models: [], capabilities: { remote: { supported: false } } }; });
+    await refreshAccount();
+    assert.equal(await choices.first().isDisabled(), true, "Empty server catalog cannot be enabled by login");
+    assert.equal(await page.locator(".local-account-profile").count(), 1, "Model unavailability must not log out the account");
+    assert.equal(await draft.inputValue(), "登录和配置之前保留这段草稿");
+    await mkdir(".tmp/model-onboarding", { recursive: true });
+    await page.locator(".model-menu").screenshot({ path: ".tmp/model-onboarding/cloud-empty-catalog.png" });
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.fixture.account = { ...window.fixture.account, models: window.fixture.catalog, gatewayCapabilities: { protocolVersion: 1, models: window.fixture.catalog.map(m => ({ id: m.id, available: false, reason: "QUOTA_UNAVAILABLE" })) } }; });
+    await refreshAccount();
+    assert.equal(await choices.first().isDisabled(), true, "Server quota denial remains disabled");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.fixture.account = { ...window.fixture.account, gatewayCapabilities: { protocolVersion: 1, models: window.fixture.catalog.map(m => ({ id: m.id, available: true })) } }; });
+    await refreshAccount();
+    assert.equal(await choices.first().isDisabled(), false);
+    await page.keyboard.press("Escape");
+    // Actual-usage quota used to keep the model selectable after exhaustion.
+    // Billing now refreshes selection, without changing the in-flight gateway path.
+    await page.evaluate(() => {
+      const state = window.fixture;
+      state.account = { ...state.account, quota: { remainingRatio: 0 }, gatewayCapabilities: {
+        protocolVersion: 1, modelGateway: { quotaAdmission: "actual-usage-v1" },
+        models: state.catalog.map(m => ({ id: m.id, supportsImages: true, available: false, reason: "QUOTA_UNAVAILABLE",
+          quota: { source: "weekly", remainingMicros: 0, exhausted: true } })) } };
+      state.listeners.forEach(listener => listener({ type: "response.cloud.billing" }));
+    });
+    await page.getByRole("button", { name: "选择模型", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".model-menu .model-choice").disabled);
+    assert.match(await choices.first().innerText(), /Cloud 周额度已用完/);
+    assert.equal(await choices.nth(1).isDisabled(), false, "Own API remains selectable at Cloud zero");
+    assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), true);
+    await draft.press("Enter");
+    assert.equal(await draft.inputValue(), "登录和配置之前保留这段草稿");
+    assert.equal(await page.evaluate(() => window.fixture.calls.filter(c => c.type === "run").length), 0);
+    await page.locator(".model-menu").screenshot({ path: ".tmp/model-onboarding/cloud-quota-exhausted.png" });
+    await page.evaluate(() => {
+      const state = window.fixture;
+      // IPC delivers a new snapshot, not in-place mutations of React state.
+      state.account = { ...state.account, quota: { remainingMicros: 100, remainingRatio: .0001, availableRatio: 0 },
+        gatewayCapabilities: { ...state.account.gatewayCapabilities, models: state.account.gatewayCapabilities.models.map(m => ({
+          ...m, quota: { source: "weekly", remainingMicros: 100, exhausted: false } })) } };
+      state.listeners.forEach(listener => listener({ type: "response.cloud.billing" }));
+    });
+    await page.waitForFunction(() => !document.querySelector(".model-menu .model-choice").disabled);
+    assert.match(await page.locator(".model-choice.selected").innerText(), /V4\.1 Flash/, "Quota refresh never changes the selected provider");
+    assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), false);
+    await page.keyboard.press("Escape");
     await page.locator(".local-account-profile").click();
     await page.getByRole("button", { name: /退出登录/ }).click();
     await page.waitForFunction(() => document.querySelector(".composer-run-actions .send-button").disabled);
@@ -125,7 +184,7 @@ try {
     await page.getByRole("button", { name: "侧聊模型", exact: true }).click();
     const sideMenu = page.getByRole("dialog", { name: "选择侧聊模型", exact: true });
     assert.equal(await sideMenu.getByRole("option").first().isDisabled(), true);
-    assert.equal(await sideMenu.getByRole("option").nth(1).isDisabled(), true);
+    assert.equal(await sideMenu.getByRole("option").nth(1).isDisabled(), false, "Own API stays available after Cloud logout");
     const search = sideMenu.getByRole("textbox", { name: "搜索模型", exact: true });
     await search.fill("DeepSeek");
     await search.press("Enter");

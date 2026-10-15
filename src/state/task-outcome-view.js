@@ -5,9 +5,17 @@ export function latestVisibleAssistant(messages = []) {
     message.role === "assistant" && !message.supersededByRetryId && message.kind !== "anchor-restore");
 }
 
+// A displayed completion means a reply was delivered, not that verification
+// passed. Preserve the original outcome and evidence for runtime decisions.
+export function hasTaskReply(message) {
+  return Boolean(message && message.replyDelivered !== false && !message.error &&
+    ["completed", "partial", "blocked", "needs_input"].includes(message.status) &&
+    typeof message.content === "string" && message.content.trim());
+}
+
 export function isHistoricalFailure(message, latest) {
   return message.role === "assistant" && message.id !== latest?.id &&
-    Boolean(message.error || ["failed", "blocked", "interrupted"].includes(message.status));
+    !hasTaskReply(message) && Boolean(message.error || ["failed", "blocked", "interrupted"].includes(message.status));
 }
 
 export function savedOutcomeFiles(message) {

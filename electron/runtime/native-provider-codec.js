@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { claudeReasoningProfile } from "../../shared/model-reasoning.js";
 
 export const PROVIDER_PROTOCOLS = Object.freeze(["chat-completions", "deepseek-chat", "responses", "anthropic-messages"]);
 export function normalizeProviderProtocol(value) {
@@ -55,7 +56,10 @@ export function compileProviderWire(provider, body) {
   const messages = body.messages || [];
   if (["chat-completions", "deepseek-chat"].includes(protocol)) {
     for (const message of messages) if (message.aporiaNative) nativeState(message, binding, protocol);
-    const deepseek = protocol === "deepseek-chat" || provider.vendor === "deepseek";
+    // Cloud is an auth transport, not a different model protocol. Bind the
+    // exception to managed DeepSeek, never an unrelated Cloud model/vendor.
+    const deepseek = protocol === "deepseek-chat" || provider.vendor === "deepseek" ||
+      (provider.kind === "aporia-cloud" && body.model === "aporia-cloud-default");
     return { protocol, binding, url: `${endpoint}/chat/completions`,
       headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
       body: { ...body, messages: messages.map((m) => removePrivate(m, { deepseek })), stream: true,
@@ -113,9 +117,11 @@ export function compileProviderWire(provider, body) {
       append(message.role, content);
     }
   }
-  const thinking = Boolean(body.reasoning_effort || body.thinking?.type === "enabled");
+  const profile = claudeReasoningProfile(body.model);
+  if (profile && body.reasoning_effort && !profile.supportedEfforts.includes(body.reasoning_effort)) throw invalid("PROVIDER_REASONING_EFFORT_INVALID");
+  const thinking = Boolean(profile?.thinkingAlwaysOn || body.reasoning_effort || body.thinking?.type === "enabled");
   const max = maxTokens(provider, body);
-  const manual = provider.anthropicThinking === "manual";
+  const manual = !profile?.thinkingAlwaysOn && provider.anthropicThinking === "manual";
   const budget = provider.thinkingBudget ?? 2048;
   if (thinking && manual && (!Number.isSafeInteger(budget) || budget < 1024 || budget >= max)) throw invalid("ANTHROPIC_THINKING_BUDGET_INVALID");
   return { protocol, binding, url: `${endpoint}/messages`,
@@ -123,7 +129,7 @@ export function compileProviderWire(provider, body) {
     body: { model: body.model, messages: nativeMessages, ...(system.length ? { system } : {}), stream: true, max_tokens: max,
       ...(tools.length ? { tools, tool_choice: choice && !["auto", "none", "required"].includes(choice) ? { type: "tool", name: choice } : { type: choice === "required" ? "any" : choice || "auto" } } : {}),
       ...(thinking ? manual ? { thinking: { type: "enabled", budget_tokens: budget } }
-        : { thinking: { type: "adaptive" }, output_config: { effort: body.reasoning_effort || "high" } } : {}) } };
+        : { thinking: { type: "adaptive" }, output_config: { effort: body.reasoning_effort || profile?.defaultEffort || "high" } } : {}) } };
 }
 
 async function* sseEvents(stream) {
@@ -151,12 +157,14 @@ const wireEvent = (value) => new TextEncoder().encode(`data: ${JSON.stringify(va
  * blocks only in provider-bound private continuation state (never UI deltas).
  * Tools are emitted only after the native terminal event has been received.
  */
-export function normalizeNativeResponse(response, wire) {
+export function normalizeNativeResponse(response, wire, { observe } = {}) {
   if (!response.ok || !response.body || !["responses", "anthropic-messages"].includes(wire.protocol)) return response;
   async function* normalize() {
     let terminal = false, started = false, content = "", usage = null, reason = null, finalItems = null;
     const blocks = new Map(), stopped = new Set(), responseItems = new Map();
     for await (const event of sseEvents(response.body)) {
+      // Observe already-decoded native events; never consume the body twice.
+      try { observe?.(event); } catch { /* diagnostics never change inference */ }
       // Even thinking/ping activity resets the common parser's idle watchdog.
       yield wireEvent({ choices: [] });
       if (event.type === "error" || event.type === "response.failed") {

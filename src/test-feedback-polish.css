@@ -31,7 +31,7 @@
 
 .assistant-message:not(:has(.aporiax-run-duration.running))
   .assistant-progress-journal:focus-visible {
-  outline: 2px solid rgba(87, 148, 190, 0.42);
+  outline: 2px solid color-mix(in srgb, var(--accent-9) 42%, transparent);
   outline-offset: 2px;
 }
 
@@ -42,8 +42,8 @@
 }
 
 .model-menu > .model-menu-heading {
-  font-size: 11.2px !important;
-  font-weight: 620 !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: var(--weight-semibold) !important;
 }
 
 .model-menu-source-group {
@@ -52,16 +52,16 @@
 
 .model-menu-source-group > .model-menu-heading {
   margin-top: 1px;
-  font-size: 10.7px !important;
-  font-weight: 650 !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: var(--weight-semibold) !important;
   letter-spacing: 0.01em;
 }
 
 .model-menu-source-note {
   margin: 2px 8px 7px !important;
-  color: #8d8795 !important;
-  font-size: 9.5px !important;
-  font-weight: 450 !important;
+  color: var(--gray-10) !important;
+  font-size: var(--text-2xs) !important;
+  font-weight: var(--weight-regular) !important;
   line-height: 1.35 !important;
 }
 
@@ -83,14 +83,14 @@
 }
 
 .model-menu .model-choice.compact .model-choice-name {
-  font-size: 12px !important;
+  font-size: var(--text-xs) !important;
   line-height: 1.25;
 }
 
 .model-menu .model-choice.compact small {
   overflow: hidden;
-  color: #88818f !important;
-  font-size: 9.4px !important;
+  color: var(--gray-10) !important;
+  font-size: var(--text-2xs) !important;
   line-height: 1.35 !important;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -119,7 +119,7 @@
 .provider-manager-modal.embedded .provider-models-input {
   width: 100%;
   min-width: 0;
-  font-size: 12.1px !important;
+  font-size: var(--text-xs) !important;
 }
 
 .provider-manager-modal.embedded .provider-form-grid label > span,
@@ -127,7 +127,7 @@
 .provider-manager-modal.embedded .provider-model-heading > div > span,
 .provider-manager-modal.embedded .provider-detection-summary,
 .provider-manager-modal.embedded .provider-list small {
-  font-size: 10.1px !important;
+  font-size: var(--text-2xs) !important;
   line-height: 1.4 !important;
 }
 
@@ -191,7 +191,7 @@
     max-width: 100%;
     overflow-x: auto;
     border-right: 0 !important;
-    border-bottom: 1px solid rgba(100, 120, 145, 0.18);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent-9) 18%, transparent);
     gap: 6px;
   }
 
@@ -226,7 +226,7 @@
 
 :root[data-theme="dark"] .model-menu-source-note,
 :root[data-theme="dark"] .model-menu .model-choice.compact small {
-  color: #817989 !important;
+  color: var(--gray-10) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

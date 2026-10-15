@@ -13,14 +13,18 @@ export function TerminalPane({ tab, resource, workbench }) {
   const [session, setSession] = useState({ status: resource?.status, atBottom: true });
   const [preferences, setPreferences] = useState(terminalPreferences);
   const [appTheme, setAppTheme] = useState(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  const [themeRevision, setThemeRevision] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false), [query, setQuery] = useState(""), [found, setFound] = useState(null);
   const [menu, setMenu] = useState(null), [paste, setPaste] = useState(null), [rename, setRename] = useState(null);
   const [focused, setFocused] = useState(false), [uiError, setUiError] = useState("");
   const theme = preferences.theme === "auto" ? appTheme : preferences.theme;
   const exited = session.status === "exited";
   useEffect(() => {
-    const observer = new MutationObserver(() => setAppTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light"));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); return () => observer.disconnect();
+    const observer = new MutationObserver(() => {
+      setAppTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+      setThemeRevision(value => value + 1);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-custom-theme", "style"] }); return () => observer.disconnect();
   }, []);
   useEffect(() => {
     if (!resource || !host.current || !sameScope(resource, workbench.task)) return;
@@ -31,7 +35,7 @@ export function TerminalPane({ tab, resource, workbench }) {
     value.style(preferences, appTheme);
     return () => { off(); detach(); controller.current = null; };
   }, [tab.id, resource?.id, workbench.key]);
-  useEffect(() => controller.current?.style(preferences, appTheme), [preferences, appTheme]);
+  useEffect(() => controller.current?.style(preferences, appTheme), [preferences, appTheme, themeRevision]);
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
   useEffect(() => {
     if (!menu) return;
@@ -55,7 +59,7 @@ export function TerminalPane({ tab, resource, workbench }) {
   const action = (fn) => { setMenu(null); void fn(); };
   const stateText = exited ? tr("已退出", "Exited") + (session.exitCode != null ? ` · ${session.exitCode}` : "")
     : focused ? tr("可输入", "Input focused") : tr("Shell 已连接", "Shell connected");
-  return <section ref={root} className="terminal-pane" data-terminal-theme={theme} aria-label={tr("交互终端", "Interactive terminal")}
+  return <section ref={root} className="terminal-pane" data-terminal-theme={theme} data-terminal-follow-theme={preferences.theme === 'auto'} aria-label={tr("交互终端", "Interactive terminal")}
     onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && !event.target.closest("dialog")) { event.preventDefault(); event.stopPropagation(); setMenu(null); setSearchOpen(true); } }}
     onContextMenu={(event) => {
       if (event.target.closest("input,textarea,dialog")) return;
@@ -67,7 +71,7 @@ export function TerminalPane({ tab, resource, workbench }) {
       <span className="terminal-connection" data-exited={exited} title={stateText + " · " + tr("关闭标签会结束会话", "Closing the tab ends the session")} aria-label={stateText} />
       <button aria-label={tr("搜索终端", "Search terminal")} title="Ctrl+F" onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }}><Search size={15} /></button>
       <button aria-label={tr("中断", "Interrupt")} title={tr("Ctrl+C · 中断当前命令，保留 Shell", "Ctrl+C · Interrupt command, keep shell")} disabled={exited || !resource} onClick={async () => { await controller.current?.command({ action: "interrupt" }); controller.current?.term.focus(); }}><Square size={12} /></button>
-      <button aria-label={tr("终端菜单", "Terminal menu")} aria-expanded={Boolean(menu)} onClick={() => setMenu(menu ? null : { right: 8, top: 38 })}><Ellipsis size={17} /></button>
+      <button aria-label={tr("终端菜单", "Terminal menu")} aria-expanded={Boolean(menu)} onClick={() => setMenu(menu ? null : { right: 8, top: "calc(var(--pane-navigation-height) + 4px)" })}><Ellipsis size={17} /></button>
     </div>
     {searchOpen && <div className="terminal-search" role="search" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeSearch(); } }}>
       <Search size={14} /><input ref={searchRef} aria-label={tr("搜索终端输出", "Search terminal output")} value={query} placeholder={tr("搜索输出", "Find in output")}

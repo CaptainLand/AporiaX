@@ -31,23 +31,39 @@ approaches and questions are always labeled assertions, not user instructions or
 verification passes. Updates use an expected revision; superseding a decision
 retains its history. Invented tool IDs are rejected. Resumed evidence is historical.
 A fresh turn can inherit the same task/workspace-owned projection, not another
-task's brief. Original active human messages are pinned even if they predate the
-pinning metadata; only an explicit human reset revokes them.
+task's brief. Current-run human requests and explicit persistent constraints stay
+verbatim; older conversation may be represented by the rolling projection below.
+Only an explicit human reset revokes earlier requirements.
 
-At context pressure, an optional same-provider summary examines at most 12 old
-**public assistant updates**, 12,000 characters total. The output is bounded to
-2,048 tokens and eight entries. Each must quote an exact named source substring.
-This validates provenance, **not semantic correctness**. Invalid output leaves
-existing decisions unchanged. Cancellation/new guidance prevents stale submission.
-The attempt is persisted before the request and its usage is included. No hidden
-reasoning is summarized, no tools are executed and no second provider is used.
+At 80% of the usable context budget, a same-model rolling summary aims for 60%.
+Each request covers complete older exchanges: at most 64 public messages, 24K
+estimated input tokens (also capped to 70% of the current usable window), 90K
+serialized characters, and 3,072 output tokens. There are at most eight batches
+per model boundary; successful summaries can recur as a long task grows. Latest
+input, current-run guidance, explicit persistent constraints, images, recent
+tool pairs and system/project rules remain verbatim. An oversized protected
+input still reports a limit rather than silently dropping it.
+
+The output must cover every selected source ID; retained constraints must quote
+exact human-source text. This validates provenance, **not semantic correctness**.
+Invalid output leaves the working projection untouched. Cancellation/new guidance
+prevents stale submission. Attempts are persisted before inference and included
+in ordinary usage, with independent Cloud request identities. No hidden reasoning
+is summarized, no tools are executed and no second provider is used. The same
+failed batch is not retried automatically; two failures disable further summaries
+for that invocation. Original text remains in local history/run checkpoints and
+is paged with `read_conversation_history`. The ordinary next-turn handoff reuses
+only exact, task-owned history coverage; edited history invalidates that cache.
 
 Limits: 64 records, 180K serialized snapshot; active injected decisions have a
 14K-character budget and explicitly report omissions. The complete record remains
 available through `task_brief(read)` and the persisted result. Full capacity is an
-explicit error, not silent eviction. `loopPolicy.maxBriefSummaries` is 0–2,
-default 1; recovered attempts remain counted. This is not unlimited semantic
-memory, a vector index or a guarantee that a model will never forget.
+explicit error, not silent eviction. `loopPolicy.maxBriefSummaries: 0` still
+disables automatic paid summaries; positive legacy values enable the rolling
+policy above, not a lifetime one-summary limit. This is not unlimited semantic
+memory, a vector index or a guarantee that a model will never forget. Worker
+loops keep their existing deterministic compaction and shared bounded 413
+recovery; Main's delegation no longer re-injects archived historical requests.
 
 ## 2. Requirements have explicit acceptance predicates
 

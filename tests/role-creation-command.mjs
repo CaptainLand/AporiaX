@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { appendRoleCreationCommand } from '../shared/role-creation-command.js';
+import { parseMentionTokens } from '../shared/mention-tokens.js';
+assert.equal(appendRoleCreationCommand(''), '@新建专业角色 ');
+assert.equal(appendRoleCreationCommand('已有草稿'), '已有草稿\n@新建专业角色 ');
+assert.equal(appendRoleCreationCommand('@新建专业角色 我的需求'), '@新建专业角色 我的需求');
+assert.equal(parseMentionTokens('@新建专业角色 帮我做前端审查')[0].kind, 'skill');
+assert.equal(parseMentionTokens('@新建专业角色 帮我做前端审查')[0].value, 'create-professional-role');
+assert.equal(parseMentionTokens('@{新建专业角色}')[0].kind, 'file');
+assert.equal(parseMentionTokens('@新建专业角色 @README.md')[1].value, 'README.md');
+console.log('PASS role creation draft preserves content, deduplicates, and is not a file mention.');

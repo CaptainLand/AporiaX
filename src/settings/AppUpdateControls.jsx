@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArrowRight, Download, RefreshCw, X } from "lucide-react";
 import { useI18n } from "../i18n";
+import "./app-update-sidebar.css";
 
 function updateErrorText(tr, code) {
   if (code === "TASK_RUNNING") {
@@ -13,8 +14,10 @@ function updateErrorText(tr, code) {
     return tr("请先下载更新。", "Download the update first.");
   }
   if (code === "UNSUPPORTED_CHANNEL") {
-    return tr("便携版请打开 GitHub 下载页。", "Portable builds open the GitHub download page.");
+    return tr("便携版请打开下载页获取新包。", "Portable builds use the download page for a new package.");
   }
+  if (/UPDATE_.*MISMATCH/.test(code)) return tr("下载源的版本或校验信息不一致，已停止更新。请稍后重新检查。", "Update sources disagree on the version or checksum. Update stopped; check again later.");
+  if (code === "UPDATE_CHECK_REQUIRED") return tr("请先检查更新。", "Check for updates first.");
   return code;
 }
 
@@ -26,6 +29,54 @@ function primaryAction(status) {
   if (status.phase === "downloaded") return "install";
   if (status.phase === "downloading" || status.phase === "checking") return "";
   return "check";
+}
+
+export function AppUpdateSidebar() {
+  const { tr } = useI18n();
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    const api = window.desktop?.update;
+    if (!api?.status) return;
+    let active = true, received = false;
+    const unsubscribe = api.subscribe?.(next => { received = true; if (active) setStatus(next); });
+    void api.status().then(next => { if (active && !received) setStatus(next); }).catch(() => {});
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+  if (!status || status.channel === "dev" || (status.phase === "not-available" && !status.availableVersion)) return null;
+  const available = Boolean(status.availableVersion);
+  const ready = status.phase === "downloaded";
+  const label = ready ? tr("更新已就绪 · 重启安装", "Update ready · Restart")
+    : status.phase === "downloading" ? tr("正在下载更新", "Downloading update")
+    : status.phase === "checking" ? tr("正在检查更新", "Checking for updates")
+    : available ? tr("有新版本更新", "New version available")
+    : status.phase === "error" ? tr("更新检查失败 · 重试", "Update check failed · Retry")
+    : tr("检查更新", "Check for updates");
+  const act = async () => {
+    const api = window.desktop.update;
+    try {
+      const result = ready ? await api.install()
+        : available && status.channel === "portable" ? await api.openRelease()
+        : available && status.phase !== "error" ? await api.download()
+        : await api.check({ force: true });
+      if (result) setStatus(result);
+    } catch { setStatus(previous => ({ ...previous, phase: "error", busy: false, error: "UPDATE_ACTION_FAILED" })); }
+  };
+  return <div className="app-update-sidebar" aria-label={tr("应用更新", "App updates")}>
+    <button type="button" onClick={act} disabled={status.busy}>
+      {status.busy ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
+      <span><strong>{label}</strong><small>{available ? "v" + status.availableVersion : "v" + status.currentVersion}
+        {status.phase === "downloading" ? " · " + Math.round(status.downloadPercent || 0) + "%" : ""}</small></span>
+    </button>
+    {status.error && <p role="status">{status.error === "TASK_RUNNING" ? updateErrorText(tr, status.error) :
+      tr("暂时无法完成更新操作，可重试或打开下载页。", "Could not complete the update. Retry or open downloads.")}</p>}
+    {status.phase === "error" && <button type="button" className="update-release-link" onClick={() => void window.desktop.update.openRelease()}>
+      {tr("打开下载页", "Open downloads")}<ArrowRight size={12} />
+    </button>}
+    {status.mirrorAvailable && available && !ready && !status.busy && (status.channel === "portable" || status.phase === "error") &&
+      <button type="button" className="update-release-link" onClick={() => void window.desktop.update.openRelease({ source: "mirror" })}>
+        {tr("备用下载（腾讯云）", "Alternate download (Tencent Cloud)")}<ArrowRight size={12} />
+      </button>}
+  </div>;
 }
 
 export function AppUpdateControls() {
@@ -74,7 +125,7 @@ export function AppUpdateControls() {
               : status.phase === "checking"
                 ? tr("正在检查更新…", "Checking for updates…")
                 : status.channel === "portable"
-                  ? tr("便携版检测到更新后会打开 GitHub 下载页。", "Portable builds open GitHub when an update is found.")
+                  ? tr("便携版可选 GitHub 或备用下载源获取新包。", "Portable builds can use GitHub or the alternate download source.")
                   : tr("安装版可在应用内下载并重启安装。", "Installed builds can download and restart to install.");
 
   return (
@@ -87,6 +138,11 @@ export function AppUpdateControls() {
         ) : null}
       </div>
       <div className="application-about-update-actions">
+        {status.mirrorAvailable && status.availableVersion && !busy && status.phase !== "downloaded" && (
+          <button type="button" className="secondary-button" onClick={() => void window.desktop.update.openRelease({ source: "mirror" })}>
+            {tr("备用下载（腾讯云）", "Alternate download (Tencent Cloud)")}
+          </button>
+        )}
         {action === "check" ? (
           <button
             type="button"
@@ -160,8 +216,8 @@ export function AppUpdateToast({ status, onAction, onClose }) {
               )
             : portable
               ? tr(
-                  "便携版请到 GitHub 下载新包。当前包不会被自动替换。",
-                  "Portable builds open GitHub for a new package. This copy is not replaced in place.",
+                  "便携版请下载新包，备用入口在左下角及设置中。当前包不会被自动替换。",
+                  "Download a new portable package; alternate downloads are in the sidebar and settings. This copy is not replaced in place.",
                 )
               : tr(
                   "安装版可以在应用内下载，下载完成后重启安装。",

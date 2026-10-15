@@ -1,0 +1,64 @@
+/* Model configuration uses the same quiet surfaces as the current workbench.
+ * Scope the legacy form overrides so other settings and dialogs stay intact. */
+:root .provider-manager-modal.provider-workbench { color: var(--text-1); background: var(--bg-app); }
+/* Embedded pages share the settings surface, including custom themes. Do not
+ * paint the workbench background over the settings content underneath. */
+:root[data-theme] .application-settings-content .provider-manager-modal.provider-workbench.embedded { background:transparent; }
+.provider-workbench-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:26px 28px 12px; flex-shrink:0; }
+.provider-workbench-header h3 { margin:0; font-size:20px; font-weight:600; letter-spacing:-.4px; }
+.provider-workbench-header small { display:block; margin-top:6px; color:var(--text-2); font-size:11px; }
+:root .provider-workbench .model-setup-actions button { background:var(--gray-3); border-color:transparent; color:var(--text-2); border-radius:10px; font-size:11px; }
+:root .provider-workbench .model-setup-actions .tutorial-link { background:var(--gray-3); border-color:transparent; color:var(--text-2); border-radius:10px; font-size:11px; }
+:root .provider-workbench .model-setup-actions button:hover { color:var(--text-1); background:var(--gray-4); }
+:root .provider-workbench .model-setup.compact { padding:0; }
+/* The prior embedded form has container-level !important layout rules. */
+:root .provider-workbench.provider-manager-modal .provider-manager-body { grid-template-columns:minmax(0,1fr) !important; grid-template-rows:auto minmax(0,1fr); overflow:hidden; }
+:root .provider-workbench.provider-manager-modal .provider-list { flex-direction:row; align-items:stretch; gap:6px; min-width:0; overflow-x:auto; padding:6px 28px 14px !important; border:0 !important; background:transparent; scrollbar-width:thin; }
+:root .provider-workbench .provider-list > button { width:auto; min-width:110px; max-width:220px; min-height:44px; flex:0 0 auto; padding:8px 12px; gap:10px; border-radius:12px; background:var(--gray-3); color:var(--text-2); box-shadow:none; }
+:root .provider-workbench .provider-list > button:hover { background:var(--gray-4); color:var(--text-1); }
+:root .provider-workbench .provider-list > button.active { color:var(--accent-11); background:color-mix(in srgb,var(--accent-9) 9%,var(--bg-app)); box-shadow:none; }
+:root .provider-workbench .provider-list > button.add-provider { justify-content:center; color:var(--text-1); font-size:12px; font-weight:500; }
+:root .provider-workbench .provider-list strong { font-size:12px; font-weight:500; }
+:root .provider-workbench .provider-list small { color:var(--text-2); font-size:10px; }
+:root .provider-workbench.provider-manager-modal .provider-editor { padding:0 28px 24px !important; background:transparent; overscroll-behavior:contain; display:flex; flex-direction:column; gap:16px; }
+.provider-workbench .provider-section { flex-shrink:0; min-width:0; margin:0; padding:18px; border-radius:18px; background:var(--gray-2); }
+.provider-workbench .provider-section h4 { margin:0 0 16px; font-size:13px; font-weight:600; }
+:root .provider-workbench .provider-presets { margin:0; padding:2px 0; background:transparent; border:0; }
+:root .provider-workbench .provider-presets > span { color:var(--text-2); font-size:11px; }
+:root .provider-workbench .provider-presets button { color:var(--text-2); border-color:transparent; background:var(--gray-3); border-radius:9px; }
+:root .provider-workbench .provider-presets button.active { color:var(--accent-11); background:var(--accent-3); }
+:root .provider-workbench.provider-manager-modal .provider-form-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:16px !important; }
+:root .provider-workbench .provider-key-field { grid-column:auto; }
+.provider-workbench .provider-form-grid > label:has([aria-label="Anthropic thinking protocol"]),
+.provider-workbench .provider-form-grid:has(input[type="number"]) .provider-key-field { grid-column:1/-1; }
+:root .provider-workbench .provider-form-grid label > span, :root .provider-workbench .provider-model-heading strong { color:var(--text-1); font-size:12px; font-weight:500; }
+.provider-workbench .provider-form-grid label small { color:var(--text-2); font-size:11px; line-height:1.6; font-weight:400; }
+:root .provider-workbench .provider-editor .text-field, :root .provider-workbench .provider-models-input { border:1px solid transparent; background:var(--gray-3); color:var(--text-1); border-radius:10px; box-shadow:none; font-size:12px; min-width:0; }
+:root .provider-workbench .provider-editor .text-field:focus, :root .provider-workbench .provider-models-input:focus { border-color:var(--gray-8); outline:0; box-shadow:none; }
+:root .provider-workbench .provider-editor .text-field:focus-visible, :root .provider-workbench .provider-models-input:focus-visible { outline:2px solid var(--accent-8); outline-offset:2px; }
+:root .provider-workbench .provider-model-heading { margin:0 0 12px; align-items:center; gap:10px; }
+:root .provider-workbench .provider-model-heading > div { min-width:0; flex:1; }
+:root .provider-workbench .provider-model-heading span { color:var(--text-2); line-height:1.5; }
+:root .provider-workbench .provider-models-input { height:104px !important; min-height:76px; margin:0; }
+:root .provider-workbench .provider-detection-summary { margin-top:8px; }
+:root .provider-workbench .provider-detection-summary span { background:transparent; color:var(--text-2); padding:0; }
+:root .provider-workbench .model-vision-settings { margin:22px 0 0; padding:0; border:0; }
+.provider-workbench .model-vision-settings legend { padding:0; margin-bottom:10px; font-size:12px; font-weight:500; }
+.provider-workbench .model-vision-settings p { font-size:11px; line-height:1.6; }
+:root .provider-workbench .model-vision-row select { border-color:transparent; background:var(--gray-3); color:var(--text-1); border-radius:9px; }
+:root .provider-workbench .secondary-button { border-color:transparent; background:var(--gray-3); color:var(--text-1); box-shadow:none; border-radius:10px; }
+:root .provider-workbench .secondary-button:hover { background:var(--gray-4); }
+:root .provider-workbench.provider-manager-modal > .modal-footer { flex-shrink:0; min-height:60px; padding:12px 28px !important; border:0; background:var(--bg-app); }
+:root[data-theme] .application-settings-content .provider-workbench.embedded > .modal-footer { background:transparent; }
+.provider-workbench .primary-button { border-radius:10px; }
+.provider-workbench .danger-text-button { font-size:11px; }
+:root[data-theme] .application-settings-modal:has(.provider-workbench, .extensions-workbench) > .application-settings-header,
+:root[data-theme] .application-settings-modal:has(.provider-workbench, .extensions-workbench) .application-settings-nav { border-color:transparent; }
+@container (max-width:520px) {
+  .provider-workbench-header { padding:20px 16px 12px; }
+  :root .provider-workbench.provider-manager-modal .provider-list { padding-inline:16px !important; }
+  :root .provider-workbench.provider-manager-modal .provider-editor { padding:0 16px 18px !important; }
+  :root .provider-workbench.provider-manager-modal .provider-form-grid { grid-template-columns:minmax(0,1fr) !important; }
+  .provider-workbench .provider-section { padding:14px; border-radius:15px; }
+  :root .provider-workbench.provider-manager-modal > .modal-footer { padding:12px 16px !important; }
+}

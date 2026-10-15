@@ -35,7 +35,7 @@ export function resolveSubagentReasoningPolicy({
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   builder: Object.freeze({
     description: "Implement the delegated task only within explicit write scopes in an isolated Git worktree. Return changes, verification evidence and remaining issues. Do not delegate again or publish.",
-    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "apply_patch"]),
+    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "cleanup_temporary_check", "apply_patch"]),
   }),
   explore: Object.freeze({
     description:
@@ -112,8 +112,11 @@ export function normalizeWorkspaceScope(values) {
   return normalized.length ? normalized : ["."];
 }
 
-export function normalizeSubagentInput(input) {
-  const role = String(input?.role || "").trim();
+export function normalizeSubagentInput(input, profiles = null) {
+  const requestedRole = String(input?.profile_id || input?.profileId || input?.role || "").trim();
+  const profile = profiles?.find(item => item.id === requestedRole);
+  if (profiles && (!profile || !profile.enabled)) throw new Error(`Agent profile is unavailable: ${requestedRole}`);
+  const role = profile?.template || requestedRole;
   if (!SUBAGENT_ROLE_CONFIG[role]) {
     throw new Error("Subagent role must be explore, review, verify, curator, or builder.");
   }
@@ -126,13 +129,15 @@ export function normalizeSubagentInput(input) {
   const requestedRounds = Number(input?.max_rounds);
   const maxRounds = Number.isInteger(requestedRounds)
     ? Math.min(MAX_SUBAGENT_ROUNDS, Math.max(2, requestedRounds))
-    : DEFAULT_SUBAGENT_ROUNDS;
+    : profile?.maxRounds || DEFAULT_SUBAGENT_ROUNDS;
   return {
     role,
+    ...(profile ? { profileId: profile.id, profile } : {}),
+    ...((input?.depends_on || input?.dependsOn) ? { dependsOn: input.depends_on || input.dependsOn } : {}),
     task,
     scope: normalizeWorkspaceScope(input?.scope),
     ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
-    background: Boolean(input?.background),
+    background: Boolean(input?.background || input?.depends_on?.length || input?.dependsOn?.length),
     requiredForCompletion: !(input?.background && input?.required_for_completion === false && ["explore", "curator"].includes(role)),
     maxRounds,
   };
@@ -153,6 +158,7 @@ export function subagentToolPaths(toolName, input = {}) {
       "search_text",
       "inspect_office_file",
       "write_file",
+      "cleanup_temporary_check",
       "apply_patch",
     ].includes(toolName)
   ) {
@@ -233,7 +239,9 @@ export function assertSubagentScope(toolName, input, scope) {
 }
 
 export function createSubagentPermissionPolicy(parentPolicy, role, definition = null) {
-  const allowed = SUBAGENT_ROLE_CONFIG[role]?.tools;
+  const base = SUBAGENT_ROLE_CONFIG[role]?.tools;
+  const allowed = base ? new Set([...base, ...(definition?.tools || []).filter(name =>
+    ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(name))]) : null;
   if (!allowed) throw new Error(`Unknown subagent role: ${role}`);
   const policy = { "*": "deny" };
   const rank = { allow: 0, ask: 1, deny: 2 };

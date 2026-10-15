@@ -1,0 +1,35 @@
+/* User themes change tokens, not geometry. Keep panels and prompts opaque. */
+.app-glyph-themed { display: none; }
+:root[data-custom-theme]:not([data-custom-theme=""]) .brand-mark img,
+:root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-mark img,
+:root[data-custom-theme]:not([data-custom-theme=""]) .application-about-mark img { display: none; }
+:root[data-custom-theme]:not([data-custom-theme=""]) .app-glyph-themed {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+  background: linear-gradient(135deg, var(--accent-11), var(--accent-9) 60%, var(--accent-10));
+  mask: url('../../aporiax-logo-clean.png') center / contain no-repeat;
+  -webkit-mask: url('../../aporiax-logo-clean.png') center / contain no-repeat;
+}
+:root[data-custom-theme]:not([data-custom-theme=""]) .local-account-quota-track i {
+  background: var(--theme-quota-gradient);
+}
+:root[data-custom-theme]:not([data-custom-theme=""]) .titlebar,
+:root[data-custom-theme]:not([data-custom-theme=""]) .sidebar { background: var(--bg-navigation); }
+:root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-modal,
+:root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-header,
+:root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-content,
+:root[data-custom-theme]:not([data-custom-theme=""]) .composer,
+:root[data-custom-theme]:not([data-custom-theme=""]) .modal { background: var(--bg-app); color: var(--text-1); }
+:root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-nav { background: var(--bg-navigation); }
+:root[data-custom-theme]:not([data-custom-theme=""]) .primary-button,
+:root[data-custom-theme]:not([data-custom-theme=""]) .composer-send { background: var(--accent-9); color: var(--theme-accent-contrast); }
+:root[data-theme][data-theme-background="true"] .thread-body {
+  background-image: linear-gradient(color-mix(in srgb, var(--bg-app) calc((1 - var(--theme-background-strength)) * 100%), transparent), color-mix(in srgb, var(--bg-app) calc((1 - var(--theme-background-strength)) * 100%), transparent)), var(--theme-background-image);
+  background-size: cover;
+  background-position: center;
+}

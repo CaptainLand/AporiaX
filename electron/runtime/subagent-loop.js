@@ -1,4 +1,6 @@
 import { TaskBrief } from "./task-brief.js";
+import { cloudWorkerDeferral } from "./cloud-wind-down.js";
+import { applyRoleThinking } from './role-capabilities.js';
 import { StrategyHistory } from "./strategy-history.js";
 import { normalizeLoopPolicy } from "./completion-policy.js";
 import { assistantHistoryMessage } from "./task-conversation.js";
@@ -19,9 +21,11 @@ import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js
 import { ToolProgressGuard } from "./tool-progress-guard.js";
 import { dispatchNativeTool } from "./tool-dispatcher.js";
 import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume } from "./durable-run.js";
+import { modelReasoningParameters } from "../../shared/model-reasoning.js";
 import { providerMessages } from "./task-conversation.js";
 import { runIsolatedBuilder } from "./delegated-builder.js";
 import { withAgentBudgetAdmission } from "../harness/agent-budget.js";
+import { currentLocalControlPolicy, acquireLocalControlWorker, assertLocalControlTool, isLocalControlToolAvailable } from "../control/policy.js";
 import { FINISH_SUBAGENT_TOOL, readWorkerOutcome, syncDelegationContext } from './subagent-contract.js';
 import {
   MAX_SUBAGENT_RESULT_CHARS,
@@ -37,6 +41,7 @@ import {
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const MAX_PARALLEL_TOOL_CALLS = 4;
+const getRolePermissionDenied = (policy, name, mcp) => !mcp && (policy[name] ?? policy['*']) === 'deny';
 
 function abortError() {
   const error = new Error("The run was interrupted.");
@@ -49,7 +54,14 @@ function throwIfAborted(signal) {
 }
 
 export async function runSubagentTask(options = {}) {
+  if (currentLocalControlPolicy() && !options.__localControlAdmitted) {
+    const release = acquireLocalControlWorker({ agentId: options.agentId, role: options.input?.role });
+    try { return await runSubagentTask({ ...options, __localControlAdmitted: true }); }
+    finally { release(); }
+  }
   await waitForRuntimeResume(options.signal);
+  const deferred = cloudWorkerDeferral(options.provider);
+  if (deferred) return { ...deferred, agentId: options.agentId, role: options.input?.role, evidence: [], steps: [], usage: null };
   if (!options.__budgetAdmitted) return withAgentBudgetAdmission({ role: options.input?.role, signal: options.signal, systemOwned: options.systemOwned },
     () => runSubagentTask({ ...options, __budgetAdmitted: true }));
   const broker = getDefaultAgentRuntimeBroker();
@@ -64,6 +76,7 @@ export async function runSubagentTask(options = {}) {
       emit: options.emit,
       signal: options.signal,
       continuation: Boolean(options.session?.conversation),
+      definition: options.agentDefinition,
       execute: ({ definition }) =>
         runSubagentTask({
           ...options,
@@ -79,6 +92,11 @@ export async function runSubagentTask(options = {}) {
     const resolved = await options.resolveModel(requestedModel);
     if (!resolved?.provider || !resolved?.modelId || !resolved?.modelConfig) throw new Error(`SUBAGENT_MODEL_NOT_CONFIGURED: ${requestedModel}`);
     return runSubagentTask({ ...options, ...resolved, __modelResolved: true });
+  }
+  if (!options.__thinkingResolved && options.input?.profile) {
+    const policy = applyRoleThinking(options.input.profile, options.provider, options.modelId,
+      { thinking: options.thinking, effort: options.effort });
+    return runSubagentTask({ ...options, ...policy, __thinkingResolved: true });
   }
   if (options.input?.role === "builder" && !options.__builderIsolated) return runIsolatedBuilder(options, runSubagentTask);
   const loopMetrics = new LoopMetrics();
@@ -132,7 +150,10 @@ export async function runSubagentTask(options = {}) {
     typeof describeCapability === "function"
       ? describeCapability
       : () => null;
-  const roleConfig = SUBAGENT_ROLE_CONFIG[input.role];
+  const roleConfig = { ...SUBAGENT_ROLE_CONFIG[input.role], tools: new Set([
+    ...SUBAGENT_ROLE_CONFIG[input.role].tools,
+    ...(agentDefinition?.tools || []).filter(name => ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(name)),
+  ]) };
   const runtimeDefinition = agentDefinition || null;
   const permissionPolicy = createSubagentPermissionPolicy(
     parentPermissionPolicy,
@@ -147,9 +168,11 @@ export async function runSubagentTask(options = {}) {
     .filter(
       (definition) =>
         roleConfig.tools.has(definition.function.name) &&
+        isLocalControlToolAvailable(definition.function.name) &&
         (!definitionTools || definitionTools.has(definition.function.name)),
     );
   enabledTools.push(FINISH_SUBAGENT_TOOL);
+  enabledTools.push(...(options.extensionDefinitions || []));
   const instructionContext = await loadProjectInstructionContext(workspaceRoot);
   const session = options.session || {};
   const contextCheckpoints = session.contextCheckpoints || [];
@@ -172,6 +195,7 @@ export async function runSubagentTask(options = {}) {
       role: "system",
       content: [
         `You are the AporiaX ${input.role} subagent.`,
+        input.profile ? `Professional role: ${input.profile.name} (${input.profile.id}).` : '',
         runtimeDefinition?.description || roleConfig.description,
         runtimeDefinition?.systemPrompt || "",
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
@@ -196,11 +220,12 @@ export async function runSubagentTask(options = {}) {
   }
   const brief = new TaskBrief(session.taskBrief, { resumed: Boolean(session.taskBrief) });
   const loopPolicy = normalizeLoopPolicy(options.loopPolicy);
+  const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: loopPolicy.maxRepeatedEvidence, snapshot: session.toolProgress });
   const strategy = new StrategyHistory(session.strategyHistory, { mode: loopPolicy.strategyMode, maxInterventions: loopPolicy.maxStrategyInterventions });
   brief.syncSources(conversation);
   Object.assign(session, { conversation, contextCheckpoints, evidence, steps: toolSteps });
   const persistSession = async (status = "running", result = null) => {
-    session.taskBrief = brief.snapshot(); session.strategyHistory = strategy.snapshot();
+    session.taskBrief = brief.snapshot(); session.strategyHistory = strategy.snapshot(); session.toolProgress = toolProgress.snapshot();
     await options.snapshotProvisional?.();
     await saveRuntimeContext(agentId, {
       kind: "worker", workspaceRoot: options.ownerWorkspaceRoot || workspaceRoot, input, session, status, result,
@@ -230,18 +255,23 @@ export async function runSubagentTask(options = {}) {
     systemOwned,
     runtime: runtimeDefinition ? "kernel" : "compatibility",
   });
+  const wireReasoning = modelReasoningParameters(provider, { modelId, thinking, effort });
   emit({ type: "subagent.configured", agentId, role: input.role, provider: provider.id, model: modelId,
+    profileId: input.profileId, profileName: input.profile?.name,
+    thinking: Boolean(wireReasoning.reasoning_effort || wireReasoning.thinking?.type === 'enabled'), effort: wireReasoning.reasoning_effort || null,
     permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: effectiveMaxRounds });
 
-  const toolProgress = new ToolProgressGuard();
   try {
     for (let round = 1; round <= effectiveMaxRounds; round += 1) {
       throwIfAborted(signal);
+      if (input.profile && (session.roleRounds || 0) >= input.profile.maxRounds) throw new Error('AGENT_BUDGET_EXHAUSTED: 累计轮次预算已耗尽。');
+      options.assertDependencies?.();
       await refreshInheritedContext();
       if (session.pendingGuidance?.length) {
         toolProgress.reset(); strategy.reset();
         conversation.push(...session.pendingGuidance.splice(0).map((content) => ({ role: 'user', content, aporiaSource: 'delegation', aporiaPinned: true })));
       }
+      toolProgress.assertBudget();
       strategy.assertBudget();
       brief.syncSources(conversation);
       brief.inject(conversation, { strategy: strategy.briefing() });
@@ -261,6 +291,7 @@ export async function runSubagentTask(options = {}) {
         accounting: tokenAccounting,
         relevantMemory: relevant,
       });
+      session.roleRounds = (session.roleRounds || 0) + 1;
       await persistSession();
       const completion = await completeLoopRequest({ conversation, contextCheckpoints,
         accounting: tokenAccounting, contextWindowTokens, signal, persist: persistSession, scopeId: agentId,
@@ -273,29 +304,14 @@ export async function runSubagentTask(options = {}) {
           ...(provider.supportsTools && enabledTools.length
             ? { tools: enabledTools, tool_choice: "auto" }
             : {}),
-          ...(provider.supportsThinking &&
-          provider.thinkingMode === "deepseek"
-            ? {
-                thinking: { type: thinking ? "enabled" : "disabled" },
-                ...(thinking
-                  ? {
-                      reasoning_effort:
-                        effort === "max" ? "max" : "high",
-                    }
-                  : {}),
-              }
-            : {}),
-          ...(provider.supportsThinking &&
-          provider.thinkingMode === "reasoning-effort" &&
-          thinking
-            ? { reasoning_effort: effort === "max" ? "high" : "medium" }
-            : {}),
+          ...modelReasoningParameters(provider, { modelId, thinking, effort }),
         }),
         complete: async (body, requestSignal = signal) => {
           loopMetrics.request(body);
-          return provider.complete({ signal: requestSignal, body, onStreamEvent: (event) => {
+          return provider.complete({ signal: requestSignal, body, requestTrace: { agentId }, onStreamEvent: (event) => {
             loopMetrics.observe(event);
             if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
+            if (["response.cloud.queued", "response.cloud.admitted"].includes(event.type)) emit({ ...event, type: `subagent.${event.type}`, agentId, role: input.role });
             if (event.type === "response.attempt.completed") emit({ ...event, type: "subagent.response.attempt.completed", agentId });
           } });
         },
@@ -317,6 +333,7 @@ export async function runSubagentTask(options = {}) {
         continue;
       }
       if (outcome) {
+        await assertLocalControlTool({ toolName: "finish_subagent", input: outcome, workspaceRoot });
         conversation.push(assistantHistoryMessage(message));
         conversation.push({ role: 'tool', tool_call_id: outcome.call.id, content: JSON.stringify({ recorded: true, accepted: false }) });
         message = { role: 'assistant', content: outcome.summary };
@@ -398,17 +415,27 @@ export async function runSubagentTask(options = {}) {
           ...activityFor(toolCall),
         });
         try {
+          options.assertDependencies?.();
           await refreshInheritedContext();
+          if (session.pendingGuidance?.length) throw new Error('SUBAGENT_GUIDANCE_CHANGED: additional instructions arrived; skip stale actions and replan.');
           if (session.delegationContext?.revision !== issuedContextRevision) throw new Error('SUBAGENT_GUIDANCE_CHANGED: action skipped; replan using updated user requirements.');
-          if (!roleConfig.tools.has(toolName)) {
+          const extension = options.extensionDefinitions?.some(def => def.function.name === toolName);
+          if (!roleConfig.tools.has(toolName) && !extension) {
             throw new Error(`Tool is not available to ${input.role}: ${toolName}`);
           }
-          if (definitionTools && !definitionTools.has(toolName)) {
+          if (definitionTools && !definitionTools.has(toolName) && !extension) {
             throw new Error(`Tool is not enabled by Agent Registry for ${input.role}: ${toolName}`);
           }
           const parsedInput = parseToolArguments(toolCall);
+          const roleExtension = extension || ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(toolName);
+          if (roleExtension) {
+            if (getRolePermissionDenied(permissionPolicy, toolName, extension)) throw new Error(`Permission denied for tool: ${toolName}`);
+            const result = await options.executeRoleExtension?.({ toolName, input: parsedInput, signal, agentId, requestApproval });
+            if (result === undefined) throw new Error('Role extension is unavailable.');
+            modelResult = compactSubagentModelResult(result);
+          } else {
           strategy.before(toolName, parsedInput);
-          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
+          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
           const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
             instructionContext,
             subagentToolPaths(toolName, parsedInput),
@@ -450,6 +477,7 @@ export async function runSubagentTask(options = {}) {
           });
           appliedChanges = executed.changes || (executed.change ? [executed.change] : []);
           modelResult = compactSubagentModelResult(executed.modelResult);
+          }
         } catch (error) {
           if (error?.name === "AbortError") throw error;
           success = false;

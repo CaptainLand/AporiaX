@@ -1,0 +1,18 @@
+.account-avatar-picker { position:relative; flex:0 0 auto; }
+:root .account-settings-profile > .account-avatar-picker { display:block; flex:0 0 auto; min-width:0; }
+:root .account-settings .account-avatar-trigger { position:relative; padding:0; min-height:0; border:0; border-radius:16px; background:transparent; display:grid; place-items:center; }
+:root .account-settings .account-avatar-trigger .account-settings-avatar { width:52px; height:52px; border:0; border-radius:16px; }
+.account-avatar-trigger > i { position:absolute; right:-3px; bottom:-3px; display:grid; place-items:center; width:19px; height:19px; border:2px solid var(--bg-app); border-radius:50%; background:var(--gray-4); color:var(--text-1); }
+.account-avatar-choices { position:absolute; top:calc(100% + 10px); left:0; z-index:20; width:min(300px,calc(100vw - 90px)); padding:14px; border:1px solid var(--gray-5); border-radius:20px; background:var(--bg-app); color:var(--text-1); box-shadow:var(--shadow-lg); }
+.account-avatar-choices > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.account-avatar-choices > header strong { font-size:12px; font-weight:500; }
+:root .account-settings .account-avatar-choices > header button { padding:4px; width:26px; min-height:26px; border:0; border-radius:50%; background:var(--gray-3); color:var(--text-2); }
+.account-avatar-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+:root .account-settings .account-avatar-grid > button { position:relative; display:flex; min-width:0; flex-direction:column; gap:7px; padding:10px 4px; border:0; border-radius:13px; background:var(--gray-2); color:var(--text-2); }
+.account-avatar-grid .agent-avatar { width:46px; height:46px; border-radius:14px; }
+:root .account-settings .account-avatar-grid > button[aria-pressed="true"] { background:var(--accent-3); color:var(--accent-11); }
+:root .account-settings .account-avatar-grid > button:hover { background:var(--gray-4); }
+.account-avatar-grid > button > span:last-of-type { font-size:11px; color:inherit; white-space:nowrap; }
+.account-avatar-grid > button > svg { position:absolute; right:7px; top:7px; color:var(--accent-11); }
+.account-avatar-choices p { margin:10px 0 0; font-size:11px; }
+.account-avatar-picker button:focus-visible { outline:2px solid var(--accent-8); outline-offset:3px; }

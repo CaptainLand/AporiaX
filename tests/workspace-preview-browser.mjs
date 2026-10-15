@@ -117,10 +117,11 @@ try {
     assert.equal(await page.evaluate(() => window.fixture.calls.some((call) => call.action === "restore")), false, "Hiding Anchor must not restore or delete snapshots");
     await page.locator(".thread-view-tabs").getByRole("button", { name: "工作区", exact: true }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "在侧栏打开", exact: true }).click();
-    assert.equal(await side.getByRole("button", { name: "显示 Anchor 快照", exact: true }).evaluate((el) => el.scrollWidth <= el.clientWidth), true);
-    await side.getByRole("button", { name: "显示 Anchor 快照", exact: true }).click();
-    assert.equal(await panel.locator(".anchor-history").isVisible(), true, "Visibility changes are shared between main and sidebar");
+    assert.equal(await side.getByRole("button", { name: "显示 Anchor 快照", exact: true }).count(), 0, "Compact sidebar contains filenames, not full workspace controls");
+    assert.equal(await side.locator(".anchor-history").count(), 0);
     assert.equal(await side.locator(".file-explorer-panel.tree-only").isVisible(), true, "Revealing the initial file must not switch the sidebar away from its workspace tab");
+    await panel.getByRole("button", { name: "显示 Anchor 快照", exact: true }).click();
+    assert.equal(await panel.locator(".anchor-history").isVisible(), true, "Full workspace retains Anchor controls without duplicating them in the sidebar");
     await panel.getByRole("button", { name: "隐藏 Anchor 快照", exact: true }).click();
     await page.getByRole("textbox", { name: "任务输入", exact: true }).fill("预览时仍可继续聊天");
     await page.locator(".thread-view-tabs").getByRole("button", { name: "对话", exact: true }).click();

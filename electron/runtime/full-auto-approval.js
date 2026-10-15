@@ -7,6 +7,7 @@ const COMPOSITION = /[;&|><`\r\n$*?]|%[^%]+%/;
 // Best-effort protection, NOT isolation: opaque scripts/MCP can have indirect
 // effects that cannot be classified from their command name or arguments.
 export async function fullAutoRequiresConfirmation(details, workspaceRoot) {
+  if (details?.kind === "agent-role-change") return "专业角色的创建、修改、删除必须逐次获得用户确认。";
   if (details?.kind === "recovery-reconciliation") return "异常恢复可能重复执行副作用，必须重新核对。";
   const tool = String(details?.toolName || details?.tool || "");
   if (["read_file", "read_external_file", "list_directory", "search_text"].includes(tool)) return "";

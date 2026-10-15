@@ -1,4 +1,5 @@
 import { TaskGoalReport } from "./TaskGoalReport.jsx";
+import { ClarificationCard } from "./ClarificationCard.jsx";
 import { RouteActivityView } from "./RouteActivityView.jsx";
 import { activityActor, describeRouteRecord } from "./route-activity-model.js";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
@@ -27,7 +28,7 @@ import {
 } from "lucide-react";
 import { ApprovalCard, DiffReviewPanel, UserAttachments } from "../agent-components";
 import { useI18n } from "../i18n";
-import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles } from "../state/task-outcome-view.js";
+import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles, hasTaskReply } from "../state/task-outcome-view.js";
 import {
   FoldableUserPrompt,
   RunDurationChip,
@@ -848,31 +849,22 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
   const [retrying, setRetrying] = useState(false);
   const failed = message.error || message.status === "failed";
   const blocked = message.status === "blocked";
+  const resultDelivered = hasTaskReply(message);
   const interrupted = message.status === "interrupted";
   const hasAnchor = Boolean(message.anchor && message.changes?.length);
   const restored = Boolean(message.anchorRestoredAt);
 
   return (
     <article
-      className={`assistant-message ${failed ? "error" : ""} ${interrupted || blocked ? "interrupted" : ""}`}
+      className={`assistant-message ${failed ? "error" : ""} ${interrupted || (blocked && !resultDelivered) ? "interrupted" : ""}`}
     >
       <div className="assistant-message-heading">
         <strong>
-          {message.status === "needs_input" ? tr("等待补充信息", "Input needed")
-            : message.status === "partial" ? tr("部分完成", "Partially complete")
-            : blocked ? tr("任务受阻", "Task blocked") : failed
+          {failed
             ? tr("运行失败", "Run failed")
             : interrupted
               ? tr("任务已停止", "Task stopped")
-              : message.status === "completed" && message.selfCheck?.delivery?.status === "unverified"
-                ? tr("已交付 · 未验证", "Delivered · Unverified")
-                : message.status === "completed" && message.selfCheck?.delivery?.status === "unavailable"
-                  ? tr("已交付 · 验证不可用", "Delivered · Verification unavailable")
-                  : message.status === "completed" && message.selfCheck?.delivery?.status === "failed"
-                    ? tr("已交付 · 验证未通过", "Delivered · Checks failed")
-                    : message.status === "completed" && message.selfCheck?.verification?.waived
-                      ? tr("已交付 · 未验证", "Delivered · Unverified")
-                      : "AporiaX"}
+              : "AporiaX"}
         </strong>
         <RunDurationChip message={message} />
         {hasAnchor && (
@@ -1115,7 +1107,7 @@ function describeWitnessRecord(record, tr, language) {
   return { title, detail: detail || "" };
 }
 
-function WitnessPanel({ witness, liveProgress }) {
+function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
   const { tr, language } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const records = witness?.records || [];
@@ -1126,11 +1118,11 @@ function WitnessPanel({ witness, liveProgress }) {
     language,
   );
   const activeAgents = witness?.counters?.activeAgents || 0;
-  const witnessFinished = ["completed", "failed", "interrupted"].includes(
+  const witnessFinished = ["completed", "partial", "blocked", "needs_input", "failed", "interrupted"].includes(
     witness?.status,
   );
   const witnessStateLabel =
-    witness?.status === "completed"
+    resultDelivered || witness?.status === "completed"
       ? tr("已完成", "Done")
       : witness?.status === "failed"
         ? tr("失败", "Failed")
@@ -1164,7 +1156,7 @@ function WitnessPanel({ witness, liveProgress }) {
           </span>
         </div>
         <b>
-          {witness?.status === "completed"
+          {resultDelivered || witness?.status === "completed"
             ? 100
             : liveProgress.progress}%
         </b>
@@ -1173,7 +1165,7 @@ function WitnessPanel({ witness, liveProgress }) {
       <div className="harness-progress-track" aria-hidden="true">
         <span
           style={{
-            width: `${witness?.status === "completed" ? 100 : liveProgress.progress}%`,
+            width: `${resultDelivered || witness?.status === "completed" ? 100 : liveProgress.progress}%`,
           }}
         />
       </div>
@@ -1184,11 +1176,11 @@ function WitnessPanel({ witness, liveProgress }) {
         </span>
         <div>
           <strong>
-            {currentDescription.title ||
+            {resultDelivered ? tr("本轮结果已输出", "Result delivered") : currentDescription.title ||
               liveProgress.currentEntry?.title}
           </strong>
           <p>
-            {currentDescription.detail ||
+            {resultDelivered ? tr("可展开查看本轮行动记录", "Expand to view this run's action record") : currentDescription.detail ||
               liveProgress.currentEntry?.path ||
               liveProgress.currentEntry?.detail}
           </p>
@@ -1367,6 +1359,7 @@ export function Conversation({
               }
             />
             </LinkWorkspace.Provider>
+            {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={isRunning && message.status === "running"} onRetry={onRetry ? () => onRetry(message) : null} />)}
             {!restored && files.length > 0 && (
               <EditedFilesCard
                 files={files}
@@ -1401,6 +1394,7 @@ export function Conversation({
         <WitnessPanel
           witness={witnessMessage?.witness}
           liveProgress={liveProgress}
+          resultDelivered={hasTaskReply(witnessMessage)}
         />
       )}
       {reviewMessage?.changes?.length > 0 && (

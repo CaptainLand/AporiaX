@@ -45,6 +45,7 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
       signal,
       continuation = false,
       execute,
+      definition: scopedDefinition = null,
     } = {}) {
       if (typeof execute !== "function") {
         throw new TypeError("Kernel Agent Runtime Broker requires an execute function.");
@@ -54,7 +55,7 @@ export function createKernelAgentRuntimeBroker({ kernel } = {}) {
       if (!safeAgentId || !safeRole) {
         throw new Error("Agent id and role are required for kernel routing.");
       }
-      const definition = kernel.agents.resolve(safeRole);
+      const definition = scopedDefinition || kernel.agents.resolve(safeRole);
       if (!definition) {
         throw new Error(`Agent role is not registered in Harness Kernel: ${safeRole}`);
       }

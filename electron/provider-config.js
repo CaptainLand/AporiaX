@@ -1,5 +1,7 @@
 import { normalizeProviderProtocol } from "./runtime/native-provider-codec.js";
+import { isClaudeModel, claudeReasoningProfile } from "../shared/model-reasoning.js";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_APORIAX_MODEL_GATEWAY_URL } from '../shared/cloud-endpoints.js';
 import { modelSupportsVision, normalizeImageCapability } from "./model-vision.js";
 
 export const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
@@ -7,7 +9,7 @@ export const APORIA_CLOUD_FLASH_MODEL_ID = "aporia-cloud-default";
 export const APORIA_CLOUD_PRO_MODEL_ID = "aporia-cloud-pro";
 // Backwards-compatible alias used by existing task defaults and integrations.
 export const APORIA_CLOUD_MODEL_ID = APORIA_CLOUD_FLASH_MODEL_ID;
-export const DEFAULT_APORIA_MODEL_GATEWAY_URL = "http://127.0.0.1:4200";
+export const DEFAULT_APORIA_MODEL_GATEWAY_URL = DEFAULT_APORIAX_MODEL_GATEWAY_URL;
 
 export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY_URL) {
   return {
@@ -23,27 +25,13 @@ export function createAporiaCloudProvider(baseUrl = DEFAULT_APORIA_MODEL_GATEWAY
     models: [
       {
         id: APORIA_CLOUD_FLASH_MODEL_ID,
-        name: "DeepSeek V4 Flash",
-        shortName: "V4 Flash",
-        family: "DeepSeek V4",
+        name: "DeepSeek V4.1 Flash",
+        shortName: "V4.1 Flash",
+        family: "DeepSeek V4.1",
         source: "aporia-cloud",
         billing: "weekly-quota",
-        imageInput: "text",
-        supportsImages: false,
-        supportsThinking: true,
-        thinkingMode: "deepseek",
-        supportsTools: true,
-        contextWindow: 1_000_000,
-      },
-      {
-        id: APORIA_CLOUD_PRO_MODEL_ID,
-        name: "DeepSeek V4 Pro",
-        shortName: "V4 Pro",
-        family: "DeepSeek V4",
-        source: "aporia-cloud",
-        billing: "weekly-quota",
-        imageInput: "text",
-        supportsImages: false,
+        imageInput: "native",
+        supportsImages: true,
         supportsThinking: true,
         thinkingMode: "deepseek",
         supportsTools: true,
@@ -159,7 +147,10 @@ export function inferModelCapabilities(modelId, vendor) {
   const supportsImages = modelSupportsVision({ id: modelId });
   let supportsThinking = false;
   let thinkingMode = "none";
-  if (vendor === "deepseek") {
+  if (isClaudeModel(modelId)) {
+    supportsThinking = true;
+    thinkingMode = "reasoning-effort";
+  } else if (vendor === "deepseek") {
     supportsThinking = /deepseek|reasoner/i.test(value);
     thinkingMode = supportsThinking ? "deepseek" : "none";
   } else if (vendor === "anthropic") {
@@ -194,6 +185,10 @@ export function normalizeProviderModels(models, vendor) {
       input && typeof input === "object" && !Array.isArray(input)
         ? input
         : {};
+    // Older versions persisted host-inferred false/none for relay Claude.
+    // Correct that stale inference without touching keys, endpoints or routes.
+    const legacyClaude = isClaudeModel(modelId) && source.reasoningCapabilitySource !== "explicit";
+    const profile = claudeReasoningProfile(modelId);
     normalized.push({
       id: modelId,
       name: String(source.name || modelId).slice(0, 240),
@@ -202,14 +197,16 @@ export function normalizeProviderModels(models, vendor) {
       ).slice(0, 40),
       ...normalizeImageCapability({ ...source, id: modelId }),
       supportsThinking:
-        typeof source.supportsThinking === "boolean"
+        legacyClaude ? true : typeof source.supportsThinking === "boolean"
           ? source.supportsThinking
           : inferred.supportsThinking,
-      thinkingMode: ["none", "deepseek", "reasoning-effort"].includes(
+      thinkingMode: legacyClaude ? "reasoning-effort" : ["none", "deepseek", "reasoning-effort"].includes(
         source.thinkingMode,
       )
         ? source.thinkingMode
         : inferred.thinkingMode,
+      ...(source.reasoningCapabilitySource === "explicit" ? { reasoningCapabilitySource: "explicit" } : {}),
+      ...(profile || {}),
       supportsTools:
         typeof source.supportsTools === "boolean"
           ? source.supportsTools

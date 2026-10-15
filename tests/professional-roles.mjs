@@ -1,0 +1,97 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { defaultRoleSettings, defaultRole, normalizeRoleSettings, effectiveRoleSettings } from '../shared/professional-roles.js';
+import { createRoleSettingsStore } from '../electron/harness/role-settings.js';
+import { createRoleCoordinator } from '../electron/runtime/role-coordinator.js';
+import { createRoleClock, createRoleLedger, withRoleBudget, beginRoleRequest, finishRoleRequest } from '../electron/runtime/role-budget.js';
+import { roleDefinition, applyRoleThinking } from '../electron/runtime/role-capabilities.js';
+import { normalizeSubagentInput, createSubagentPermissionPolicy } from '../electron/runtime/subagent-model.js';
+import { registerWorkerControls, controlWorker } from '../electron/runtime/worker-controls.js';
+import { applyProfessionalAgentEvent } from '../src/conversation/professional-agent-events.js';
+
+const root = await mkdtemp(join(tmpdir(), 'aporia-roles-'));
+try {
+  const settings = defaultRoleSettings();
+  assert.deepEqual(normalizeRoleSettings(settings), settings);
+  assert.equal(effectiveRoleSettings(settings, { builderLimit: 0 }).builderLimit, 0);
+  assert.equal(effectiveRoleSettings(settings, { profiles: { explore: { instructions: 'ignored', skills: ['denied'], maxRequests: 3 } } }).profiles[0].maxRequests, 3);
+  assert.equal(effectiveRoleSettings(settings, { profiles: { explore: { instructions: 'ignored', skills: ['denied'] } } }).profiles[0].instructions, '');
+  assert.throws(() => normalizeRoleSettings({ ...settings, profiles: settings.profiles.slice(1) }), /内置/);
+  assert.throws(() => normalizeRoleSettings({ ...settings, builderLimit: -1 }));
+  assert.throws(() => normalizeRoleSettings({ ...settings, profiles: [...settings.profiles, settings.profiles[0]] }), /重复/);
+  const profile = { ...defaultRole('explore'), id: 'researcher', name: 'Research', skills: ['research'], knowledge: 'read' };
+  const input = normalizeSubagentInput({ role: 'researcher', task: 'Read notes', scope: ['notes.txt'], depends_on: ['a'] }, [profile]);
+  assert.equal(input.role, 'explore'); assert.equal(input.profileId, 'researcher'); assert.equal(input.background, true);
+  assert.throws(() => normalizeSubagentInput({ role: 'researcher', task: 'Read' }, [{ ...profile, enabled: false }]));
+  const definition = roleDefinition(profile, { knowledge: true });
+  const policy = createSubagentPermissionPolicy({ '*': 'allow', read_file: 'ask', project_knowledge: 'deny' }, 'explore', definition);
+  assert.equal(policy.write_file ?? policy['*'], 'deny'); assert.equal(policy.read_file, 'ask'); assert.equal(policy.project_knowledge, 'deny');
+  assert(definition.tools.includes('read_skill_resource'));
+  assert(!roleDefinition(profile, { knowledge: false, skills: false }).tools.includes('project_knowledge'));
+  assert.throws(() => applyRoleThinking({ thinking: 'high' }, { supportsThinking: false }, 'plain', {}), /不能/);
+  assert.throws(() => applyRoleThinking({ thinking: 'off' }, {}, 'claude-opus-5-5', {}), /不能关闭/);
+  assert.equal(applyRoleThinking({ thinking: 'max' }, {}, 'claude-opus-5-5', {}).effort, 'max');
+
+  const store = await createRoleSettingsStore(root);
+  const first = store.snapshot(); first.profiles[0].name = 'Detached';
+  assert.notEqual(store.snapshot().profiles[0].name, 'Detached');
+  const saved = await store.save({ ...settings, builderLimit: 0 });
+  assert.equal(saved.revision, 1);
+  await assert.rejects(store.save(settings), /已被更新/);
+  assert.equal((await createRoleSettingsStore(root)).snapshot().builderLimit, 0);
+  await writeFile(join(root, 'security', 'professional-roles.json'), '{invalid');
+  assert.match((await createRoleSettingsStore(root)).snapshot().error, /禁用委派/);
+
+  const records = new Map();
+  const coordinator = createRoleCoordinator(records, undefined, { maxActive: 1, builderLimit: 1 });
+  const record = (id, deps = []) => { const value = { agentId: id, role: 'explore', status: 'running', input: { dependsOn: deps }, session: {}, controller: new AbortController() }; records.set(id, value); return value; };
+  const a = record('a'), b = record('b', ['a']);
+  coordinator.validate(['a'], 'b');
+  assert.throws(() => coordinator.validate(['missing'], 'x'));
+  assert.throws(() => coordinator.validate(['b'], 'a'), /成环/);
+  let bStarted = false;
+  const pendingB = coordinator.enter(b, profile).then(release => { bStarted = true; return release; });
+  const releaseA = await coordinator.enter(a, profile);
+  a.status = 'completed'; a.result = { reportId: 'a:1', acceptance: { status: 'pending' } }; releaseA();
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(bStarted, false);
+  a.result.acceptance.status = 'accepted'; coordinator.notify();
+  const releaseB = await pendingB; assert(bStarted);
+  coordinator.assertDependencies(b);
+  a.result.reportId = 'a:2'; assert.throws(() => coordinator.assertDependencies(b), /DEPENDENCY_CHANGED/);
+  const c = record('c'); const pendingC = coordinator.enter(c, profile); c.controller.abort();
+  await assert.rejects(pendingC, { name: 'AbortError' }); releaseB();
+  a.result.acceptance.status = 'needs_changes';
+  await assert.rejects(coordinator.enter(record('d', ['a']), profile), /DEPENDENCY_BLOCKED/);
+  await assert.rejects(createRoleCoordinator(records, null, { maxActive: 1, builderLimit: 0 }).enter(record('e'), defaultRole('builder')), /关闭/);
+
+  let persisted = 0; const ledger = createRoleLedger(), total = createRoleLedger();
+  await withRoleBudget({ ledger, total, profile: { maxRequests: 2 }, limit: 5, persist: async () => { persisted++; } }, async () => {
+    const ticket = await beginRoleRequest({ messages: [], max_tokens: 100 });
+    assert.equal(persisted, 1, 'reserve is persisted before inference');
+    await finishRoleRequest(ticket, { input_tokens: 5, output_tokens: 2 });
+    await finishRoleRequest(ticket, { input_tokens: 5, output_tokens: 2 });
+    assert.equal(ledger.tokens, 7); assert.equal(ledger.reserved, 0);
+    await finishRoleRequest(await beginRoleRequest({ messages: [], max_tokens: 100 }), null);
+    assert.equal(ledger.unknown, 1); assert(ledger.reserved > 0);
+    await assert.rejects(beginRoleRequest({}), /BUDGET_EXHAUSTED/);
+  });
+  assert.equal(total.requests, 2);
+  await withRoleBudget({ ledger: createRoleLedger(), total, profile: { maxRequests: 10 }, limit: 2 }, async () => assert.rejects(beginRoleRequest({}), /BUDGET_EXHAUSTED/));
+  await withRoleBudget({ ledger: createRoleLedger(), total: createRoleLedger(), profile: { maxRequests: 10, maxTokens: 1024 }, limit: 20 }, async () => assert.rejects(beginRoleRequest({ max_tokens: 4096 }), /Token/));
+  let now = 1000; const clock = createRoleClock({ activeNow: () => now }, 500, true);
+  now += 5000; assert.equal(clock.elapsed(), 500); clock.start(); now += 2000;
+  assert.equal(clock.elapsed(), 2500);
+  await clock.approval(async () => { now += 6000; assert.equal(clock.elapsed(), 2500); });
+  now += 100; assert.equal(clock.elapsed(), 2600);
+
+  const off = registerWorkerControls({ runId: 'run', taskId: 'task', list: () => [{ agentId: 'a' }], steer: () => ({ status: 'queued' }), stop: () => ({ status: 'stopped' }) });
+  assert.equal((await controlWorker('list', { runId: 'run', taskId: 'task' })).length, 1);
+  await assert.rejects(controlWorker('steer', { runId: 'run', taskId: 'other', agentId: 'a' }), /不匹配/);
+  off(); await assert.rejects(controlWorker('list', { runId: 'run', taskId: 'task' }), /已结束/);
+  let rows = applyProfessionalAgentEvent([], { type: 'subagent.profile', agentId: 'a', role: 'explore', profileName: 'Research', phase: 'queued' });
+  rows = applyProfessionalAgentEvent(rows, { type: 'subagent.phase', agentId: 'a', phase: 'approval' });
+  assert.equal(rows[0].phase, 'approval');
+  console.log('Professional roles: configuration, private storage, permission ceilings, dependencies, budget, clock, controls and event projection PASS');
+} finally { await rm(root, { recursive: true, force: true }); }

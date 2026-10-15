@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHarness } from "../electron/agent-runtime.js";
+import { configureNativeFileAccess } from "../electron/runtime/file-access-policy.js";
 
 const root = await mkdtemp(join(tmpdir(), "aporia-runtime-receipts-"));
 const originalFetch = globalThis.fetch;
@@ -10,6 +11,8 @@ const controller = new AbortController();
 const timeout = setTimeout(() => controller.abort(), 45_000);
 const provider = { id: "fixture", name: "Fixture", vendor: "deepseek", baseUrl: "https://fixture.invalid/v1", apiKey: "fake", models: [{ id: "fixture", supportsTools: true, contextWindow: 64000 }] };
 try {
+  // Simulate the user's confirmed global grant; never load real desktop settings.
+  configureNativeFileAccess(() => ({ enabled: true }));
   const workspace = join(root, "workspace"), external = join(root, "office-install");
   await mkdir(workspace); await mkdir(external);
   await writeFile(join(external, "render-fixture.txt"), "exists");
@@ -49,6 +52,7 @@ try {
     assert.equal(completed.some((event) => event.parallel), tool === "read_file" && count > 1);
   }
 } finally {
+  configureNativeFileAccess(() => ({ enabled: false }));
   clearTimeout(timeout); globalThis.fetch = originalFetch;
   await rm(root, { recursive: true, force: true });
 }

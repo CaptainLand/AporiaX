@@ -18,12 +18,35 @@ const rememberTaskExecutionModes = (tasks) => {
 
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
+  agentProfiles: {
+    get: () => ipcRenderer.invoke('agent-profiles:get'),
+    save: value => ipcRenderer.invoke('agent-profiles:save', value),
+    list: request => ipcRenderer.invoke('harness:agents:list', request),
+    steer: request => ipcRenderer.invoke('harness:agents:steer', request),
+    stop: request => ipcRenderer.invoke('harness:agents:stop', request),
+  },
+  control: {
+    request: (input) => ipcRenderer.invoke("control:request", input),
+    subscribe: (callback) => {
+      const listener = (_event, data) => callback(data);
+      ipcRenderer.on("control:event", listener);
+      return () => ipcRenderer.removeListener("control:event", listener);
+    },
+  },
   sideChat: {
     request: (input) => ipcRenderer.invoke("side-chat:request", input),
     subscribe: (callback) => {
       const listener = (_event, data) => callback(data);
       ipcRenderer.on("side-chat:event", listener);
       return () => ipcRenderer.removeListener("side-chat:event", listener);
+    },
+  },
+  teamChat: {
+    request: input => ipcRenderer.invoke('team-chat:request', input),
+    subscribe: callback => {
+      const listener = (_event, data) => callback(data);
+      ipcRenderer.on('team-chat:event', listener);
+      return () => ipcRenderer.removeListener('team-chat:event', listener);
     },
   },
   workbench: {
@@ -41,22 +64,21 @@ contextBridge.exposeInMainWorld("desktop", {
   theme: {
     set: (theme) => ipcRenderer.invoke("desktop:set-theme", theme),
   },
+  appearance: {
+    request: input => ipcRenderer.invoke('appearance:request', input),
+    subscribe: callback => {
+      const listener = (_event, value) => callback(value);
+      ipcRenderer.on('appearance:changed', listener);
+      return () => ipcRenderer.removeListener('appearance:changed', listener);
+    },
+  },
   account: {
     get: () => ipcRenderer.invoke("account:get"),
     signIn: () => ipcRenderer.invoke("account:sign-in"),
+    openCenter: () => ipcRenderer.invoke("account:open-center"),
+    getRequestHistory: (input) => ipcRenderer.invoke("account:request-history", input),
     refresh: () => ipcRenderer.invoke("account:refresh"),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
-    setRemoteEnabled: (enabled) =>
-      ipcRenderer.invoke("account:set-remote-enabled", enabled),
-    setRemoteFileAccess: (enabled) =>
-      ipcRenderer.invoke("account:set-remote-file-access", enabled),
-    syncTasks: (payload) => ipcRenderer.invoke("account:sync-tasks", payload),
-    remoteCommands: () => ipcRenderer.invoke("account:remote-commands"),
-    claimRemoteCommand: (commandId) => ipcRenderer.invoke("account:claim-remote-command", commandId),
-    acknowledgeRemoteCommand: (commandId, status, result = "", claim) =>
-      ipcRenderer.invoke("account:ack-remote-command", commandId, status, result, claim),
-    executeRemoteFileCommand: (command) =>
-      ipcRenderer.invoke("account:execute-remote-file-command", command),
   },
   tasks: {
     load: async () => {
@@ -86,6 +108,7 @@ contextBridge.exposeInMainWorld("desktop", {
     },
   },
   workspace: {
+    fileMenu: (request) => ipcRenderer.invoke('workspace:file-menu', request),
     listTree: (workspacePath, requestedDirectory = ".") =>
       ipcRenderer.invoke(
         "workspace:list-tree",
@@ -171,7 +194,7 @@ contextBridge.exposeInMainWorld("desktop", {
     check: (request = {}) => ipcRenderer.invoke("update:check", request),
     download: () => ipcRenderer.invoke("update:download"),
     install: () => ipcRenderer.invoke("update:install"),
-    openRelease: () => ipcRenderer.invoke("update:open-release"),
+    openRelease: (request) => ipcRenderer.invoke("update:open-release", { source: request?.source || "github" }),
     subscribe: (callback) => {
       const listener = (_event, data) => callback(data);
       ipcRenderer.on("update:event", listener);
@@ -226,6 +249,8 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.invoke("harness:acknowledge-recovery", runId),
     respondToApproval: (response) =>
       ipcRenderer.invoke("harness:approval-response", response),
+    respondToClarification: (response) =>
+      ipcRenderer.invoke("harness:clarification-response", response),
     onEvent: (listener) => {
       const handler = (_event, payload) => listener(payload);
       ipcRenderer.on("harness:event", handler);

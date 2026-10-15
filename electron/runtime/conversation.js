@@ -134,10 +134,13 @@ export function sanitizeConversation(
       // context controller may compact it, or explicitly reject an oversized
       // protected request. Never drop the tail of a human instruction here.
       const guidance = String(message.aporiaSkillContext || "");
-      const text = guidance && message.content.endsWith("\n\n" + guidance)
+      let text = guidance && message.content.endsWith("\n\n" + guidance)
         ? message.content.slice(0, -(guidance.length + 2)) : message.content;
+      const references = String(message.aporiaWorkspaceContext || "");
+      if (references && text.endsWith("\n\n" + references)) text = text.slice(0, -(references.length + 2));
       const provenance = {
         ...(guidance ? { aporiaSkillContext: guidance } : {}),
+        ...(references ? { aporiaWorkspaceContext: references } : {}),
         ...(["human", "harness", "retrieval", "delegation"].includes(message.aporiaSource) ? { aporiaSource: message.aporiaSource } : {}),
         ...(message.aporiaPinned === true ? { aporiaPinned: true } : {}),
         ...(message.aporiaSupersededBy ? { aporiaSupersededBy: String(message.aporiaSupersededBy) } : {}),
@@ -202,9 +205,9 @@ export function sanitizeConversation(
           ...imageParts,
         ],
       };
-    }).flatMap(({ aporiaSkillContext, ...message }) => aporiaSkillContext
-      ? [message, { role: "user", content: aporiaSkillContext, aporiaSource: "retrieval" }]
-      : [message]);
+    }).flatMap(({ aporiaSkillContext, aporiaWorkspaceContext, ...message }) => [message,
+      ...[aporiaWorkspaceContext, aporiaSkillContext].filter(Boolean).map(content => ({ role: "user", content, aporiaSource: "retrieval" })),
+    ]);
 }
 
 export function sanitizeFinalAnswer(content) {
@@ -224,6 +227,10 @@ export function formatToolStepDetail(
   language = "zh-CN",
 ) {
   if (modelResult?.reason) return modelResult.reason;
+  if (modelResult?.isError === true) {
+    const detail = (modelResult.content || []).filter(item => item.type === "text").map(item => item.text).join("\n").slice(0, 800);
+    return detail || (language === "en" ? "MCP service reported a tool error" : "MCP 服务返回工具错误");
+  }
   const error = String(modelResult?.error || "");
   if (!error) return null;
   if (/Invalid arguments/i.test(error)) {

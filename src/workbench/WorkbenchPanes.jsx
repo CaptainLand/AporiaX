@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import { TerminalPane } from "./TerminalPane.jsx";
-import { FileText, GitCompare, GitBranch, Globe, TerminalSquare, MessagesSquare } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, FileText, GitCompare, GitBranch, Globe, RotateCcw, TerminalSquare, MessagesSquare } from "lucide-react";
 import { SideChatPane } from "./SideChatPane.jsx";
+import { TeamChatPane } from '../team-chat/TeamChatPane.jsx';
 import { MarkdownPreview } from "./MarkdownPreview.jsx";
 import { DocxPreview } from "./DocxPreview.jsx";
 import { GitPane } from "./GitPane.jsx";
@@ -12,6 +13,8 @@ import { useI18n } from "../i18n";
 import { normalizeBrowserUrl } from "../../electron/browser-url.js";
 import { highlightedRows } from "./code-preview.js";
 import { toWorkspaceRelativePath } from "../../electron/link-target.js";
+import { useFileContextMenu } from './use-file-context-menu.js';
+import { isBrowserConsoleShortcut } from '../../shared/browser-shortcuts.js';
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const LANG = {
@@ -96,6 +99,7 @@ export function WorkbenchContent({
   if (tab.kind === "route") return builtins.route;
   if (tab.kind === "git") return <GitPane key={workbench.key} workbench={workbench} />;
   if (tab.kind === "sidechat") return <SideChatPane key={workbench.key} task={task} workbench={workbench} {...sideChat} />;
+  if (tab.kind === 'teamchat') return <TeamChatPane key={workbench.key} task={task} tab={tab} workbench={workbench} {...sideChat} />;
   if (tab.kind === "understanding") return builtins.understanding;
   if (tab.kind === "workspace") {
     return (
@@ -135,6 +139,7 @@ export function WorkspaceFiles({ task, workbench, onNotice }) {
 
 function WorkspacePane({ task, workbench, onNotice, children }) {
   const { tr } = useI18n();
+  const fileContextMenu = useFileContextMenu({ workspacePath: task.workspacePath, onNotice, onOpenFile: path => workbench.openFile(path) });
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState(null);
   useEffect(() => {
@@ -152,8 +157,8 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [query, workbench.key, task.id]);
   return (
-    <div className="workbench-file">
-      <div className="workbench-toolbar">
+    <div className="workbench-file workspace-browser">
+      <div className="workbench-toolbar workspace-browser-search">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -175,12 +180,15 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
               <button
                 type="button"
                 key={entry.path}
-                title={tr("双击打开文件", "Double-click to open")}
+                onContextMenu={event => void fileContextMenu(event, entry)}
+                onKeyDown={event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') void fileContextMenu(event, entry); }}
+                title={`${entry.path} · ${tr("双击打开文件", "Double-click to open")}`}
                 onDoubleClick={() => workbench.openFile(entry.path)}
               >
-                {entry.path}
+                <FileText size={14} /><span className="workspace-tree-name">{entry.name || entry.path.split(/[/\\]/).at(-1)}</span><ChevronRight className="workspace-tree-open-file" size={12} />
               </button>
             ))}
+            {!hits.entries.length && <div className="workspace-tree-state">{tr("没有匹配的文件", "No matching files")}</div>}
           </div>
         </>
       ) : (
@@ -421,7 +429,26 @@ function BrowserPane({ tab, resource, workbench, covered }) {
   const host = useRef(null);
   const [url, setUrl] = useState(() => displayBrowserUrl(resource?.url));
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const consoleSequence = useRef(resource?.consoleToggleSeq || 0);
   const [logs, setLogs] = useState([]);
+  // Native page focus lives in another renderer, so shortcuts are delivered
+  // through the same scoped resource updates as navigation and ownership.
+  useEffect(() => {
+    const sequence = resource?.consoleToggleSeq || 0;
+    if (sequence > consoleSequence.current && (sequence - consoleSequence.current) % 2) setConsoleOpen(open => !open);
+    consoleSequence.current = sequence;
+  }, [resource?.consoleToggleSeq]);
+  useEffect(() => {
+    if (!resource || covered) return undefined;
+    const shortcut = event => {
+      if (!isBrowserConsoleShortcut(event) || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      if (!event.target?.closest?.('.workbench-browser')) return;
+      event.preventDefault(); event.stopPropagation();
+      setConsoleOpen(open => !open);
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, [resource?.id, covered]);
   useEffect(() => {
     setUrl(displayBrowserUrl(resource?.url));
   }, [resource?.url]);
@@ -522,10 +549,10 @@ function BrowserPane({ tab, resource, workbench, covered }) {
   const busy = resource?.owner === "agent" || resource?.owner === "handoff";
   const showHttpsHint = Boolean(url.trim()) && !hasHttpScheme(url);
   if (!resource) {
-    return <div className="workbench-file"><div className="workbench-host" /></div>;
+    return <div className="workbench-file workbench-browser"><div className="workbench-host" /></div>;
   }
   return (
-    <div className="workbench-file">
+    <div className="workbench-file workbench-browser">
       <div className="workbench-toolbar">
         <button
           type="button"
@@ -534,7 +561,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           title={tr("后退", "Back")}
           onClick={() => workbench.request({ action: "history", id: tab.id, direction: "back" }).catch((error) => workbench.setError(error.message))}
         >
-          ←
+          <ArrowLeft size={15} />
         </button>
         <button
           type="button"
@@ -543,7 +570,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           title={tr("前进", "Forward")}
           onClick={() => workbench.request({ action: "history", id: tab.id, direction: "forward" }).catch((error) => workbench.setError(error.message))}
         >
-          →
+          <ArrowRight size={15} />
         </button>
         <button
           type="button"
@@ -552,7 +579,7 @@ function BrowserPane({ tab, resource, workbench, covered }) {
           title={tr("刷新", "Reload")}
           onClick={() => workbench.request({ action: "history", id: tab.id, direction: "reload" }).catch((error) => workbench.setError(error.message))}
         >
-          ↻
+          <RotateCcw size={14} />
         </button>
         <form className="workbench-url" onSubmit={(event) => void go(event)}>
           {showHttpsHint ? <span className="workbench-url-scheme">https://</span> : null}
@@ -571,13 +598,11 @@ function BrowserPane({ tab, resource, workbench, covered }) {
             disabled={busy}
             placeholder="bilibili.com"
             aria-label={tr("网址", "Address")}
+            title={tr("回车访问 · F12 / Ctrl+Shift+I / Ctrl+Shift+J 打开控制台", "Enter to navigate · F12 / Ctrl+Shift+I / Ctrl+Shift+J opens the console")}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
           />
-          <button className="workbench-toolbar-btn" type="submit" disabled={busy}>
-            {tr("前往", "Go")}
-          </button>
         </form>
         {busy ? (
           <button
@@ -596,15 +621,6 @@ function BrowserPane({ tab, resource, workbench, covered }) {
             {tr("交还", "Return")}
           </button>
         ) : null}
-        <button
-          type="button"
-          className={`workbench-toolbar-btn${consoleOpen ? " active" : ""}`}
-          title={tr("控制台", "Console")}
-          aria-pressed={consoleOpen}
-          onClick={() => setConsoleOpen((open) => !open)}
-        >
-          {tr("控制台", "Console")}
-        </button>
       </div>
       {resource?.status === "crashed" ? (
         <div className="workbench-status" style={{ padding: "4px 10px" }}>

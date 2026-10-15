@@ -18,12 +18,9 @@ app.disableHardwareAcceleration();
     account.fetchModelGateway = async (route, init) => {
       calls.push({ route, method: init.method });
       if (route === '/v1/capabilities/vision') return Response.json(ready
-        ? { status:'ready', verification:'configuration', model:{id:'aporia-cloud-vision',name:'server-selected-vision',supportsImages:true} }
+        ? { status:'ready', verification:'configuration', model:{id:'aporia-cloud-default',name:'server-selected-vision',supportsImages:true} }
         : { status:'unavailable' });
-      assert.equal(route, '/v1/chat/completions');
-      const body = JSON.parse(init.body);
-      assert.equal(body.model, 'aporia-cloud-vision');
-      return new Response('data: '+JSON.stringify({choices:[{index:0,delta:{content:'cloud observation'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n', {headers:{'Content-Type':'text/event-stream'}});
+      throw new Error('Native Cloud vision must not issue a preprocessing completion');
     };
     globalThis.fetch = async (url, init) => {
       calls.push({ url, body: JSON.parse(init.body) });
@@ -52,9 +49,9 @@ app.disableHardwareAcceleration();
     assert.equal(calls[0].route,'/v1/capabilities/vision');
     ready=true; calls=[];
     const cloud = await prepareVisionProxyRequest({...request,providerId:'aporia-cloud'});
-    assert.deepEqual(calls.map(x=>x.route),['/v1/capabilities/vision','/v1/chat/completions']);
-    assert.match(cloud.messages[0].content,/server-selected-vision/);
-    assert.match(cloud.messages[0].content,/cloud observation/);
+    assert.deepEqual(calls.map(x=>x.route),['/v1/capabilities/vision']);
+    assert.equal(cloud.messages, request.messages, 'original image attachments reach the native model');
+    assert.equal(cloud.visionProxy, undefined);
     console.log('Real Electron vision request path: native bypass, BYOK routing, no implicit Cloud, readiness gating, server-selected model label: PASS');
   } finally {
     globalThis.fetch=originalFetch;

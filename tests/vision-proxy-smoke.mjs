@@ -82,18 +82,15 @@ const cloudProviders = exposeVisionProxyCapabilities([
     kind: "aporia-cloud",
     source: "aporia-cloud",
     hasApiKey: false,
-    visionCapability: { status: "ready", model: { id: "aporia-cloud-vision", name: "Configured Vision" } },
-    models: [{ id: "aporia-cloud-default", name: "DeepSeek V4 Flash", supportsImages: false }],
+    visionCapability: { status: "ready", model: { id: "aporia-cloud-default", name: "Configured Vision" } },
+    models: [{ id: "aporia-cloud-default", name: "DeepSeek V4.1 Flash", imageInput: "native", supportsImages: true }],
   },
 ]);
 const cloudDeepSeek = cloudProviders[0].models[0];
 assert.equal(cloudDeepSeek.supportsImages, true);
-assert.equal(cloudDeepSeek.nativeSupportsImages, false);
-assert.equal(cloudDeepSeek.supportsImageProxy, true);
-assert.equal(cloudDeepSeek.visionProxy.providerId, "aporia-cloud");
-assert.equal(cloudDeepSeek.visionProxy.providerName, "Aporia Cloud");
-assert.equal(cloudDeepSeek.visionProxy.modelId, "aporia-cloud-vision");
-assert.equal(cloudDeepSeek.visionProxy.modelName, "Configured Vision");
+assert.equal(cloudDeepSeek.nativeSupportsImages, true);
+assert.equal(cloudDeepSeek.supportsImageProxy, false);
+assert.equal(cloudDeepSeek.visionProxy, null);
 
 const noKeyProviders = exposeVisionProxyCapabilities([
   {

@@ -1,5 +1,6 @@
 import { runIsolatedBuilder } from "./runtime/delegated-builder.js";
 import { saveRuntimeContext } from "./runtime/durable-run.js";
+import { currentLocalControlPolicy, acquireLocalControlWorker, withLocalControlWorker } from "./control/policy.js";
 export * from "./agent-runtime-core.js";
 
 import { realpath } from "node:fs/promises";
@@ -173,6 +174,7 @@ function plannerPrompt(request, builderLimit) {
   return [
     "AporiaX Harness orchestration preflight.",
     "Do not edit files. Inspect the repository only as much as necessary to decide whether the current implementation task can be split safely across Builder workers.",
+    "If essential user-only requirements are unclear, return parallelize=false and explain the missing decision. Main can request clarification before any Builder writes; do not invent a requirement just to parallelize.",
     `At most ${Math.min(MAX_BUILDERS, Math.max(1, builderLimit))} Builder workers may be proposed.`,
     "Builder workers must own explicit, non-overlapping workspace-relative write scopes. The workspace root '.' is forbidden. Two scopes conflict when either is the same as, an ancestor of, or a descendant of the other.",
     "Do not create a Builder merely to make the team larger. If one coherent implementation is safer or the task is not actually a write task, return parallelize=false.",
@@ -556,7 +558,10 @@ async function runOrchestratedHarness(options) {
     options.onEvent?.(event);
   };
 
-  const request = latestUserText(options.messages);
+  const priorAnswers = options.clarification?.ownerRunId === options.runId
+    ? options.clarification.snapshot().filter(question => question.status === "answered") : [];
+  const request = [latestUserText(options.messages), ...priorAnswers.map(question =>
+    "User clarification of this task: " + question.question + "\nAnswer: " + question.answer.text)].join("\n\n");
   const builderLimit = Math.min(
     MAX_BUILDERS,
     Math.max(0, Number(budget?.limits?.roles?.builder || 0)),
@@ -611,7 +616,7 @@ async function runOrchestratedHarness(options) {
         },
         { budgetEvent: false },
       );
-      const plannerResult = await runWithAgentBudget(
+      const plannerResult = await withLocalControlWorker({ agentId: `${options.runId || "run"}-orchestration-planner`, role: "explore" }, () => runWithAgentBudget(
         plannerChildBudget(),
         {},
         () =>
@@ -633,7 +638,7 @@ async function runOrchestratedHarness(options) {
             understandingDirectory: null,
             onEvent: () => undefined,
           }),
-      );
+      ));
       totalUsage = mergeTokenUsage(totalUsage, plannerResult?.usage);
       plan = normalizeBuilderOrchestrationPlan(
         String(plannerResult?.content || "").slice(
@@ -756,7 +761,9 @@ async function runOrchestratedHarness(options) {
             },
             run: async () => {
               let started = false;
+              let releaseLocalControl = () => {};
               try {
+                releaseLocalControl = acquireLocalControlWorker({ agentId, role: "builder" });
                 const inbox = mailbox.forTarget(node.id);
                 emit({
                   type: "subagent.started",
@@ -1004,6 +1011,8 @@ async function runOrchestratedHarness(options) {
                   }, { budgetEvent: node.executionRole !== "main" });
                 }
                 return result;
+              } finally {
+                releaseLocalControl();
               }
             },
           });
@@ -1231,6 +1240,7 @@ async function runOrchestratedHarness(options) {
 }
 
 export async function runHarness(options = {}) {
+  if (currentLocalControlPolicy()?.permissionProfile === "read_only") options = { ...options, permission: "read-only", builderOrchestration: false };
   if (currentAgentBudget()) {
     return runOrchestratedHarness(options);
   }

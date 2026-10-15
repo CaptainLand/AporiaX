@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectUnderstandingStore } from "../electron/project-understanding.js";
@@ -7,7 +7,8 @@ import { createKnowledgeWorkspace, createKnowledgeSession } from "../electron/kn
 import { runHarness } from "../electron/agent-runtime-core.js";
 import { createTaskHistoryStore } from "../electron/task-history-store.js";
 
-const root = await mkdtemp(join(tmpdir(), "aporia-knowledge-projects-"));
+// Match the physical root used by runHarness, including Windows short TEMP aliases.
+const root = await realpath(await mkdtemp(join(tmpdir(), "aporia-knowledge-projects-")));
 const originalFetch = globalThis.fetch;
 try {
   const workspaceRoot = join(root, "workspace"), baseDirectory = join(root, "knowledge");
