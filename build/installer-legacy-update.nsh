@@ -405,6 +405,14 @@ Function AporiaLegacyInstFilesPre
     StrCpy $INSTDIR $ApLegacyTarget
   ${Else}
     !ifdef allowToChangeInstallationDirectory
+      ; The assisted template defines this callback before our custom page.
+      ; Keep its reference for NSIS strict warnings, but discard its substring-
+      ; based result: the validated basename rule below owns the destination.
+      Push $INSTDIR
+      Push $0
+      Call instFilesPre
+      Pop $0
+      Pop $INSTDIR
       Call AporiaCopiesNormalizeDirectory
     !endif
   ${EndIf}

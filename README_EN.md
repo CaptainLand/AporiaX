@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://aporiax.cloud"><strong>Official website · aporiax.cloud</strong></a> ·
   <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0">Download 1.0.0 stable</a> ·
-  <a href="https://captainland.github.io/AporiaX_web/guide/">User guide (Chinese)</a>
+  <a href="https://aporiax.cloud/guide/">User guide (Chinese)</a>
 </p>
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0"><img alt="Release 1.0.0" src="https://img.shields.io/badge/release-1.0.0-2689f5"></a>

@@ -50,6 +50,7 @@ function Fixture() {
   const wb = useWorkbench(task);
   window.wb = wb;
   window.switchTask = (id) => setTask(makeTask(id));
+  window.setFixtureStatus = (status) => setTask(value => ({ ...value, messages: value.messages.map(message => message.role === 'assistant' ? { ...message, status } : message) }));
   useEffect(() => { wb.expand(); }, [wb.key]);
   useEffect(() => { const timer = setInterval(() => setTicks((n) => n + 1), 100); return () => clearInterval(timer); }, []);
   return <WorkbenchContext.Provider value={wb}>
@@ -66,7 +67,7 @@ function Fixture() {
         <button className="fixture-action" onClick={() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; }}>切换主题</button>
       </div>
       {wb.layout.open && <WorkbenchLayout workbench={wb} builtins={{ route: <p>主任务 Route，继续运行。</p> }} sideChat={{
-        providers, isRunning: true, onSendToMain: async (content) => { window.handoffs.push(content); return true; },
+        providers, isRunning: task.messages.at(-1)?.status === 'running', onSendToMain: async (content) => { window.handoffs.push(content); return true; },
       }} />}
     </div>
   </WorkbenchContext.Provider>;

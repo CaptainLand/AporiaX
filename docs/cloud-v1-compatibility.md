@@ -78,7 +78,7 @@ billing status event is recorded separately from raw model Token usage, and unkn
 amounts remain null. A pending-usage count is visible in the account panel.
 No prompts, keys or private reasoning are added to correlation headers.
 
-Implementation and verification boundaries: [2026-09-23 integration](cloud-integration-recovery-2026-09-23.md).
+Historical implementation boundary: [public Preview 3 notes](RELEASE_NOTES_v1.0.0-preview.3.md). Later hardening and UI changes are documented in [1.0.0 notes](RELEASE_NOTES_v1.0.0.md).
 
 ## Validation
 

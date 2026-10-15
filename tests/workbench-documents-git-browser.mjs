@@ -50,7 +50,7 @@ try {
   page.on("pageerror", (error) => errors.push(error.message)); page.on("request", (req) => { if (req.url().includes("example.invalid")) network.push(req.url()); });
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/workbench-documents-git.html");
   assert.equal(await page.locator(".workbench-empty-card").nth(5).innerText(), "Git");
-  await page.getByRole("button", { name: "打开内容", exact: true }).click(); assert.equal(await page.getByRole("menuitem").nth(5).innerText(), "Git"); await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "打开内容", exact: true }).click(); assert.equal(await page.getByRole("menuitem", { name: "Git", exact: true }).innerText(), "Git"); await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "查看 Markdown", exact: true }).click();
   const preview = page.getByRole("article", { name: "Markdown 阅读视图" });
   await preview.getByRole("heading", { name: "C++ 快速参考", exact: true }).waitFor();

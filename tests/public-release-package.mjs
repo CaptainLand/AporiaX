@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
 import { _electron } from "playwright-core";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { extractFile, listPackage } from "@electron/asar";
 
 // Anonymous/read-only release QA: no production fixture account, OTP or inference.
 const older = process.argv.includes("--check-older");
-const output = resolve(process.argv[2] || "release/v1.0.0-preview.3");
+const targetVersion = JSON.parse(await readFile('package.json', 'utf8')).version;
+const output = resolve(process.argv[2] || `release/v${targetVersion}`);
 const archive = join(output, "win-unpacked/resources/app.asar");
 const pkg = JSON.parse(extractFile(archive, "package.json"));
-const targetVersion = "1.0.0-preview.3";
 if (!older) {
   assert.equal(pkg.version, targetVersion);
   assert.equal(pkg.main, "electron/main-v2.js");
   assert.deepEqual(JSON.parse(extractFile(archive, "config/cloud-endpoints.json")), {
-    version: 1, accountWebUrl: "https://101.43.44.160",
-    accountApiUrl: "https://101.43.44.160/api", modelGatewayUrl: "https://101.43.44.160/gateway",
+    version: 1, accountWebUrl: "https://aporiax.cloud",
+    accountApiUrl: "https://aporiax.cloud/api", modelGatewayUrl: "https://aporiax.cloud/gateway",
   });
   assert.ok(!listPackage(archive).some(p => /cloud-private-preview\.json|\.ssh[\\/]|\.env($|\.)|aporiax-account-session\.json/i.test(p)));
 }
@@ -52,12 +52,12 @@ for (const portable of [false, true]) {
         await new Promise(r => setTimeout(r, 250));
       }
       const auth = new URL(authUrl);
-      assert.equal(auth.origin, "https://101.43.44.160");
+      assert.equal(auth.origin, "https://aporiax.cloud");
       assert.equal(auth.searchParams.get("code_challenge_method"), "S256");
       assert.equal(auth.searchParams.get("app_version"), targetVersion);
       assert.equal(new URL(auth.searchParams.get("redirect_uri")).hostname, "127.0.0.1");
       await page.evaluate(() => window.desktop.account.openCenter());
-      assert.equal(await desktop.evaluate(() => globalThis.__releaseOpenedUrl), "https://101.43.44.160/account");
+      assert.equal(await desktop.evaluate(() => globalThis.__releaseOpenedUrl), "https://aporiax.cloud/account");
       console.log("PASS packaged public sign-in + PKCE + account center; stale SSH profile ignored; " + (portable ? "portable" : "installer"));
     }
     let update;

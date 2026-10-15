@@ -102,6 +102,9 @@ try {
   await picker.getByRole("button", { name: "关闭模型选择", exact: true }).click();
   await picker.waitFor({ state: "hidden" });
   const layout = async () => ({ conversation: await page.locator(".side-chat-messages").boundingBox(), composer: await page.locator(".side-chat-composer").boundingBox() });
+  assert.equal(await page.getByRole('button', { name: '查看任务状态', exact: true }).count(), 0, 'Running tasks do not display an overall task-state badge');
+  await page.evaluate(() => window.setFixtureStatus('completed'));
+  await page.getByRole('button', { name: '查看任务状态', exact: true }).waitFor();
   const beforeStatus = await layout();
   await input.fill("保留这个草稿");
   await page.getByRole("button", { name: "查看任务状态", exact: true }).click();
@@ -121,6 +124,8 @@ try {
   assert.equal(await page.locator("dialog[open]").count(), 1, "Switching from status to source reuses one modal");
   await page.getByRole("button", { name: "关闭弹窗", exact: true }).click();
   assert.equal(await input.inputValue(), "保留这个草稿");
+  await page.evaluate(() => window.setFixtureStatus('running'));
+  await page.getByRole('button', { name: '查看任务状态', exact: true }).waitFor({ state: 'hidden' });
   await input.fill("");
   const ask = async (question) => {
     await page.getByRole("textbox", { name: "侧聊输入", exact: true }).fill(question);

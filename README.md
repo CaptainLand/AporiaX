@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://aporiax.cloud"><strong>官网 · aporiax.cloud</strong></a>　·　
   <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0">下载 1.0.0 正式版</a>　·　
-  <a href="https://captainland.github.io/AporiaX_web/guide/">使用教程</a>
+  <a href="https://aporiax.cloud/guide/">使用教程</a>
 </p>
 <p align="center">
   <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.0"><img alt="Release 1.0.0" src="https://img.shields.io/badge/release-1.0.0-2689f5"></a>
