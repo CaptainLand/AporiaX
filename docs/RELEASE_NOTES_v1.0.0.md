@@ -2,6 +2,8 @@
 
 Windows x64 · 2026-10-15
 
+> 2026-10-15：初次发布已暂停。安装流程已回退到 RC5.2 的原目录覆盖方案，不再提供“整理安装副本”。以下新版 UI 与功能保留；请勿继续使用已下载的初次 1.0.0 安装包整理旧副本。
+
 ## 工作台与 Agent 团队
 
 - 统一白天、暗夜和自定义主题下的主对话、执行记录、工作区、项目知识、侧栏与设置；对话表格、文件改动和 Witness 改为扁平化设计。
@@ -27,17 +29,15 @@ Windows x64 · 2026-10-15
 ## 安装与更新
 
 - 安装器兼容旧客户端的目录定位，保留固定当前安装路径更新及快捷方式修复。
-- 稳定版交互安装提供“整理安装副本”：展示可识别副本，确认保留目录与待整理列表后，先安装和校验新版，再把确认的旧程序文件移入可恢复备份。
-- 首次安装或选择新位置时，选择父目录后自动创建 `AporiaX` 文件夹；选择已叫 AporiaX 的目录不重复追加。
-- 不全盘扫描，不处理无法确认、运行中或更高版本的副本；不删除用户对话、凭据、工作区和混放文档。可跳过整理，静默安装与便携版不自动整理。
-- 备份默认位于 `%LOCALAPPDATA%\AporiaX\installation-backups`，包含恢复清单与处理报告。详细说明见 [安装与副本整理](INSTALLATION_ORGANIZER.zh-CN.md)。
+- 安装流程回退到 RC5.2：更新覆盖当前确认的安装目录；多个登记位置存在歧义时需要明确选择，不猜测目录。
+- 不再弹出整理页面、不搬动其他副本、不清理其他目录；对话、账户配置和工作区保持不变。首次安装沿用原有目录选择流程。
 
 ## 下载与限制
 
 - 安装版：`AporiaX-Setup-1.0.0-x64.exe`
 - 便携版：`AporiaX-Portable-1.0.0-x64.exe`
 - 更新元数据：`latest.yml`；增量辅助：安装包 `.blockmap`；完整性校验：`SHA256SUMS-1.0.0.txt`。
-- Windows 包仍未做可信代码签名。更新前请从托盘退出旧客户端；已下载的旧安装包不会自行获得新版整理功能。
+- Windows 包仍未做可信代码签名。更新前请从托盘退出旧客户端；已下载的安装包不会自行获得此次回退修改。
 - 不修改 Cloud 扣费、服务器安全配置或最低客户端版本；本次发布不部署 Web / Cloud。云模型与真实硬件环境的所有组合不可能由本地回归覆盖，失败时保留具体诊断。
 - 当前版本使用仓库的源码可用许可；不追溯撤销 RC5.2 及更早已按 MIT 发布副本的权利，第三方组件保持各自许可。
 
@@ -45,4 +45,4 @@ Windows x64 · 2026-10-15
 
 ## English summary
 
-AporiaX 1.0.0 brings a unified light/dark workbench, six specialist identities, a 2.5D office, team/private chat, configurable confirmed role management, account history and usage calendar, experimental themes, and centralized permission controls. The stable interactive installer supports confirmed, recoverable organization of recognized old copies and parent-directory installation. Windows packages remain unsigned. No Web/Cloud deployment or billing change is included; historical MIT grants remain valid.
+AporiaX 1.0.0 brings a unified light/dark workbench, six specialist identities, a 2.5D office, team/private chat, configurable confirmed role management, account history and usage calendar, experimental themes, and centralized permission controls. The initial distribution has been withdrawn. The installer has been reverted to the RC5.2 single-directory overwrite/update flow, without organizing other copies. Windows packages remain unsigned. Historical MIT grants remain valid.

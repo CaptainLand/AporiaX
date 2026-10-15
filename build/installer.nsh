@@ -6,7 +6,6 @@
 ; that already exist; do not recreate shortcuts the user deliberately removed.
 !macro customInstall
   Call AporiaLegacyUpdateCompleted
-  Call AporiaCopiesInstalled
   SetOutPath "$INSTDIR"
   !ifndef DO_NOT_CREATE_START_MENU_SHORTCUT
     ${if} ${FileExists} "$newStartMenuLink"

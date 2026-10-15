@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 — 2026-10-15
+
+- Withdraw the initial 1.0.0 distribution while investigating an incomplete installed application archive.
+- Restore the RC5.2 single-directory installer/update flow. No installation organizer, cross-copy moves or cleanup is executed; legacy directory selection and shortcut repair remain.
+- Verify actual Setup/Portable payload bytes and isolated real-installer upgrade/startup, not only win-unpacked. Keep distinct 1.0.1 assets so installed 1.0.0 clients can detect the fix.
+
 ## 1.0.0 — 2026-10-15
 
 - Ship the unified light/dark workbench, flat conversation and Witness surfaces, refined settings, model reasoning selection and theme-aware terminal/calendar/quota UI.

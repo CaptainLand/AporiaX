@@ -4,6 +4,7 @@ import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, normalize, resolve } from "node:path";
 import { extractFile, listPackage, statFile } from "@electron/asar";
 import yaml from "js-yaml";
+import { verifyWindowsPayloads } from './verify-windows-payloads.mjs';
 
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
 const version = pkg.version;
@@ -72,6 +73,7 @@ const installer = metadata.files.find((file) => file.url === setup);
 assert.equal(installer.size, blobs.get(setup).length);
 assert.equal(installer.sha512, metadata.sha512);
 const checksumName = `SHA256SUMS-${version}.txt`;
+await verifyWindowsPayloads(output, version);
 await writeFile(join(output, checksumName), names.map((name) => `${hash(blobs.get(name))}  ${name}`).join("\n") + "\n");
 console.log(`PASS: v${version}, ${sources.length} packaged source/assets byte-identical, ${natives.length} native PTY files unpacked, no private root artifacts, update SHA-512/size correct.`);
 for (const name of names) console.log(`${name}: ${blobs.get(name).length} bytes`);

@@ -4,7 +4,6 @@
 !include FileFunc.nsh
 !include LogicLib.nsh
 !include nsDialogs.nsh
-!include "${__FILEDIR__}\installer-copies.nsh"
 !define MUI_CUSTOMFUNCTION_ABORT AporiaLegacyRestoreRegistry
 
 !macro ApLegacyGetInQuotes VAR VALUE
@@ -93,7 +92,6 @@ Var ApLegacyScopeFound
 !macroend
 
 !macro customHeader
-!insertmacro ApCopiesHeader
 Function AporiaLegacyQuotedPath
   Exch $R0
   Push $R1
@@ -258,7 +256,6 @@ Function AporiaLegacyPrepareTarget
 FunctionEnd
 
 Function AporiaLegacyRestoreRegistry
-  Call AporiaCopiesRestore
   ${If} $ApLegacyPrepared != 1
     Return
   ${EndIf}
@@ -309,7 +306,6 @@ FunctionEnd
 !macroend
 
 !macro customInit
-  Call AporiaCopiesInit
   ${GetParameters} $0
   ClearErrors
   ${GetOptions} $0 "--updated" $1
@@ -317,23 +313,6 @@ FunctionEnd
     StrCpy $ApLegacyUpdate 0
   ${Else}
     StrCpy $ApLegacyUpdate 1
-    ${If} $ApCopiesEnabled == 1
-      ; The formal installer has its own explicit destination/cleanup form.
-      ; Do not mutate registrations or delete the old copy before that form.
-      !insertmacro GetDParameter $ApLegacyExplicit
-      StrCpy $ApLegacyTarget "$ApLegacyExplicit"
-      StrCpy $ApLegacyScope "$installMode"
-      Call AporiaLegacyReadCandidates
-      ${If} $ApLegacyTarget == ""
-      ${AndIf} $ApLegacyCount == 1
-        StrCpy $ApLegacyTarget "$ApLegacyDir1"
-        StrCpy $ApLegacyScope "$ApLegacyScope1"
-      ${EndIf}
-      !insertmacro ApLegacyMatchExplicitScope 1
-      !insertmacro ApLegacyMatchExplicitScope 2
-      !insertmacro ApLegacyMatchExplicitScope 3
-      !insertmacro ApLegacyMatchExplicitScope 4
-    ${Else}
     !insertmacro GetDParameter $ApLegacyExplicit
     ${If} $ApLegacyExplicit != ""
       StrCpy $ApLegacyCandidate $ApLegacyExplicit
@@ -368,7 +347,6 @@ FunctionEnd
       Call AporiaLegacyElevateIfNeeded
       Call AporiaLegacyPrepareTarget
     ${EndIf}
-    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -385,7 +363,6 @@ FunctionEnd
 
 !macro customPageAfterChangeDir
   Page custom AporiaLegacyDestinationPage AporiaLegacyDestinationLeave
-  Page custom AporiaCopiesPage
   ; Assisted installers normally append APP_FILENAME to custom directories.
   ; That is appropriate for a fresh install, never for an existing-copy update.
   !ifdef MUI_PAGE_CUSTOMFUNCTION_PRE
@@ -396,32 +373,17 @@ FunctionEnd
 
 !macro ApLegacyPageFunctions
 Function AporiaLegacyInstFilesPre
-  ${If} $ApCopiesEnabled == 1
-    Call AporiaCopiesPrepareTarget
-    Return
-  ${EndIf}
   ${If} $ApLegacyUpdate == 1
     Call AporiaLegacyPrepareTarget
     StrCpy $INSTDIR $ApLegacyTarget
   ${Else}
     !ifdef allowToChangeInstallationDirectory
-      ; The assisted template defines this callback before our custom page.
-      ; Keep its reference for NSIS strict warnings, but discard its substring-
-      ; based result: the validated basename rule below owns the destination.
-      Push $INSTDIR
-      Push $0
       Call instFilesPre
-      Pop $0
-      Pop $INSTDIR
-      Call AporiaCopiesNormalizeDirectory
     !endif
   ${EndIf}
 FunctionEnd
 
 Function AporiaLegacyDestinationPage
-  ${If} $ApCopiesEnabled == 1
-    Abort
-  ${EndIf}
   ${If} $ApLegacyUpdate != 1
     Abort
   ${EndIf}

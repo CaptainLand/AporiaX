@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -196,7 +196,7 @@
       "LICENSE",
       "licenses/**/*",
       "docs/RELEASE_NOTES_v1.0.0.md",
-      "docs/INSTALLATION_ORGANIZER.zh-CN.md",
+      "docs/RELEASE_NOTES_v1.0.1.md",
       "config/cloud-endpoints.json",
       "shared/**/*",
       "docs/LOCAL_CONTROL.md"

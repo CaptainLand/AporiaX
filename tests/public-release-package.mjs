@@ -8,7 +8,9 @@ import { extractFile, listPackage } from "@electron/asar";
 const older = process.argv.includes("--check-older");
 const targetVersion = JSON.parse(await readFile('package.json', 'utf8')).version;
 const output = resolve(process.argv[2] || `release/v${targetVersion}`);
-const archive = join(output, "win-unpacked/resources/app.asar");
+const appDirFlag = process.argv.indexOf('--app-dir');
+const appDirectory = appDirFlag >= 0 ? resolve(process.argv[appDirFlag + 1]) : join(output, 'win-unpacked');
+const archive = join(appDirectory, "resources/app.asar");
 const pkg = JSON.parse(extractFile(archive, "package.json"));
 if (!older) {
   assert.equal(pkg.version, targetVersion);
@@ -29,7 +31,7 @@ for (const portable of [false, true]) {
   const env = { ...process.env, APPDATA: join(profile, "roaming"), LOCALAPPDATA: join(profile, "local") };
   for (const key of Object.keys(env)) if (/^(APORIAX_|ELECTRON_RUN_AS_NODE|PORTABLE_EXECUTABLE)/.test(key)) delete env[key];
   if (portable) env.PORTABLE_EXECUTABLE_FILE = join(output, "portable-test.exe");
-  const desktop = await _electron.launch({ executablePath: join(output, "win-unpacked/AporiaX.exe"), args: ["--user-data-dir=" + data], env, timeout: 45000 });
+  const desktop = await _electron.launch({ executablePath: join(appDirectory, "AporiaX.exe"), args: ["--user-data-dir=" + data], env, timeout: 45000 });
   try {
     const info = await desktop.evaluate(({ app, shell }) => {
       shell.openExternal = async url => { globalThis.__releaseOpenedUrl = url; };

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir, mkdtemp, readdir, access, copyFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, mkdtemp, readdir, access } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -14,6 +14,7 @@ assert.match(helper, /GetDParameter \$ApLegacyExplicit/);
 assert.match(helper, /AporiaLegacyRestoreRegistry/);
 assert.match(helper, /WriteRegStr SHELL_CONTEXT.*UninstallString/);
 assert.match(helper, /No default selection/);
+assert.doesNotMatch(helper + hook, /installer-copies\.nsh|Call AporiaCopies|Page custom AporiaCopies/, 'Released installer must use the original single-directory update flow, not organize other copies');
 if (process.platform !== 'win32') {
   console.log('legacy installer static checks PASS; native fixture requires Windows');
   process.exit(0);
@@ -81,8 +82,6 @@ OutFile "${n(exe)}"
 !define APP_EXECUTABLE_FILENAME "AporiaX.exe"
 !define UNINSTALL_FILENAME "Uninstall AporiaX.exe"
 !define APP_FILENAME "AporiaX"
-!define VERSION "1.0.0"
-!define BUILD_RESOURCES_DIR "${n(join(root, 'build'))}"
 !define allowToChangeInstallationDirectory
 !include "${n(join(template, 'include/StrContains.nsh'))}"
 ${directoryPre}
@@ -100,41 +99,6 @@ Function .onInit
   SetRegView 64
   SetShellVarContext current
   StrCpy $installMode CurrentUser
-  $\{GetParameters} $0
-  ClearErrors
-  $\{GetOptions} $0 "--organize-fixture" $1
-  $\{IfNot} $\{Errors}
-    ; Bypass only the interactive form in this isolated fixture. Exercise the
-    ; exact production pre-install transaction against throwaway GUID keys.
-    StrCpy $ApCopiesEnabled 1
-    StrCpy $ApCopiesVersion "1.0.0"
-    StrCpy $ApCopiesRoot "$EXEDIR"
-    ReadINIStr $ApCopiesTarget "$EXEDIR\\input.ini" input target
-    StrCpy $ApCopiesPlanReady 1
-    $\{StdUtils.HashFile} $ApCopiesHash "SHA2-256" "$EXEDIR\\plan.json"
-    StrCpy $ApLegacyUpdate 1
-    Call AporiaLegacyInstFilesPre
-    WriteINIStr "${n(results)}" "result" "target" "$INSTDIR"
-    ReadRegStr $0 SHCTX "${uninstallKey}" UninstallString
-    WriteINIStr "${n(results)}" "result" "suppressedUninstall" "$0"
-    Call AporiaLegacyRestoreRegistry
-    ReadRegStr $0 SHCTX "${uninstallKey}" UninstallString
-    WriteINIStr "${n(results)}" "result" "restoredUninstall" "$0"
-    StrLen $0 $ApCopiesHash
-    WriteINIStr "${n(results)}" "result" "hashLength" "$0"
-    SetErrorLevel 0
-    Quit
-  $\{EndIf}
-  $\{GetParameters} $0
-  ClearErrors
-  $\{GetOptions} $0 "--normalize" $1
-  $\{IfNot} $\{Errors}
-    ReadINIStr $INSTDIR "$EXEDIR\\input.ini" input target
-    Call AporiaCopiesNormalizeDirectory
-    WriteINIStr "${n(results)}" "result" "target" "$INSTDIR"
-    SetErrorLevel 0
-    Quit
-  $\{EndIf}
   $\{GetParameters} $0
   ClearErrors
   $\{GetOptions} $0 "--select=" $1
@@ -179,8 +143,6 @@ Section
 SectionEnd
 `, 'utf8');
 execFileSync(nsis, ['/V2', fixture], {stdio:'pipe', timeout:60000});
-await writeFile(join(temp, 'plan.json'), '{"fixture":"confirmation hash binding"}');
-await copyFile(join(root, 'build/installer-copies.ps1'), join(temp, 'helper.ps1'));
 
 const folders = [join(temp, 'D copy'), join(temp, 'C copy'), join(temp, '中文 软件')];
 for (const folder of folders) {
@@ -199,14 +161,9 @@ function seed(directory, uninstallDirectory) {
 function inspectSeed() {
   return JSON.parse(ps(`$a=Get-ItemProperty -LiteralPath ${q(regPath + '\\Install')};$b=Get-ItemProperty -LiteralPath ${q(regPath + '\\Uninstall')};@{directory=$a.InstallLocation;uninstall=$b.UninstallString}|ConvertTo-Json -Compress`));
 }
-async function run(args, target) {
+async function run(args) {
   // Windows INI APIs otherwise create an ANSI file and lose Unicode paths.
   await writeFile(results, '\ufeff', 'utf16le');
-  if (target) await writeFile(join(temp, 'input.ini'), '\ufeff[input]\r\ntarget=' + target + '\r\n', 'utf16le');
-  if (args.includes('--organize-fixture')) {
-    await writeFile(join(temp, 'target.txt'), target, 'utf16le');
-    await writeFile(join(temp, 'plan.json'), JSON.stringify({ Schema: 1, Version: '1.0.0', ProductGuid: id, KeepDirectory: target, Confirmed: true, Selected: [] }));
-  }
   let status = 0;
 try { execFileSync(exe, ['/S', ...args], {stdio:'pipe', timeout:15000, windowsHide:true}); } catch (error) { status = error.status; }
   if (status) return {status};
@@ -232,23 +189,6 @@ try {
   const ambiguous = await run(['--updated']);
   assert.equal(ambiguous.status, 51041, 'Silent ambiguity must abort, not choose C:');
   assert.equal(inspectSeed().directory, folders[1]);
-  checks++;
-  for (const parent of [join(temp, 'chosen parent'), join(temp, 'AporiaXTools'), join(temp, '中文 软件', 'AporiaX'), join(temp, 'AporiaX') + '\\\\', 'D:\\']) {
-    const result = await run(['--normalize'], parent);
-    const cleanParent = resolve(parent);
-    const expected = /[\\/]AporiaX$/i.test(cleanParent) ? cleanParent : join(cleanParent, 'AporiaX');
-    assert.equal(result.target.toLowerCase(), expected.toLowerCase(), 'Native installer appends exactly one AporiaX basename');
-    checks++;
-  }
-  seed(folders[1], folders[0]);
-  const freshDestination = join(temp, 'selected new parent', 'AporiaX');
-  const organized = await run(['--organize-fixture'], freshDestination);
-  assert.equal(organized.status, 0);
-  assert.equal(organized.target, freshDestination, 'New destination does not have to contain a prior installation');
-  assert.equal(organized.hashLength, '64', 'Native StdUtils SHA2-256 plan hash matches the helper algorithm');
-  assert.equal(organized.suppressedUninstall, '', 'Upstream must never uninstall an old copy before new verification');
-  assert.equal(organized.restoredUninstall, '"' + join(folders[0], 'Uninstall AporiaX.exe') + '" /currentuser');
-  assert.equal(inspectSeed().directory, folders[1], 'Cancel/failure restores the previous installation registration');
   checks++;
   for (const [index, folder] of [[0, folders[1]], [1, folders[0]]]) {
     seed(folders[1], folders[0]);
