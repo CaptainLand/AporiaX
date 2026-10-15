@@ -135,7 +135,8 @@ try {
     await active.getByText('等待 Cloud 模型槽位', { exact: true }).waitFor({ state: 'hidden' });
     await active.getByText('等待模型响应', { exact: true }).waitFor();
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; window.routeFixture.emit({ type: 'turn.completed', status: 'partial', summary: '部分修改已保存，验证尚未完成' }); });
-    await page.locator('.ra-state').filter({ hasText: '部分完成' }).waitFor();
+    await page.locator('.ra-state').filter({ hasText: '已完成' }).waitFor();
+    assert.equal(await page.locator('.ra-state').getByText('部分完成', { exact: true }).count(), 0, 'Normal delivered replies use the simplified completion label; detailed records remain inspectable');
     assert.equal(await page.locator('.ra-current-row').count(), 0);
     await page.getByRole('button', { name: '选择任务轮次', exact: true }).click();
     await page.locator('.ra-run-list button').last().click();
