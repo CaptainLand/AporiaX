@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { ApprovalCard, DiffReviewPanel, UserAttachments } from "../agent-components";
 import { useI18n } from "../i18n";
+import { PreviewImage } from '../images/ImageViewer.jsx';
 import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles, hasTaskReply } from "../state/task-outcome-view.js";
 import {
   FoldableUserPrompt,
@@ -140,11 +141,7 @@ function MarkdownMessage({ content }) {
 }
 
 function MessageImage({ src, alt }) {
-  const workbench = useWorkbenchContext();
-  if (!workbench) return <img src={src} alt={alt} />;
-  return <img src={src} alt={alt} role="button" tabIndex={0} title="在侧栏打开"
-    onClick={() => workbench.openImage(src, alt)}
-    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); workbench.openImage(src, alt); } }} />;
+  return <PreviewImage src={src} alt={alt} />;
 }
 
 function FileIcon({ path }) {
@@ -1311,7 +1308,7 @@ export function Conversation({
             {message.content && (
               <FoldableUserPrompt content={message.content} />
             )}
-            <UserAttachments attachments={message.attachments} onOpenImage={workbench?.openImage} />
+            <UserAttachments attachments={message.attachments} />
             {message.queued && (
               <span className="queued-message-state">
                 <LoaderCircle size={12} />

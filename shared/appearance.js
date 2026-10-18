@@ -1,3 +1,4 @@
+import { legacyThemeFields, legacyThemeColors } from './appearance-legacy.js';
 export const THEME_SKILL = 'create-aporiax-theme';
 export const THEME_COMMAND = '@skill:create-aporiax-theme';
 export const IMAGE_ID = /^bg-[a-f0-9-]{36}$/;
@@ -14,15 +15,17 @@ export function contrast(a, b) { const x = luminance(a), y = luminance(b); retur
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const only = (value, keys) => object(value) && Object.keys(value).every(key => keys.includes(key));
 export function validateTheme(input) {
-  if (!only(input, ['name', 'base', 'colors', 'backgroundId', 'backgroundStrength'])) throw Error('THEME_INVALID_FIELDS');
+  if (!only(input, ['name', 'base', 'colors', 'backgroundId', 'backgroundStrength', 'regions', 'components', 'shape', 'gradient'])) throw Error('THEME_INVALID_FIELDS');
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 60) throw Error('THEME_INVALID_NAME');
   if (!['light', 'dark'].includes(input.base)) throw Error('THEME_INVALID_BASE');
-  if (!only(input.colors, ['accent', 'background', 'panel', 'text'])) throw Error('THEME_INVALID_COLORS');
+  if (!only(input.colors, ['accent', 'background', 'panel', 'text', 'secondary', 'quota', 'icon'])) throw Error('THEME_INVALID_COLORS');
   const colors = {};
   for (const key of ['accent', 'background', 'panel', 'text']) {
     if (typeof input.colors[key] !== 'string' || !/^#[0-9a-f]{6}$/i.test(input.colors[key])) throw Error('THEME_INVALID_COLORS');
     colors[key] = input.colors[key].toLowerCase();
   }
+  Object.assign(colors, legacyThemeColors(input.colors));
+  const legacy = legacyThemeFields(input);
   const light = input.base === 'light';
   if (light ? luminance(colors.background) < .5 || luminance(colors.panel) < .4 : luminance(colors.background) > .12 || luminance(colors.panel) > .16) throw Error('THEME_BASE_MISMATCH');
   if (contrast(colors.text, colors.background) < 7 || contrast(colors.text, colors.panel) < 7) throw Error('THEME_LOW_CONTRAST');
@@ -30,7 +33,7 @@ export function validateTheme(input) {
   const backgroundStrength = input.backgroundStrength ?? .12;
   if (typeof backgroundStrength !== 'number' || !Number.isFinite(backgroundStrength) || backgroundStrength < 0 || backgroundStrength > .18) throw Error('THEME_INVALID_STRENGTH');
   if (input.backgroundId && contrast(colors.text, mixColor(colors.background, light ? '#000000' : '#ffffff', backgroundStrength)) < 4.5) throw Error('THEME_LOW_CONTRAST');
-  return { name: input.name.trim(), base: input.base, colors, backgroundId: input.backgroundId || null, backgroundStrength };
+  return { name: input.name.trim(), base: input.base, colors, backgroundId: input.backgroundId || null, backgroundStrength, ...legacy };
 }
 function readableColor(color, background, ratio = 4.5, panel = background) {
   const readable = candidate => contrast(candidate, background) >= ratio && contrast(candidate, panel) >= ratio;
@@ -54,13 +57,16 @@ export function themeTokens(theme) {
   return tokens;
 }
 export function defaultAppearance() { return { version: 1, revision: 0, enabled: false, selectedId: null, base: null, themes: [], images: [] }; }
-export function themeDraft(theme) { const { name, base, colors, backgroundId, backgroundStrength } = theme; return { name, base, colors, backgroundId, backgroundStrength }; }
+export function themeDraft(theme, { includeLegacy = true } = {}) {
+  const { name, base, colors, backgroundId, backgroundStrength } = theme;
+  return { name, base, colors: includeLegacy ? { ...colors } : Object.fromEntries(['accent', 'background', 'panel', 'text'].map(key => [key, colors[key]])), backgroundId, backgroundStrength, ...(includeLegacy ? legacyThemeFields(theme) : {}) };
+}
 export function validateAppearance(value) {
   if (!only(value, ['version', 'revision', 'enabled', 'selectedId', 'base', 'themes', 'images']) || value.version !== 1 || !Number.isInteger(value.revision) || value.revision < 0
     || typeof value.enabled !== 'boolean' || (value.base != null && !['light', 'dark'].includes(value.base))
     || !Array.isArray(value.themes) || value.themes.length > 40 || !Array.isArray(value.images) || value.images.length > 32) throw Error('APPEARANCE_INVALID');
   const themes = value.themes.map(theme => {
-    if (!only(theme, ['id', 'name', 'base', 'colors', 'backgroundId', 'backgroundStrength', 'source', 'createdAt', 'updatedAt']) || !THEME_ID.test(theme.id) || !['manual', 'ai'].includes(theme.source)
+    if (!only(theme, ['id', 'name', 'base', 'colors', 'backgroundId', 'backgroundStrength', 'regions', 'components', 'shape', 'gradient', 'source', 'createdAt', 'updatedAt']) || !THEME_ID.test(theme.id) || !['manual', 'ai'].includes(theme.source)
       || !Number.isFinite(Date.parse(theme.createdAt)) || !Number.isFinite(Date.parse(theme.updatedAt))) throw Error('APPEARANCE_INVALID');
     return { ...validateTheme(themeDraft(theme)), id: theme.id, source: theme.source, createdAt: theme.createdAt, updatedAt: theme.updatedAt };
   });

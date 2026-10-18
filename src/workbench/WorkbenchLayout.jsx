@@ -3,6 +3,7 @@ import { useI18n } from "../i18n";
 import { clampWorkbenchWidth, MIN_DIALOGUE_WIDTH, MIN_WIDTH } from "./state.js";
 import { WorkbenchContent } from "./WorkbenchPanes.jsx";
 import { WorkbenchTabs } from "./WorkbenchTabs.jsx";
+import { useImagePreviewOpen } from '../images/ImageViewer.jsx';
 import {
   composerAttachmentFromDataTransfer,
   isComposerAttachmentDrag,
@@ -40,12 +41,13 @@ export function WorkbenchLayout({
   const [resizing, setResizing] = useState(false);
   const [dropReady, setDropReady] = useState(false);
   const active = layout.tabs.find((tab) => tab.id === layout.active) || null;
-  const covered = overlaying || resizing || menuOpen;
+  const imagePreviewOpen = useImagePreviewOpen();
+  const covered = overlaying || resizing || menuOpen || imagePreviewOpen;
   const displayWidth = clampWorkbenchWidth(layout.width, room);
 
   useLayoutEffect(() => {
-    if (overlaying) void workbench.hideBrowser();
-  }, [overlaying]);
+    if (overlaying || imagePreviewOpen) void workbench.hideBrowser();
+  }, [overlaying, imagePreviewOpen]);
 
   useEffect(() => {
     const shell = shellRef.current;

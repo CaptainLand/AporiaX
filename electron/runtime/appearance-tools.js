@@ -17,9 +17,10 @@ export function createAppearanceTools({ store, signal }) {
     if (name === 'list_aporiax_themes') {
       if (Object.keys(input).length) throw Error('No arguments are accepted');
       return { enabled: snapshot.enabled, revision: snapshot.revision, presets: PRESET_COLORS,
-        themes: snapshot.themes.map(theme => ({ id: theme.id, ...themeDraft(theme) })), images: snapshot.images.map(({ id, name, width, height }) => ({ id, name, width, height })),
+        themes: snapshot.themes.map(theme => ({ id: theme.id, ...themeDraft(theme, { includeLegacy: false }) })), images: snapshot.images.map(({ id, name, width, height }) => ({ id, name, width, height })),
         constraints: 'No layout/scripts/remote URLs. Text contrast >= 7 against both backgrounds. Light backgrounds: luminance >= .5 / panel >= .4; dark <= .12 / panel <= .16. The user applies candidates in Settings.' };
     }
+    if (Object.keys(input).some(key => !['name', 'base', 'colors', 'backgroundId', 'backgroundStrength'].includes(key)) || Object.keys(input.colors || {}).some(key => !['accent', 'background', 'panel', 'text'].includes(key))) throw Error('THEME_INVALID_FIELDS');
     const saved = await store.change({ action: 'save', revision: snapshot.revision, theme: input }, { source: 'ai', signal });
     const theme = saved.themes.at(-1);
     return { status: 'candidate-saved', themeId: theme.id, name: theme.name, applied: false,

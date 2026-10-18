@@ -1,4 +1,5 @@
 import { assistantHistoryMessage } from "./runtime/task-conversation.js";
+import { memberPermissionPolicy } from './team-chat/member-policy.js';
 import { defaultRoleSettings } from '../shared/professional-roles.js';
 import { roleDefinition } from './runtime/role-capabilities.js';
 import { createRoleCoordinator } from './runtime/role-coordinator.js';
@@ -1044,6 +1045,7 @@ import { createKnowledgeSession } from "./knowledge-projects.js";
 import { CLARIFICATION_TOOL, CLARIFICATION_POLICY, clarificationHumanMessage, clarificationResult, restoreClarificationConversation } from "./runtime/user-clarification.js";
 
 export async function runHarness({
+  memberRole = null,
   runId = "",
   taskId = "",
   provider: providerConfig,
@@ -1228,10 +1230,10 @@ export async function runHarness({
     },
   }) : null;
   requestApproval = createFullAutoApproval({ approvalMode: effectiveApprovalMode, workspaceRoot, requestApproval, emit });
-  const permissionPolicy = createPermissionPolicy(
+  const permissionPolicy = memberPermissionPolicy(createPermissionPolicy(
     permission,
     projectConfig.permissions,
-  );
+  ), memberRole);
   const canWriteWorkspace =
     getToolPermission(permissionPolicy, "write_file") !== "deny" ||
     getToolPermission(permissionPolicy, "apply_patch") !== "deny" ||
@@ -1433,7 +1435,7 @@ export async function runHarness({
     {
       role: "system",
       content: [
-        "You are AporiaX, a local coding and productivity agent.",
+        memberRole ? `You are ${memberRole.name}, working on a separately authorized team-member job, not the main task. Your role ID is ${memberRole.id}. Do not delegate, modify the main task, or claim another member's work.\n${memberRole.persona || ''}\nReport the result briefly, with evidence and remaining limitations. All writes are in this job's retained copy, NOT applied to the user's source project.` : "You are AporiaX, a local coding and productivity agent.",
         `Configured professional roles (use their id as delegate_subagent.role; disabled roles are unavailable): ${JSON.stringify(roles.filter(p => p.enabled).map(p => ({ id: p.id, name: p.name, responsibility: p.description.slice(0, 500), execution: p.template, skills: p.skills, knowledge: p.knowledge, maxRounds: p.maxRounds, model: p.model, thinking: p.thinking })))}`,
         "Choose a suitable configured role only when delegation helps. Independent tasks may run concurrently; pass depends_on with existing worker IDs for dependent work. Review and accept dependency reports to unblock waiting workers. Do not repeatedly poll the model for worker progress. Role budgets, model settings and permissions are user-owned and cannot be raised by delegation.",
         ...(roleTools ? ["When the user asks to create, edit or delete a reusable professional role, inspect list_agent_roles then propose a single manage_agent_role change. The UI must obtain explicit human approval for every change, including full-auto. Do not use shell/file tools to edit role storage. Rejected changes must not be retried without new user direction. Built-in roles are protected. Saved changes apply to later delegations; existing workers and parent task permissions/budgets are unchanged. list_agent_roles is authoritative over the initial role list above."] : []),

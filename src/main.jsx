@@ -440,6 +440,7 @@ function Sidebar({
   runningTaskIds,
   searchOpen,
   onToggleSearch,
+  onOpenAccountSettings,
 }) {
   const { tr } = useI18n();
   const [query, setQuery] = useState("");
@@ -654,7 +655,7 @@ function Sidebar({
       </div>
       </ScrollFadeSurface>
       <AppUpdateSidebar />
-      <LocalAccountPanel />
+      <LocalAccountPanel onOpenAccountSettings={onOpenAccountSettings} />
       {contextTask && contextMenu && (
         <div
           ref={contextMenuRef}
@@ -4506,6 +4507,7 @@ function App() {
         {!sidebarCollapsed && (
           <Sidebar
             tasks={tasks}
+            onOpenAccountSettings={() => openApplicationSettings("account")}
             activeTaskId={activeTaskId}
             onSelectTask={setActiveTaskId}
             onNewTask={requestNewTask}

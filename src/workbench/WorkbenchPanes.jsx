@@ -15,6 +15,7 @@ import { highlightedRows } from "./code-preview.js";
 import { toWorkspaceRelativePath } from "../../electron/link-target.js";
 import { useFileContextMenu } from './use-file-context-menu.js';
 import { isBrowserConsoleShortcut } from '../../shared/browser-shortcuts.js';
+import { ImageSurface } from '../images/ImageViewer.jsx';
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const LANG = {
@@ -70,27 +71,27 @@ export function WorkbenchContent({
       <div className="workbench-empty">
         <div className="workbench-empty-grid">
           <button type="button" className="workbench-empty-card" onClick={() => workbench.open("sidechat")}>
-            <MessagesSquare size={22} strokeWidth={1.6} />
+            <MessagesSquare size={20} strokeWidth={1.6} />
             {tr("侧边聊天", "Side chat")}
           </button>
           <button type="button" className="workbench-empty-card" onClick={() => workbench.open("route")}>
-            <GitCompare size={22} strokeWidth={1.6} />
+            <GitCompare size={20} strokeWidth={1.6} />
             {tr("变更", "Changes")}
           </button>
           <button type="button" className="workbench-empty-card" onClick={() => workbench.create("browser")}>
-            <Globe size={22} strokeWidth={1.6} />
-            Browser
+            <Globe size={20} strokeWidth={1.6} />
+            {tr("浏览器", "Browser")}
           </button>
           <button type="button" className="workbench-empty-card" onClick={() => workbench.create("terminal")}>
-            <TerminalSquare size={22} strokeWidth={1.6} />
+            <TerminalSquare size={20} strokeWidth={1.6} />
             {tr("终端", "Terminal")}
           </button>
           <button type="button" className="workbench-empty-card" onClick={openFile}>
-            <FileText size={22} strokeWidth={1.6} />
+            <FileText size={20} strokeWidth={1.6} />
             {tr("文件", "File")}
           </button>
           <button type="button" className="workbench-empty-card" onClick={() => workbench.open("git")}>
-            <GitBranch size={22} strokeWidth={1.6} /> Git
+            <GitBranch size={20} strokeWidth={1.6} /> Git
           </button>
         </div>
       </div>
@@ -378,26 +379,9 @@ export function FilePane({ tab, task, workbench, onNotice, previewOnly = false }
 
 function ImagePane({ src, title }) {
   const { tr } = useI18n();
-  const [zoom, setZoom] = useState(1);
-  const [fit, setFit] = useState(true);
-  const [size, setSize] = useState(null);
-  const [failed, setFailed] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   return <div className="workbench-file">
-    <div className="workbench-toolbar">
-      {OCR_UI_ENABLED && window.desktop?.ocr && ocrSource({ src, name: title }) && <button className="workbench-toolbar-btn" onClick={() => setOcrOpen(true)}>{tr("识别文字", "Recognize text")}</button>}
-      <button className="workbench-toolbar-btn" onClick={() => { setFit(true); setZoom(1); }}>{tr("适应", "Fit")}</button>
-      <button className="workbench-toolbar-btn" onClick={() => { setFit(false); setZoom(1); }}>{tr("原始", "Original")}</button>
-      <button className="workbench-icon" aria-label={tr("缩小", "Zoom out")} onClick={() => { setFit(false); setZoom((z) => Math.max(0.25, z - 0.25)); }}>−</button>
-      <button className="workbench-icon" aria-label={tr("放大", "Zoom in")} onClick={() => { setFit(false); setZoom((z) => Math.min(4, z + 0.25)); }}>+</button>
-      <span className="workbench-status">{fit ? tr("适应窗口", "Fit") : Math.round(zoom * 100) + "%"}{size ? ` · ${size.width} × ${size.height}` : ""}</span>
-    </div>
-    {failed ? <div role="alert" className="workbench-error">{tr("图片已失效或无法读取，请重新添加附件。", "Image unavailable. Please attach it again.")}</div> :
-      <div className="workbench-image" data-fit={fit ? "contain" : "original"}>
-        <img src={src} alt={title} onError={() => setFailed(true)}
-          onLoad={(event) => setSize({ width: event.target.naturalWidth, height: event.target.naturalHeight })}
-          style={!fit && size ? { width: size.width * zoom, maxWidth: "none", maxHeight: "none" } : undefined} />
-      </div>}
+    <ImageSurface key={src} src={src} alt={title} stageClassName="workbench-image" actions={OCR_UI_ENABLED && window.desktop?.ocr && ocrSource({ src, name: title }) && <button type="button" onClick={() => setOcrOpen(true)}>{tr('识别文字', 'Recognize text')}</button>} />
     {OCR_UI_ENABLED && ocrOpen && <OcrDialog source={ocrSource({ src, name: title })} onClose={() => setOcrOpen(false)} />}
   </div>;
 }

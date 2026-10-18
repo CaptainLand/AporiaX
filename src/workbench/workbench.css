@@ -100,7 +100,7 @@
   gap: 4px;
   min-width: 0;
   overflow: visible;
-  padding: 0 6px;
+  padding: 0 6px 0 16px;
   border-bottom: 1px solid var(--gray-5);
   background: var(--bg-app);
 }
@@ -300,16 +300,23 @@
 }
 
 .workbench-empty {
-  display: grid;
-  place-content: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
   height: 100%;
-  padding: 32px 24px;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
 }
 
 .workbench-empty-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(118px, 168px));
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  max-width: 316px;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .workbench-empty-card {
@@ -317,20 +324,32 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  min-height: 112px;
-  padding: 18px 12px;
-  border: 1px solid var(--gray-6);
-  border-radius: var(--radius-xl);
-  background: var(--gray-1);
-  color: var(--gray-11);
+  gap: 8px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 16px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text-1) 4%, var(--bg-app));
+  color: var(--text-2);
   font-size: var(--text-sm);
+  line-height: 20px;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.workbench-empty-card:hover {
-  border-color: var(--gray-7);
-  background: var(--gray-2);
-  color: var(--gray-12);
+.workbench-empty-card:hover,
+.workbench-empty-card:focus-visible {
+  background: color-mix(in srgb, var(--text-1) 8%, var(--bg-app));
+  color: var(--text-1);
+}
+.workbench-empty-card:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbench-empty-card { transition: none; }
 }
 
 .workbench-host {
@@ -688,18 +707,6 @@
 :root[data-theme="dark"] .workbench-menu button:hover,
 :root[data-theme="dark"] .workbench-tab-close:hover {
   background: var(--gray-5);
-}
-
-:root[data-theme="dark"] .workbench-empty-card {
-  border-color: var(--gray-6);
-  background: var(--gray-4);
-  color: var(--gray-11);
-}
-
-:root[data-theme="dark"] .workbench-empty-card:hover {
-  border-color: var(--gray-7);
-  background: var(--gray-5);
-  color: var(--gray-12);
 }
 
 :root[data-theme="dark"] .workbench-docx,

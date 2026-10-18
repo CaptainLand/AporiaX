@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "./i18n";
 import { attachmentImageSrc } from "./attachments.js";
+import { PreviewImage } from './images/ImageViewer.jsx';
 import { RoleChangeApproval } from './settings/RoleChangeApproval.jsx';
 import { useFileContextMenu } from './workbench/use-file-context-menu.js';
 
@@ -187,7 +188,7 @@ function BinaryCheckpointReview({ change }) {
   );
 }
 
-export function UserAttachments({ attachments, onOpenImage }) {
+export function UserAttachments({ attachments }) {
   const { tr } = useI18n();
   if (!attachments?.length) return null;
   return (
@@ -216,20 +217,10 @@ export function UserAttachments({ attachments, onOpenImage }) {
           </div>
         ) : (
           <figure key={attachment.id || attachment.name}>
-            <img
+            <PreviewImage
               src={attachmentImageSrc(attachment)}
               alt={attachment.name || tr("图片附件", "Image attachment")}
-              role={onOpenImage ? "button" : undefined}
-              tabIndex={onOpenImage ? 0 : undefined}
-              title={onOpenImage ? tr("在侧栏打开", "Open in sidebar") : undefined}
-              onClick={() => onOpenImage?.(attachmentImageSrc(attachment), attachment.name)}
-              onKeyDown={(event) => {
-                if (onOpenImage && (event.key === "Enter" || event.key === " ")) {
-                  event.preventDefault(); onOpenImage(attachmentImageSrc(attachment), attachment.name);
-                }
-              }}
             />
-            <figcaption>{attachment.name || tr("图片", "Image")}</figcaption>
           </figure>
         ),
       )}

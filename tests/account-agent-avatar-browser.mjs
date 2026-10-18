@@ -32,8 +32,15 @@ try {
     if(theme==='dark') await page.evaluate(()=>localStorage.removeItem('aporiax.account-agent-avatars.v1'));
     await boot(theme);await profile.click();
     assert.equal(await page.locator('.local-account-popover .local-account-avatar').getAttribute('data-avatar'),'main');await decode(page.locator('.local-account-popover img'));
-    await page.locator('.local-account-popover').screenshot({path:`.tmp/qa/account-refresh/popover-${theme}.png`});await page.keyboard.press('Escape');assert.equal(await page.locator('.local-account-popover').count(),0);
-    await openSettings();assert.equal(await portrait.getAttribute('data-avatar'),'main');
+    assert.equal(await page.locator('.local-account-popover .local-account-connected, .local-account-popover .local-account-meta').count(),0);
+    await page.locator('.local-account-popover').screenshot({path:`.tmp/qa/account-refresh/popover-${theme}.png`});
+    await page.getByRole('button',{name:'账户中心',exact:true}).click();
+    await portrait.waitFor();assert.equal(await nav.locator('.active').innerText(),'账户');
+    assert.equal(await page.locator('.local-account-popover').count(),0);
+    assert.equal(await page.evaluate(()=>window.avatarQA.opened),0,'Account center opens local profile settings, not a browser');
+    assert.equal(await portrait.getAttribute('data-avatar'),'main');
+    await page.getByRole('button',{name:'网页账户',exact:true}).click();
+    assert.equal(await page.evaluate(()=>window.avatarQA.opened),1,'The separate website action remains in account settings');
     await page.getByRole('button',{name:'更换账户头像',exact:true}).click();assert.equal(await picker.locator('.account-avatar-grid button').count(),6);
     await decode(picker.locator('img'));await page.screenshot({path:`.tmp/qa/account-refresh/avatar-picker-${theme}.png`});
     await page.keyboard.press('Escape');assert.equal(await picker.count(),0);assert.equal(await page.locator('.application-settings-modal').count(),1,'Escape closes only the avatar picker');

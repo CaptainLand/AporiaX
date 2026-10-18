@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { PreviewImage } from '../images/ImageViewer.jsx';
 import { OCR_UI_ENABLED, OcrDialog, ocrSource } from "../workbench/OcrDialog.jsx";
 import { getModel } from "../models/model-catalog.js";
 import { ModelMenu } from "../models/ModelMenu.jsx";
@@ -445,8 +446,7 @@ export function Composer({
                   }}
                   onDragEnd={endComposerAttachmentDrag}
                 >
-                  <img src={attachmentImageSrc(attachment)} alt={attachment.name} draggable={false} />
-                  <figcaption>{attachment.name}</figcaption>
+                  <PreviewImage src={attachmentImageSrc(attachment)} alt={attachment.name} draggable={false} />
                   {OCR_UI_ENABLED && window.desktop?.ocr && <button type="button" className="composer-ocr-button" aria-label={tr("识别图片文字", "Recognize image text")} onClick={() => setOcr({ source: ocrSource(attachment) })}>OCR</button>}
                   <button
                     type="button"

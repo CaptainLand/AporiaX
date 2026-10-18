@@ -1,12 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  Check,
-  Cloud,
   ExternalLink,
-  Laptop,
   LogIn,
   LogOut,
   RefreshCw,
+  UserRound,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { useAccount } from "./AccountContext.jsx";
@@ -19,16 +17,9 @@ function quotaPercent(quota) {
   return Math.min(100, Math.max(0, Math.round(Number(quota?.remainingRatio || 0) * 100)));
 }
 
-function primaryModel(models = []) {
-  const model = Array.isArray(models) ? models[0] : null;
-  return model?.displayName || model?.name || model?.id || "Aporia Cloud";
-}
-
-export function LocalAccountPanel() {
+export function LocalAccountPanel({ onOpenAccountSettings }) {
   const { tr } = useI18n();
-  const { account, busy: accountBusy, error, setError, api, signIn: accountSignIn, refresh: accountRefresh, signOut: accountSignOut } = useAccount();
-  const [actionBusy, setBusy] = useState(false);
-  const busy = accountBusy || actionBusy;
+  const { account, busy, error, setError, signIn: accountSignIn, refresh: accountRefresh, signOut: accountSignOut } = useAccount();
   const [menuOpen, setMenuOpen] = useState(false);
   const panel = useRef(null), profileButton = useRef(null);
   useEffect(() => {
@@ -51,15 +42,12 @@ export function LocalAccountPanel() {
   const profile = account?.profile;
   const visibleName = profile?.displayName || profile?.email?.split("@")[0] || "AporiaX";
   const remaining = quotaPercent(account?.quota);
-  const modelName = useMemo(() => primaryModel(account?.models), [account?.models]);
   const signedIn = account?.status === "authenticated" && profile;
-  const openAccountCenter = async () => {
-    if (busy || !api?.openCenter) return;
-    setBusy(true);
+  const openAccountSettings = () => {
+    if (busy || !onOpenAccountSettings) return;
     setError("");
-    try { await api.openCenter(); }
-    catch (failure) { setError(failure?.message?.startsWith("APORIAX_PRIVATE_") || failure?.message?.includes("APORIAX_CLOUD_ENDPOINTS_") ? failure.message : "APORIAX_ACCOUNT_CENTER_FAILED"); }
-    finally { setBusy(false); }
+    setMenuOpen(false);
+    onOpenAccountSettings();
   };
 
   const signIn = async () => {
@@ -89,9 +77,8 @@ export function LocalAccountPanel() {
               <AccountAvatar />
               <div>
                 <strong>{visibleName}</strong>
-                <small>{profile.email || tr("Aporia Account", "Aporia Account")}</small>
+                <small title={profile.email || undefined}>{profile.email || tr("Aporia Account", "Aporia Account")}</small>
               </div>
-              <span className="local-account-connected"><Check size={12} />{tr("已连接", "Connected")}</span>
             </div>
 
             <div className="local-account-quota-card">
@@ -110,16 +97,8 @@ export function LocalAccountPanel() {
             </div>
 
             {account?.usage?.unresolvedRequestCount > 0 && <p role="status" className="local-account-local-note">{tr("有用量待核算，尚未计入已确认消费。", "Some usage is pending reconciliation and excluded from confirmed totals.")}</p>}
-            <div className="local-account-meta">
-              <div><Cloud size={13} /><span>{modelName}</span></div>
-              <div><Laptop size={13} /><span>{account?.device?.name || tr("当前电脑", "This PC")}</span></div>
-            </div>
-
-
-
-
             <div className="local-account-actions">
-              <button className="local-account-web" disabled={busy || !api?.openCenter} onClick={openAccountCenter} type="button"><ExternalLink size={14} />{tr("账户中心", "Account center")}</button>
+              <button className="local-account-web" disabled={busy || !onOpenAccountSettings} onClick={openAccountSettings} type="button"><UserRound size={14} />{tr("账户中心", "Account center")}</button>
               <button disabled={busy} onClick={refresh} type="button"><RefreshCw className={busy ? "spin" : ""} size={14} />{tr("刷新", "Refresh")}</button>
               <button disabled={busy} onClick={signOut} type="button"><LogOut size={14} />{tr("退出登录", "Sign out")}</button>
             </div>

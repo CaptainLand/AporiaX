@@ -5,6 +5,7 @@ import { remarkAutolinkBoundary } from "../conversation/remark-autolink-boundary
 import hljs from "highlight.js/lib/common";
 import { classifyLink } from "../../electron/link-target.js";
 import { useI18n } from "../i18n";
+import { PreviewImage } from '../images/ImageViewer.jsx';
 import "./document-preview.css";
 
 export function documentLink(path, href) {
@@ -58,7 +59,7 @@ function MarkdownImage({ src, alt, path, workbench }) {
     }).catch((failure) => { if (!disposed) setError(failure.message); }).finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
   }, [link, approved, workbench.key]);
-  if (url && !error) return <img src={url} alt={alt || ""} loading="lazy" onError={() => setError(tr("图片加载失败", "Image failed to load"))} onDoubleClick={() => workbench.openImage(url, alt)} />;
+  if (url && !error) return <PreviewImage src={url} alt={alt || ""} loading="lazy" onError={() => setError(tr("图片加载失败", "Image failed to load"))} />;
   return <span className="document-image-placeholder"><span>{alt || tr("图片", "Image")}{loading ? " · …" : error ? " · " + error : ""}</span>{!loading && !approved && <button type="button" onClick={() => {
     if (link?.kind === "web") void workbench.openHref(link.href).catch((failure) => setError(failure.message));
     else setApproved(true);

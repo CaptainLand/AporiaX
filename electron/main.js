@@ -33,6 +33,7 @@ export const fileAccessSettingsReady = app.whenReady().then(async () => {
 fileAccessSettingsReady.catch(() => undefined);
 import { createSideChatService } from "./side-chat/service.js";
 import { createTeamChatService } from './team-chat/service.js';
+import { createMemberExecutor } from './team-chat/executor.js';
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
 import {
   lstat,
@@ -119,6 +120,8 @@ function approvalGrantKey(details = {}) {
 }
 
 let externalRunSource = () => [];
+let memberRunSource = () => [];
+const allExternalRuns = () => [...externalRunSource(), ...memberRunSource()];
 export function setDesktopExternalRunSource(source) {
   externalRunSource = typeof source === "function" ? source : () => [];
 }
@@ -132,7 +135,7 @@ const harnessTaskRuntime = createHarnessTaskRuntime({
         process.platform !== "darwin" &&
         app.isReady() &&
         !harnessTaskRuntime.hasActiveRuns() &&
-        externalRunSource().length === 0 &&
+        allExternalRuns().length === 0 &&
         (!mainWindow || mainWindow.isDestroyed())
       ) {
         app.quit();
@@ -159,8 +162,14 @@ handleTrustedIpc(ipcMain, "side-chat:request", (event, input) => {
 });
 app.on("before-quit", () => sideChat.dispose());
 
+const memberExecutor = createMemberExecutor({ dataDirectory: () => app.getPath('userData'), resolveProvider,
+  onActive: () => { if (app.isReady()) app.emit('aporiax:member-activity'); } });
 const teamChat = createTeamChatService({
   dataDirectory: () => app.getPath('userData'), resolveProvider,
+  executeJob: memberExecutor.executeJob,
+  getJobResult: runId => memberExecutor.runtime.getRunResult(runId),
+  respondJobApproval: (runId, approvalId, response) => memberExecutor.runtime.respondApproval(runId, approvalId, response),
+  interruptJob: runId => memberExecutor.runtime.interrupt(runId),
   loadTask: id => getTaskHistoryStore().loadTask(id),
   loadTasks: () => getTaskHistoryStore().loadTasks(),
   loadRoles: async () => (await roleSettingsStore(app.getPath('userData'))).snapshot(),
@@ -173,9 +182,18 @@ const teamChat = createTeamChatService({
     return { ...run, workers };
   },
   publish: payload => {
+    if (payload.type === 'member-jobs.updated') {
+      app.emit('aporiax:member-activity');
+      // The final notification is emitted after the report is durable.
+      setImmediate(() => {
+        if (process.platform !== 'darwin' && app.isReady() && !harnessTaskRuntime.hasActiveRuns() && allExternalRuns().length === 0 && (!mainWindow || mainWindow.isDestroyed())) app.quit();
+      });
+    }
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send('team-chat:event', payload);
   },
 });
+memberRunSource = () => teamChat.listMemberJobs();
+export const listDesktopMemberRuns = () => memberRunSource();
 handleTrustedIpc(ipcMain, 'team-chat:request', (_event, input) => teamChat.request(input));
 app.on('before-quit', () => teamChat.dispose());
 
@@ -1103,6 +1121,8 @@ app.whenReady().then(() => {
   if (!hasSingleInstanceLock) return;
   const disposeEnvironment = monitorTaskEnvironment({ powerMonitor, net, runtime: harnessTaskRuntime });
   app.once("will-quit", disposeEnvironment);
+  const disposeMemberEnvironment = monitorTaskEnvironment({ powerMonitor, net, runtime: memberExecutor.runtime });
+  app.once('will-quit', disposeMemberEnvironment);
   if (process.platform === "win32") {
     app.setAppUserModelId("com.aporiax.desktop");
   }
@@ -1116,7 +1136,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns() && externalRunSource().length === 0) {
+  if (process.platform !== "darwin" && !harnessTaskRuntime.hasActiveRuns() && allExternalRuns().length === 0) {
     app.quit();
   }
 });

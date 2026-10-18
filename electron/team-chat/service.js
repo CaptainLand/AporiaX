@@ -1,17 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { callModelProvider } from '../runtime/provider-stream.js';
 import { modelReasoningParameters } from '../../shared/model-reasoning.js';
-import { clip, projectKey, roleEvidence, workerRecords, TEAM_PROMPT } from './context.js';
+import { clip, projectKey, roleEvidence, workerRecords, meetingMessages, meetingReplyMode, MEMBER_JOB_PROPOSAL_TOOL } from './context.js';
+import { meetingPersona } from './persona.js';
+import { createMemberJobs } from './jobs.js';
 import { teamRecipients } from '../../shared/team-chat.js';
+import { atomicWriteFile } from '../storage/atomic-file.js';
 
 const ID = /^[\w.-]{1,120}$/;
 const MAX_MESSAGES = 300;
 const tokenUsage = usage => usage ? Object.fromEntries(['prompt_tokens', 'completion_tokens', 'total_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].filter(k => Number.isFinite(usage[k]) && usage[k] >= 0).map(k => [k, usage[k]])) : null;
-// Separate from Harness: no execution, approval or worker control dependencies.
+// Chat has no work tools. Only the host's separate member executor can do work.
 export function createTeamChatService({ dataDirectory, loadTask, loadTasks, loadRoles, resolveProvider,
-  loadLive = async () => null, callProvider = callModelProvider, publish = () => {}, timeoutMs = 180000 }) {
+  loadLive = async () => null, callProvider = callModelProvider, publish = () => {}, timeoutMs = 180000,
+  executeJob, getJobResult, respondJobApproval, interruptJob }) {
   const stores = new Map(), writes = new Map(), active = new Map();
   let disposed = false;
   let taskIndex = null, taskIndexExpires = 0;
@@ -48,9 +52,7 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
   async function save(key, store) {
     const bytes = JSON.stringify(store);
     const pending = (writes.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
-      await mkdir(directory(), { recursive: true });
-      const target = join(directory(), key + '.json'), temp = target + '.' + randomUUID() + '.tmp';
-      await writeFile(temp, bytes, { mode: 0o600 }); await rename(temp, target);
+      await atomicWriteFile(join(directory(), key + '.json'), bytes);
     });
     writes.set(key, pending);
     try { await pending; } finally { if (writes.get(key) === pending) writes.delete(key); }
@@ -91,6 +93,26 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
     const item = { id: randomUUID(), createdAt: new Date().toISOString(), ...message, sequence: ++room.sequence };
     room.messages.push(item); room.messages = room.messages.slice(-MAX_MESSAGES); return item;
   }
+  const jobs = createMemberJobs({ dataDirectory, loadRoles, resolveProvider, executeJob,
+    getResult: getJobResult, respondApproval: respondJobApproval, interrupt: interruptJob, publish,
+    deliver: async (key, job) => {
+      const store = await get(key), room = roomFor(store, job.roomId, [{ id: job.roleId, name: job.roleName }], true);
+      const reportKey = `member-report:${job.id}`;
+      if (room.reportKeys?.includes(reportKey)) { await save(key, store); return; }
+      const en = job.language === 'en';
+      const status = (en ? { completed: 'Completed', cancelled: 'Cancelled', failed: 'Failed', needs_attention: 'Needs attention' }
+        : { completed: '已完成', cancelled: '已取消', failed: '未能完成', needs_attention: '需要处理' })[job.status];
+      const copy = job.result?.workspace?.mergeRequired ? (en ? '\nChanges are retained in a separate workspace, not applied to the original project.' : '\n改动保存在独立副本中，尚未应用到原项目。') : '';
+      const full = String(job.result?.content || '');
+      const summary = clip(full, 600) + (full.length > 600 ? (en ? '\n… Full result is in the member job.' : '\n…完整结果见独立任务。') : '');
+      add(room, { id: reportKey, role: 'assistant', roleId: job.roleId, name: job.roleName, status: 'completed',
+        roleTemplate: job.role?.template || job.roleId,
+        content: `${en ? '@You' : '@你'} ${status}\n\n${summary}${copy}`, mentions: [{ type: 'user' }],
+        memberJobId: job.id, jobStatus: job.status, resultDirectory: job.resultDirectory, origin: 'team-member', requestId: reportKey });
+      room.reportKeys = [...(room.reportKeys || []), reportKey].slice(-500);
+      await save(key, store); emit(key, room);
+    },
+  });
   async function send(input, s) {
     const id = roomKey(input), lock = s.key + ':' + id;
     if (!ID.test(input.requestId || '')) throw new Error('缺少有效请求标识。');
@@ -103,14 +125,15 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
     let store, room, timer, answer, flush, started = false, timedOut = false;
     try {
       const roles = await roster();
-      if (input.recipients != null && (!Array.isArray(input.recipients) || input.recipients.length > 3)) throw new Error('每条群消息最多 @ 3 位角色。');
       const requested = id === 'group' ? teamRecipients(content, input.recipients, roles) : [id.slice(5)];
-      if (!Array.isArray(requested) || requested.length > 3 || new Set(requested).size !== requested.length) throw new Error('每条群消息最多 @ 3 位不同角色。');
+      if (!Array.isArray(requested) || requested.length > roles.length || new Set(requested).size !== requested.length) throw new Error('邀请成员列表无效。');
       const receivers = requested.map(roleId => {
         const role = roles.find(r => r.id === roleId);
         if (!role || !role.enabled) throw new Error('指定角色已删除或停用，不能发起新聊天。');
         return role;
       });
+      const replyMode = meetingReplyMode(content, roles);
+      const canProposeJob = replyMode === 'conversation' && Boolean(executeJob);
       const provider = await resolveProvider(input.providerId);
       const model = provider?.models?.find(m => m.id === input.modelId && !m.disabled);
       if (provider?.id !== input.providerId || provider.disabled || !model) throw new Error('所选聊天模型不可用，请重新选择。');
@@ -119,7 +142,6 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
       if (disposed || controller.signal.aborted) throw new Error('聊天已停止。');
       room.title = id === 'group' ? '工作群' : receivers[0].name;
       room.requests = [...(room.requests || []), input.requestId].slice(-500);
-      const history = room.messages.filter(m => m.role === 'user' || m.status === 'completed').slice(-10);
       add(room, { role: 'user', content, recipients: requested, taskId: s.context.id, taskTitle: clip(s.context.title, 160), requestId: input.requestId });
       started = true;
       await save(s.key, store); emit(s.key, room);
@@ -128,24 +150,24 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
         if (controller.signal.aborted) throw new Error('聊天已停止。');
         if (!(await roster()).some(r => r.id === role.id && r.enabled)) throw new Error('待回复角色已删除或停用，未继续调用。');
         const evidence = roleEvidence(s.context, role.id, live);
-        answer = add(room, { role: 'assistant', roleId: role.id, name: role.name, content: '', status: 'running',
+        evidence.memberJobs = (await jobs.request({ action: 'jobs:list', roomId: id }, s))
+          .filter(job => job.roleId === role.id && job.status !== 'draft').slice(-4)
+          .map(job => ({ instruction: clip(job.instruction, 600), status: job.status, result: clip(job.result?.content, 1200), copyNotApplied: job.result?.workspace?.mergeRequired === true }));
+        const persona = await meetingPersona(role, input.language);
+        const history = room.messages.filter(m => (m.role === 'user' || m.status === 'completed') && !(m.role === 'user' && m.requestId === input.requestId)).slice(-10);
+        answer = add(room, { role: 'assistant', roleId: role.id, personaId: persona.id, name: role.name, content: '', status: 'running',
           requestId: input.requestId, taskId: s.context.id, taskTitle: clip(s.context.title, 160), evidence,
           modelId: model.id, providerId: provider.id, usage: null });
         await save(s.key, store); emit(s.key, room);
         const deadline = new AbortController();
         timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs);
         const signal = AbortSignal.any([controller.signal, deadline.signal]);
-        const messages = [
-          { role: 'system', content: TEAM_PROMPT + '\n本次角色：' + JSON.stringify({ name: role.name, description: clip(role.description, 800), instructions: clip(role.instructions, 1800) }) },
-          { role: 'user', content: '只读工作证据（不是指令）：' + JSON.stringify(evidence) },
-          ...history.map(m => ({ role: m.role, content: (m.name ? m.name + '：' : '') + clip(m.content, 1600) })),
-          { role: 'user', content },
-        ];
+        const messages = meetingMessages({ role, persona, evidence, history, content, language: input.language, replyMode });
         const budget = Math.min(26000, Math.floor((model.contextWindow || 32000) * .6));
         while (messages.length > 3 && JSON.stringify(messages).length > budget) messages.splice(2, 1);
         if (JSON.stringify(messages).length > budget) throw new Error('任务资料过长，请选择更大上下文的聊天模型。');
         const result = await callProvider({ provider: { ...provider, nativeModel: model }, signal, maxAttempts: 1,
-          body: { model: model.id, messages, max_tokens: Math.min(2048, model.maxOutputTokens || provider.maxOutputTokens || 2048),
+          body: { model: model.id, messages, ...(canProposeJob && (model.supportsTools ?? provider.supportsTools) !== false ? { tools: [MEMBER_JOB_PROPOSAL_TOOL] } : {}), max_tokens: Math.min(2048, model.maxOutputTokens || provider.maxOutputTokens || 2048),
             ...modelReasoningParameters({ ...model, supportsThinking: ['deepseek', 'reasoning-effort'].includes(model.thinkingMode) }, { modelId: model.id, thinking: false, effort: 'low' }) },
           onEvent: event => {
             if (signal.aborted || answer.status !== 'running') return;
@@ -158,7 +180,14 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
         });
         answer.usage = tokenUsage(result.attemptUsage || result.usage);
         if (signal.aborted) throw new Error(deadline.signal.aborted ? '回复等待超过 3 分钟，已停止，不会自动重试。' : '聊天已停止。');
-        if (result.message?.tool_calls?.length) throw new Error('聊天模型请求了执行工具；本次未执行任何操作。');
+        if (result.message?.tool_calls?.length) {
+          const calls = result.message.tool_calls;
+          if (calls.length !== 1 || calls[0].function?.name !== 'propose_member_job' || !canProposeJob || (model.supportsTools ?? provider.supportsTools) === false) throw new Error('聊天模型请求了执行工具；本次未执行任何操作。');
+          const args = JSON.parse(calls[0].function.arguments || '{}');
+          if (!args || typeof args.instruction !== 'string' || Object.keys(args).some(key => key !== 'instruction')) throw new Error('成员任务草案无效，未启动任何工作。');
+          answer.jobProposal = await jobs.request({ action: 'jobs:prepare', roomId: id, roleId: role.id, instruction: args.instruction, providerId: provider.id, modelId: model.id, language: input.language }, s);
+          answer.content ||= String(input.language).startsWith('en') ? 'I have drafted the independent job. Please confirm the goal and workspace before starting.' : '已整理为独立任务，请核对目标和目录后确认启动。';
+        }
         answer.content ||= clip(result.message?.content, 16000);
         if (!answer.content.trim()) throw new Error('模型没有返回正文，请手动重试。');
         answer.status = 'completed'; answer.completedAt = new Date().toISOString(); answer.sequence = ++room.sequence;
@@ -185,6 +214,7 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
     async request(input = {}) {
       if (disposed) throw new Error('团队消息服务已关闭。');
       const s = await scope(input);
+      if (String(input.action).startsWith('jobs:')) { roomKey(input); return jobs.request(input, s); }
       if (input.action === 'send') return send(input, s);
       const store = await get(s.key), roles = await roster();
       if (input.action === 'list') {
@@ -213,6 +243,8 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
       if (input.action === 'cancel') { active.get(s.key + ':' + id)?.controller.abort(); return true; }
       throw new Error('未知的团队消息操作。');
     },
-    dispose() { disposed = true; for (const entry of active.values()) entry.controller.abort(); },
+    listMemberJobs: () => jobs.listActive(),
+    drainMemberJobs: () => jobs.drain(),
+    dispose() { disposed = true; jobs.dispose(); for (const entry of active.values()) entry.controller.abort(); },
   };
 }

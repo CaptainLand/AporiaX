@@ -47,9 +47,29 @@ try {
   await page.locator('.tm-assistant[data-status="completed"]').waitFor();
   assert.match(await page.locator('.tm-assistant').innerText(), /隔离测试回复/);
   const calls = await application.evaluate(() => globalThis.teamTestCalls);
-  assert.equal(calls.length, 1); assert.equal(calls[0].tools, undefined);
+  assert.equal(calls.length, 1); assert.deepEqual(calls[0].tools.map(t => t.function.name), ['propose_member_job'], 'chat can only draft, never execute work');
+  await composer.fill('@全体成员 都在吗？');
+  await page.getByRole('button', { name: '发送团队消息' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.tm-assistant[data-status="completed"]').length === 7);
+  const socialCalls = await application.evaluate(() => globalThis.teamTestCalls.slice(1));
+  assert.equal(socialCalls.length, 6);
+  for (const call of socialCalls) {
+    assert.equal(call.messages.length, 2, 'native meeting uses identity and greeting, without old reports');
+    assert.equal(call.tools, undefined);
+    assert(!JSON.stringify(call).includes('隔离测试回复'), 'previous replies cannot turn a greeting into another report');
+  }
   const source = await page.evaluate(() => window.desktop.tasks.load());
   assert.equal(source.find(t => t.id === 'team-test').messages.length, 0, 'ordinary chat must not start the main task');
+  // Actual host executor + separate journal, still using only the fake provider.
+  const memberDraft = await page.evaluate(() => window.desktop.teamChat.request({ action: 'jobs:prepare', taskId: 'team-test', roomId: 'group', roleId: 'review', instruction: '只读解释，不修改文件', providerId: 'team-mock', modelId: 'team-model' }));
+  await page.evaluate(jobId => window.desktop.teamChat.request({ action: 'jobs:start', taskId: 'team-test', roomId: 'group', jobId }), memberDraft.id);
+  await page.waitForFunction(async jobId => (await window.desktop.teamChat.request({ action: 'jobs:list', taskId: 'team-test', roomId: 'group' })).find(j => j.id === jobId)?.status === 'completed', memberDraft.id);
+  await page.locator('.tm-mentioned-user').waitFor();
+  const memberCalls = await application.evaluate(() => globalThis.teamTestCalls.slice(7));
+  assert(memberCalls.length > 0);
+  assert(memberCalls[0].messages[0].content.includes('察微'));
+  assert(!memberCalls[0].tools.some(t => ['delegate_subagent', 'manage_agent_role', 'write_file', 'run_command', 'read_conversation_history'].includes(t.function.name)), 'member tools respect role and cannot control main');
+  assert.equal((await page.evaluate(() => window.desktop.tasks.load())).find(t => t.id === 'team-test').messages.length, 0, 'member execution must not mutate the main task');
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     await page.screenshot({ path: `.tmp/qa/team-office-group-${theme}.png` });

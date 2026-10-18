@@ -68,7 +68,8 @@ handleTrustedIpc(ipcMain, "core:library:verify-skill", (_event, request = {}) =>
 
 const desktopBackground = installDesktopBackground();
 const externalActivity = createControlActivityTracker();
-const desktopRuns = () => externalActivity.combined(kernel?.taskRuntime?.listActiveRuns() || []);
+const desktopRuns = () => [...externalActivity.combined(kernel?.taskRuntime?.listActiveRuns() || []), ...(desktopMainForMembers?.listDesktopMemberRuns() || [])];
+let desktopMainForMembers = null;
 installAppUpdate({
   getActiveRunCount: () => desktopRuns().length,
 });
@@ -290,6 +291,8 @@ ipcMain.handle = function budgetAwareHandle(channel, listener) {
 };
 
 const desktopMain = await import("./main.js");
+desktopMainForMembers = desktopMain;
+app.on('aporiax:member-activity', () => desktopBackground.refresh());
 ipcMain.handle = originalHandle;
 
 kernel = createHarnessKernel({

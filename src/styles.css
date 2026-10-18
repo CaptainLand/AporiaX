@@ -2984,21 +2984,6 @@ body.panel-is-resizing * {
   object-fit: cover;
 }
 
-.message-attachment-grid figcaption,
-.composer-attachments figcaption {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  overflow: hidden;
-  padding: 12px 7px 5px;
-  color: var(--gray-1);
-  background: linear-gradient(transparent, color-mix(in srgb, var(--gray-12) 72%, transparent));
-  font-size: var(--text-2xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .composer-attachments {
   display: flex;
   padding: 10px 11px 0;
@@ -12605,6 +12590,26 @@ button.anchor-history-heading:hover {
 /* Navigation has a quiet, opaque surface distinct from the working panes. */
 :root[data-theme] .sidebar {
   border-right: 0;
+  --sidebar-label: color-mix(in srgb, var(--text-1) 35%, var(--text-2));
+  --sidebar-label-active: color-mix(in srgb, var(--text-1) 70%, var(--text-2));
+}
+
+/* Navigation stays legible without competing with the conversation. */
+:root[data-theme] .sidebar .sidebar-heading,
+:root[data-theme] .sidebar .new-task-button,
+:root[data-theme] .sidebar .sidebar-project-toggle > span,
+:root[data-theme] .sidebar .task-item-title,
+:root[data-theme] .sidebar .local-account-profile strong,
+:root[data-theme] .sidebar .local-account-signin strong {
+  color: var(--sidebar-label);
+}
+
+:root[data-theme] .sidebar .task-item:is(.active, :hover, :focus-visible) .task-item-title,
+:root[data-theme] .sidebar .sidebar-project-toggle:is(:hover, :focus-visible) > span,
+:root[data-theme] .sidebar .new-task-button:is(:hover, :focus-visible),
+:root[data-theme] .sidebar .local-account-profile:is(:hover, :focus-visible) strong,
+:root[data-theme] .sidebar .local-account-signin:is(:hover, :focus-visible) strong {
+  color: var(--sidebar-label-active);
 }
 
 /* The workspace is a rounded surface, not a boxed-in continuation of navigation. */

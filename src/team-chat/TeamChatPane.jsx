@@ -1,17 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ArrowUp, AtSign, Check, MoreHorizontal, Search, Square, X } from 'lucide-react';
+import { ChevronLeft, ArrowUp, AtSign, BriefcaseBusiness, Check, MoreHorizontal, Search, Square, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getAvailableModels } from '../models/model-catalog.js';
 import { SideChatModelPicker } from '../workbench/SideChatModelPicker.jsx';
 import { SideChatDialog } from '../workbench/SideChatDialog.jsx';
-import { teamDisplayInfo, teamRecipients } from '../../shared/team-chat.js';
+import { teamDisplayInfo, teamRecipients, ALL_TEAM_MEMBERS } from '../../shared/team-chat.js';
 import { agentAliases, agentDisplayName, agentChatDisplayName } from '../../shared/agent-identity.js';
 import { useI18n } from '../i18n';
 import '../workbench/side-chat.css';
 import './team-chat.css';
 import { AgentAvatar } from '../components/AgentAvatar.jsx';
 import { AgentTeamAvatar } from '../components/AgentTeamAvatar.jsx';
+import { MemberJobDialogs } from './MemberJobDialogs.jsx';
 
 function Face({ role, group }) {
   if (group) return <AgentTeamAvatar className="tm-avatar tm-group" />;
@@ -28,6 +29,8 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
   const [query, setQuery] = useState(''), [draft, setDraft] = useState(''), [recipients, setRecipients] = useState([]);
   const [error, setError] = useState(''), [syncError, setSyncError] = useState(''), [notice, setNotice] = useState(''), [pending, setPending] = useState('');
   const [mentionOpen, setMentionOpen] = useState(false), [dialog, setDialog] = useState(null), [transfer, setTransfer] = useState(''), [transferring, setTransferring] = useState(false);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [jobs, setJobs] = useState([]), [jobTarget, setJobTarget] = useState('main'), [jobText, setJobText] = useState(''), [jobDraft, setJobDraft] = useState(null), [jobBusy, setJobBusy] = useState(false), [jobError, setJobError] = useState('');
   const [selected, setSelected] = useState(() => workbench.draft('teamchat:model') || '');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchButtonRef = useRef(null);
@@ -35,7 +38,12 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
   current.current = { taskId: task.id, contextId, roomId, key: info?.projectKey };
   const request = (action, extra = {}) => {
     if (!window.desktop?.teamChat) return Promise.reject(new Error('请重启最新版 AporiaX 后使用团队消息。'));
-    return window.desktop.teamChat.request({ action, taskId: task.id, contextTaskId: contextId, roomId, ...extra });
+    return window.desktop.teamChat.request({ action, taskId: task.id, contextTaskId: contextId, roomId, language, ...extra });
+  };
+  const refreshJobs = async () => {
+    const captured = { taskId: task.id, roomId };
+    const value = await request('jobs:list');
+    if (mounted.current && current.current.taskId === captured.taskId && current.current.roomId === captured.roomId) setJobs(value);
   };
   const options = useMemo(() => getAvailableModels(providers).map(m => ({ ...m, modelId: m.id, value: JSON.stringify([m.providerId, m.id]) })), [providers]);
   const choice = selected ? options.find(m => m.value === selected) : task.providerId && task.modelId ? options.find(m => m.providerId === task.providerId && m.id === task.modelId) : options.find(m => !m.disabled);
@@ -46,6 +54,7 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
   const validRoom = room?.id === roomId;
   const stateLabel = worker => ({ running: tr('执行中', 'Working'), completed: tr('已完成', 'Completed'), failed: tr('失败', 'Failed'), interrupted: tr('已停止', 'Stopped'), queued: tr('等待中', 'Queued'), waiting: tr('等待中', 'Waiting') }[worker.status] || tr('最后已知记录', 'Last known record'));
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setMentionIndex(0); }, [mentionOpen, draft]);
   useEffect(() => { setRoomId(tab.roomId || ''); setContextId(task.id); }, [tab.revision]);
   useEffect(() => {
     let alive = true, timer, sequence = 0;
@@ -71,8 +80,18 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
       if (mounted.current && generation === loadGeneration.current) setRoom(previous => previous?.sequence > value.sequence ? previous : value);
     }).catch(e => { if (mounted.current && generation === loadGeneration.current) setError(e.message); });
   }, [task.id, roomId]);
+  useEffect(() => {
+    setJobs([]); setJobDraft(null); setJobError('');
+    if (!roomId) return;
+    let alive = true;
+    const refresh = () => { if (alive) void refreshJobs().catch(e => { if (alive) setJobError(e.message); }); };
+    refresh(); const timer = setInterval(refresh, 3000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [task.id, roomId]);
   useEffect(() => window.desktop?.teamChat?.subscribe(event => {
     if (event.projectKey !== current.current.key) return;
+    if (event.type === 'member-jobs.updated') return;
+    if (!event.room) return;
     setInfo(previous => previous ? { ...previous, rooms: previous.rooms.map(r => r.id === event.roomId ? {
       ...r, preview: event.room.messages.at(-1)?.content || event.room.messages.at(-1)?.error || '', updatedAt: event.room.messages.at(-1)?.createdAt,
       busy: event.room.messages.some(m => m.status === 'running'),
@@ -102,8 +121,7 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
   }, [roomId, room?.sequence]);
   const changeDraft = value => { setDraft(value); workbench.saveDraft('teamchat:draft:' + roomId, value); };
   const chooseMention = id => {
-    if (!recipients.includes(id) && recipients.length >= 3) { setError(tr('每次最多邀请 3 位角色。', 'Invite at most 3 roles.')); return; }
-    setRecipients(previous => previous.includes(id) ? previous : [...previous, id]);
+    setRecipients(previous => id === ALL_TEAM_MEMBERS ? [ALL_TEAM_MEMBERS] : previous.includes(id) ? previous : [...previous.filter(p => p !== ALL_TEAM_MEMBERS), id]);
     changeDraft(draft.replace(/(?:^|\s)@[^\s@]*$/u, '')); setMentionOpen(false); inputRef.current?.focus();
   };
   async function send(event) {
@@ -122,6 +140,25 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
     finally { if (mounted.current) setPending(''); }
   }
   const stop = async () => { try { await request('cancel'); } catch (e) { setError(e.message); } };
+  const openJob = (message = null) => {
+    setJobTarget(profile?.id || message?.roleId || (recipients.length === 1 && recipients[0] !== ALL_TEAM_MEMBERS ? recipients[0] : 'main'));
+    setJobText(message?.role === 'user' ? message.content : draft);
+    setJobDraft(null); setJobError(''); setDialog({ kind: 'job' });
+  };
+  async function prepareJob() {
+    if (!choice || jobBusy) return;
+    setJobBusy(true); setJobError('');
+    try { setJobDraft(await request('jobs:prepare', { roleId: jobTarget, instruction: jobText, providerId: choice.providerId, modelId: choice.modelId })); }
+    catch (e) { setJobError(e.message); }
+    finally { if (mounted.current) setJobBusy(false); }
+  }
+  async function jobAction(action, job, extra = {}) {
+    setJobBusy(true); setJobError('');
+    try { await request(action, { jobId: job.id, ...extra }); await refreshJobs(); if (action === 'jobs:start') { setJobDraft(null); setDialog({ kind: 'jobs' }); } }
+    catch (e) { setJobError(e.message); }
+    finally { if (mounted.current) setJobBusy(false); }
+  }
+  const jobStatus = status => ({ draft: tr('待确认', 'Draft'), queued: tr('排队中', 'Queued'), running: tr('执行中', 'Working'), waiting_approval: tr('等待审批', 'Approval needed'), completed: tr('已完成', 'Completed'), cancelled: tr('已取消', 'Cancelled'), failed: tr('未能完成', 'Failed'), needs_attention: tr('需要处理', 'Needs attention') }[status] || status);
   const openTransfer = message => {
     setTransfer((message.roleId ? tr('请主管结合 {name} 的建议协调后续工作：\n', 'Please coordinate next steps using {name}’s suggestions:\n', { name: messageName(message) }) : '') + message.content);
     setDialog({ kind: 'transfer' });
@@ -137,11 +174,23 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
   }
   const markdown = { a: ({ children }) => <span>{children}</span>, img: ({ alt }) => <span>{alt}</span> };
   const mentions = info?.roles.filter(r => r.enabled && agentAliases(r).join(' ').toLowerCase().includes((draft.match(/@([^\s@]*)$/u)?.[1] || '').toLowerCase())) || [];
+  const mentionChoices = [{ id: ALL_TEAM_MEMBERS }, ...mentions];
+  const composerKeyDown = e => {
+    if (e.nativeEvent.isComposing) return;
+    if (mentionOpen && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(e.key) && !e.shiftKey) {
+      e.preventDefault();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') setMentionIndex(index => (index + (e.key === 'ArrowDown' ? 1 : -1) + mentionChoices.length) % mentionChoices.length);
+      else chooseMention(mentionChoices[mentionIndex % mentionChoices.length].id);
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form.requestSubmit(); }
+    if (e.key === 'Escape') setMentionOpen(false);
+  };
   return <section className="team-chat" data-room={roomId} aria-label={tr('团队消息', 'Team messages')}>
     <header className="tm-header">
       {roomId && <><button className="tm-icon" onClick={() => setRoomId('')} aria-label={tr('返回会话列表', 'Back to conversations')}><ChevronLeft size={20} /></button><Face role={profile} group={group} /></>}
       <strong>{roomId ? summary?.title || room?.title || tr('聊天', 'Chat') : tr('团队消息', 'Team messages')}</strong>
-      {roomId ? <button className="tm-icon" aria-label={tr('聊天设置', 'Chat settings')} title={tr('聊天设置', 'Chat settings')} aria-haspopup="dialog" onClick={() => setDialog({ kind: 'settings' })}><MoreHorizontal size={20} /></button>
+      {roomId ? <><button className="tm-icon tm-jobs-trigger" aria-label={tr('成员独立任务', 'Member jobs')} title={tr('成员独立任务', 'Member jobs')} onClick={() => { setJobError(''); setDialog({ kind: 'jobs' }); }}><BriefcaseBusiness size={18} />{jobs.some(j => ['running', 'waiting_approval', 'queued'].includes(j.status)) && <i />}</button><button className="tm-icon" aria-label={tr('聊天设置', 'Chat settings')} title={tr('聊天设置', 'Chat settings')} aria-haspopup="dialog" onClick={() => setDialog({ kind: 'settings' })}><MoreHorizontal size={20} /></button></>
         : <button ref={searchButtonRef} className="tm-icon" aria-label={tr('搜索会话', 'Search chats')} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setQuery(''); }}>{searchOpen ? <X size={18} /> : <Search size={18} />}</button>}
     </header>
     {error && <p className="tm-error" role="alert">{error}</p>}
@@ -159,21 +208,22 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
     </> : <>
       <div className="tm-history" ref={listRef} onScroll={e => { follow.current = e.currentTarget.scrollHeight - e.currentTarget.scrollTop - e.currentTarget.clientHeight < 70; }}>
         {!validRoom ? <p className="tm-empty">{tr('正在读取消息…', 'Loading messages…')}</p> : !room.messages.length ? <div className="tm-empty tm-welcome"><Face role={profile} group={group} /><h3>{summary?.title}</h3></div> : room.messages.map(m => <article className={`tm-message tm-${m.role}`} data-status={m.status} aria-label={m.role === 'user' ? tr('你的消息', 'Your message') : m.role === 'assistant' ? messageName(m) : tr('系统消息', 'System message')} key={m.id}>
-          {m.role === 'assistant' && <Face role={info?.roles.find(r => r.id === m.roleId) || profile} />}
+          {m.role === 'assistant' && <Face role={info?.roles.find(r => r.id === m.roleId) || { id: m.roleId, template: m.roleTemplate || m.roleId }} />}
           <div className="tm-message-body">
             {group && m.role === 'assistant' && <b className="tm-sender">{messageName(m)}</b>}
-            <div className="tm-bubble">{!m.content && m.status === 'running' ? <span className="tm-typing" role="status" aria-label={tr('等待回复', 'Waiting for a reply')}><i /><i /><i /></span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{m.content || ''}</ReactMarkdown>}{m.error && <p className="tm-error">{m.error}</p>}</div>
+            <div className={`tm-bubble${m.mentions?.some(mention => mention.type === 'user') ? ' tm-mentioned-user' : ''}`}>{!m.content && m.status === 'running' ? <span className="tm-typing" role="status" aria-label={tr('等待回复', 'Waiting for a reply')}><i /><i /><i /></span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{m.content || ''}</ReactMarkdown>}{m.error && <p className="tm-error">{m.error}</p>}{m.memberJobId && <button type="button" className="tm-report-detail" onClick={() => setDialog({ kind: 'jobs' })}>{tr('查看独立任务', 'View member job')}</button>}{m.jobProposal && <button type="button" className="tm-report-detail" onClick={() => { setJobDraft(m.jobProposal); setJobError(''); setDialog({ kind: 'job' }); }}>{tr('确认独立任务', 'Review independent job')}</button>}</div>
             {m.role === 'user' && group && m.recipients?.length > 0 && <small className="tm-receivers">{m.recipients.map(id => '@' + (info?.roles.find(r => r.id === id)?.name || id)).join(' ')}</small>}
           </div>
           {m.role !== 'system' && m.status !== 'running' && <button className="tm-icon tm-message-more" aria-label={tr('消息选项', 'Message options')} aria-haspopup="dialog" title={tr('消息选项', 'Message options')} onClick={() => setDialog({ kind: 'message', message: m })}><MoreHorizontal size={17} /></button>}
         </article>)}
       </div>
       {locked ? <p className="tm-empty">{tr('角色已删除或停用，历史只读。', 'Role deleted or disabled. History is read-only.')}</p> : <form className="tm-compose" onSubmit={send}>
-        {group && recipients.length > 0 && <div className="tm-recipients">{recipients.map(id => <button type="button" key={id} disabled={busy} aria-label={tr('移除回复角色', 'Remove respondent') + ' ' + (info?.roles.find(r => r.id === id)?.name || id)} onClick={() => setRecipients(recipients.filter(r => r !== id))}>@{info?.roles.find(r => r.id === id)?.name || id}<X size={12} /></button>)}</div>}
-        {group && mentionOpen && <div className="tm-mentions" role="group" aria-label={tr('选择回复角色', 'Choose respondents')}>{mentions.map(r => <button type="button" key={r.id} onClick={() => chooseMention(r.id)}><Face role={r} /><span>{r.name}</span>{recipients.includes(r.id) && <Check size={14} />}</button>)}</div>}
+        {group && recipients.length > 0 && <div className="tm-recipients">{recipients.map(id => <button type="button" key={id} disabled={busy} aria-label={tr('移除回复角色', 'Remove respondent') + ' ' + (id === ALL_TEAM_MEMBERS ? tr('全体成员', 'Everyone') : info?.roles.find(r => r.id === id)?.name || id)} onClick={() => setRecipients(recipients.filter(r => r !== id))}>@{id === ALL_TEAM_MEMBERS ? tr('全体成员', 'Everyone') : info?.roles.find(r => r.id === id)?.name || id}<X size={12} /></button>)}</div>}
+        {group && mentionOpen && <div className="tm-mentions" role="group" aria-label={tr('选择回复角色', 'Choose respondents')}><button type="button" data-active={mentionIndex === 0} onClick={() => chooseMention(ALL_TEAM_MEMBERS)}><Face group /><span>{tr('全体成员', 'Everyone')}</span>{recipients.includes(ALL_TEAM_MEMBERS) && <Check size={14} />}</button>{mentions.map((r, index) => <button type="button" key={r.id} data-active={mentionIndex === index + 1} onClick={() => chooseMention(r.id)}><Face role={r} /><span>{r.name}</span>{recipients.includes(r.id) && <Check size={14} />}</button>)}</div>}
         <div className="tm-compose-row">
           {group && <button type="button" className="tm-icon tm-mention-trigger" aria-label={tr('邀请角色', 'Invite roles')} title={tr('邀请角色（默认主管回复）', 'Invite roles (supervisor replies by default)')} aria-expanded={mentionOpen} onClick={() => setMentionOpen(!mentionOpen)} disabled={busy}><AtSign size={19} /></button>}
-          <textarea ref={inputRef} rows={1} aria-label={tr('团队聊天消息', 'Team chat message')} value={draft} disabled={busy} maxLength={8000} placeholder={group ? tr('发消息，或 @角色', 'Message or @ a role') : tr('发消息…', 'Message…')} onChange={e => { changeDraft(e.target.value); if (group) setMentionOpen(/(?:^|\s)@[^\s@]*$/u.test(e.target.value)); }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!mentionOpen) e.currentTarget.form.requestSubmit(); } if (e.key === 'Escape') setMentionOpen(false); }} />
+          <button type="button" className="tm-icon" aria-label={tr('派发独立任务', 'Assign member job')} title={tr('派发独立任务，不影响主任务', 'Assign independently of the main task')} onClick={() => openJob()} disabled={!choice}><BriefcaseBusiness size={18} /></button>
+          <textarea ref={inputRef} rows={1} aria-label={tr('团队聊天消息', 'Team chat message')} value={draft} disabled={busy} maxLength={8000} placeholder={group ? tr('发消息，或 @角色', 'Message or @ a role') : tr('发消息…', 'Message…')} onChange={e => { changeDraft(e.target.value); if (group) setMentionOpen(/(?:^|\s)@[^\s@]*$/u.test(e.target.value)); }} onKeyDown={composerKeyDown} />
           {busy ? <button type="button" className="tm-send" aria-label={tr('停止聊天回复', 'Stop chat reply')} onClick={stop}><Square size={14} /></button> : <button className="tm-send" type="submit" aria-label={tr('发送团队消息', 'Send team message')} disabled={!draft.trim() || !choice || choice.disabled || !validRoom}><ArrowUp size={20} /></button>}
         </div>
         {(!choice || choice.disabled) && <button type="button" className="tm-configure" onClick={() => setDialog({ kind: 'settings' })}>{tr('选择聊天模型', 'Choose a chat model')}</button>}
@@ -188,6 +238,7 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
       <div className="tm-message-identity">{dialog.message.role === 'assistant' && <Face role={info?.roles.find(r => r.id === dialog.message.roleId) || { id: dialog.message.roleId || 'main' }} />}<p className="tm-message-details">{dialog.message.role === 'user' ? tr('你', 'You') : messageName(dialog.message)}<br /><time>{new Date(dialog.message.createdAt).toLocaleString()}</time>{dialog.message.modelId && <><br />{dialog.message.modelId} · {totalTokens(dialog.message.usage) ?? '—'} tokens</>}</p></div>
       {dialog.message.evidence && <button className="tm-menu-action" onClick={() => setDialog({ kind: 'evidence', message: dialog.message })}>{tr('工作依据与用量', 'Evidence & usage')}</button>}
       {dialog.message.content && <button className="tm-menu-action tm-transfer" disabled={contextId !== task.id || !onSendToMain} onClick={() => openTransfer(dialog.message)}>{tr('转为工作要求', 'Turn into work instructions')}</button>}
+      {!locked && <button className="tm-menu-action" onClick={() => openJob(dialog.message)}>{tr('交给成员独立处理', 'Assign to a member independently')}</button>}
       {contextId !== task.id && <p className="tm-setting-note">{tr('转交前，请在聊天设置中选择当前任务作为工作背景。', 'To hand off work, select the current task in chat settings first.')}</p>}
     </SideChatDialog>}
     {dialog?.kind === 'evidence' && <SideChatDialog className="tm-dialog" title={tr('工作依据与用量', 'Evidence & usage')} onClose={() => setDialog(null)}>
@@ -202,5 +253,8 @@ export function TeamChatPane({ task, tab, workbench, providers = [], onSendToMai
       <p>{task.title}</p><textarea className="tm-transfer-editor" aria-label={tr('工作要求', 'Work instructions')} value={transfer} maxLength={8000} disabled={transferring} onChange={e => setTransfer(e.target.value)} />
       {error && <p role="alert">{error}</p>}
     </SideChatDialog>}
+    <MemberJobDialogs kind={dialog?.kind} onClose={() => { if (!jobBusy) setDialog(null); }} tr={tr} roles={info?.roles || []} group={group} profile={profile}
+      target={jobTarget} setTarget={setJobTarget} text={jobText} setText={setJobText} draft={jobDraft} setDraft={setJobDraft} jobs={jobs}
+      workspacePath={task.workspacePath} busy={jobBusy} error={jobError} setError={setJobError} prepare={prepareJob} act={jobAction} statusLabel={jobStatus} openNew={() => openJob()} />
   </section>;
 }

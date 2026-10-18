@@ -31,7 +31,7 @@ assert.equal(initial.rooms[0].id, 'group');
 assert.equal(initial.roles.length, settings.profiles.length + 1);
 await assert.rejects(service.request({ ...base, contextTaskId: 'c', action: 'load' }), /本项目/);
 await assert.rejects(service.request({ ...base, contextTaskId: 'd', action: 'list' }), /本项目/);
-await assert.rejects(send({ recipients: ['review', 'verify', 'explore', 'builder'] }), /最多/);
+await assert.rejects(send({ recipients: ['review', 'verify', 'explore', 'missing-role'] }), /删除或停用/);
 await assert.rejects(send({ message: '@不存在 你好' }), /未识别/);
 const reply = await send({ requestId: 'one' });
 assert.equal(calls.length, 1);

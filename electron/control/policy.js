@@ -56,6 +56,7 @@ export function createLocalControlPolicy(options = {}) {
   const context = Object.freeze({
     clientId: String(options.clientId || ""), runId: String(options.runId || ""), workspaceRoot,
     permissionProfile: options.permissionProfile,
+    strictWorkspace: options.strictWorkspace === true,
     capabilities: Object.freeze(Object.fromEntries(["commands", "browser", "mcp"].map(key => [key, options.capabilities?.[key] === true]))),
     allowedMcpServerIds: list(options.allowedMcpServerIds), allowedProviderIds: list(options.allowedProviderIds), allowedModelIds: list(options.allowedModelIds),
     limits, deadlineAt,
@@ -208,7 +209,7 @@ export function localControlToolRequiresApproval(toolName) {
 }
 
 async function verifyPath(data, value, { writable = false, nativeFile = false } = {}) {
-  if (nativeFile && outsideFileAccessEnabled()) {
+  if (nativeFile && outsideFileAccessEnabled() && !data.context.strictWorkspace) {
     await verifyNativeFileTarget(data.workspaceRoot, value, { writable });
     return;
   }

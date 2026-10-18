@@ -177,15 +177,6 @@
   white-space: nowrap;
 }
 
-.local-account-connected {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--accent-8);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-}
-
 .local-account-quota-card {
   display: flex;
   padding: 9px 10px;
@@ -207,31 +198,6 @@
 .local-account-quota-card strong {
   color: var(--accent-7);
   font-size: var(--text-xs);
-}
-
-.local-account-meta {
-  display: grid;
-  gap: 6px;
-}
-
-.local-account-meta > div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  color: var(--gray-10);
-  font-size: var(--text-2xs);
-}
-
-.local-account-meta svg {
-  flex: 0 0 auto;
-  color: var(--accent-8);
-}
-
-.local-account-meta span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .local-account-local-note {
@@ -322,13 +288,9 @@
 .local-account-signin small,
 .local-account-profile small,
 .local-account-quota-card > div,
-.local-account-meta > div,
 .local-account-local-note { color: var(--account-muted); font-size: var(--text-2xs); line-height: 1.5; }
-.local-account-connected,
 .local-account-quota-card strong,
-.local-account-meta svg,
 .local-account-avatar { color: var(--account-accent); }
-.local-account-connected { font-size: var(--text-2xs); }
 .local-account-quota-card strong { font-size: var(--text-xs); }
 .local-account-actions button { color: var(--account-muted); font-size: var(--text-xs); min-height: 34px; }
 .local-account-actions .local-account-web { grid-column: 1 / -1; color: var(--account-accent); }
@@ -369,28 +331,23 @@
   box-shadow: none;
 }
 
-/* Compact account card, aligned with the rounded workbench surfaces. */
-:root[data-theme] .local-account-popover { padding:16px; gap:16px; bottom:calc(100% + 6px); border:1px solid var(--gray-5); border-radius:22px; background:var(--bg-app); box-shadow:var(--shadow-lg); }
+/* Compact identity, quota and actions; secondary details live in settings. */
+:root[data-theme] .local-account-popover { padding:14px; gap:12px; bottom:calc(100% + 6px); border:1px solid var(--gray-5); border-radius:18px; background:var(--bg-app); box-shadow:var(--shadow-lg); }
 :root .local-account-avatar.agent-avatar { border:0; background:var(--gray-3); overflow:hidden; }
-:root .local-account-popover .local-account-avatar { width:42px; height:42px; border-radius:14px; }
-.local-account-popover-head { gap:10px; flex-wrap:wrap; }
-.local-account-popover-head > div { min-width:70px; }
+:root .local-account-popover .local-account-avatar { width:40px; height:40px; border-radius:12px; }
+.local-account-popover-head { gap:10px; min-height:40px; flex-wrap:nowrap; }
+.local-account-popover-head > div { min-width:0; gap:4px; }
 .local-account-popover-head strong { font-size:13px; font-weight:600; }
-.local-account-popover-head small { font-size:10px; }
-.local-account-popover .local-account-connected { color:var(--text-2); font-size:10px; gap:3px; font-weight:400; }
-.local-account-connected > svg { color:var(--green-11); }
-:root[data-theme] .local-account-quota-card { border:0; padding:14px; border-radius:15px; gap:11px; background:var(--gray-2); }
+.local-account-popover-head small { font-size:11px; }
+:root[data-theme] .local-account-quota-card { border:0; padding:12px; border-radius:12px; gap:10px; background:var(--gray-2); }
 .local-account-quota-card > div { font-size:11px; }
 .local-account-quota-card strong { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--account-accent); }
 .local-account-quota-card > small { color:var(--account-muted); font-size:10px; line-height:1.4; }
 .local-account-quota-track--large { height:5px; }
 .local-account-quota-card .local-account-quota-track i { box-shadow:none; }
-.local-account-meta { padding:0 3px; gap:10px; }
-.local-account-meta > div { font-size:11px; gap:9px; }
-.local-account-meta svg { color:var(--text-2); }
 .local-account-actions { gap:6px; }
 :root[data-theme] .local-account-actions button { border:0; background:var(--gray-3); border-radius:11px; min-height:34px; font-size:11px; color:var(--text-2); }
-:root[data-theme] .local-account-actions .local-account-web { color:var(--text-1); background:var(--gray-3); }
+:root[data-theme] .local-account-actions .local-account-web { color:var(--text-1); background:var(--gray-3); min-height:36px; }
 :root[data-theme] .local-account-actions button:hover:not(:disabled) { background:var(--gray-4); color:var(--text-1); }
 :root[data-theme] .local-account-actions button:last-child:hover:not(:disabled) { color:var(--red-11); background:var(--red-3); }
 .local-account-actions button:disabled { opacity:.5; }
