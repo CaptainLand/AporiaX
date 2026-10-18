@@ -100,21 +100,22 @@ assert.match(updater, /autoDownload = false/);
 assert.match(updater, /autoInstallOnAppQuit = false/);
 assert.match(updater, /quitAndInstall\(false, true\)/);
 assert.match(mainV2, /installAppUpdate\(/);
-// Runtime tasks and accepted external tasks both block update installation,
-// including external preparation before the task reaches the runtime.
+// Runtime tasks, accepted external tasks and independent member jobs block
+// installation, including preparation before a job reaches the runtime.
 const { createControlActivityTracker } = await import("../electron/control/desktop-runtime.js");
 const updateWiring = mainV2.match(/installAppUpdate\(\{[\s\S]*?\}\);/)?.[0];
 const runSourceWiring = mainV2.match(/const desktopRuns = [^;]+;/)?.[0];
 assert(updateWiring, "Missing updater wiring");
 assert(runSourceWiring, "Missing desktop task source");
-for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) for (const preparing of [false, true]) {
+for (const states of [null, [], ["running"], ["paused"], ["starting"], ["running", "paused"]]) for (const preparing of [false, true]) for (const members of [null, [], ["queued"], ["running"], ["paused"], ["running", "paused"]]) {
   let options;
   const kernel = states === null ? null : { taskRuntime: { listActiveRuns: () => states.map((status, index) => ({ runId: `runtime-${index}`, status })) } };
   const externalActivity = createControlActivityTracker();
+  const desktopMainForMembers = members === null ? null : { listDesktopMemberRuns: () => members.map((status, index) => ({ runId: `member-${index}`, status })) };
   if (preparing) externalActivity.observe({ type: "run.created", runId: "external-queued", run: { runId: "external-queued", status: "queued" } });
-  runInNewContext(`${runSourceWiring}\n${updateWiring}`, { kernel, externalActivity, installAppUpdate: (value) => { options = value; } });
+  runInNewContext(`${runSourceWiring}\n${updateWiring}`, { kernel, externalActivity, desktopMainForMembers, installAppUpdate: (value) => { options = value; } });
   const count = options.getActiveRunCount();
-  assert.equal(count, (states?.length || 0) + Number(preparing));
+  assert.equal(count, (states?.length || 0) + Number(preparing) + (members?.length || 0));
   const decision = installUpdateDecision({ channel: "nsis", downloaded: true, activeRuns: count });
   assert.equal(decision.ok, count === 0);
   if (count > 0) assert.equal(decision.code, "TASK_RUNNING");
