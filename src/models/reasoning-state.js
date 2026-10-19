@@ -4,7 +4,9 @@ export function reasoningState(model, task = {}) {
   const efforts = model?.supportedEfforts?.length ? model.supportedEfforts : ['high', 'max'];
   const defaultEffort = efforts.includes(model?.defaultEffort) ? model.defaultEffort : efforts.includes('high') ? 'high' : efforts[0];
   return {
-    thinking: supportsThinking && Boolean(model.thinkingAlwaysOn || task.thinking),
+    // The composer always enables reasoning when the selected model supports it,
+    // including older tasks that saved an explicit off preference.
+    thinking: supportsThinking,
     effort: efforts.includes(task.effort) ? task.effort : defaultEffort,
     defaultEffort,
     efforts,

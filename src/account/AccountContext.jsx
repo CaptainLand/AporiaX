@@ -10,7 +10,7 @@ export function AccountProvider({ children }) {
   const [account, setAccount] = useState({ status: "booting" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const avatar = useAccountAvatar(account.status === 'authenticated' ? account.profile?.id : null);
+  const avatar = useAccountAvatar(account.status === 'authenticated' ? account.profile?.id : null,account.profile,api,snapshot=>setAccount(current=>current.profile?.id===snapshot.profile?.id?{...current,profile:snapshot.profile}:current));
   const revision = useRef(0), pending = useRef(false);
   useEffect(() => {
     let active = true;

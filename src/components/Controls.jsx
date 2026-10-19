@@ -15,7 +15,7 @@ export function IconButton({ label, className = "", children, ...props }) {
   );
 }
 
-export function ModelChoice({ model, selected, onSelect, compact = false, option = false }) {
+export function ModelChoice({ model, selected, onSelect, compact = false, option = false, hideDescription = false }) {
   const { tr } = useI18n();
   const ModelIcon = model.icon;
 
@@ -35,7 +35,7 @@ export function ModelChoice({ model, selected, onSelect, compact = false, option
       <span className="model-choice-copy">
         <span className="model-choice-name">{model.name}</span>
         {!compact && <code className="model-choice-id">{model.id}</code>}
-        <small>{model.disabled ? tr(model.disabledReasonZh || "模型不可用", model.disabledReasonEn || "Model unavailable") : tr(model.descriptionZh || model.description, model.descriptionEn || model.description)}</small>
+        {!hideDescription && <small>{model.disabled ? tr(model.disabledReasonZh || "模型不可用", model.disabledReasonEn || "Model unavailable") : tr(model.descriptionZh || model.description, model.descriptionEn || model.description)}</small>}
       </span>
       {selected && !model.disabled && <Check size={17} className="model-choice-check" />}
     </button>

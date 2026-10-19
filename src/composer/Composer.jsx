@@ -4,7 +4,6 @@ import { appendFileMention } from './file-mention.js';
 import { MentionTextarea } from './MentionTextarea.jsx';
 import {
   ArrowUp,
-  ChevronDown,
   FileText,
   LoaderCircle,
   Pause,
@@ -149,6 +148,9 @@ export function Composer({
   useEffect(() => { setOcr(null); }, [task.id]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [effortMenuOpen, setEffortMenuOpen] = useState(false);
+  useEffect(() => { setModelMenuOpen(false); setEffortMenuOpen(false); }, [task.id]);
+  useEffect(() => { setEffortMenuOpen(false); }, [task.providerId, task.modelId]);
   const textareaRef = useRef(null);
   const imageInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
@@ -514,7 +516,7 @@ export function Composer({
               aria-expanded={Boolean(mentionAutocomplete.state.query?.manual)}
               type="button"
               onMouseDown={event => event.preventDefault()}
-              onClick={() => { setModelMenuOpen(false); mentionAutocomplete.togglePicker(); }}
+              onClick={() => { setModelMenuOpen(false); setEffortMenuOpen(false); mentionAutocomplete.togglePicker(); }}
             >
               {attachmentLoading ? (
                 <LoaderCircle className="spin" size={16} />
@@ -527,6 +529,7 @@ export function Composer({
                 <ModelMenu
                   task={task}
                   providers={providers}
+                  showReasoning={false}
                   onClose={() => setModelMenuOpen(false)}
                   onUpdate={(patch) => onUpdateTask(patch)}
                   onManageProviders={onManageProviders ? () => { setModelMenuOpen(false); onManageProviders(); } : undefined}
@@ -539,17 +542,22 @@ export function Composer({
                 aria-expanded={modelMenuOpen}
                 onClick={(event) => {
                   event.stopPropagation();
+                  setEffortMenuOpen(false);
                   setModelMenuOpen((open) => !open);
                 }}
               >
-                <model.icon size={15} />
                 <span>{modelReady ? model.shortName : tr("选择模型", "Choose a model")}</span>
-                {modelReady && reasoningState(model, task).thinking && (
-                  <span className="thinking-pill">{reasoningState(model, task).effort}</span>
-                )}
-                <ChevronDown size={14} />
               </button>
             </div>
+            {modelReady && reasoningState(model, task).thinking && <div className="model-control effort-control">
+              {effortMenuOpen && <ModelMenu mode="effort" task={task} providers={providers}
+                onUpdate={onUpdateTask} onClose={() => setEffortMenuOpen(false)} />}
+              <button className="thinking-pill effort-trigger" type="button"
+                aria-label={tr("切换思考强度", "Change reasoning effort")} aria-expanded={effortMenuOpen}
+                aria-haspopup="dialog" onClick={() => { setModelMenuOpen(false); setEffortMenuOpen(open => !open); }}>
+                <span>{reasoningState(model, task).effort}</span>
+              </button>
+            </div>}
           </div>
           <div className="composer-run-actions">
             {isRunning && (

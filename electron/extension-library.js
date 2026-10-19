@@ -330,6 +330,14 @@ async function readRawMcpConfig(userDataDirectory) {
 export async function saveMcpServer({ userDataDirectory, server, createOnly = false } = {}) {
   return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => saveMcpServerUnlocked({ userDataDirectory, server, importing: createOnly }));
 }
+export async function saveCommunityMcpServers(userDataDirectory,servers){
+  return withExtensionWriteLock(userDataDirectory,async directory=>{
+    const {path,value}=await readRawMcpConfig(directory);
+    for(const server of servers){normalizeMcpServer(server);const before=value.servers.find(item=>item.id===server.id);if(before&&JSON.stringify(before)!==JSON.stringify(server))throw Error('COMMUNITY_LOCAL_CONFLICT');if(!before)value.servers.push(server);}
+    if(value.servers.length>64)throw Error('COMMUNITY_LOCAL_LIMIT');
+    await writeJsonAtomic(path,value);return servers;
+  });
+}
 
 async function saveMcpServerUnlocked({ userDataDirectory, server, importing = false }) {
   const normalized = normalizeMcpServer(server || {});

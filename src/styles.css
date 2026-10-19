@@ -12736,6 +12736,7 @@ button.anchor-history-heading:hover {
 }
 
 :root[data-theme] .witness-heading strong {
+  color: var(--text-2);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   letter-spacing: normal;
@@ -12755,12 +12756,12 @@ button.anchor-history-heading:hover {
 :root[data-theme] .witness-current p,
 :root[data-theme] .witness-record > div > span,
 :root[data-theme] .witness-record time {
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 :root[data-theme] .witness-current strong,
 :root[data-theme] .witness-record strong {
-  color: var(--text-1);
+  color: var(--text-2);
   font-weight: var(--weight-medium);
 }
 
@@ -12788,22 +12789,28 @@ button.anchor-history-heading:hover {
   font-size: var(--text-sm);
 }
 
-/* Composer: a crisp bordered surface with a single elevation step. */
+/* Retain the original composer outline and corners; keep the newer controls. */
 :root[data-theme] .composer {
   border: 1px solid var(--gray-6);
   border-radius: var(--radius-lg);
-  background: var(--gray-1);
-  box-shadow: var(--shadow-xs);
+  background: var(--gray-2);
+  box-shadow: none;
 }
 
 :root[data-theme] .composer:focus-within {
   border-color: var(--gray-8);
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
 }
 
-:root[data-theme="dark"] .composer {
-  background: var(--gray-2);
-}
+:root[data-theme] .composer textarea::placeholder { color: var(--text-3); opacity: 1; }
+:root[data-theme] .composer .composer-add,
+:root[data-theme] .composer .model-trigger { color: var(--text-2); }
+:root[data-theme] .composer .composer-add:hover,
+:root[data-theme] .composer .model-trigger:is(:hover, .active) { color: var(--text-1); background: var(--gray-4); }
+:root[data-theme] .composer .thinking-pill { color: var(--text-2); background: var(--gray-4); }
+:root[data-theme] .composer .send-button { border-radius: var(--radius-md); box-shadow: none; }
+:root[data-theme] .composer .send-button:hover:not(:disabled) { background: var(--gray-11); }
+:root[data-theme] .composer .send-button:disabled { color: var(--text-3); background: var(--gray-4); opacity: 1; }
 
 :root[data-theme] ::selection {
   background: color-mix(in srgb, var(--accent-9) 28%, transparent);
@@ -13049,6 +13056,20 @@ button.anchor-history-heading:hover {
 :root[data-theme] .markdown-message th { background: var(--gray-3); }
 :root[data-theme] .markdown-message tr:hover td { background: var(--gray-3); }
 :root[data-theme] .edited-files-header { background: transparent; }
+:root[data-theme] .edited-files-title strong,
+:root[data-theme] .edited-file-name,
+:root[data-theme] .review-files-button,
+:root[data-theme] .show-more-files,
+:root[data-theme] .witness-toggle {
+  color: var(--text-2);
+}
+:root[data-theme] .edited-files-title .legacy-edit-note { color: var(--text-3); }
+:root[data-theme] .review-files-button:is(:hover, :focus-visible),
+:root[data-theme] .show-more-files:is(:hover, :focus-visible),
+:root[data-theme] .witness-toggle:is(:hover, :focus-visible),
+:root[data-theme] .edited-file-row:is(:hover, :focus-visible) .edited-file-name {
+  color: var(--text-1);
+}
 :root[data-theme] .edited-file-row:hover { background: var(--gray-3); }
 :root[data-theme] .review-files-button,
 :root[data-theme] .show-more-files,

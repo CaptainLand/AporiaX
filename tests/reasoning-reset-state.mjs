@@ -11,6 +11,9 @@ assert.equal(modelSelectionPatch({ ...claude, providerId: 'b' }, { ...task, effo
 assert.equal(reasoningState(deepseek, task).effort, 'high');
 assert.equal(reasoningState({ supportsThinking: false }, task).thinking, false);
 assert.equal(reasoningState(claude, { thinking: false }).thinking, true);
+assert.equal(reasoningState(deepseek, { thinking: false }).thinking, true, 'legacy off preference cannot disable default reasoning');
+assert.equal(reasoningState(deepseek).thinking, true);
+assert.equal(modelSelectionPatch(deepseek, { ...task, thinking: false }).thinking, true);
 const tr = (zh, en, values = {}) => en.replace(/\{(\w+)\}/g, (_, key) => values[key]);
 const now = Date.parse('2026-10-14T00:00:00Z');
 const label = delta => quotaResetLabel({ cycleEnd: new Date(now + delta).toISOString() }, now, tr);

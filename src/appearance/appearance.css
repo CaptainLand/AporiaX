@@ -23,7 +23,6 @@
 :root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-modal,
 :root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-header,
 :root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-content,
-:root[data-custom-theme]:not([data-custom-theme=""]) .composer,
 :root[data-custom-theme]:not([data-custom-theme=""]) .modal { background: var(--bg-app); color: var(--text-1); }
 :root[data-custom-theme]:not([data-custom-theme=""]) .application-settings-nav { background: var(--bg-navigation); }
 :root[data-custom-theme]:not([data-custom-theme=""]) .primary-button,

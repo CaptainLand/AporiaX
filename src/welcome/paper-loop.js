@@ -11,6 +11,8 @@ export function mountWelcomeShader(host, {
   maxPixels = WELCOME_MAX_PIXELS,
   mipmaps = [],
   timeScale = 0.24,
+  getTimeScale,
+  maxFps = WELCOME_MAX_FPS,
   startFrame = 0,
   prepare,
   onReady = () => {},
@@ -25,7 +27,7 @@ export function mountWelcomeShader(host, {
   let visible = true;
   let ready = false;
   const doc = host.ownerDocument;
-  const interval = 1000 / WELCOME_MAX_FPS;
+  const interval = 1000 / maxFps;
   const stop = () => {
     cancelAnimationFrame(raf);
     raf = 0;
@@ -36,7 +38,7 @@ export function mountWelcomeShader(host, {
     if (disposed || doc.hidden || !visible || !mount) return;
     const elapsed = lastDraw === null ? interval : now - lastDraw;
     if (elapsed >= interval - 0.15 && mount.canvasElement.width > 0) {
-      frame += Math.min(elapsed, 50) * timeScale;
+      frame += Math.min(elapsed, 50) * (getTimeScale ? getTimeScale() : timeScale);
       mount.setFrame(frame);
       lastDraw = now;
       if (!ready) {

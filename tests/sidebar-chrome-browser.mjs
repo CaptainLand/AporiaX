@@ -21,7 +21,11 @@ try {
     localStorage.setItem('aporiax.language.v1', 'zh-CN');
     localStorage.setItem('aporiax.theme.v2', new URLSearchParams(location.search).get('theme') || 'dark');
     localStorage.setItem('aporiax.session-ui.v1', JSON.stringify({ welcomeDismissed: true, taskId: 'chrome-demo' }));
-    const task = { id: 'chrome-demo', title: '查看工作进度', workspaceName: '演示项目', workspacePath: 'D:/Fixture', providerId: 'demo', modelId: 'demo', messages: [{ id: 'answer', role: 'assistant', status: 'completed', content: '已准备好。' }] };
+    const task = { id: 'chrome-demo', title: '查看工作进度', workspaceName: '演示项目', workspacePath: 'D:/Fixture', providerId: 'demo', modelId: 'demo', messages: [{
+      id: 'answer', role: 'assistant', status: 'completed', content: '### 当前结果\n\n已完成界面细节调整，辅助记录不会抢占正文的视觉重点。',
+      changes: [{ path: 'src/demo.js', created: true, beforeMissing: true, beforeContent: '', afterContent: 'new', additions: 1, deletions: 0 }],
+      witness: { status: 'completed', revision: 1, counters: { activeAgents: 0 }, records: ['turn.started', 'plan.updated', 'response.reset', 'turn.completed'].map((eventType, i) => ({ id: `record-${i}`, eventType, status: 'completed', detail: '已保留本轮行动记录', elapsedMs: i * 20 })) },
+    }] };
     window.desktop = {
       theme: { set: async () => {} },
       providers: { list: async () => [{ id: 'demo', name: 'Demo', models: [{ id: 'demo', name: 'Demo' }] }] },
@@ -41,6 +45,29 @@ try {
     await page.goto(server.resolvedUrls.local[0] + '?theme=' + theme);
     if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
     await page.locator('.local-account-profile').waitFor();
+    await page.locator('.witness-panel').waitFor();
+    if (!baseline) {
+      const colors = await page.evaluate(() => {
+        const color = selector => getComputedStyle(document.querySelector(selector)).color;
+        const probe = document.createElement('span');
+        document.body.append(probe);
+        probe.style.color = 'var(--text-2)'; const secondary = getComputedStyle(probe).color;
+        probe.style.color = 'var(--text-3)'; const muted = getComputedStyle(probe).color;
+        probe.remove();
+        return { secondary, muted, heading: color('.witness-heading strong'), current: color('.witness-current strong'), record: color('.witness-record strong'), detail: color('.witness-current p'), title: color('.edited-files-title strong'), file: color('.edited-file-name'), toggle: color('.witness-toggle'), bar: getComputedStyle(document.querySelector('.local-account-profile .local-account-quota-track')).height };
+      });
+      for (const key of ['heading', 'current', 'record', 'title', 'file', 'toggle']) assert.equal(colors[key], colors.secondary, `${theme}: ${key} uses secondary text`);
+      assert.equal(colors.detail, colors.muted);
+      assert.equal(colors.bar, '3px');
+      assert.match(await page.locator('.local-account-quota-label').innerText(), /^reset /);
+      assert.doesNotMatch(await page.locator('.local-account-quota-label').innerText(), /周额度|Weekly|·/);
+      assert.equal(await page.locator('.witness-current').isVisible(), true);
+      await page.locator('.witness-toggle').click();
+      assert.equal(await page.locator('.witness-record').count(), 4);
+      await page.locator('.witness-toggle').click();
+      assert.equal(await page.locator('.witness-record').count(), 3);
+      await page.screenshot({ path: `.tmp/qa/sidebar-chrome/quiet-cards-${theme}.png` });
+    }
     await page.getByRole('button', { name: '打开工作侧栏', exact: true }).click();
     await page.getByRole('button', { name: '侧边聊天', exact: true }).click();
     await page.locator('.side-chat-modes').waitFor();

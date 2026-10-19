@@ -117,7 +117,7 @@ export function LocalAccountPanel({ onOpenAccountSettings }) {
           <span className="local-account-profile-copy">
             <strong>{visibleName}</strong>
             <span className="local-account-quota-row">
-              <small className="local-account-quota-label">{tr("周额度", "Weekly")}<span className="local-account-quota-reset" title={account?.quota?.cycleEnd || tr('尚未取得额度重置时间', 'Quota reset time is unavailable')}> · {quotaResetLabel(account?.quota, now, tr)}</span></small>
+              <small className="local-account-quota-label"><span className="local-account-quota-reset" title={account?.quota?.cycleEnd || tr('尚未取得额度重置时间', 'Quota reset time is unavailable')}>{quotaResetLabel(account?.quota, now, tr)}</span></small>
               <span className="local-account-quota-percent">{remaining}%</span>
             </span>
             <span className="local-account-quota-track" aria-hidden="true"><i style={{ width: `${remaining}%` }} /></span>

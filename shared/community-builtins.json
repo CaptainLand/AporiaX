@@ -1,0 +1,7 @@
+{
+  "agent": ["explore", "review", "verify", "curator", "builder"],
+  "skill": ["create-professional-role", "create-aporiax-theme", "word-professional", "document-themes", "systematic-debugging", "word-design", "spreadsheet-design", "presentation-design", "hermes-docx", "bug-investigation", "documentation-delivery", "frontend-review", "release-readiness", "repository-onboarding", "test-strategy"],
+  "mcp": ["filesystem", "playwright", "context7", "github", "markitdown"],
+  "mcpPackages": ["@modelcontextprotocol/server-filesystem", "@playwright/mcp", "markitdown-mcp"],
+  "mcpUrls": ["https://mcp.context7.com/mcp", "https://api.githubcopilot.com/mcp/readonly"]
+}

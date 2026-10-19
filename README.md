@@ -5,20 +5,24 @@
 
 <p align="center">
   <a href="https://aporiax.cloud"><strong>官网 · aporiax.cloud</strong></a>　·　
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.1">下载 1.0.1 正式版</a>　·　
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.3">下载 1.0.3 正式版</a>　·　
   <a href="https://aporiax.cloud/guide/">使用教程</a>
 </p>
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.1"><img alt="Release 1.0.1" src="https://img.shields.io/badge/release-1.0.1-2689f5"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.3"><img alt="Release 1.0.3" src="https://img.shields.io/badge/release-1.0.3-2689f5"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-24272c?logo=windows"></a>
   <a href="LICENSE"><img alt="Source Available" src="https://img.shields.io/badge/License-Source_Available-6b7280"></a>
 </p>
 
 AporiaX 是 Windows 上的本地优先桌面 Agent：在你授权的工作区里编写代码、运行命令、生成 Word / Excel / PowerPoint，把主对话、文件、终端、浏览器、Git 和专业 Agent 放进同一个工作台。你可以查看行动记录、审查文件改动，并通过 Anchor 回退。
 
-> 当前正式版为 **1.0.1 安装修复版**，恢复原目录覆盖更新。初次 1.0.0 已撤回，不再提供“整理安装副本”；已经安装 1.0.0 的客户端也可检测到 1.0.1。
+> 当前正式版为 **1.0.3**：接入社区工坊资源同步、账号默认头像同步，并优化模型切换与思考强度交互。安装继续采用原目录覆盖，不清理其他客户端副本。
 
-## 1.0.1 正式版
+## 1.0.3 正式版
+
+- **社区工坊**：[浏览作品](https://aporiax.cloud/community/)，先导入个人仓库，再保存到同账号的桌面端；自建资源可由网页一键同步到私有仓库后投稿。内置资源不能作为原创上传。
+- **受控接收**：保存不等于启用，不自动执行、安装依赖或扩大权限；重试不会覆盖本地修改。
+- **头像与界面**：六种默认头像随账号同步到网页、排行榜和作者信息；模型入口、思考强度滑条与输入栏对齐进一步优化。
 
 - **完整工作台**：统一的白天／暗夜界面，扁平化对话与 Witness 摘要；侧栏查看文档、代码、终端、Git，也可单独聊进度和想法。
 - **专业 Agent 团队**：角色可配置模型、思考强度、预算与受控能力；主 Agent 可提出新增、修改、删除自定义角色，每次都需要用户确认。内置角色不能删除。
@@ -27,15 +31,15 @@ AporiaX 是 Windows 上的本地优先桌面 Agent：在你授权的工作区里
 - **统一权限入口**：权限与审批集中在设置；工作区外文件访问默认关闭。专业角色、Skills 和 MCP 不能突破父任务的授权边界。
 - **安装与更新修复**：恢复 RC5.2 的当前目录覆盖更新流程，保留旧客户端目录定位与快捷方式修复；不整理或搬动其他副本。
 
-[安装修复说明](docs/RELEASE_NOTES_v1.0.1.md) · [工作台功能说明](docs/RELEASE_NOTES_v1.0.0.md) · [更新历史](CHANGELOG.md)
+[1.0.3 更新说明](docs/RELEASE_NOTES_v1.0.3.md) · [安装修复说明](docs/RELEASE_NOTES_v1.0.1.md) · [更新历史](CHANGELOG.md)
 
 ## 下载与开始使用
 
 | Windows x64 | 下载 |
 | --- | --- |
-| 安装版（推荐） | [AporiaX-Setup-1.0.1-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.1/AporiaX-Setup-1.0.1-x64.exe) |
-| 便携版 | [AporiaX-Portable-1.0.1-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.1/AporiaX-Portable-1.0.1-x64.exe) |
-| 校验文件 | [SHA256SUMS-1.0.1.txt](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.1/SHA256SUMS-1.0.1.txt) |
+| 安装版（推荐） | [AporiaX-Setup-1.0.3-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.3/AporiaX-Setup-1.0.3-x64.exe) |
+| 便携版 | [AporiaX-Portable-1.0.3-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.3/AporiaX-Portable-1.0.3-x64.exe) |
+| 校验文件 | [SHA256SUMS-1.0.3.txt](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.3/SHA256SUMS-1.0.3.txt) |
 
 1. 安装并选择工作区。关闭窗口可能只是缩到托盘；更新前，请从托盘退出旧程序。
 2. 登录 Aporia Account 使用 Aporia Cloud，或在“模型与 API”添加自己的服务／本地模型。

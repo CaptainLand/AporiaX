@@ -10,6 +10,15 @@ export async function createRoleSettingsStore(dataDirectory) {
   const snapshot = () => ({ ...structuredClone(value), ...(error ? { error } : {}) });
   return {
     snapshot,
+    importCommunity(profile){
+      const operation=tail.catch(()=>{}).then(async()=>{
+        if(error)throw Error('COMMUNITY_LOCAL_READ_FAILED');
+        const before=value.profiles.find(item=>item.id===profile.id);
+        if(before){if(JSON.stringify(before)!==JSON.stringify(profile))throw Error('COMMUNITY_LOCAL_CONFLICT');return before;}
+        const updated=normalizeRoleSettings({...value,revision:value.revision+1,profiles:[...value.profiles,profile]});
+        await writePrivateJson(path,updated);value=updated;return updated.profiles.find(item=>item.id===profile.id);
+      });tail=operation;return operation;
+    },
     save(input, { signal } = {}) {
       const next = normalizeRoleSettings(input);
       const operation = tail.catch(() => {}).then(async () => {

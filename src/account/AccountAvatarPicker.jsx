@@ -10,7 +10,7 @@ import './account-avatar-picker.css';
 
 export function AccountAvatarPicker() {
   const { language, tr } = useI18n();
-  const { avatarTemplate = 'main', selectAvatar, avatarSaveError } = useAccount();
+  const { avatarTemplate = 'main', selectAvatar, avatarSaveError,avatarSaving } = useAccount();
   const [open, setOpen] = useState(false);
   const root = useRef(null), trigger = useRef(null), grid = useRef(null);
   const close = () => { setOpen(false); trigger.current?.focus(); };
@@ -35,7 +35,7 @@ export function AccountAvatarPicker() {
         const buttons=[...grid.current.querySelectorAll('button')], index=buttons.indexOf(document.activeElement);
         if (index >= 0) { event.preventDefault(); buttons[(index+step+buttons.length)%buttons.length].focus(); }
       }}>
-        {ACCOUNT_AGENT_AVATARS.map(template => <button type="button" key={template} aria-pressed={avatarTemplate === template} onClick={() => { if (selectAvatar?.(template)) close(); }}>
+        {ACCOUNT_AGENT_AVATARS.map(template => <button type="button" key={template} disabled={avatarSaving} aria-pressed={avatarTemplate === template} onClick={async () => { if (await selectAvatar?.(template)) close(); }}>
           <AgentAvatar template={template} /><span>{agentName(template,language)}</span>{avatarTemplate === template && <Check size={12} />}
         </button>)}
       </div>

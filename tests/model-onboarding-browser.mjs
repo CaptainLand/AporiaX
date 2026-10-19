@@ -186,12 +186,12 @@ try {
     assert.equal(await sideMenu.getByRole("option").first().isDisabled(), true);
     assert.equal(await sideMenu.getByRole("option").nth(1).isDisabled(), false, "Own API stays available after Cloud logout");
     const search = sideMenu.getByRole("textbox", { name: "搜索模型", exact: true });
-    await search.fill("DeepSeek");
-    await search.press("Enter");
-    assert.equal(await sideMenu.isVisible(), true, "Enter must not choose a disabled Cloud model");
-    await search.fill("own-model");
-    await search.press("ArrowDown");
-    assert.equal(await sideMenu.getByRole("option").evaluate((el) => el === document.activeElement), true);
+    assert.equal(await search.count(), 0, 'small model catalog has no search header');
+    await sideMenu.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await sideMenu.isVisible(), true, "Enter on the menu must not choose a disabled Cloud model");
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await sideMenu.getByRole("option").nth(1).evaluate((el) => el === document.activeElement), true, 'keyboard skips disabled Cloud');
     await page.keyboard.press("Enter");
     assert.equal(await page.getByRole("button", { name: "发送侧聊", exact: true }).isDisabled(), false);
     assert.equal(await sideDraft.inputValue(), "侧聊草稿也应保留");

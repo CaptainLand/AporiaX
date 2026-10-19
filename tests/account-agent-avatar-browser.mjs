@@ -11,12 +11,13 @@ try {
   await page.addInitScript(()=>{
     if(!sessionStorage.avatarSeeded){localStorage.clear();localStorage.setItem('aporiax.language.v1','zh-CN');localStorage.setItem('aporiax.session-ui.v1',JSON.stringify({welcomeDismissed:true,taskId:'avatar-demo'}));sessionStorage.avatarSeeded='true';}
     localStorage.setItem('aporiax.theme.v2',new URLSearchParams(location.search).get('theme')||'light');
-    const signed=()=>({status:'authenticated',profile:{id:window.avatarQA.owner,displayName:'演示用户',email:'demo@example.invalid'},session:{id:'demo-session'},quota:{remainingRatio:.82,cycleEnd:new Date(Date.now()+86400000*3).toISOString()},models:[{id:'demo-model',name:'演示 Cloud 模型'}],device:{name:'演示电脑'}});
+    const cloud=()=>JSON.parse(sessionStorage.avatarCloud||'{}');
+    const signed=()=>({status:'authenticated',profile:{id:window.avatarQA.owner,displayName:'演示用户',email:'demo@example.invalid',avatarTemplate:cloud()[window.avatarQA.owner]?.template||'main',avatarTemplateUpdatedAt:cloud()[window.avatarQA.owner]?.updatedAt||null},session:{id:'demo-session'},quota:{remainingRatio:.82,cycleEnd:new Date(Date.now()+86400000*3).toISOString()},models:[{id:'demo-model',name:'演示 Cloud 模型'}],device:{name:'演示电脑'}});
     window.avatarQA={owner:'account-a',signed:true,opened:0};
     const task={id:'avatar-demo',title:'阅读项目说明',workspaceName:'演示工作区',workspacePath:'D:/Demo/Starlight',providerId:'demo-api',modelId:'demo-model',messages:[]};
     window.desktop={theme:{set:async()=>{}},providers:{list:async()=>[{id:'demo-api',name:'演示 API',models:[{id:'demo-model',name:'演示模型'}]}]},tasks:{load:async()=>[task],save:async()=>{}},
       harness:{onEvent:()=>()=>{},recoverableRuns:async()=>[]},sandbox:{status:async()=>({localAvailable:true})},
-      account:{get:async()=>signed(),refresh:async()=>window.avatarQA.signed?signed():{status:'anonymous'},signOut:async()=>{window.avatarQA.signed=false;return{status:'anonymous'};},signIn:async()=>{window.avatarQA.signed=true;return signed();},openCenter:async()=>{window.avatarQA.opened++;},getRequestHistory:async()=>({items:[],nextCursor:null,sampledAt:new Date().toISOString()})},
+      account:{get:async()=>signed(),refresh:async()=>window.avatarQA.signed?signed():{status:'anonymous'},setAvatarTemplate:async input=>{if(window.avatarQA.failSave)throw Error('Cloud unavailable');if(input.accountId!==window.avatarQA.owner)throw Error('Wrong owner');const choices=cloud();if(!input.initializeOnly||!choices[input.accountId])choices[input.accountId]={template:input.template,updatedAt:new Date().toISOString()};sessionStorage.avatarCloud=JSON.stringify(choices);return signed();},signOut:async()=>{window.avatarQA.signed=false;return{status:'anonymous'};},signIn:async()=>{window.avatarQA.signed=true;return signed();},openCenter:async()=>{window.avatarQA.opened++;},getRequestHistory:async()=>({items:[],nextCursor:null,sampledAt:new Date().toISOString()})},
       workspace:{listTree:async()=>({entries:[{path:'README.md',name:'README.md',type:'file'}]}),readPreview:async()=>({content:'# 演示文档\n\n文件工具栏预览。',binary:false})},
       workbench:{request:async({action})=>action==='list'?[]:true,subscribe:()=>()=>{}},
     };
@@ -29,7 +30,7 @@ try {
   const decode=async locator=>locator.evaluateAll(images=>Promise.all(images.map(image=>image.decode())));
   await mkdir('.tmp/qa/account-refresh',{recursive:true});
   for(const theme of ['light','dark']) {
-    if(theme==='dark') await page.evaluate(()=>localStorage.removeItem('aporiax.account-agent-avatars.v1'));
+    if(theme==='dark') await page.evaluate(()=>{localStorage.removeItem('aporiax.account-agent-avatars.v1');sessionStorage.removeItem('avatarCloud');});
     await boot(theme);await profile.click();
     assert.equal(await page.locator('.local-account-popover .local-account-avatar').getAttribute('data-avatar'),'main');await decode(page.locator('.local-account-popover img'));
     assert.equal(await page.locator('.local-account-popover .local-account-connected, .local-account-popover .local-account-meta').count(),0);
@@ -51,8 +52,10 @@ try {
     await page.evaluate(()=>window.avatarQA.owner='account-b');await page.getByRole('button',{name:'刷新账户与用量',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.account-settings-avatar')?.dataset.avatar==='main');
     await choose('知序');assert.equal(await portrait.getAttribute('data-avatar'),'curator');
     await page.evaluate(()=>window.avatarQA.owner='account-a');await page.getByRole('button',{name:'刷新账户与用量',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.account-settings-avatar')?.dataset.avatar==='explore','Account A retains its separate choice');
+    await page.evaluate(()=>window.avatarQA.failSave=true);
+    await choose('搭匠');await picker.getByRole('alert').waitFor();assert.equal(await portrait.getAttribute('data-avatar'),'explore','Failed cloud persistence does not pretend to save');await page.evaluate(()=>window.avatarQA.failSave=false);await picker.getByRole('button',{name:'阿珀',exact:true}).click();await picker.waitFor({state:'hidden'});
     await page.evaluate(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='aporiax.account-agent-avatars.v1')throw Error('Unavailable');return original.call(this,key,value);};window.avatarQA.restoreStorage=()=>Storage.prototype.setItem=original;});
-    await choose('搭匠');await picker.getByRole('alert').waitFor();assert.equal(await portrait.getAttribute('data-avatar'),'explore','Failed persistence does not pretend to save');await page.evaluate(()=>window.avatarQA.restoreStorage());await picker.getByRole('button',{name:'阿珀',exact:true}).click();
+    await choose('搭匠');await picker.waitFor({state:'hidden'});assert.equal(await portrait.getAttribute('data-avatar'),'builder','Confirmed cloud choice works even if device cache cannot write');await page.evaluate(()=>window.avatarQA.restoreStorage());
     await nav.getByRole('button',{name:'通用',exact:true}).click();await page.screenshot({path:`.tmp/qa/account-refresh/general-${theme}.png`});
     await page.getByRole('button',{name:'关闭设置',exact:true}).click();await page.locator('.thread-view-tabs').getByRole('button',{name:'工作区',exact:true}).click();await page.getByRole('button',{name:/README.md/}).first().click();await page.getByRole('heading',{name:'演示文档',exact:true}).waitFor();
     const toolbar=page.locator('.workbench-file .document-toolbar');await toolbar.getByRole('button',{name:'源码',exact:true}).click();await toolbar.getByRole('button',{name:'阅读',exact:true}).click();
@@ -60,6 +63,16 @@ try {
     for(const color of colors){const channels=color.match(/\d+/g).slice(0,3).map(Number);assert(Math.max(...channels)-Math.min(...channels)<12,`Neutral file mode: ${color}`);}
     await toolbar.screenshot({path:`.tmp/qa/account-refresh/file-modes-${theme}.png`});
   }
+  // Upgrade an old device-only choice, then prove the server wins over a stale
+  // cache on another device. The API's insert-only behavior is covered in PG tests.
+  await page.evaluate(()=>{sessionStorage.removeItem('avatarCloud');localStorage.setItem('aporiax.account-agent-avatars.v1',JSON.stringify({'account-a':'verify'}));});
+  await page.reload();if(await page.locator('.ax-welcome__enter').isVisible())await page.locator('.ax-welcome__enter').click();await openSettings();
+  await page.waitForFunction(()=>JSON.parse(sessionStorage.avatarCloud||'{}')['account-a']?.template==='verify');
+  assert.equal(await portrait.getAttribute('data-avatar'),'verify','device-only selection migrates to cloud');
+  await page.evaluate(()=>{sessionStorage.avatarCloud=JSON.stringify({'account-a':{template:'review',updatedAt:new Date().toISOString()}});});
+  await page.reload();if(await page.locator('.ax-welcome__enter').isVisible())await page.locator('.ax-welcome__enter').click();await openSettings();
+  assert.equal(await portrait.getAttribute('data-avatar'),'review','a confirmed server choice beats this device’s stale local preference');
+  await page.getByRole('button',{name:'关闭设置',exact:true}).click();
   await page.setViewportSize({width:740,height:800});await openSettings();await page.getByRole('button',{name:'更换账户头像',exact:true}).click();const box=await picker.boundingBox();assert(box.x>=0&&box.x+box.width<=740);await page.screenshot({path:'.tmp/qa/account-refresh/avatar-picker-narrow.png'});
   assert.deepEqual(errors,[]);console.log('PASS account avatar: six choices, popover synchronization, persisted reload, account isolation, save failure, Escape/focus, light/dark/narrow; General and neutral file mode controls verified.');
 } finally {await browser.close();await new Promise(resolve=>server.httpServer.close(resolve));}

@@ -324,7 +324,7 @@
 }
 .local-account-profile .local-account-quota-track {
   width: 100%;
-  height: 6px;
+  height: 3px;
 }
 .local-account-profile .local-account-quota-track i {
   background: linear-gradient(90deg, #4abbed, #176de2 58%, #85dfff);

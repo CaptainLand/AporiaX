@@ -22,6 +22,16 @@ export async function createAppearanceStore(dataDirectory, { onChanged = () => {
   const assetPath = id => { if (!IMAGE_ID.test(id)) throw Error('THEME_INVALID_IMAGE'); return join(directory, `${id}.png`); };
   return {
     snapshot,
+    importCommunity(id,theme){
+      return queue(async()=>{
+        if(error)throw Error('COMMUNITY_LOCAL_READ_FAILED');
+        const draft=validateTheme(theme),before=value.themes.find(item=>item.id===id);
+        if(before){if(!Object.entries(draft).every(([key,v])=>JSON.stringify(before[key])===JSON.stringify(v)))throw Error('COMMUNITY_LOCAL_CONFLICT');return before;}
+        if(value.themes.length>=40)throw Error('THEME_LIMIT');
+        const saved={...draft,id,source:'manual',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+        await commit({...value,themes:[...value.themes,saved]});return saved;
+      });
+    },
     change(input, { source = 'manual', signal } = {}) {
       return queue(async () => {
         signal?.throwIfAborted();

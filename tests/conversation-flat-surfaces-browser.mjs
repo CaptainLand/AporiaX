@@ -28,9 +28,10 @@ try {
       const at = '2026-10-15T00:00:00Z';
       const records = Array.from({ length: 5 }, (_, i) => ({ id: 'record-' + i, kind: 'tool', tool: 'read_file', title: '读取文件', path: 'demo-' + i + '.md', status: 'completed', startedAt: at, elapsedMs: 10 }));
       const task = { id: 'flat-demo', title: '样式检查', workspaceName: '演示工作区', workspacePath: 'D:/Demo/Starlight', providerId: 'demo-api', modelId: 'demo-model', messages: [
-        { id: 'u', role: 'user', content: '检查演示页面。', createdAt: at },
+        { id: 'u', role: 'user', content: '@skill:create-aporiax-theme 检查演示页面。', createdAt: at },
         { id: 'a', role: 'assistant', status: 'completed', createdAt: at, content: '## 检查结果\n\n| 检查项 | 结果 |\n| --- | --- |\n| 页面 | 通过 |\n\n```js\nconst demo = true;\n```', changes: [{ path: 'demo.js', beforeContent: 'old\n', afterContent: 'new\n', additions: 1, deletions: 1 }], witness: { status: 'completed', startedAt: at, records, counters: { toolCalls: 5, fileChanges: 1, activeAgents: 0 } } },
       ] };
+      window.fileMenuFixture = { action: 'preview', calls: [] };
       window.desktop = {
         theme: { set: async () => {} }, appearance: { request: async () => appearance },
         account: { get: async () => ({ status: 'anonymous' }) },
@@ -38,6 +39,13 @@ try {
         tasks: { load: async () => [task], save: async () => {} },
         harness: { onEvent: () => () => {}, recoverableRuns: async () => [] },
         sandbox: { status: async () => ({ localAvailable: true }) },
+        workspace: {
+          fileMenu: async input => {
+            window.fileMenuFixture.calls.push(input);
+            return window.fileMenuFixture.action ? { action: window.fileMenuFixture.action, path: input.path } : null;
+          },
+          readPreview: async () => ({ binary: false, content: 'const demo = true;\n' }),
+        },
         workbench: { request: async ({ action }) => action === 'list' ? [] : true, subscribe: () => () => {} },
       };
     }, { theme, appearance });
@@ -49,7 +57,13 @@ try {
     if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
     await page.locator('.witness-panel').waitFor();
     if (mode.startsWith('custom')) await page.waitForFunction(() => Boolean(document.documentElement.dataset.customTheme));
-    for (const selector of ['.markdown-message table', '.code-block', '.edited-files-card', '.witness-panel']) {
+    const skillColor = await page.locator('.aporiax-message-mention.skill').evaluate(el => {
+      const probe = document.createElement('span'); probe.style.color = 'var(--accent-11)'; el.append(probe);
+      const expected = getComputedStyle(probe).color; probe.remove();
+      return { actual: getComputedStyle(el).color, expected };
+    });
+    assert.equal(skillColor.actual, skillColor.expected, `${mode}: sent Skill uses the readable theme accent`);
+    for (const selector of ['.markdown-message table', '.code-block', '.edited-files-card', '.witness-panel', '.composer']) {
       const surface = page.locator(selector).first();
       assert.equal(await surface.count(), 1, selector);
       const style = await surface.evaluate(el => {
@@ -64,6 +78,8 @@ try {
       assert.equal(style.bg, style.fill, `${mode} ${selector} theme fill`);
     }
     const toggle = page.locator('.witness-toggle');
+    assert.equal(await page.locator('.witness-disclosure').count(), 0, 'outer fold rolled back');
+    assert.equal(await page.locator('.witness-current').isVisible(), true, 'Witness details visible by default');
     assert.equal(await page.locator('.witness-record').count(), 3);
     await toggle.click(); assert.equal(await page.locator('.witness-record').count(), 5);
     await toggle.click(); assert.equal(await page.locator('.witness-record').count(), 3);
@@ -75,6 +91,17 @@ try {
     await page.locator('.review-files-button').click();
     await page.locator('.review-panel').waitFor();
     await page.getByRole('button', { name: '关闭审核', exact: true }).click();
+    const editedFile = page.locator('.edited-file-row').first();
+    await editedFile.click({ button: 'right' });
+    await page.locator('.workbench-tab.active .workbench-tab-title').waitFor();
+    assert.equal(await page.locator('.workbench-tab.active .workbench-tab-title').innerText(), 'demo.js');
+    assert.equal(await page.locator('.review-panel').count(), 0, 'right click does not open review');
+    assert.deepEqual((await page.evaluate(() => window.fileMenuFixture.calls))[0], { workspacePath: 'D:/Demo/Starlight', path: 'demo.js', language: 'zh-CN', canAddToChat: true });
+    await page.getByRole('button', { name: '关闭标签', exact: true }).click();
+    await page.evaluate(() => { window.fileMenuFixture.action = null; });
+    await editedFile.focus(); await page.keyboard.press('Shift+F10');
+    assert.equal(await page.evaluate(() => window.fileMenuFixture.calls.length), 2);
+    assert.equal(await page.locator('.workbench-tab').count(), 0, 'cancelled menu does not open a tab');
     await page.getByRole('button', { name: '打开 AporiaX 设置', exact: true }).click();
     // Compare visible paper colors, including transparent ancestors.
     const paper = locator => locator.evaluate(el => {

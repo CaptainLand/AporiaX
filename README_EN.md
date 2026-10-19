@@ -4,20 +4,24 @@
 <p align="center"><em>Every problem begins with an aporia.</em></p>
 <p align="center">
   <a href="https://aporiax.cloud"><strong>Official website · aporiax.cloud</strong></a> ·
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.1">Download 1.0.1 stable</a> ·
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.3">Download 1.0.3 stable</a> ·
   <a href="https://aporiax.cloud/guide/">User guide (Chinese)</a>
 </p>
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.1"><img alt="Release 1.0.1" src="https://img.shields.io/badge/release-1.0.1-2689f5"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.3"><img alt="Release 1.0.3" src="https://img.shields.io/badge/release-1.0.3-2689f5"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-24272c?logo=windows"></a>
   <a href="LICENSE"><img alt="Source Available" src="https://img.shields.io/badge/License-Source_Available-6b7280"></a>
 </p>
 
 AporiaX is a local-first Windows desktop agent for coding and Office work. It brings conversations, files, a terminal, browser, Git and specialist agents into one workbench. Review actions and file changes, inspect results, and use Anchor checkpoints to revert changes in your authorized workspace.
 
-> **1.0.1** restores single-directory overwrite/update installation. The initial 1.0.0 distribution is withdrawn; installation organization is disabled. Installed 1.0.0 clients can detect 1.0.1.
+> **1.0.3** adds Workshop resource saving, account-synced preset avatars and refined model/effort controls. Installation continues to update the selected directory without cleaning up other copies.
 
-## 1.0.1 stable
+## 1.0.3 stable
+
+- **Community Workshop:** [browse creations](https://aporiax.cloud/community/), import into your private library, then save to the desktop signed into the same account. Sync original local resources from the Web before submitting; built-ins cannot be uploaded as originals.
+- **Bounded saving:** no automatic activation, execution, dependency installation or permission expansion. Retries preserve local edits.
+- **Avatar and UI refinements:** six account-synced preset avatars, independent model/effort controls, smoother effort dragging and aligned composer tools.
 
 - **Unified workbench:** refined light/dark themes, flat conversation and Witness surfaces, and focused sidebar tools for documents, code, Git, terminals and side chat.
 - **Specialist agents:** configure roles, models, reasoning effort, budgets and permitted capabilities. Creating, modifying or deleting a reusable custom role through the main agent always requires user confirmation. Built-in roles cannot be deleted.
@@ -26,15 +30,15 @@ AporiaX is a local-first Windows desktop agent for coding and Office work. It br
 - **Clear controls:** permissions and approvals live in Settings. Outside-workspace file access is off by default. Roles, Skills and MCP cannot exceed parent-task authority.
 - **Installation and updates:** restored the RC5.2 single-directory overwrite/update flow, including legacy directory selection and shortcut repair. Other copies are not organized or moved.
 
-[Installer fix](docs/RELEASE_NOTES_v1.0.1.md) · [Workbench features](docs/RELEASE_NOTES_v1.0.0.md) · [Changelog](CHANGELOG.md)
+[1.0.3 release notes](docs/RELEASE_NOTES_v1.0.3.md) · [Installer fix](docs/RELEASE_NOTES_v1.0.1.md) · [Changelog](CHANGELOG.md)
 
 ## Download
 
 | Windows x64 | Download |
 | --- | --- |
-| Installer (recommended) | [AporiaX-Setup-1.0.1-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.1/AporiaX-Setup-1.0.1-x64.exe) |
-| Portable | [AporiaX-Portable-1.0.1-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.1/AporiaX-Portable-1.0.1-x64.exe) |
-| Checksums | [SHA256SUMS-1.0.1.txt](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.1/SHA256SUMS-1.0.1.txt) |
+| Installer (recommended) | [AporiaX-Setup-1.0.3-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.3/AporiaX-Setup-1.0.3-x64.exe) |
+| Portable | [AporiaX-Portable-1.0.3-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.3/AporiaX-Portable-1.0.3-x64.exe) |
+| Checksums | [SHA256SUMS-1.0.3.txt](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.3/SHA256SUMS-1.0.3.txt) |
 
 Install, choose a workspace, and sign in for Aporia Cloud or add your own API/local model in Settings. Describe your goal and inspect the actions and deliverables. Project knowledge is opt-in per task.
 

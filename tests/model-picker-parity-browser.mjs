@@ -20,6 +20,8 @@ try {
       { id: 'local', source: 'local', name: 'Local API', models: [{ id: 'local', name: 'Local model', shortName: 'Local' }] },
     ];
     const task = { id: 'picker', title: '模型选择复用测试', workspaceName: 'Fixture', workspacePath: 'D:/Fixture', providerId: 'own', modelId: 'alpha', thinking: false, builderLimit: 2, messages: [{ id: 'answer', role: 'assistant', status: 'completed', content: '合成测试，不调用模型。' }] };
+    const extraCount = new URLSearchParams(location.search).get('modelCount') === '7' ? 3 : 4;
+    models[1].models.push(...Array.from({ length: extraCount }, (_, i) => ({ id: `extra-${i}`, name: `Extra ${i}` })));
     window.pickerCalls = [];
     window.desktop = {
       theme: { set: async () => {} }, providers: { list: async () => models }, account: { get: async () => ({ status: 'anonymous' }) },
@@ -52,13 +54,49 @@ try {
   for (const theme of ['light', 'dark']) {
     if (await page.locator('html').getAttribute('data-theme') !== theme) await page.locator('.theme-toggle').click();
     await mainTrigger.click(); await mainMenu.waitFor(); const main = await snapshot(mainMenu);
-    assert.equal(await mainMenu.getByRole('switch', { name: '深度思考', exact: true }).count(), 1);
+    assert.equal(await mainMenu.getByRole('switch', { name: '深度思考', exact: true }).count(), 0);
+    assert.equal(await mainMenu.locator('.model-menu-effort').count(), 0, 'model and effort menus are separate');
+    assert.equal(await mainMenu.evaluate(el => getComputedStyle(el).boxShadow), 'none');
     await mainMenu.screenshot({ path: `.tmp/qa/model-picker-main-${theme}.png` });
     await mainMenu.getByRole('textbox', { name: '搜索模型' }).press('Escape');
     assert.equal(await mainTrigger.evaluate(el => el === document.activeElement), true);
+    const effortTrigger = page.getByRole('button', { name: '切换思考强度', exact: true });
+    assert.equal(await effortTrigger.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+    assert.equal(await mainTrigger.locator('.lucide-brain').count(), 0);
+    assert.equal(await mainTrigger.locator('svg').count(), 0, 'model dropdown chevron removed');
+    const toolbarCenters = await page.evaluate(() => ['.composer-add[data-composer-add] svg', '.composer .model-trigger > span', '.composer .effort-trigger'].map(selector => {
+      const el = document.querySelector(selector), bounds = el.getBoundingClientRect();
+      return bounds.y + bounds.height / 2;
+    }));
+    assert(Math.max(...toolbarCenters) - Math.min(...toolbarCenters) < 1, 'plus, model and effort share one center line');
+    const textOffset = await page.evaluate(() => {
+      const model = document.querySelector('.composer .model-trigger > span').getBoundingClientRect();
+      const effort = document.querySelector('.composer .effort-trigger > span').getBoundingClientRect();
+      return effort.y + effort.height / 2 - model.y - model.height / 2;
+    });
+    assert(Math.abs(textOffset - 1) < .25, 'smaller uppercase effort text is optically lowered by 1px, not just button-box aligned');
+    await effortTrigger.click();
+    const effortMenu = page.getByRole('dialog', { name: '思考强度', exact: true });
+    const slider = effortMenu.getByRole('slider', { name: '思考强度', exact: true });
+    assert.equal(await slider.getAttribute('max'), '1');
+    assert.equal(await slider.evaluate(el => getComputedStyle(el).cursor), 'default');
+    await page.waitForFunction(() => ['animated', 'fallback'].includes(document.querySelector('.effort-gem')?.dataset.state));
+    assert.equal(await effortMenu.locator('.effort-gem').getAttribute('data-state'), 'animated', 'website Gem effect renders, not just its CSS fallback');
+    assert.doesNotMatch(await effortMenu.innerText(), /Alpha/);
+    assert.equal(await effortMenu.locator('svg, button').count(), 0);
+    await slider.press('End');
+    assert.equal(await slider.getAttribute('aria-valuetext'), 'Max');
+    await effortMenu.screenshot({ path: `.tmp/qa/model-effort-${theme}.png`, animations: 'disabled' });
+    await slider.press('Home');
+    assert.equal(await slider.getAttribute('aria-valuetext'), 'High');
+    await effortMenu.press('Escape');
+    assert.equal(await page.locator('.effort-gem canvas').count(), 0, 'closing the picker removes its animation canvas');
+    assert.equal(await effortTrigger.evaluate(el => el === document.activeElement), true);
     await sideTrigger.click(); await sideMenu.waitFor(); const side = await snapshot(sideMenu);
     assert.deepEqual(side, main, `${theme}: shared model list, source notes, selected/disabled styles and setup match`);
     assert.equal(await sideMenu.getByRole('switch', { name: '深度思考', exact: true }).count(), 0, 'No unimplemented side-chat reasoning controls');
+    assert.equal(await sideMenu.locator('[data-source="user-provider"] .model-choice small').count(), 0, 'own-model subtitles removed');
+    assert.ok(await sideMenu.locator('[data-source="aporia-cloud"] .model-choice small').count(), 'Cloud availability/billing note retained');
     await sideMenu.screenshot({ path: `.tmp/qa/model-picker-side-${theme}.png` });
     await sideMenu.getByRole('textbox', { name: '搜索模型' }).press('Escape');
   }
@@ -80,6 +118,14 @@ try {
   assert.ok(menu.x >= pane.x && menu.x + menu.width <= pane.x + pane.width + 1);
   assert.ok(menu.y >= pane.y && menu.y + menu.height < composer.y);
   await search.press('Escape');
+  await page.goto(server.resolvedUrls.local[0] + '?modelCount=7');
+  if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
+  await mainTrigger.click(); await mainMenu.waitFor();
+  assert.equal(await mainMenu.locator('.model-choice').count(), 7);
+  assert.equal(await mainMenu.locator('.model-menu-topbar, .model-menu-search').count(), 0, 'fewer than eight models hides the entire header');
+  await mainMenu.screenshot({ path: '.tmp/qa/model-picker-seven.png' });
+  await page.keyboard.press('Escape');
+  assert.equal(await mainMenu.isVisible(), false);
   assert.equal(await page.evaluate(() => window.pickerCalls.some(c => ['send', 'push', 'commit'].includes(c.action || c.operation))), false);
   assert.deepEqual(errors, []);
   console.log('PASS shared picker visual parity, main-only reasoning controls, side-only persistence, keyboard/IME/disabled guards, trigger toggle/focus restore and compact bounds; no model calls.');

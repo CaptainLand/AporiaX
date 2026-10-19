@@ -6,6 +6,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
 import { useWorkbenchContext } from "../workbench/use-workbench.js";
+import { useFileContextMenu } from "../workbench/use-file-context-menu.js";
 import remarkGfm from "remark-gfm";
 import { remarkAutolinkBoundary } from "./remark-autolink-boundary.js";
 import { diffLines } from "diff";
@@ -115,7 +116,9 @@ function MessageLink({ href, children, title }) {
   </>;
 }
 
-function MarkdownMessage({ content }) {
+// Model/effort changes leave message text intact. Keep the parsed Markdown tree
+// instead of reparsing the entire history during the slider's release frame.
+const MarkdownMessage = React.memo(function MarkdownMessage({ content }) {
   const normalizedContent = String(content || "")
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
     .replace(
@@ -138,7 +141,7 @@ function MarkdownMessage({ content }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function MessageImage({ src, alt }) {
   return <PreviewImage src={src} alt={alt} />;
@@ -277,9 +280,13 @@ function EditedFilesCard({
   hasSnapshots,
   confirmed,
   onReview,
+  workspacePath,
+  onNotice,
 }) {
   const { tr } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  const workbench = useWorkbenchContext();
+  const fileContextMenu = useFileContextMenu({ workspacePath, onNotice, onOpenFile: path => workbench?.openFile(path) });
   if (!files.length) return null;
 
   const hasLineStats = files.some(
@@ -354,8 +361,11 @@ function EditedFilesCard({
             className="edited-file-row"
             key={file.path}
             type="button"
-            disabled={!hasSnapshots}
-            onClick={() => onReview(file.path)}
+            onClick={() => hasSnapshots ? onReview(file.path) : workbench?.openFile(file.path)}
+            onContextMenu={event => void fileContextMenu(event, file)}
+            onKeyDown={event => {
+              if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void fileContextMenu(event, file);
+            }}
             title={
               hasSnapshots
                 ? tr(
@@ -363,7 +373,7 @@ function EditedFilesCard({
                     "Review and edit {path}",
                     { path: file.path },
                   )
-                : file.path
+                : tr("在侧栏打开 {path}", "Open {path} in sidebar", { path: file.path })
             }
           >
             <span className="edited-file-name">
@@ -1360,6 +1370,8 @@ export function Conversation({
             {!restored && files.length > 0 && (
               <EditedFilesCard
                 files={files}
+                workspacePath={task.workspacePath}
+                onNotice={onNotice}
                 hasSnapshots={Boolean(message.changes?.length)}
                 confirmed={Boolean(message.reviewConfirmedAt)}
                 onReview={(path) =>

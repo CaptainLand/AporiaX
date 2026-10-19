@@ -524,6 +524,32 @@ export function createDesktopAccountRuntime(options = {}) {
     startBrowserLogin,
     openAccountCenter,
     getRequestHistory,
+    async setAvatarTemplate(input){
+      if(!input||Object.keys(input).some(key=>!['accountId','template','initializeOnly'].includes(key))||!['main','explore','review','verify','builder','curator'].includes(input.template)||typeof input.accountId!=='string'||(input.initializeOnly!==undefined&&typeof input.initializeOnly!=='boolean'))throw Error('ACCOUNT_AVATAR_INVALID');
+      const epoch=historyEpoch,owner=input.accountId;
+      const assertOwner=()=>{if(epoch!==historyEpoch||currentSnapshot.status!=='authenticated'||currentSnapshot.profile?.id!==owner)throw Error('DESKTOP_ACCOUNT_CHANGED');};
+      assertOwner();
+      const body={avatarTemplate:input.template,...(input.initializeOnly?{initializeAvatarOnly:true}:{})};
+      let result;
+      try{result=await request('/me',{method:'PATCH',body,token:accessToken});}
+      catch(error){assertOwner();if(error?.status!==401)throw Error('ACCOUNT_AVATAR_SAVE_FAILED');try{await rotateRefreshToken();assertOwner();result=await request('/me',{method:'PATCH',body,token:accessToken});}catch{assertOwner();throw Error('ACCOUNT_AVATAR_SAVE_FAILED');}}
+      assertOwner();
+      if(result?.id!==owner||!['main','explore','review','verify','builder','curator'].includes(result.avatarTemplate)||!Number.isFinite(Date.parse(result.avatarTemplateUpdatedAt)))throw Error('ACCOUNT_AVATAR_SAVE_FAILED');
+      currentSnapshot={...currentSnapshot,profile:{...currentSnapshot.profile,avatarTemplate:result.avatarTemplate,avatarTemplateUpdatedAt:result.avatarTemplateUpdatedAt}};
+      bootstrapPromise=Promise.resolve(currentSnapshot);return currentSnapshot;
+    },
+    async communityRepositoryRequest(action,input,accountId){
+      const epoch=historyEpoch;
+      const assertOwner=()=>{if(epoch!==historyEpoch||currentSnapshot.status!=='authenticated'||currentSnapshot.profile?.id!==accountId)throw Error('COMMUNITY_ACCOUNT_CHANGED');};
+      const path=action==='list'?`/community/repository?page=${Number(input?.page)||0}`:action==='sync'?'/community/repository/sync':action==='content'&&/^[a-f0-9-]{36}$/i.test(input?.id)?`/community/repository/${input.id}/content`:null;
+      if(!path)throw Error('COMMUNITY_INVALID_ACTION');
+      assertOwner();
+      const options=action==='sync'?{method:'POST',body:input,timeout:30000}:{};
+      let result;
+      try{result=await request(path,{...options,token:accessToken});}
+      catch(error){assertOwner();if(error?.status!==401)throw error;await rotateRefreshToken();assertOwner();result=await request(path,{...options,token:accessToken});}
+      assertOwner();return result;
+    },
     fetchModelGateway,
     refresh,
     signOut,

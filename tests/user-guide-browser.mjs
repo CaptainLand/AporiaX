@@ -90,7 +90,7 @@ try {
   await desktop.evaluate(() => { window.guideFixture.fail = true; });
   await desktop.getByRole("link", { name: "API 添加教程", exact: true }).click();
   await desktop.locator(".tutorial-link-error").waitFor();
-  assert.match(await desktop.locator(".tutorial-link-error").innerText(), /https:\/\/captainland.github.io\/AporiaX_web\/guide/);
+  assert.match(await desktop.locator(".tutorial-link-error").innerText(), /https:\/\/aporiax\.cloud\/guide/);
   assert.equal(await desktop.getByLabel("API Base URL", { exact: true }).inputValue(), "https://example.invalid/v1", "Opening tutorial must preserve API form draft");
   await desktop.screenshot({ path: ".tmp/user-guide/api-entry.png" });
   await desktop.getByRole("button", { name: "关于", exact: true }).click();

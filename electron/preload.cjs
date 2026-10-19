@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld("desktop", {
     openCenter: () => ipcRenderer.invoke("account:open-center"),
     getRequestHistory: (input) => ipcRenderer.invoke("account:request-history", input),
     refresh: () => ipcRenderer.invoke("account:refresh"),
+    setAvatarTemplate: input => ipcRenderer.invoke("account:avatar-template",input),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
   },
   tasks: {

@@ -485,9 +485,9 @@
   box-decoration-break: clone;
 }
 
-.aporiax-message-mention.skill {
+:root[data-theme] .aporiax-message-mention.skill {
   border-color: color-mix(in srgb, var(--accent-8) 27%, transparent);
-  color: var(--accent-8);
+  color: var(--accent-11);
 }
 
 .aporiax-message-mention.mcp {
