@@ -22,18 +22,18 @@ const tests = [
   ['node', 'goal-ui-browser.mjs'],
   ['node', 'side-chat-smoke.mjs'], ['node', 'temporary-side-chat.mjs'], ['node', 'temporary-chat-browser.mjs'],
   ['node', 'workbench-git-smoke.mjs'], ['node', 'workbench-documents-git-browser.mjs'],
-  ['node', 'markdown-reader-browser.mjs'], ['node', 'task-operation-progress-browser.mjs'], ['node', 'user-facing-delivery-browser.mjs'],
+  ['node', 'markdown-reader-browser.mjs'], ['node', 'task-operation-progress-browser.mjs'], ['node', 'user-facing-delivery-browser.mjs', '--production'],
   ['node', 'workbench-git-setup-smoke.mjs'], ['node', 'workbench-git-setup-browser.mjs'],
   ['node', 'terminal-buffer-smoke.mjs'], ['node', 'terminal-v2-browser.mjs'],
   ['electron', 'terminal-v2-electron.cjs'], ['electron', 'workbench-document-electron.cjs'],
 ];
 const results = [];
 mkdirSync('.tmp/audit-results', { recursive: true });
-for (const [runtime, file] of tests) {
+for (const [runtime, file, ...args] of tests) {
   console.log(`\n=== Desktop ${runtime}: ${file} ===`);
   const started = Date.now();
   const result = spawnSync(runtime === 'node' ? process.execPath : electron,
-    [...(runtime === 'node' ? ['--experimental-sqlite'] : []), `tests/${file}`],
+    [...(runtime === 'node' ? ['--experimental-sqlite'] : []), `tests/${file}`, ...args],
     { stdio: 'inherit', windowsHide: true, timeout: 120000 });
   results.push({ file, runtime, passed: result.status === 0 && !result.error,
     exitCode: result.status, durationMs: Date.now() - started, error: result.error?.message });

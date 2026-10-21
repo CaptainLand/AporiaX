@@ -6,14 +6,15 @@ import { chromium } from 'playwright-core';
 const production = process.argv.includes('--production');
 const server = production ? await preview({ preview: { host: '127.0.0.1', port: 0, open: false } })
   : await createServer({ server: { host: '127.0.0.1', port: 0, open: false, watch: null } });
-let browser;
+let browser, page, reloadCase = 'initial';
 try {
   if (!production) await server.listen();
   browser = await chromium.launch({ executablePath: process.env.TEST_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true });
   // Dev Vite injects CSS through style tags; production uses CSP-safe links.
-  const page = await browser.newPage({ viewport: { width: 1360, height: 950 }, bypassCSP: !production });
+  page = await browser.newPage({ viewport: { width: 1360, height: 950 }, bypassCSP: !production });
   page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', error => { errors.push(error.message); console.error('PAGE ERROR:', error.message); });
+  page.on('console', message => { if (message.type() === 'error') console.error('BROWSER ERROR:', message.text()); });
   await page.addInitScript(() => {
     if (!localStorage.getItem('delivery-fixture-started')) {
       localStorage.clear(); localStorage.setItem('delivery-fixture-started', 'yes');
@@ -218,6 +219,7 @@ try {
     ['命令示例：\n\n```js\nconst value = true;\n```', 'P'],
     ['| 文件 | 状态 |\n| --- | --- |\n| calc.html | 已删除 |', 'P'],
   ]) {
+    reloadCase = content.slice(0, 80);
     await page.evaluate(content => {
       const tasks = JSON.parse(localStorage.getItem('delivery-fixture-tasks'));
       for (const task of tasks) for (const message of task.messages || []) if (message.role === 'assistant') message.content = content;
@@ -252,4 +254,10 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(`PASS ${production ? 'production CSP' : 'dev'} icon-only disclosure, folded file results/review, files-only and empty cases, save/reload, keyboard, light/dark, narrow viewport and safe Markdown. No real model requests.`);
+} catch (error) {
+  if (page) {
+    console.error('DELIVERY RELOAD DIAGNOSTICS:', reloadCase, await page.evaluate(() => ({ url: location.href, ready: document.readyState, text: document.body.innerText.slice(0, 1500), markers: [...document.querySelectorAll('.ax-welcome__enter, .thread-view-tabs')].map(element => ({ className: element.className, display: getComputedStyle(element).display, rect: element.getBoundingClientRect().toJSON() })) })));
+    await page.screenshot({ path: '.tmp/qa/user-facing-delivery/failure.png' });
+  }
+  throw error;
 } finally { await browser?.close(); if (production) await new Promise(resolve => server.httpServer.close(resolve)); else await server.close(); }
