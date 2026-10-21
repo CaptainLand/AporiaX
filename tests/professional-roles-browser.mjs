@@ -99,6 +99,7 @@ try {
   await roles.getByRole('button', { name: '保存', exact: true }).click();
   await page.waitForFunction(() => window.fixture.saved.profiles.length === 5);
   await page.evaluate(() => window.fixture.end());
+  await panel.getByRole('button', { name: '停止此 Agent' }).waitFor({ state: 'detached' });
   assert.equal(await panel.getByRole('button', { name: '停止此 Agent' }).count(), 0);
   await panel.getByRole('button', { name: '继续交办', exact: true }).click();
   await panel.getByText('原轮次已结束，请在主对话中发送下一轮交办。').waitFor();
