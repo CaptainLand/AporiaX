@@ -8,7 +8,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
 import {
   captureWorkspaceState,
   getPendingSelfCheckPaths,
@@ -67,6 +68,7 @@ import { createWitnessMonitor } from "../electron/witness-monitor.js";
 import { createProjectUnderstandingStore } from "../electron/project-understanding.js";
 
 const testRoot = await mkdtemp(join(resolve("."), ".runtime-smoke-"));
+const plainGitRoot = await mkdtemp(join(tmpdir(), 'aporia-plain-git-'));
 const originalFetch = globalThis.fetch;
 const testProvider = {
   ...DEFAULT_DEEPSEEK_PROVIDER,
@@ -1971,13 +1973,10 @@ try {
   assert.equal(officeRevert[0]?.success, true);
   await assert.rejects(access(join(officeRoot, "销售看板.xlsx")));
 
-  const plainRoot = join(testRoot, "plain-workspace");
-  await mkdir(plainRoot, { recursive: true });
-  await writeFile(
-    join(plainRoot, ".git"),
-    "gitdir: Z:\\missing-aporiax-repository",
-    "utf8",
-  );
+  // A genuine non-repository, not a broken .git pointer whose diagnostic
+  // differs across Git for Windows versions. Keep it outside the source repo.
+  const plainRoot = plainGitRoot;
+  assert.equal(resolve(plainRoot).startsWith(`${resolve('.')}${sep}`), false);
   const plainGitResponses = [
     createToolDelta("plain-git-status", "git_status", {}),
     {
@@ -2006,7 +2005,7 @@ try {
     ],
   });
   assert.equal(plainGitResult.status, "completed");
-  assert.equal(plainGitResult.steps[0]?.success, true);
+  assert.equal(plainGitResult.steps[0]?.success, true, JSON.stringify(plainGitResult.steps[0]));
   assert.equal(plainGitResult.steps[0]?.skipped, true);
   assert.doesNotMatch(plainGitResult.content, /<svg/i);
   assert.match(plainGitResult.content, /✅/, "Unicode content is preserved; stripping it can corrupt file links");
@@ -2320,5 +2319,9 @@ try {
   ) {
     throw new Error("Refusing to remove a test directory outside the workspace.");
   }
+  if (dirname(resolve(plainGitRoot)) !== resolve(tmpdir()) || !basename(plainGitRoot).startsWith('aporia-plain-git-')) {
+    throw new Error('Refusing to remove an unowned non-repository fixture.');
+  }
   await rm(resolvedRoot, { recursive: true, force: true });
+  await rm(plainGitRoot, { recursive: true, force: true });
 }
