@@ -24,7 +24,7 @@ const files = [
   'audit-reliability.mjs', 'audit-migration-index.mjs', 'task-history-store-smoke.mjs', 'task-store-smoke.mjs',
   'approval-response-regression.mjs', 'builder-merge-regression.mjs', 'builder-merge-crash.mjs',
   'context-continuation-regression.mjs', 'mcp-deferred-catalog.mjs', 'understanding-lock-recovery.mjs',
-  'reliability-storage.mjs', 'privacy-no-sync.mjs', 'project-script-trust.mjs', 'human-constraints.mjs', 'release-source.mjs',
+  'reliability-storage.mjs', 'privacy-no-sync.mjs', 'project-script-trust.mjs', 'human-constraints.mjs', 'release-source.mjs', 'installer-only-release.mjs',
   'task-runtime-rpc-smoke.mjs', 'run-store-sqlite-smoke.mjs',
   'native-tool-executor-smoke.mjs', 'tool-permissions-smoke.mjs', 'tool-dispatcher-smoke.mjs',
   'execution-policy-smoke.mjs', 'execution-mode-wiring-smoke.mjs',

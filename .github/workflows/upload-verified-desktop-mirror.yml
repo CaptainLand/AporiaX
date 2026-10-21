@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable release tag with a prepared GitHub draft
+        description: Existing installer-only stable tag with a prepared GitHub draft
         required: true
         type: string
       checksum_sha256:
@@ -50,12 +50,24 @@ jobs:
           mkdir "$RUNNER_TEMP/desktop-release"
           cd "$RUNNER_TEMP/desktop-release"
           manifest="SHA256SUMS-$RELEASE_VERSION.txt"
-          files=("AporiaX-Setup-$RELEASE_VERSION-x64.exe" "AporiaX-Portable-$RELEASE_VERSION-x64.exe" "AporiaX-Setup-$RELEASE_VERSION-x64.exe.blockmap" latest.yml "$manifest")
+          files=("AporiaX-Setup-$RELEASE_VERSION-x64.exe" "AporiaX-Setup-$RELEASE_VERSION-x64.exe.blockmap" latest.yml "$manifest")
           for file in "${files[@]}"; do
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --retry 2 --connect-timeout 20 --max-time 600 --output "$file" "https://aporiax.cloud/downloads/$file"
           done
           printf '%s  %s\n' "$CHECKSUM_SHA256" "$manifest" | sha256sum -c -
-          # The trusted checksum digest binds every versioned file and latest.yml.
+          # Reject legacy portable manifests and paths outside the public list.
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const version = process.env.RELEASE_VERSION;
+          const expected = [`AporiaX-Setup-${version}-x64.exe`, `AporiaX-Setup-${version}-x64.exe.blockmap`, 'latest.yml'];
+          const rows = readFileSync(`SHA256SUMS-${version}.txt`, 'utf8').trim().split('\n');
+          const names = rows.map(row => {
+            const match = row.match(/^[a-f0-9]{64}  (.+)$/);
+            assert(match, 'Malformed release checksum row'); return match[1];
+          });
+          assert.deepEqual(names.sort(), expected.sort(), 'Expected exactly the installer, blockmap and update metadata');
+          NODE
           sha256sum -c "$manifest"
           gh release view "$RELEASE_TAG" --json tagName,isDraft,assets > release.json
           node --input-type=module <<'NODE'
@@ -63,7 +75,7 @@ jobs:
           import { readFileSync, writeFileSync } from 'node:fs';
           import { createHash } from 'node:crypto';
           const version = process.env.RELEASE_VERSION;
-          const names = [`AporiaX-Setup-${version}-x64.exe`, `AporiaX-Portable-${version}-x64.exe`, `AporiaX-Setup-${version}-x64.exe.blockmap`, 'latest.yml', `SHA256SUMS-${version}.txt`];
+          const names = [`AporiaX-Setup-${version}-x64.exe`, `AporiaX-Setup-${version}-x64.exe.blockmap`, 'latest.yml', `SHA256SUMS-${version}.txt`];
           const release = JSON.parse(readFileSync('release.json'));
           assert.equal(release.tagName, process.env.RELEASE_TAG);
           assert.equal(release.isDraft, true, 'Never mutate an already-public release');

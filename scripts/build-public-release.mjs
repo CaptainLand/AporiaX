@@ -3,6 +3,7 @@ import { readFile, access, lstat } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { synchronizeReleaseChannels } from './release-channels.mjs';
+import { PUBLIC_WINDOWS_TARGETS } from './windows-release-artifacts.mjs';
 
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
 const output = resolve(process.argv[2] || "release");
@@ -10,7 +11,7 @@ const output = resolve(process.argv[2] || "release");
 if ((await lstat("node_modules")).isSymbolicLink()) throw new Error("Release packaging requires a real node_modules directory, not a junction/symlink.");
 await build({
   projectDir: process.cwd(),
-  targets: Platform.WINDOWS.createTarget(["nsis", "portable"], Arch.x64),
+  targets: Platform.WINDOWS.createTarget([...PUBLIC_WINDOWS_TARGETS], Arch.x64),
   publish: "never",
   config: { directories: { output } },
 });

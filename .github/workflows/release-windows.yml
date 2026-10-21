@@ -87,7 +87,6 @@ jobs:
           }
           gh release upload $tag `
             "release/AporiaX-Setup-$version-x64.exe" `
-            "release/AporiaX-Portable-$version-x64.exe" `
             "release/AporiaX-Setup-$version-x64.exe.blockmap" `
             "release/latest.yml" `
             "release/SHA256SUMS-$version.txt" `

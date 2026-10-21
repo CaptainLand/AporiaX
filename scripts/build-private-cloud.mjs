@@ -19,4 +19,4 @@ await build({ projectDir: root, targets: Platform.WINDOWS.createTarget(["nsis", 
     extraResources: [{ from: join(web, ".tmp/private-preview-web"), to: "private-cloud-web", filter: ["**/*", "!**/.env*", "!**/*.map"] }],
   },
 });
-run(["scripts/verify-windows-release.mjs", output], root);
+run(["scripts/verify-windows-release.mjs", output, "--include-portable"], root);
