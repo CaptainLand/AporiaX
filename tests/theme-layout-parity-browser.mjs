@@ -110,7 +110,12 @@ try {
     const atBottom = await measure(); await toggle(); const switchedBottom = await measure();
     assert.ok(Math.abs(atBottom.scrollHeight - atBottom.clientHeight - atBottom.scrollTop) < 1);
     assert.ok(Math.abs(switchedBottom.scrollHeight - switchedBottom.clientHeight - switchedBottom.scrollTop) < 1);
-    const row = page.locator('.edited-file-row').first(); await row.hover(); const hovered = await measure();
+    const row = page.locator('.edited-file-row').first();
+    assert.equal(await row.isVisible(), false, 'file results remain folded by default');
+    const replyToggle = page.locator('.assistant-message').first().getByRole('button', { name: '展开回复', exact: true });
+    await replyToggle.click();
+    assert.equal(await replyToggle.getAttribute('aria-expanded'), 'true');
+    await row.hover(); const hovered = await measure();
     await toggle(); const hoverOther = await measure(); assert.equal(differences(hovered, hoverOther).length, 0, 'File-row hover does not change geometry between themes');
     await page.locator('.composer textarea').fill('同一份草稿\n第二行草稿'); await page.locator('.composer textarea').focus();
     const focused = await measure(); await toggle(); const focusOther = await measure();
