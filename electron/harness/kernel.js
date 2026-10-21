@@ -1,4 +1,5 @@
 import { MAX_BUILDERS } from "./builder-count.js";
+import { isNetworkToolName } from '../runtime/web-tools.js';
 import { createHarnessEventBus } from "./event-bus.js";
 import { createAgentDefinitionRegistry } from "./agent-definitions.js";
 import { HarnessSessionStore } from "./session.js";
@@ -159,7 +160,7 @@ export function createHarnessKernel({
             tool.source ||
             (tool.plugin
               ? "plugin"
-              : tool.name.startsWith("browser_")
+              : isNetworkToolName(tool.name)
                 ? "browser"
                 : "native"),
           plugin: tool.plugin || null,

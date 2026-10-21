@@ -3239,6 +3239,46 @@ body.panel-is-resizing * {
   gap: 9px;
 }
 
+.assistant-progress-disclosure {
+  margin: 0;
+}
+
+.assistant-progress-disclosure[open] { margin-bottom: 10px; }
+
+.assistant-message-heading:has(+ .assistant-progress-disclosure) { margin-bottom: 0; }
+
+.assistant-progress-toggle {
+  display: flex;
+  width: 37.5%;
+  height: 20px;
+  padding-top: 3px;
+  align-items: flex-start;
+  border-radius: var(--radius-xs);
+  list-style: none;
+  cursor: pointer;
+}
+
+.assistant-progress-toggle::-webkit-details-marker { display: none; }
+
+.assistant-progress-line {
+  --progress-rule-color: var(--gray-6);
+  display: block;
+  width: 100%;
+  height: 1px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--progress-rule-color) 0%, var(--progress-rule-color) 60%, transparent 100%);
+  opacity: 0.55;
+  transition: opacity 150ms ease;
+}
+
+.assistant-progress-toggle:is(:hover, :focus-visible) .assistant-progress-line { --progress-rule-color: var(--gray-7); opacity: 0.9; }
+.assistant-progress-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.assistant-progress-disclosure > .assistant-progress-journal { margin: 6px 0 0; }
+.assistant-progress-disclosure:not([open]) > .assistant-progress-journal { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .assistant-progress-line { transition: none; }
+}
+
 .assistant-progress-entry {
   padding: 9px 12px 10px;
   border-left: 2px solid color-mix(in srgb, var(--accent-8) 72%, transparent);
@@ -6561,6 +6601,25 @@ body.panel-is-resizing * {
   box-shadow: var(--shadow-lg);
   backdrop-filter: blur(22px) saturate(125%);
   gap: 11px;
+}
+
+.witness-panel .witness-progress-unknown > span {
+  width: 28%;
+  opacity: 0.45;
+  transition: none;
+}
+
+.witness-panel .witness-progress-unknown.is-active > span {
+  animation: witness-activity 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes witness-activity {
+  from { transform: translateX(0); }
+  to { transform: translateX(257%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .witness-panel .witness-progress-unknown.is-active > span { animation: none; }
 }
 
 .witness-heading {
@@ -11262,26 +11321,25 @@ button.anchor-history-heading:hover {
 
 .turn-anchor-button {
   display: inline-flex;
-  height: 25px;
+  height: 22px;
   align-items: center;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--accent-9) 20%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--accent-9);
-  background: color-mix(in srgb, var(--accent-9) 5.5%, transparent);
+  padding: 0 3px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--text-3);
+  background: transparent;
   cursor: pointer;
   gap: 4px;
   font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
   transition:
-    border-color 140ms ease,
     color 140ms ease,
     background 140ms ease;
 }
 
 .turn-anchor-button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent-9) 42%, transparent);
-  color: var(--accent-9);
-  background: color-mix(in srgb, var(--accent-9) 10%, transparent);
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--text-1) 4%, transparent);
 }
 
 .turn-anchor-button.restored,
@@ -11431,18 +11489,6 @@ button.anchor-history-heading:hover {
   border-color: color-mix(in srgb, var(--red-9) 35%, transparent);
   color: var(--red-11);
   background: color-mix(in srgb, var(--red-9) 8%, transparent);
-}
-
-:root[data-theme="dark"] .turn-anchor-button {
-  border-color: color-mix(in srgb, var(--accent-10) 24%, transparent);
-  color: var(--accent-11);
-  background: color-mix(in srgb, var(--accent-10) 7.5%, transparent);
-}
-
-:root[data-theme="dark"] .turn-anchor-button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent-11) 48%, transparent);
-  color: var(--accent-12);
-  background: color-mix(in srgb, var(--accent-10) 13%, transparent);
 }
 
 :root[data-theme="dark"] .restored-turn-output {
@@ -12830,7 +12876,13 @@ button.anchor-history-heading:hover {
 }
 
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message li + li {
-  margin-top: 6px;
+  margin-top: 3px;
+}
+
+/* Soften reading text, without dimming headings, links or fenced code. */
+:root[data-theme="dark"] .assistant-message-content > .markdown-message :is(p, li),
+:root[data-theme="dark"] .assistant-message-content > .markdown-message :is(p, li) > code {
+  color: color-mix(in srgb, var(--text-1) 70%, var(--text-2));
 }
 
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message li > p:last-child,
@@ -12861,25 +12913,35 @@ button.anchor-history-heading:hover {
   white-space: normal;
 }
 
-.assistant-delivery-details > summary {
+.assistant-delivery-toggle {
   display: inline-flex;
+  width: 24px;
+  height: 24px;
+  margin-left: 3px;
+  padding: 0;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  vertical-align: middle;
+  border: 0;
+  background: transparent;
   color: var(--text-2);
-  font-size: var(--text-sm);
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  list-style: none;
 }
 
-.assistant-delivery-details > summary::-webkit-details-marker { display: none; }
-.assistant-delivery-details > summary:hover { color: var(--text-1); }
-.assistant-delivery-details > summary:focus-visible {
+.assistant-delivery-toggle:hover { color: var(--text-1); }
+.assistant-delivery-toggle:focus-visible {
   outline: 2px solid var(--accent-9);
   outline-offset: 3px;
   border-radius: var(--radius-xs);
 }
-.assistant-delivery-details[open] > summary svg { transform: rotate(180deg); }
-.assistant-delivery-details-content { margin-top: 10px; }
+.assistant-delivery-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.assistant-delivery-toggle svg { transition: transform 160ms ease; }
+.assistant-delivery-details-content { display: grid; gap: 10px; margin-top: 8px; }
+.assistant-delivery-details-content > .edited-files-card { margin: 0; min-width: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .assistant-delivery-toggle svg { transition: none; }
+}
 
 /* Retain the original composer outline and corners; keep the newer controls. */
 :root[data-theme] .composer {

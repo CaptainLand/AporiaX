@@ -64,26 +64,8 @@ export function assessDelivery(state, changes, version) {
   return { status, passed: status === "passed", attempted: results.length > 0, waived: Boolean(state.verificationWaived), results, findings, reviewPending };
 }
 
-export function deliveryNotice(assessment, hasChanges, language = "zh-CN") {
-  if (!hasChanges) return "";
+export function deliveryNotice(assessment, _hasChanges, language = "zh-CN") {
   const en = language === "en";
-  const messages = {
-    unverified: en ? "Verification note: the current version has not had a complete executable check." : "验证说明：当前版本尚未完成运行验证。",
-    unavailable: en ? "Verification note: implementation is preserved; the execution environment could not complete the checks." : "验证说明：实现已保存，执行环境未能完成检查。",
-    failed: en ? "Verification note: some checks failed; their evidence is retained in the execution records." : "验证说明：部分检查未通过，具体失败记录已保留在执行记录中。",
-  };
-  const notices = [messages[assessment.status]];
-  if (assessment.findings.length) notices.push(en ? "Review findings remain unresolved." : "仍有审查问题未解决。" );
-  else if (assessment.reviewPending) notices.push(en ? "Independent review coverage is incomplete." : "独立审查尚未覆盖全部改动。" );
-  return notices.filter(Boolean).join(" ");
-}
-
-// Routine evidence belongs in the full reply. Consequential failures remain
-// visible regardless of how the model chooses to summarize the result.
-export function deliveryPresentation(assessment, hasChanges, language = "zh-CN") {
-  const details = deliveryNotice(assessment, hasChanges, language);
-  if (!hasChanges) return { warning: '', details };
-  const en = language === 'en';
   const warnings = [];
   if (assessment.status === 'failed') warnings.push(en
     ? 'Some checks did not pass; the result still needs attention before use.'
@@ -91,5 +73,11 @@ export function deliveryPresentation(assessment, hasChanges, language = "zh-CN")
   if (assessment.findings.length) warnings.push(en
     ? 'There are unresolved issues affecting this result.'
     : '还有影响结果的问题尚未解决。');
-  return { warning: warnings.join(' '), details };
+  return warnings.join(' ');
+}
+
+// A missing/unavailable check or pending review is recorded, not a reason to
+// manufacture a disclaimer or disclosure. Only actual failures/findings warn.
+export function deliveryPresentation(assessment, hasChanges, language = "zh-CN") {
+  return { warning: deliveryNotice(assessment, hasChanges, language), details: '' };
 }

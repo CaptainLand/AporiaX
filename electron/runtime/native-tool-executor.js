@@ -17,6 +17,7 @@ import {
 } from "../office-tools.js";
 import { MAX_ATTACHMENT_BYTES, extractPdfText } from "../attachment-parser.js";
 import { executeBrowserTool, isBrowserToolName } from "../browser-runtime.js";
+import { isWebToolName } from './web-tools.js';
 import {
   parseGitHubJson,
   runGitHubCli as defaultRunGitHubCli,
@@ -171,6 +172,7 @@ export function createNativeToolExecutor({
     sandboxStatus = null,
     dependencyWorkspaceRoot = workspaceRoot,
     browserRuntime = null,
+    webRuntime = null,
     processManager = null,
     lspManager = null,
     workbenchPresent = null,
@@ -198,6 +200,10 @@ export function createNativeToolExecutor({
       return { modelResult: await searchSkills({ workspaceRoot, userSkillsDirectory }, input) };
     }
 
+    if (isWebToolName(toolName)) {
+      if (!webRuntime) throw new Error('AporiaX Web runtime is unavailable.');
+      return { modelResult: await webRuntime.execute(toolName, input, { signal }) };
+    }
     if (isBrowserToolName(toolName)) {
       return {
         modelResult: await executeBrowserTool(browserRuntime, toolName, input),

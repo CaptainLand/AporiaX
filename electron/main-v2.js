@@ -14,6 +14,7 @@ import { installDesktopBackground } from "./desktop-background.js";
 import { installAppUpdate } from "./app-update.js";
 import { showApprovalToast, showClarificationToast, closeClarificationToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
+import { isNetworkToolName } from './runtime/web-tools.js';
 import { createHarnessCoreServer } from "./harness/core-server.js";
 import { createDesktopLocalControl, desktopControlBridgePath, createControlActivityTracker } from "./control/desktop-runtime.js";
 import { setDefaultHarnessEventBus } from "./harness/event-bus.js";
@@ -82,7 +83,7 @@ function nativeToolDescriptors() {
     return {
       definition,
       risk: TOOL_RISKS[name],
-      source: name.startsWith("browser_") ? "browser" : "native",
+      source: isNetworkToolName(name) ? "browser" : "native",
     };
   });
 }

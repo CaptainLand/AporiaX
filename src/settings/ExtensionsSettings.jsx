@@ -38,7 +38,7 @@ const EMPTY_MCP = {
 function sourceLabel(source, tr) {
   return {
     native: tr("原生工具", "Native tools"),
-    browser: tr("浏览器", "Browser"),
+    browser: tr("浏览器与联网", "Browser & web"),
     plugin: tr("插件", "Plugins"),
     mcp: "MCP",
     skill: "Skills",

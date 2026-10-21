@@ -15,6 +15,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Search and understand the codebase with exact evidence. Do not edit files.",
     tools: Object.freeze([
+      'web_search', 'web_fetch',
       "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
@@ -23,7 +24,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_diff",
       "inspect_office_file",
     ]),
-    permissions: readPermissions(),
+    permissions: readPermissions({ web_search: 'allow', web_fetch: 'allow' }),
     maxRounds: null,
     background: false,
     triggers: Object.freeze([]),
@@ -35,6 +36,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Review current code or artifacts for correctness, security, completeness, maintainability, and regressions. Do not edit files.",
     tools: Object.freeze([
+      'web_search', 'web_fetch',
       "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
@@ -43,7 +45,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_diff",
       "inspect_office_file",
     ]),
-    permissions: readPermissions(),
+    permissions: readPermissions({ web_search: 'allow', web_fetch: 'allow' }),
     maxRounds: null,
     background: true,
     triggers: Object.freeze(["plan.step.completed", "changes.batch.ready"]),
@@ -55,6 +57,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     description:
       "Verify focused claims using repository evidence and project commands. Do not edit source files.",
     tools: Object.freeze([
+      'web_search', 'web_fetch',
       "task_brief", "replan_strategy",
       "list_directory",
       "read_file",
@@ -64,7 +67,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "inspect_office_file",
       "run_command",
     ]),
-    permissions: readPermissions({ run_command: "ask" }),
+    permissions: readPermissions({ run_command: "ask", web_search: 'allow', web_fetch: 'allow' }),
     maxRounds: null,
     background: true,
     triggers: Object.freeze(["verification.requested"]),

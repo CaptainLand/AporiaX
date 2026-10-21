@@ -18,6 +18,9 @@ try {
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/conversation-turn-spacing.html`);
+  await page.locator('#files .assistant-delivery-toggle').waitFor();
+  assert.equal(await page.locator('#files .edited-files-card').isVisible(), false);
+  await page.locator('#files .assistant-delivery-toggle').click();
   await page.locator('#files .edited-files-card').waitFor();
   assert.deepEqual(await page.locator('.assistant-message-heading > strong').allTextContents(), ['AporiaX', 'AporiaX'], 'Chinese conversation headings retain the product name');
   if (process.argv.includes('--built-css')) {

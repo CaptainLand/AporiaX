@@ -6,35 +6,6 @@
   display: none !important;
 }
 
-/* During a live run, progress stays fully visible. Once the run is no longer
-   live, keep a compact preview. Completed journals expand only after an
-   explicit click; hover/focus alone must never reveal the retained journal. */
-.assistant-message:not(:has(.aporiax-run-duration.running))
-  .assistant-progress-journal {
-  position: relative;
-  max-height: 78px;
-  overflow: hidden;
-  cursor: pointer;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
-}
-
-/* Expanded means expanded: never cap the retained journal at an arbitrary
-   pixel height. A click reveals the complete progress history in one shot. */
-.assistant-message:not(:has(.aporiax-run-duration.running))
-  .assistant-progress-journal.manual-expanded {
-  max-height: none !important;
-  overflow: visible !important;
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
-.assistant-message:not(:has(.aporiax-run-duration.running))
-  .assistant-progress-journal:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent-9) 42%, transparent);
-  outline-offset: 2px;
-}
-
 /* Model source labels are secondary metadata, not another headline. */
 .model-menu {
   width: min(320px, calc(100vw - 32px));
@@ -227,10 +198,4 @@
 :root[data-theme="dark"] .model-menu-source-note,
 :root[data-theme="dark"] .model-menu .model-choice.compact small {
   color: var(--gray-10) !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .assistant-progress-journal {
-    transition: none !important;
-  }
 }

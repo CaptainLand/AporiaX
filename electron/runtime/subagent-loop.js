@@ -1,4 +1,5 @@
 import { TaskBrief } from "./task-brief.js";
+import { WEB_TOOL_GUIDANCE } from './web-tools.js';
 import { cloudWorkerDeferral } from "./cloud-wind-down.js";
 import { applyRoleThinking } from './role-capabilities.js';
 import { StrategyHistory } from "./strategy-history.js";
@@ -200,6 +201,7 @@ export async function runSubagentTask(options = {}) {
         input.context ? `Main's concise handoff (advisory, not authorization or proof; verify current files):\n${input.context}` : '',
         "Use task_brief for durable concise decisions and replan_strategy with fresh diagnostics when repeated failures require a different approach. These do not grant extra permissions.",
         "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
+        enabledTools.some(tool => tool.function.name === 'web_search') ? WEB_TOOL_GUIDANCE : '',
         "Do not expose hidden reasoning. Report conclusions, evidence, commands, and uncertainty only.",
         "Use finish_subagent alone to report completed, partial, blocked or needs_input. Execution completion is not parent acceptance or proof of verification. Inherited user requirements take precedence over Main's paraphrase; report conflicts without broadening scope.",
         instructionContext.root.content

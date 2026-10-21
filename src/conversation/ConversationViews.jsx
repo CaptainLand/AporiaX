@@ -2,14 +2,18 @@ import { TaskGoalReport } from "./TaskGoalReport.jsx";
 import { ClarificationCard } from "./ClarificationCard.jsx";
 import { RouteActivityView } from "./RouteActivityView.jsx";
 import { activityActor, describeRouteRecord } from "./route-activity-model.js";
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
 import { useWorkbenchContext } from "../workbench/use-workbench.js";
 import { useFileContextMenu } from "../workbench/use-file-context-menu.js";
 import remarkGfm from "remark-gfm";
 import { remarkAutolinkBoundary } from "./remark-autolink-boundary.js";
+import { remarkInlineReplyToggle } from './remark-inline-reply-toggle.js';
 import { diffLines } from "diff";
+import { turnRestorePreview } from './turn-restore-preview.js';
+import { getLiveRunProgress } from './witness-progress.js';
+import { supportingReply } from '../../shared/reply-presentation.js';
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -74,6 +78,11 @@ function MarkdownCodeBlock({ children }) {
 }
 
 const LinkWorkspace = createContext("");
+const ReplyAction = createContext(null);
+
+function MarkdownReplyToggle() {
+  return useContext(ReplyAction);
+}
 
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
@@ -118,7 +127,7 @@ function MessageLink({ href, children, title }) {
 
 // Model/effort changes leave message text intact. Keep the parsed Markdown tree
 // instead of reparsing the entire history during the slider's release frame.
-const MarkdownMessage = React.memo(function MarkdownMessage({ content }) {
+const MarkdownMessage = React.memo(function MarkdownMessage({ content, trailingAction }) {
   const normalizedContent = String(content || "")
     .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
     .replace(
@@ -127,19 +136,22 @@ const MarkdownMessage = React.memo(function MarkdownMessage({ content }) {
     );
 
   return (
+    <ReplyAction.Provider value={trailingAction}>
     <div className="markdown-message">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkAutolinkBoundary]}
+        remarkPlugins={[remarkGfm, remarkAutolinkBoundary, ...(trailingAction ? [remarkInlineReplyToggle] : [])]}
         urlTransform={(url, key) => key === "href" ? messageLinkUrl(url) : defaultUrlTransform(url)}
         components={{
           pre: MarkdownCodeBlock,
           a: MessageLink,
           img: MessageImage,
+          'aporiax-reply-toggle': MarkdownReplyToggle,
         }}
       >
         {normalizedContent}
       </ReactMarkdown>
     </div>
+    </ReplyAction.Provider>
   );
 });
 
@@ -498,50 +510,6 @@ function SelfCheckCard({ selfCheck }) {
   );
 }
 
-function buildTurnAnchorDiffRows(beforeContent, afterContent) {
-  const rows = [];
-  let beforeLine = 1;
-  let afterLine = 1;
-
-  for (const part of diffLines(
-    String(beforeContent || ""),
-    String(afterContent || ""),
-  )) {
-    const rawLines = part.value.split("\n");
-    if (rawLines.at(-1) === "") rawLines.pop();
-    for (const line of rawLines) {
-      if (part.added) {
-        rows.push({
-          type: "added",
-          before: "",
-          after: afterLine,
-          content: line,
-        });
-        afterLine += 1;
-      } else if (part.removed) {
-        rows.push({
-          type: "removed",
-          before: beforeLine,
-          after: "",
-          content: line,
-        });
-        beforeLine += 1;
-      } else {
-        rows.push({
-          type: "context",
-          before: beforeLine,
-          after: afterLine,
-          content: line,
-        });
-        beforeLine += 1;
-        afterLine += 1;
-      }
-    }
-  }
-
-  return rows;
-}
-
 function TurnAnchorReview({
   message,
   isRunning,
@@ -549,9 +517,8 @@ function TurnAnchorReview({
   onRestore,
 }) {
   const { tr } = useI18n();
-  const activeChanges = (message?.changes || []).filter(
-    (change) => !change.reverted,
-  );
+  const activeChanges = useMemo(() => (message?.changes || [])
+    .filter(change => !change.reverted).map(turnRestorePreview), [message?.changes]);
   const [selectedPath, setSelectedPath] = useState(
     activeChanges[0]?.path || "",
   );
@@ -562,16 +529,7 @@ function TurnAnchorReview({
     activeChanges.find((change) => change.path === selectedPath) ||
     activeChanges[0] ||
     null;
-  const rows = useMemo(
-    () =>
-      selected && !selected.binary
-        ? buildTurnAnchorDiffRows(
-            selected.beforeContent,
-            selected.afterContent,
-          )
-        : [],
-    [selected],
-  );
+  const rows = selected?.rows || [];
   const additions = activeChanges.reduce(
     (sum, change) => sum + (Number(change.additions) || 0),
     0,
@@ -623,8 +581,8 @@ function TurnAnchorReview({
               <strong>{tr("回退这一轮", "Restore this turn")}</strong>
               <span>
                 {tr(
-                  "{count} 个文件 · +{additions} -{deletions} · 先预览，确认后才会执行",
-                  "{count} file(s) · +{additions} -{deletions} · review before restoring",
+                  "回退将影响 {count} 个文件 · 恢复 {additions} 行，移除 {deletions} 行 · 确认后才会执行",
+                  "Restore affects {count} file(s) · restore {additions} lines, remove {deletions} lines · confirm to apply",
                   {
                     count: activeChanges.length,
                     additions,
@@ -661,13 +619,13 @@ function TurnAnchorReview({
                   <FileText size={15} />
                 )}
                 <span>{change.path}</span>
-                {change.deleted || change.afterMissing ? (
+                {change.deleted ? (
                   <em className="deleted-change-kind">
-                    {tr("删除", "Deleted")}
+                    {tr("将删除", "Will delete")}
                   </em>
                 ) : change.created ? (
                   <em className="anchor-created-kind">
-                    {tr("新增", "New")}
+                    {tr("将恢复", "Will restore")}
                   </em>
                 ) : change.binary ? (
                   <em className="office-change-kind">
@@ -694,10 +652,10 @@ function TurnAnchorReview({
                       <FileCode2 size={15} />
                     )}
                     <strong>{selected.path}</strong>
-                    {selected.created && <span>{tr("新增", "New")}</span>}
-                    {(selected.deleted || selected.afterMissing) && (
+                    {selected.created && <span>{tr("将恢复", "Will restore")}</span>}
+                    {selected.deleted && (
                       <span className="deleted">
-                        {tr("已删除", "Deleted")}
+                        {tr("将删除", "Will delete")}
                       </span>
                     )}
                   </div>
@@ -716,8 +674,8 @@ function TurnAnchorReview({
                         tr("二进制文件检查点", "Binary file checkpoint")}
                     </strong>
                     <span>
-                      {tr(
-                        "二进制内容不会以文本展开；确认后会恢复该文件在本轮之前的完整版本。",
+                      {selected.deleted ? tr("回退后会删除这个文件。", "Restoring will delete this file.") : tr(
+                        "回退后会恢复这个文件在本轮之前的完整版本；二进制内容不以文本展示。",
                         "Binary content is not rendered as text. Confirming restores the complete version from before this turn.",
                       )}
                     </span>
@@ -744,7 +702,9 @@ function TurnAnchorReview({
                       ))
                     ) : (
                       <div className="diff-empty">
-                        {tr("文件内容没有文本差异。", "No text diff is available for this file.")}
+                        {selected.deleted ? tr("回退后会删除这个空文件。", "Restoring will delete this empty file.")
+                          : selected.created ? tr("回退后会恢复这个空文件。", "Restoring will restore this empty file.")
+                          : tr("文件内容没有文本差异。", "No text diff is available for this file.")}
                       </div>
                     )}
                   </div>
@@ -851,7 +811,7 @@ function FailedRunContent({ message }) {
   </div>;
 }
 
-function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
+function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, editedFiles }) {
   const { tr } = useI18n();
   const [retrying, setRetrying] = useState(false);
   const failed = message.error || message.status === "failed";
@@ -860,6 +820,18 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
   const interrupted = message.status === "interrupted";
   const hasAnchor = Boolean(message.anchor && message.changes?.length);
   const restored = Boolean(message.anchorRestoredAt);
+  const replyDetails = useMemo(() => supportingReply(message.content, message.deliveryDetails), [message.content, message.deliveryDetails]);
+  const [replyExpanded, setReplyExpanded] = useState(false);
+  const replyDetailsId = useId();
+  const canExpand = !restored && message.status !== 'running' && Boolean(replyDetails || editedFiles);
+  const replyToggle = useMemo(() => canExpand ? (
+    <button type="button" className="assistant-delivery-toggle"
+      aria-label={tr('展开回复', 'Expand reply')} aria-expanded={replyExpanded} aria-controls={replyDetailsId}
+      title={tr('展开或收起补充内容', 'Expand or collapse supporting content')}
+      onClick={() => setReplyExpanded(open => !open)}>
+      <ChevronDown size={16} aria-hidden="true" />
+    </button>
+  ) : null, [canExpand, replyExpanded, replyDetailsId, tr]);
 
   return (
     <article
@@ -899,7 +871,12 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
       <ExtensionNotices message={message} />
       {Array.isArray(message.progressUpdates) &&
         message.progressUpdates.length > 0 && (
-          <div className="assistant-progress-journal">
+          <details className="assistant-progress-disclosure">
+            <summary className="assistant-progress-toggle" aria-label={tr('展开任务进展', 'Expand task progress')}
+              title={tr('展开或收起任务进展', 'Expand or collapse task progress')}>
+              <span className="assistant-progress-line" aria-hidden="true" />
+            </summary>
+            <div className="assistant-progress-journal">
             {message.progressUpdates.map((update, index) => (
               <section
                 className={`assistant-progress-entry ${update.kind || "progress"}`}
@@ -925,7 +902,8 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
                 )}
               </section>
             ))}
-          </div>
+            </div>
+          </details>
         )}
       <div className="assistant-message-content">
         {restored ? (
@@ -949,21 +927,21 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
           </div>
         ) : message.content ? (
           failed ? (
-            <FailedRunContent message={message} />
+            <><FailedRunContent message={message} />{replyToggle}</>
           ) : (
-            <MarkdownMessage content={message.content} />
+            <MarkdownMessage content={message.content} trailingAction={replyToggle} />
           )
         ) : message.status === "running" ? null : (
-          <span className="stream-placeholder">{tr("暂无回复内容", "No response content")}</span>
+          <><span className="stream-placeholder">{tr("暂无回复内容", "No response content")}</span>{replyToggle}</>
         )}
       </div>
-      {!restored && message.status !== 'running' && typeof message.deliveryDetails === 'string' && message.deliveryDetails.trim() && (
-        <details className="assistant-delivery-details">
-          <summary>{tr('查看完整回复', 'View full reply')}<ChevronDown size={12} /></summary>
+      {canExpand && (
+        <div className="assistant-delivery-details" id={replyDetailsId} hidden={!replyExpanded}>
           <div className="assistant-message-content assistant-delivery-details-content">
-            <MarkdownMessage content={message.deliveryDetails} />
+            {replyDetails && <MarkdownMessage content={replyDetails} />}
+            {editedFiles}
           </div>
-        </details>
+        </div>
       )}
       {(failed || interrupted || blocked) && message.prompt && (
         <button
@@ -1000,75 +978,6 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
       )}
     </article>
   );
-}
-
-function getLiveRunProgress(message) {
-  const planSteps = message?.plan?.steps || [];
-  if (planSteps.length) {
-    const completedCount = planSteps.filter(
-      (step) => step.status === "completed",
-    ).length;
-    const blockedCount = planSteps.filter(
-      (step) => step.status === "blocked",
-    ).length;
-    const currentStep =
-      planSteps.find((step) => step.status === "in_progress") ||
-      planSteps.find((step) => step.status === "pending") ||
-      planSteps.at(-1) ||
-      null;
-    const inProgressCredit = planSteps.some(
-      (step) => step.status === "in_progress",
-    )
-      ? 0.35
-      : 0;
-    return {
-      entries: message?.route || [],
-      completedCount,
-      currentEntry: currentStep
-        ? {
-            title: currentStep.title,
-            detail: currentStep.detail || "",
-            stage: "route",
-          }
-        : null,
-      progress: Math.min(
-        message?.status === "running" ? 96 : 100,
-        Math.round(
-          ((completedCount + inProgressCredit) / planSteps.length) * 100,
-        ),
-      ),
-      totalCount: planSteps.length,
-      blockedCount,
-      plan: message.plan,
-    };
-  }
-  const entries = message?.route || [];
-  const completedCount = entries.filter((entry) =>
-    ["completed", "skipped", "recovered"].includes(entry.status),
-  ).length;
-  const currentEntry =
-    [...entries]
-      .reverse()
-      .find((entry) => ["running", "waiting", "retry"].includes(entry.status)) ||
-    entries.at(-1) ||
-    null;
-  const stageBase = {
-    route: 12,
-    forge: 42,
-    trial: 74,
-    deliver: 93,
-  };
-  const base = stageBase[currentEntry?.stage] || 8;
-  const progress = Math.min(96, base + Math.min(12, completedCount * 2));
-  return {
-    entries,
-    completedCount,
-    currentEntry,
-    progress,
-    totalCount: entries.length,
-    blockedCount: entries.filter((entry) => entry.status === "failed").length,
-    plan: null,
-  };
 }
 
 function formatWitnessElapsed(milliseconds) {
@@ -1113,7 +1022,7 @@ function describeWitnessRecord(record, tr, language) {
     "approval.required": [tr("等待用户确认", "Waiting for approval"), record.command],
     "control.paused": [tr("任务已暂停", "Task paused"), tr("Witness 将继续保留当前进度", "Witness will preserve the current progress")],
     "control.resumed": [tr("任务继续运行", "Task resumed"), tr("从安全边界继续执行", "Continuing from the safe boundary")],
-    "turn.completed": [tr("任务执行完成", "Task execution completed"), tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
+    "turn.completed": [record.status === 'completed' ? tr("任务执行完成", "Task execution completed") : tr("本轮已结束", "This run has ended"), tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
     "turn.cancelled": [tr("任务已停止", "Task stopped"), tr("已保留停止前的行动记录", "The action record before interruption was preserved")],
     "turn.failed": [tr("任务运行失败", "Task run failed"), record.detail],
   };
@@ -1135,26 +1044,27 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
     language,
   );
   const activeAgents = witness?.counters?.activeAgents || 0;
-  const witnessFinished = ["completed", "partial", "blocked", "needs_input", "failed", "interrupted"].includes(
-    witness?.status,
-  );
-  const witnessStateLabel =
-    resultDelivered || witness?.status === "completed"
-      ? tr("已完成", "Done")
-      : witness?.status === "failed"
-        ? tr("失败", "Failed")
-        : witness?.status === "interrupted"
-          ? tr("已停止", "Stopped")
-          : witness?.current?.longRunning
-            ? tr("耗时较长", "Long running")
-            : tr("正在做", "Now");
+  const witnessFinished = liveProgress.finished;
+  const stateLabels = {
+    completed: ['已完成', 'Done'], partial: ['部分完成', 'Partially done'],
+    blocked: ['任务受阻', 'Blocked'], needs_input: ['等待补充', 'Input needed'],
+    failed: ['失败', 'Failed'], interrupted: ['已停止', 'Stopped'],
+    paused: ['已暂停', 'Paused'], waiting: ['等待确认', 'Awaiting approval'],
+  };
+  const witnessStateLabel = tr(...(stateLabels[liveProgress.status]
+    || (witness?.current?.longRunning ? ['耗时较长', 'Long running'] : ['正在做', 'Now'])));
+  const progressLabel = liveProgress.completed ? '100%'
+    : liveProgress.plan ? tr('已完成 {done}/{total} 步', '{done}/{total} steps done', {
+      done: liveProgress.completedCount, total: liveProgress.totalCount,
+    }) : witnessStateLabel;
+  const indeterminate = liveProgress.progress === null;
 
   useEffect(() => {
     setExpanded(false);
   }, [witness?.startedAt]);
 
   return (
-    <section className="witness-panel" aria-label={tr("Witness 任务监控", "Witness task monitor")}>
+    <section className="witness-panel" data-status={liveProgress.status} aria-label={tr("Witness 任务监控", "Witness task monitor")}>
       <header className="witness-heading">
         <span className="witness-mark">
           <Eye size={15} />
@@ -1172,28 +1082,28 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
               : tr("正在记录 AporiaX 的行动", "Recording AporiaX activity")}
           </span>
         </div>
-        <b>
-          {resultDelivered || witness?.status === "completed"
-            ? 100
-            : liveProgress.progress}%
-        </b>
+        <b>{progressLabel}</b>
       </header>
 
-      <div className="harness-progress-track" aria-hidden="true">
+      <div className={`harness-progress-track${indeterminate ? ' witness-progress-unknown' : ''}${liveProgress.active ? ' is-active' : ''}`}
+        role="progressbar" aria-label={tr('本轮任务进度', 'Task progress')}
+        aria-valuemin={0} aria-valuemax={100}
+        aria-valuenow={indeterminate ? undefined : liveProgress.progress}
+        aria-valuetext={`${witnessStateLabel} · ${progressLabel}`}>
         <span
           style={{
-            width: `${resultDelivered || witness?.status === "completed" ? 100 : liveProgress.progress}%`,
+            width: indeterminate ? undefined : `${liveProgress.progress}%`,
           }}
         />
       </div>
 
       <div className="witness-current">
-        <span className={witness?.current?.longRunning ? "long-running" : ""}>
+        <span className={liveProgress.active && witness?.current?.longRunning ? "long-running" : ""}>
           {witnessStateLabel}
         </span>
         <div>
           <strong>
-            {resultDelivered ? tr("本轮结果已输出", "Result delivered") : currentDescription.title ||
+            {resultDelivered ? tr("本轮结果已输出", "Result delivered") : !liveProgress.active ? witnessStateLabel : currentDescription.title ||
               liveProgress.currentEntry?.title}
           </strong>
           <p title={currentDescription.progressHint}>
@@ -1212,7 +1122,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
               <div className={`witness-record ${record.status}`} key={record.id}>
                 <span className="witness-record-state">
                   {record.status === "running" || record.status === "waiting" ? (
-                    <LoaderCircle className="spin" size={12} />
+                    <LoaderCircle className={liveProgress.active ? 'spin' : ''} size={12} />
                   ) : record.status === "failed" ? (
                     <AlertTriangle size={12} />
                   ) : (
@@ -1365,11 +1275,28 @@ export function Conversation({
           message.changes,
         );
         const restored = Boolean(message.anchorRestoredAt);
+        const editedFiles = !restored && !message.unapplied && files.length > 0 ? (
+          <EditedFilesCard
+            files={files}
+            workspacePath={task.workspacePath}
+            onNotice={onNotice}
+            hasSnapshots={allowFileActions && Boolean(message.changes?.length)}
+            confirmed={Boolean(message.reviewConfirmedAt)}
+            onReview={(path) => allowFileActions ?
+              setReviewRequest({
+                messageId: message.id,
+                path,
+                mode: path ? "edit" : "diff",
+              }) : workbench?.openFile(path || files[0]?.path)
+            }
+          />
+        ) : null;
         const attempt = (
           <React.Fragment key={message.id}>
             <LinkWorkspace.Provider value={task.workspacePath || ""}>
             <AssistantMessage
               message={message}
+              editedFiles={editedFiles}
               onRetry={onRetry}
               taskRunning={isRunning && latestAssistant?.status === "running"}
               onOpenAnchor={(anchorTarget) =>
@@ -1378,22 +1305,6 @@ export function Conversation({
             />
             </LinkWorkspace.Provider>
             {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={isRunning && message.status === "running"} onRetry={onRetry ? () => onRetry(message) : null} />)}
-            {!restored && !message.unapplied && files.length > 0 && (
-              <EditedFilesCard
-                files={files}
-                workspacePath={task.workspacePath}
-                onNotice={onNotice}
-                hasSnapshots={allowFileActions && Boolean(message.changes?.length)}
-                confirmed={Boolean(message.reviewConfirmedAt)}
-                onReview={(path) => allowFileActions ?
-                  setReviewRequest({
-                    messageId: message.id,
-                    path,
-                    mode: path ? "edit" : "diff",
-                  }) : workbench?.openFile(path || files[0]?.path)
-                }
-              />
-            )}
             {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}
             {!restored && <TaskGoalReport brief={message.taskBrief} acceptance={message.acceptance} strategy={message.strategy} />}
           </React.Fragment>

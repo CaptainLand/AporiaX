@@ -7,6 +7,8 @@ const TOOL_PRESENTATION = {
   read_file: ["lens", "读取文件", "Read file", "正在读取文件", "Reading file", "file-read"],
   read_external_file: ["lens", "读取外部文件", "Read external file", "等待批准后读取工作区外文件", "Waiting for approval to read an external file", "file-read"],
   search_text: ["lens", "定位相关内容", "Locate relevant content", "正在搜索代码", "Searching code", "search"],
+  web_search: ['lens', '联网搜索', 'Search the web', '正在检索网络来源', 'Searching web sources', 'search'],
+  web_fetch: ['lens', '读取网页', 'Read web page', '正在读取网页正文', 'Reading web page text', 'browser-read'],
   git_status: ["lens", "检查 Git 状态", "Inspect Git status", "正在检查 Git 状态", "Inspecting Git status", "git"],
   git_diff: ["lens", "检查代码差异", "Inspect code diff", "正在读取代码差异", "Reading code diff", "git"],
   write_file: ["forge", "写入文件", "Write file", "正在修改文件", "Writing file", "file-write"],

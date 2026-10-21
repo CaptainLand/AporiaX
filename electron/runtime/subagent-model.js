@@ -3,6 +3,7 @@ import { posix, resolve, relative, isAbsolute, dirname, basename } from "node:pa
 import { realpath } from "node:fs/promises";
 import { normalizeBuilderScopes } from "../harness/scope-leases.js";
 import { parseWorkspacePatch } from './workspace-patch.js';
+import { isWebToolName } from './web-tools.js';
 
 // null is JSON-safe and explicitly means no round-count cutoff.
 export const DEFAULT_SUBAGENT_ROUNDS = null;
@@ -31,7 +32,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   explore: Object.freeze({
     description:
       "Search and understand the codebase. Return concise findings with exact file and line evidence. Do not edit files.",
-    tools: new Set(["task_brief", "replan_strategy",
+    tools: new Set(["task_brief", "replan_strategy", 'web_search', 'web_fetch',
       "list_directory",
       "read_file",
       "search_text",
@@ -43,7 +44,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   review: Object.freeze({
     description:
       "Review existing code or artifacts for correctness, security, completeness, maintainability, and regressions. Report actionable findings with evidence. Do not edit files.",
-    tools: new Set(["task_brief", "replan_strategy",
+    tools: new Set(["task_brief", "replan_strategy", 'web_search', 'web_fetch',
       "list_directory",
       "read_file",
       "search_text",
@@ -55,7 +56,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   verify: Object.freeze({
     description:
       "Verify a focused claim using repository inspection and relevant project commands. Do not edit source files. Report the exact command, exit code, evidence, and remaining uncertainty.",
-    tools: new Set(["task_brief", "replan_strategy",
+    tools: new Set(["task_brief", "replan_strategy", 'web_search', 'web_fetch',
       "list_directory",
       "read_file",
       "search_text",
@@ -136,6 +137,7 @@ export function normalizeSubagentInput(input, profiles = null) {
 }
 
 export function subagentToolPaths(toolName, input = {}) {
+  if (isWebToolName(toolName)) return []; // Network permissions, not workspace paths.
   if (toolName === "apply_patch" && typeof input.patch === "string") {
     const patches = parseWorkspacePatch(input.patch);
     if (!patches.length) throw new Error("Patch contains no file changes.");
@@ -189,6 +191,7 @@ async function realCandidate(path) {
 }
 
 export async function assertSubagentRealScope(toolName, input, scope, workspaceRoot) {
+  if (isWebToolName(toolName)) return; // Dispatcher still enforces role/parent/network grants.
   if (["task_brief", "replan_strategy"].includes(toolName)) return; // local session controls; dispatch still checks permissions
   assertSubagentScope(toolName, input, scope);
   if (!workspaceRoot) throw new Error("Subagent requires a verified workspace.");
@@ -208,6 +211,7 @@ export async function assertSubagentRealScope(toolName, input, scope, workspaceR
 }
 
 export function assertSubagentScope(toolName, input, scope) {
+  if (isWebToolName(toolName)) return;
   if (["run_command", "verify_project"].includes(toolName) && !scope.includes(".")) {
     throw new Error(
       'run_command requires repository-wide scope (".") because an arbitrary command cannot be reliably confined to a narrower path scope.',
@@ -253,6 +257,7 @@ export function compactSubagentModelResult(modelResult) {
       ? { ...modelResult }
       : { value: modelResult };
   if (typeof result.content === "string" && result.content.length > 16_000) {
+    if (['http_text', 'provider_text'].includes(result.evidence)) result.nextOffset = (result.offset || 0) + 16_000;
     if (result.readRange) result.readRange = { ...result.readRange, end: result.readRange.start + result.content.slice(0, 16_000).replace(/\r\n/g, "\n").length };
     result.content = `${result.content.slice(0, 16_000)}\n[truncated]`;
     result.truncated = true;
@@ -282,6 +287,8 @@ export function subagentEvidence(toolName, result) {
     command: value.command || null,
     cwd: value.cwd || null,
     query: value.query || null,
+    ...(value.url ? { url: value.url } : {}),
+    ...(toolName === 'web_search' && Array.isArray(value.results) ? { sources: value.results.slice(0, 8).map(item => ({ title: item.title, url: item.url })) } : {}),
     exitCode: typeof value.exitCode === "number" ? value.exitCode : null,
     timedOut: Boolean(value.timedOut),
     ...(value.parseOnly ? { parseOnly: true } : {}),
@@ -289,6 +296,7 @@ export function subagentEvidence(toolName, result) {
     error: value.error ? String(value.error).slice(0, 500) : null,
     preview: String(
       value.content ||
+        (toolName === 'web_search' && Array.isArray(value.results) ? value.results.map(item => `${item.title}: ${item.url}`).join('\n') : '') ||
         value.diff ||
         value.stdout ||
         value.reason ||
@@ -328,6 +336,7 @@ export function subagentToolsAreParallel(toolCalls) {
         "git_status",
         "git_diff",
         "inspect_office_file",
+        'web_search', 'web_fetch',
       ].includes(call?.function?.name),
     )
   );

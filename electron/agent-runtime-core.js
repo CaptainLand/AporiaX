@@ -129,11 +129,14 @@ import { APPEARANCE_TOOLS, APPEARANCE_TOOL_NAMES, createAppearanceTools } from '
 import { effectiveRoleSettings as applyRoleOverrides } from '../shared/professional-roles.js';
 import { verificationDirective, onlyStandaloneDeliverables, USER_FACING_DELIVERY_GUIDANCE } from "./runtime/delivery-policy.js";
 import { assessDelivery, deliveryNotice, deliveryPresentation, normalizeVerificationSelection } from "./runtime/workflow-policy.js";
+import { supportingReply } from '../shared/reply-presentation.js';
 import { isReadOnlyNativeTool } from "./runtime/durable-run.js";
 import { projectSimpleRequestHistory } from './runtime/simple-request-context.js';
 import { inspectWorkspaceSnapshot, restoreWorkspaceSnapshot } from './runtime/workspace-mutations.js';
 import { cloudWorkerDeferral, cloudWindDownActive } from "./runtime/cloud-wind-down.js";
 import { ToolProgressGuard } from "./runtime/tool-progress-guard.js";
+import { WEB_TOOL_DEFINITIONS, WEB_TOOL_GUIDANCE, isWebToolName, isNetworkToolName } from './runtime/web-tools.js';
+import { createWebRuntime } from './runtime/web-runtime.js';
 import { saveRuntimeCheckpoint, saveRuntimeContext, executeDurableTool } from "./runtime/durable-run.js";
 import {
   getSandboxStatus,
@@ -451,6 +454,7 @@ function describeToolActivity(toolCall) {
       input.pattern ||
       input.title ||
       input.name ||
+      (isWebToolName(toolCall.function.name) ? input.url : '') ||
       "";
     return {
       ...(path ? { path: String(path).slice(0, 260) } : {}),
@@ -1081,6 +1085,7 @@ export async function runHarness({
   mcpConfigErrors = [],
   capabilityRegistry = null,
   extensionPolicy = {},
+  webRuntimeFactory = createWebRuntime,
   recoveryContext = null,
   deferUnderstandingCuration = true,
   onNativeVisionRejected = null,
@@ -1269,6 +1274,7 @@ export async function runHarness({
   const browserEnabled = extensionPolicy?.browser !== false;
   const workbenchResources = temporaryChat ? null : acquireWorkbenchResources({ runId, taskId, workspacePath: workspaceRoot || workspacePath || "", emit });
   const browserRuntime = workbenchResources?.browserRuntime || createBrowserRuntime();
+  const webRuntime = webRuntimeFactory();
   const processManager = workbenchResources?.processManager || createPersistentProcessManager({ emit });
   const lspManager = workspaceRoot
     ? createLspManager({ workspaceRoot, emit, signal })
@@ -1347,14 +1353,12 @@ export async function runHarness({
         return { servers: [], tools: [], errors: [] };
       })
     : { servers: [], tools: [], errors: [] };
-  const staticToolCatalog = hasWorkspace
-    ? projectNativeToolCatalog({
-        catalog: TOOL_REGISTRY.catalog(permissionPolicy),
+  const staticToolCatalog = projectNativeToolCatalog({
+        catalog: TOOL_REGISTRY.catalog(permissionPolicy).filter(tool => hasWorkspace || isWebToolName(tool.name)),
         approvalMode: effectiveApprovalMode,
         sandboxStatus,
-      }).filter((tool) => (!APPEARANCE_TOOL_NAMES.has(tool.name) || Boolean(appearanceTools)) && (!AGENT_ROLE_TOOL_NAMES.has(tool.name) || Boolean(roleTools)) && isLocalControlToolAvailable(tool.name) && (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !String(tool.name || "").startsWith("browser_")) &&
-        (tool.name !== "project_knowledge" || knowledgeSession.enabled) && (tool.name !== "remember_project_fact" || canCurateKnowledge()))
-    : [];
+      }).filter((tool) => (!APPEARANCE_TOOL_NAMES.has(tool.name) || Boolean(appearanceTools)) && (!AGENT_ROLE_TOOL_NAMES.has(tool.name) || Boolean(roleTools)) && isLocalControlToolAvailable(tool.name) && (tool.name !== "request_user_input" || Boolean(clarification)) && (browserEnabled || !isNetworkToolName(tool.name)) &&
+        (tool.name !== "project_knowledge" || knowledgeSession.enabled) && (tool.name !== "remember_project_fact" || canCurateKnowledge()));
   const toolCatalog = [...staticToolCatalog, ...(mcpDiscovery.tools || [])];
   const resolveToolDefinitions = () => hasWorkspace
     ? TOOL_REGISTRY.definitions(permissionPolicy).filter((definition) => {
@@ -1366,10 +1370,10 @@ export async function runHarness({
         if (name === "request_user_input" && !clarification) return false;
         if (name === "project_knowledge" && !knowledgeSession.enabled) return false;
         if (name === "remember_project_fact" && !canCurateKnowledge()) return false;
-        if (!browserEnabled && String(name || "").startsWith("browser_")) return false;
+        if (!browserEnabled && isNetworkToolName(name)) return false;
         return name !== "run_command" || commandToolAvailable;
       })
-    : [HISTORY_TOOL, TASK_BRIEF_TOOL, REPLAN_TOOL, ...(appearanceTools ? APPEARANCE_TOOLS : []), ...(roleTools ? AGENT_ROLE_TOOLS : []), ...(extensionPolicy?.skill === false ? [] : [SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL]), ...(clarification ? [CLARIFICATION_TOOL] : [])].filter((tool) => getToolPermission(permissionPolicy, tool.function.name) !== "deny");
+    : [HISTORY_TOOL, TASK_BRIEF_TOOL, REPLAN_TOOL, ...(browserEnabled ? WEB_TOOL_DEFINITIONS : []), ...(appearanceTools ? APPEARANCE_TOOLS : []), ...(roleTools ? AGENT_ROLE_TOOLS : []), ...(extensionPolicy?.skill === false ? [] : [SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL]), ...(clarification ? [CLARIFICATION_TOOL] : [])].filter((tool) => getToolPermission(permissionPolicy, tool.function.name) !== "deny" && isLocalControlToolAvailable(tool.function.name));
   let enabledToolDefinitions = provider.supportsTools
     ? [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)]
     : [];
@@ -1475,6 +1479,7 @@ export async function runHarness({
         "Do not use emoji, pictograms, decorative symbols, or status glyphs anywhere in the final answer.",
         "Do not generate SVG markup or SVG files unless the user explicitly asks for SVG output.",
         "Use git_status and git_diff to inspect repository changes when the workspace is a Git repository.",
+        browserEnabled ? WEB_TOOL_GUIDANCE : 'Web search and retrieval are disabled by the effective Extension Policy. Do not bypass this restriction with Browser, MCP, commands or delegation.',
         browserEnabled
           ? "Use browser_open and browser_snapshot when the task requires checking a running web page. Prefer semantic browser locators. Treat browser_click, browser_fill, and browser_press as potentially state-changing actions and never claim a page was verified without observing the resulting snapshot, console, or network evidence."
           : "Browser capabilities are disabled by the effective Extension Policy for this task. Do not claim browser verification was performed.",
@@ -1980,6 +1985,10 @@ export async function runHarness({
     record.session.delegationContext = delegationContext;
     record.session.roleBudget = createRoleLedger(record.session.roleBudget);
     const definition = roleDefinition(profile, { skills: extensionPolicy?.skill !== false, knowledge: knowledgeSession.enabled });
+    if (!browserEnabled) {
+      definition.tools = definition.tools.filter(name => !isNetworkToolName(name));
+      definition.permissions = { ...definition.permissions, web_search: 'deny', web_fetch: 'deny' };
+    }
     const mcpAllowed = input.role === 'verify' && input.scope.includes('.') && permission === 'workspace-write' && extensionPolicy.mcp !== false;
     const selectedMcp = mcpAllowed ? mcpRuntime.selectedToolDefinitions(profile.mcpTools, permission) : [];
     emit({ type: 'subagent.profile', agentId, role: input.role, profileId: profile.id, profileName: profile.name,
@@ -2485,11 +2494,12 @@ export async function runHarness({
   };
 
   const executeTrackedTool = async (args) => {
+    if (!browserEnabled && isNetworkToolName(args.toolName || args.toolCall?.function?.name)) throw new Error('Network tools are disabled by the extension policy.');
     const mayWrite = !AGENT_ROLE_TOOL_NAMES.has(args.toolName) && !isReadOnlyNativeTool(args.toolName);
     if (mayWrite) await ensureAnchorBaseline();
     try {
       if (["read_skill_resource", "search_skills"].includes(args.toolName || args.toolCall?.function?.name) && extensionPolicy?.skill === false) throw new Error("Skills are disabled by the extension policy.");
-      return await executeAuthorizedTool({ ...args, userSkillsDirectory });
+      return await executeAuthorizedTool({ ...args, userSkillsDirectory, webRuntime });
     }
     finally { if (mayWrite) anchorDirty = true; }
   };
@@ -2695,7 +2705,7 @@ export async function runHarness({
           ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
           ...(message.aporiaNative ? { aporiaNative: message.aporiaNative } : {}) });
         conversation.push({ role: "tool", tool_call_id: message.tool_calls[0].id, content: JSON.stringify({ status: outcome.status, accepted: true }) });
-        const deliveryDetails = [...new Set([outcome.details, outcome.limitations].filter(Boolean))].join('\n\n');
+        const deliveryDetails = supportingReply([outcome.summary, outcome.warnings].filter(Boolean).join('\n\n'), outcome.details, outcome.limitations);
         message = { role: "assistant", content: [outcome.summary, outcome.warnings].filter(Boolean).join('\n\n'),
           ...(deliveryDetails ? { deliveryDetails } : {}) };
         await persistMainContext();
@@ -2788,7 +2798,7 @@ export async function runHarness({
         const presentation = deliveryPresentation(deliveryAssessment, changes.length > 0, language);
         const checkedContent = await validateDeliveryLinks(baseFinalContent, workspaceRoot, language);
         const finalContent = appendSandboxRecoveryNotice(presentation.warning ? `${checkedContent}\n\n${presentation.warning}` : checkedContent, sandboxRecoveries, language);
-        const detailsContent = [...new Set([message.deliveryDetails, presentation.details].filter(Boolean))].join('\n\n');
+        const detailsContent = supportingReply(finalContent, message.deliveryDetails);
         const finalDetails = detailsContent
           ? await validateDeliveryLinks(sanitizeFinalAnswer(detailsContent), workspaceRoot, language) : '';
         const curationInput = {
@@ -3624,6 +3634,7 @@ export async function runHarness({
     return failedResult;
   } finally {
     unregisterWorkerControls();
+    webRuntime.clear();
     forwardEvent({ type: "loop.metrics", metrics: loopMetrics.snapshot() });
     await safeDependencySession.close();
     await lspManager?.closeAll().catch(() => undefined);

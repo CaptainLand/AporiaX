@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { turnRestorePreview } from '../src/conversation/turn-restore-preview.js';
+
+const created = { path: '12345.txt', created: true, beforeMissing: true, afterMissing: false, beforeContent: '', afterContent: '12345\n', additions: 2, deletions: 0 };
+const saved = JSON.stringify(created);
+const removed = turnRestorePreview(created);
+assert.equal(removed.deleted, true);
+assert.equal(removed.created, false);
+assert.equal(removed.additions, 0);
+assert.equal(removed.deletions, 1);
+assert.deepEqual(removed.rows, [{ type: 'removed', before: 1, after: '', content: '12345' }]);
+assert.equal(JSON.stringify(created), saved, 'Preview must not change the checkpoint used by restore/conflict checks');
+const restored = turnRestorePreview({ path: 'old.txt', beforeMissing: false, afterMissing: true, deleted: true, beforeContent: 'original\n', afterContent: '' });
+assert.equal(restored.created, true);
+assert.equal(restored.deleted, false);
+assert.deepEqual(restored.rows, [{ type: 'added', before: '', after: 1, content: 'original' }]);
+const modified = turnRestorePreview({ path: 'existing.txt', beforeContent: 'keep\nbefore\n', afterContent: 'keep\nafter\n' });
+assert.deepEqual(modified.rows.map(row => [row.type, row.content]), [['context', 'keep'], ['removed', 'after'], ['added', 'before']]);
+assert.equal(modified.additions, 1); assert.equal(modified.deletions, 1);
+assert.equal(turnRestorePreview({ ...created, binary: true }).deleted, true);
+assert.deepEqual(turnRestorePreview({ ...created, binary: true }).rows, []);
+assert.equal(turnRestorePreview({ created: false, beforeMissing: true, afterContent: '' }).deleted, true, 'Explicit missing state takes precedence');
+assert.equal(turnRestorePreview({ created: true, beforeMissing: false }).deleted, false);
+assert.equal(turnRestorePreview({ deleted: true, beforeContent: '' }).created, true, 'Legacy deletion flags remain supported');
+console.log('PASS inverse restore preview: new/deleted/modified/empty/binary files, line totals and immutable source snapshots.');

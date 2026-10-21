@@ -40,6 +40,8 @@ export async function saveRuntimeContext(scopeId, state) {
 // Unknown tools, MCP calls and process tools are conservatively effectful.
 const READ_ONLY = new Set(["search_skills", "read_skill_resource", "read_file", "read_external_file", "list_directory", "search_text", "git_status", "git_diff", "inspect_office_file", "browser_snapshot", "browser_screenshot", "read_process", "wait_process", "present_to_user", "read_conversation_history", "mcp_search_tools", "mcp_read_result", "task_brief", "replan_strategy"]);
 READ_ONLY.add('list_agent_roles');
+READ_ONLY.add('web_search');
+READ_ONLY.add('web_fetch');
 export const isReadOnlyNativeTool = (name) => READ_ONLY.has(name);
 function stableInput(value) {
   if (Array.isArray(value)) return value.map(stableInput);

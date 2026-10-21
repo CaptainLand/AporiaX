@@ -3,6 +3,7 @@ import {
   normalizeCapabilityPresentation,
   publicToolCapability,
 } from "./capability-presentation.js";
+import { isNetworkToolName } from '../runtime/web-tools.js';
 
 const VALID_KINDS = new Set(["tool", "resource", "prompt", "agent", "skill"]);
 const VALID_SOURCES = new Set(["native", "browser", "plugin", "mcp", "skill", "runtime"]);
@@ -187,7 +188,7 @@ export function createCapabilityRegistry(options) {
 
 export function capabilityFromToolDescriptor(descriptor = {}) {
   const name = descriptor?.definition?.function?.name || descriptor?.name;
-  const browser = String(name || "").startsWith("browser_");
+  const browser = isNetworkToolName(name);
   const source = descriptor.source || (descriptor.plugin ? "plugin" : browser ? "browser" : "native");
   const title = descriptor.title || name;
   const risk = descriptor.risk || "control";

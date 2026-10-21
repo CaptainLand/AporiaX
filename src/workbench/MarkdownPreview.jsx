@@ -66,10 +66,16 @@ function MarkdownImage({ src, alt, path, workbench }) {
   }}>{link?.kind === "web" ? tr("打开远程图片", "Open remote image") : tr("授权读取图片", "Authorize image")}</button>}</span>;
 }
 
+function MarkdownTable({ children }) {
+  const { tr } = useI18n();
+  return <div className="document-table-scroll" role="region" tabIndex={0} aria-label={tr('文档表格', 'Document table')}><table>{children}</table></div>;
+}
+
 export function MarkdownPreview({ content, path, workbench, onError }) {
   const root = useRef(null), latest = useRef({ path, workbench, onError });
   latest.current = { path, workbench, onError };
   const components = useMemo(() => ({
+    table: MarkdownTable,
     code: ({ className, children }) => {
       const language = className?.replace("language-", "");
       return language && hljs.getLanguage(language) ? <code className={className} dangerouslySetInnerHTML={{ __html: hljs.highlight(String(children), { language }).value }} /> : <code className={className}>{children}</code>;

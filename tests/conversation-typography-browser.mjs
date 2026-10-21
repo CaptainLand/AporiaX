@@ -30,7 +30,7 @@ try {
   const contents = await body.textContent();
   const style = async locator => locator.evaluate(element => {
     const s = getComputedStyle(element);
-    return Object.fromEntries(['fontSize', 'fontWeight', 'fontFamily', 'lineHeight', 'letterSpacing', 'marginTop', 'marginBottom', 'paddingLeft', 'paddingRight', 'borderTopWidth', 'backgroundColor', 'boxShadow', 'display', 'listStylePosition'].map(key => [key, s[key]]));
+    return Object.fromEntries(['fontSize', 'fontWeight', 'fontFamily', 'lineHeight', 'letterSpacing', 'marginTop', 'marginBottom', 'paddingLeft', 'paddingRight', 'borderTopWidth', 'color', 'backgroundColor', 'boxShadow', 'display', 'listStylePosition'].map(key => [key, s[key]]));
   });
   const unaffected = async () => ({
     progress: await style(page.locator('.assistant-progress-entry .markdown-message')),
@@ -69,8 +69,22 @@ try {
         }
         assert.equal(metrics.list.paddingLeft, '22px');
         assert.equal(metrics.list.listStylePosition, 'outside');
-        assert.equal(metrics.item.marginTop, '6px');
+        assert.equal(metrics.item.marginTop, '3px');
         assert.equal(metrics.item.marginBottom, '0px');
+        if (theme === 'dark') {
+          const expected = await body.evaluate(element => {
+            const probe = document.createElement('span');
+            probe.style.color = 'color-mix(in srgb, var(--text-1) 70%, var(--text-2))';
+            element.append(probe); const color = getComputedStyle(probe).color; probe.remove();
+            return color;
+          });
+          assert.equal(metrics.paragraph.color, expected, 'dark reply text uses a softer theme-aware gray');
+          assert.equal(metrics.item.color, expected, 'list text and markers use the same softer color');
+          assert.equal(metrics.inline.color, expected, 'inline code does not remain glaring white');
+          assert.notEqual(metrics.paragraph.color, metrics.body.color, 'the change does not dim headings or the entire UI');
+        } else {
+          assert.equal(metrics.paragraph.color, metrics.body.color, 'light reply text stays unchanged');
+        }
         assert.equal(metrics.inline.borderTopWidth, '0px');
         assert.equal(metrics.inline.fontSize, '12.6px');
         assert.equal(metrics.inline.letterSpacing, 'normal', 'inline code keeps its monospaced tracking');

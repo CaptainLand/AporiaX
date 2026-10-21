@@ -10,7 +10,9 @@ const monitor = createWitnessMonitor({ heartbeatMs: 0, now: () => clock });
 monitor.observe({ type: 'turn.started' }); monitor.observe({ type: 'response.reset', round: 1 });
 function Fixture() {
   const [witness, setWitness] = useState(monitor.snapshot());
+  const [overrides, setOverrides] = useState({});
+  window.witnessProgressState = setOverrides;
   window.operationProgress = event => { clock += 1200; monitor.observe(event); setWitness(monitor.snapshot()); };
-  return <div style={{ maxWidth: 820, margin: '48px auto', padding: '0 24px' }}><Conversation task={{ id: 'progress', messages: [{ id: 'answer', role: 'assistant', status: 'running', content: '', steps: [], changes: [], witness }] }} isRunning onNotice={() => {}} /></div>;
+  return <div style={{ maxWidth: 820, margin: '48px auto', padding: '0 24px' }}><Conversation task={{ id: 'progress', messages: [{ id: 'answer', role: 'assistant', status: 'running', content: '', steps: [], changes: [], witness, ...overrides }] }} isRunning onNotice={() => {}} /></div>;
 }
 createRoot(document.getElementById('root')).render(<I18nProvider><Fixture /></I18nProvider>);

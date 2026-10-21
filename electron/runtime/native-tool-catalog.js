@@ -6,6 +6,7 @@ import { SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL } from "../skill-resources.js";
 import { HISTORY_TOOL } from "./conversation-history.js";
 import { OFFICE_TOOL_DEFINITIONS } from "../office-tools.js";
 import { BROWSER_TOOL_DEFINITIONS, BROWSER_TOOL_RISKS } from "../browser-runtime.js";
+import { WEB_TOOL_DEFINITIONS, WEB_TOOL_RISKS } from './web-tools.js';
 import { AGENT_ROLE_TOOLS } from './agent-role-tools.js';
 import { APPEARANCE_TOOLS } from './appearance-tools.js';
 import { VERIFY_PROJECT_TOOL } from './isolated-verification.js';
@@ -39,8 +40,8 @@ export const TOOL_DEFINITIONS = [
       parameters: { type: "object", properties: {
         status: { type: "string", enum: ["completed", "partial", "blocked", "needs_input"] },
         summary: { type: "string", minLength: 1, description: "Always-visible natural delivery: one short result sentence, useful file/preview links, and at most one or two important points. No mandatory report headings, repeated check disclaimers or internal metadata." },
-        details: { type: "string", maxLength: 24000, description: "Optional supporting Markdown for View full reply: analysis, formulas, code, line references and check details. No hidden reasoning or raw internal worker receipts. Important failures or actions must also be in summary/warnings." },
-        limitations: { type: "string", maxLength: 4000, description: "Routine verification scope and limitations for the collapsed full reply, such as code inspected but visual/browser behavior not checked. Do not invent a disclaimer when checks passed; use warnings for consequential failures or actions." },
+        details: { type: "string", maxLength: 24000, description: "Optional supporting Markdown for Expand reply: analysis, formulas, code, line references and check details, written naturally without report labels. Omit when there is nothing useful to add; do not repeat summary. No hidden reasoning or raw internal worker receipts. Important failures or actions must also be in summary/warnings." },
+        limitations: { type: "string", maxLength: 4000, description: "Real scope limitations for the collapsed full reply, phrased conversationally without Verification note or similar report labels. Omit when unnecessary; never invent a disclaimer when checks passed. Use warnings for consequential failures or actions." },
         warnings: { type: "string", maxLength: 4000, description: "Always-visible essential warning or user action, in natural language: failed checks, unsafe/unusable output, unresolved issues affecting use, or preview lifetime requirements. Keep to one or two important points. Not for routine verification logs." },
       }, required: ["status", "summary"], additionalProperties: false },
     },
@@ -858,6 +859,7 @@ export const TOOL_DEFINITIONS = [
   },
   ...OFFICE_TOOL_DEFINITIONS,
   ...BROWSER_TOOL_DEFINITIONS,
+  ...WEB_TOOL_DEFINITIONS,
   {
     type: "function",
     function: {
@@ -1012,6 +1014,7 @@ export const TOOL_RISKS = {
   kill_process: "control",
   present_to_user: "read",
   ...BROWSER_TOOL_RISKS,
+  ...WEB_TOOL_RISKS,
   request_self_check: "control",
   complete_self_check: "control",
 };

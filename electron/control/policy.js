@@ -13,7 +13,9 @@ const NOOP = () => {};
 const READ_TOOLS = new Set(["list_directory", "read_file", "search_text", "git_status", "git_diff", "git_log", "git_remote_list", "inspect_office_file"]);
 const WRITE_TOOLS = new Set(["write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const COMMAND_TOOLS = new Set(["verify_project", "run_command", "start_process", "read_process", "wait_process", "write_stdin", "kill_process", "git_init", "git_stage", "git_commit", "git_create_branch", "git_remote_add", "git_pull", "git_push", "github_repo_create", "github_pr_create", "github_pr_view", "github_pr_checks", "github_auth_status", "lsp"]);
-const BROWSER_TOOLS = new Set(["browser_open", "browser_snapshot", "browser_screenshot", "browser_console", "browser_network", "browser_close", "browser_click", "browser_fill", "browser_press"]);
+// The existing browser grant already allows outbound network access. Native
+// search/retrieval must require the same explicit grant, never the file grant.
+const BROWSER_TOOLS = new Set(["web_search", "web_fetch", "browser_open", "browser_snapshot", "browser_screenshot", "browser_console", "browser_network", "browser_close", "browser_click", "browser_fill", "browser_press"]);
 export const LOCAL_CONTROL_SPECIAL_TOOLS = new Set(["request_user_input", "read_conversation_history", "finish_task", "finish_subagent", "task_brief", "replan_strategy", "delegate_subagent", "followup_subagent", "cancel_subagent", "collect_subagents", "review_subagent_result", "update_plan", "request_self_check", "complete_self_check", "remember_project_fact", "project_knowledge"]);
 const DENIED_TOOLS = new Set(["read_external_file", "lsp_install", "read_skill_resource", "search_skills", "remember_project_fact", "project_knowledge"]);
 const DEFAULT_LIMITS = Object.freeze({ maxModelCalls: 80, maxToolCalls: 400, maxParallelAgents: 2, maxSubagents: 12, maxDurationSeconds: 1800 });

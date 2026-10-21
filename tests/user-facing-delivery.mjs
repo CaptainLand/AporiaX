@@ -5,7 +5,17 @@ import { sanitizeConversation, sanitizeFinalAnswer } from '../electron/runtime/c
 import { forkPublicHistory } from '../electron/side-chat/temporary-context.js';
 import { sanitizeRunResult } from '../electron/run-store.js';
 import { TOOL_DEFINITIONS } from '../electron/runtime/native-tool-catalog.js';
-import { deliveryPresentation } from '../electron/runtime/workflow-policy.js';
+import { deliveryNotice, deliveryPresentation } from '../electron/runtime/workflow-policy.js';
+import { conversationalReplyDetails, supportingReply } from '../shared/reply-presentation.js';
+
+assert.equal(supportingReply('做好了。', ''), '');
+assert.equal(supportingReply('做好了。', '做好了。'), '');
+assert.equal(supportingReply('做好了。', '验证说明：'), '');
+assert.equal(supportingReply('做好了。', '验证与限制\n\n做好了。'), '');
+assert.equal(supportingReply('做好了。', '**验证说明：** 还没打开浏览器。'), '还没打开浏览器。');
+assert.equal(conversationalReplyDetails('## 验证与限制\n\n视觉效果未由我验证：我还没在浏览器里试过。'), '我还没在浏览器里试过。');
+const fenced = '```txt\n验证说明：示例原文\n\n验证说明：示例原文\n```';
+assert.equal(supportingReply('已保存。', fenced), fenced);
 
 const outcome = input => readTaskOutcome({ tool_calls: [{ id: 'done', function: { name: 'finish_task', arguments: JSON.stringify(input) } }] }, call => JSON.parse(call.function.arguments));
 assert.deepEqual(outcome({ status: 'completed', summary: ' legacy reply ' }), { status: 'completed', summary: 'legacy reply' });
@@ -21,13 +31,14 @@ assert.match(finish.parameters.properties.limitations.description, /collapsed fu
 assert.match(finish.parameters.properties.warnings.description, /Always-visible essential warning/);
 assert.match(finish.parameters.properties.details.description, /Important failures or actions must also be in summary\/warnings/);
 
-for (const status of ['unverified', 'unavailable']) {
-  const presentation = deliveryPresentation({ status, findings: [], reviewPending: false }, true);
-  assert.equal(presentation.warning, '', 'routine verification notes stay out of the main reply');
-  assert.match(presentation.details, /验证说明/);
+for (const language of ['zh-CN', 'en']) for (const status of ['unverified', 'unavailable', 'passed']) for (const hasChanges of [false, true]) {
+  const assessment = { status, findings: [], reviewPending: true };
+  assert.deepEqual(deliveryPresentation(assessment, hasChanges, language), { warning: '', details: '' }, 'Missing checks/review never manufacture a reply or disclosure');
+  assert.equal(deliveryNotice(assessment, hasChanges, language), '', 'The self-check report must not reintroduce the boilerplate');
 }
 const failed = deliveryPresentation({ status: 'failed', findings: [], reviewPending: false }, true);
-assert.match(failed.warning, /检查没有通过/); assert.match(failed.details, /部分检查未通过/);
+assert.match(failed.warning, /检查没有通过/); assert.equal(failed.details, '');
+assert.match(deliveryPresentation({ status: 'failed', findings: [], reviewPending: false }, false).warning, /检查没有通过/, 'Real failures remain visible even in read-only tasks');
 assert.match(deliveryPresentation({ status: 'passed', findings: [{ severity: 'high' }], reviewPending: false }, true).warning, /问题尚未解决/);
 assert.deepEqual(deliveryPresentation({ status: 'passed', findings: [], reviewPending: false }, true), { warning: '', details: '' });
 assert.deepEqual(deliveryPresentation({ status: 'unverified', findings: [], reviewPending: false }, false), { warning: '', details: '' });

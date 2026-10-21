@@ -22,6 +22,9 @@ try {
     assert.match(instructions, /speak naturally to the user, not like an audit report/);
     assert.match(instructions, /at most one or two genuinely important points/);
     assert.match(instructions, /a build or syntax check alone does not prove browser\/runtime behavior/);
+    assert.match(instructions, /Expanded reply is optional/);
+    assert.match(instructions, /Do not use Verification note/);
+    assert.match(instructions, /Do not append generic saved-but-not-tested or review-pending disclaimers/);
     return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: "Hello, what would you like to do?" } }] }) + '\n\ndata: [DONE]\n\n');
   };
   const result = await runHarness({

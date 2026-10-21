@@ -57,22 +57,16 @@ assert.ok(excelMatch.skills.some((skill) => skill.name === "spreadsheet-design")
 const pptMatch = kernel.skills.activate("制作一个答辩 PPT 演示文稿");
 assert.ok(pptMatch.skills.some((skill) => skill.name === "presentation-design"));
 
-const [css, progressToggle, indexHtml] = await Promise.all([
+const [css, conversationCss, indexHtml] = await Promise.all([
   readFile(new URL("../src/test-feedback-polish.css", import.meta.url), "utf8"),
-  readFile(new URL("../src/progress-journal-toggle.js", import.meta.url), "utf8"),
+  readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   readFile(new URL("../index.html", import.meta.url), "utf8"),
 ]);
 assert.match(css, /\.self-check-card\s*\{[\s\S]*display:\s*none\s*!important/);
-assert.match(css, /assistant-message:not\(:has\(\.aporiax-run-duration\.running\)\)[\s\S]*assistant-progress-journal/);
-assert.match(css, /\.assistant-progress-journal\.manual-expanded[\s\S]*max-height:\s*none\s*!important/);
-assert.match(css, /\.assistant-progress-journal\.manual-expanded[\s\S]*overflow:\s*visible\s*!important/);
-assert.doesNotMatch(css, /manual-expanded[\s\S]{0,160}max-height:\s*\d+px/);
-assert.doesNotMatch(css, /assistant-progress-journal:hover/);
-assert.doesNotMatch(css, /assistant-progress-journal:focus-within/);
-assert.match(progressToggle, /classList\.toggle\(EXPANDED_CLASS\)/);
-assert.match(progressToggle, /document\.addEventListener\("click"/);
-assert.match(progressToggle, /assistant\.querySelector\(RUNNING_SELECTOR\)/);
-assert.match(indexHtml, /src\/progress-journal-toggle\.js/);
+assert.doesNotMatch(css, /assistant-progress-journal|manual-expanded/, 'the old 78px clipped preview must not override the single disclosure');
+assert.doesNotMatch(indexHtml, /progress-journal-toggle/, 'the old document-wide second-click toggle is no longer loaded');
+assert.match(conversationCss, /\.assistant-progress-disclosure:not\(\[open\]\)\s*>\s*\.assistant-progress-journal\s*\{\s*display:\s*none/);
+assert.doesNotMatch(conversationCss, /manual-expanded|progress-reveal/);
 assert.match(css, /@container\s*\(max-width:\s*720px\)/);
 assert.match(css, /\.model-menu-source-note/);
 assert.match(css, /\.model-menu-source-group\s*\{[\s\S]*width:\s*100%/);

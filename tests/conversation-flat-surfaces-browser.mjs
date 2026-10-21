@@ -56,6 +56,8 @@ try {
     await page.locator('.ax-welcome__enter, .thread-view-tabs').first().waitFor();
     if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
     await page.locator('.witness-panel').waitFor();
+    assert.equal(await page.locator('.edited-files-card').isVisible(), false, 'file results are folded initially');
+    await page.locator('.assistant-delivery-toggle').click();
     if (mode.startsWith('custom')) await page.waitForFunction(() => Boolean(document.documentElement.dataset.customTheme));
     const skillColor = await page.locator('.aporiax-message-mention.skill').evaluate(el => {
       const probe = document.createElement('span'); probe.style.color = 'var(--accent-11)'; el.append(probe);

@@ -239,6 +239,8 @@ try {
       messages: [{ role: 'user', content: 'Never delete SVG files.' }, { role: 'assistant', content: 'old-report '.repeat(4000) }, { role: 'user', content: 'hi' }, { role: 'assistant', content: 'Hello' }, { role: 'user', content: 'Delete target.html from the workspace' }], loopPolicy: { maxBriefSummaries: 0 } }));
     assert.equal(requests, 3); assert.equal(approvals, 1); assert.equal(result.status, 'completed');
     assert(result.changes.some(change => change.path === 'target.html' && change.deleted));
+    assert.equal(result.content, 'Deleted target.html. No other files were changed.', 'Deletion replies must not gain a saved-but-not-tested disclaimer');
+    assert.equal(result.deliveryDetails, undefined, 'Deletion alone must not create an Expand reply disclosure');
     await assert.rejects(access(join(workspace, 'target.html')), { code: 'ENOENT' });
   });
   await test('same-run write/delete and delete/recreate preserve the original checkpoint without encoding corruption', async () => {

@@ -22,7 +22,7 @@ if (!older) {
   assert.ok(!listPackage(archive).some(p => /cloud-private-preview\.json|\.ssh[\\/]|\.env($|\.)|aporiax-account-session\.json/i.test(p)));
 }
 await mkdir(".tmp", { recursive: true });
-for (const portable of [false, true]) {
+for (const portable of process.argv.includes('--installer-only') ? [false] : [false, true]) {
   const profile = await mkdtemp(resolve(".tmp/public-release-qa-"));
   const data = join(profile, "data");
   await mkdir(data);
@@ -53,6 +53,32 @@ for (const portable of [false, true]) {
         try { await window.desktop.personalChatGPT.startLogin(); return 'unexpectedly enabled'; }
         catch (error) { return error.message; }
       }), /PERSONAL_CHATGPT_LOCAL_ONLY|仅在本地开发版/);
+      if (listPackage(archive).some(path => /[\\/]electron[\\/]runtime[\\/]web-runtime\.js$/.test(path))) {
+        const web = await desktop.evaluate(async ({ app }) => {
+          const { join } = process.getBuiltinModule('path');
+          const { createRequire } = process.getBuiltinModule('module');
+          const root = app.getAppPath();
+          const moduleAt = createRequire(join(root, 'package.json'));
+          const { createWebRuntime } = moduleAt('./electron/runtime/web-runtime.js');
+          const { Client } = moduleAt('@modelcontextprotocol/sdk/client/index.js');
+          const { StreamableHTTPClientTransport } = moduleAt('@modelcontextprotocol/sdk/client/streamableHttp.js');
+          const runtime = createWebRuntime({
+            search: async () => ({ structuredContent: { results: [{ title: 'Fixture', url: 'https://example.com/', text: 'Fixture excerpt' }] } }),
+            fetchPage: async url => ({ url, type: 'text/html', text: '<html><head><title>Fixture</title></head><body><main><p>Packaged &amp; parsed</p></main><script>UNSAFE</script></body></html>' }),
+          });
+          const search = await runtime.execute('web_search', { query: 'fixture' });
+          const read = await runtime.execute('web_fetch', { url: 'https://example.com/' });
+          runtime.clear();
+          return { count: search.resultCount, content: read.content, title: read.title,
+            scriptsExecuted: read.scriptsExecuted, sdk: typeof Client === 'function' && typeof StreamableHTTPClientTransport === 'function' };
+        });
+        assert.equal(web.count, 1);
+        assert.equal(web.content, 'Packaged & parsed');
+        assert.equal(web.title, 'Fixture');
+        assert.equal(web.scriptsExecuted, false);
+        assert.equal(web.sdk, true);
+        console.log('PASS actual packaged web tools, transitive HTML parser dependencies and lazy MCP transport; synthetic data only');
+      }
       await page.locator(".local-account-signin").click();
       let authUrl;
       for (let i = 0; i < 60; i++) {
@@ -68,6 +94,12 @@ for (const portable of [false, true]) {
       await page.evaluate(() => window.desktop.account.openCenter());
       assert.equal(await desktop.evaluate(() => globalThis.__releaseOpenedUrl), "https://aporiax.cloud/account");
       console.log("PASS packaged public sign-in + PKCE + account center; stale SSH profile ignored; " + (portable ? "portable" : "installer"));
+    }
+    if (process.argv.includes('--offline')) {
+      assert.deepEqual(errors, []);
+      await page.screenshot({ path: join(profile, 'desktop.png') });
+      console.log('PASS packaged desktop startup; updater network probe skipped for local-only packaging');
+      continue;
     }
     let update;
     for (let i = 0; i < 90; i++) {

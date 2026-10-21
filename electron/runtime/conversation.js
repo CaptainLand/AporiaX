@@ -229,6 +229,9 @@ export function formatToolStepDetail(
   modelResult,
   language = "zh-CN",
 ) {
+  if (toolName === 'web_search' && Array.isArray(modelResult?.results)) return language === 'en'
+    ? `${modelResult.results.length} web sources · ${modelResult.query}` : `${modelResult.results.length} 条网络来源 · ${modelResult.query}`;
+  if (toolName === 'web_fetch' && modelResult?.url) return `${modelResult.title || modelResult.url}${modelResult.truncated ? (language === 'en' ? ' · partial text' : ' · 正文分段') : ''}`;
   if (modelResult?.reason) return modelResult.reason;
   if (modelResult?.isError === true) {
     const detail = (modelResult.content || []).filter(item => item.type === "text").map(item => item.text).join("\n").slice(0, 800);

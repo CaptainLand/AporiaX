@@ -47,10 +47,12 @@ try {
       assert.equal(await readFile(join(root, "core.js"), "utf8"), "export const ready = true;\n");
       assert.ok(reviews >= 2, "skipping executable tests must retain independent static review");
       assert.doesNotMatch(result.content, /验证说明/, 'routine verification notes do not clutter the delivery');
-      if (mode === 'failed') { assert.match(result.content, /检查没有通过/, 'actual failed checks stay visible without report labels'); assert.match(result.deliveryDetails, /验证说明：部分检查未通过/); assert.equal(result.selfCheck.verification.passed, false); }
-      else if (waived) { assert.match(result.deliveryDetails, /验证说明：当前版本尚未完成运行验证/); assert.equal(result.selfCheck.verification.waived, true); assert.equal(result.selfCheck.verification.passed, false); }
-      else { assert.match(result.deliveryDetails, /验证说明：实现已保存，执行环境未能完成检查/); assert.equal(result.selfCheck.verification.passed, false); assert.equal(result.selfCheck.verification.results.length, 1); }
+      assert.equal(result.deliveryDetails, undefined, 'No status-only note is appended or creates an empty Expand reply');
+      assert.doesNotMatch(result.content, /文件已保存|没有完成实际运行检查|当前环境没能跑完/);
+      if (mode === 'failed') { assert.match(result.content, /检查没有通过/, 'actual failed checks stay visible without report labels'); assert.equal(result.selfCheck.verification.passed, false); }
+      else if (waived) { assert.equal(result.selfCheck.verification.waived, true); assert.equal(result.selfCheck.verification.passed, false); }
+      else { assert.equal(result.selfCheck.verification.passed, false); assert.equal(result.selfCheck.delivery.status, 'unavailable'); assert.equal(result.selfCheck.verification.results.length, 1); }
     } finally { clearTimeout(timeout); controller.abort(); }
   }
-  console.log("Actual runtime full-auto wiring, saved work on unavailable verification, explicit unverified delivery with static review: PASS");
+  console.log("Actual runtime: no missing-check boilerplate, failed checks still visible, honest verification records and static review retained: PASS");
 } finally { globalThis.fetch = originalFetch; await rm(temp, { recursive: true, force: true }); }

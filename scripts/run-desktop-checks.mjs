@@ -22,6 +22,7 @@ const tests = [
   ['node', 'goal-ui-browser.mjs'],
   ['node', 'side-chat-smoke.mjs'], ['node', 'temporary-side-chat.mjs'], ['node', 'temporary-chat-browser.mjs'],
   ['node', 'workbench-git-smoke.mjs'], ['node', 'workbench-documents-git-browser.mjs'],
+  ['node', 'markdown-reader-browser.mjs'], ['node', 'task-operation-progress-browser.mjs'], ['node', 'user-facing-delivery-browser.mjs'],
   ['node', 'workbench-git-setup-smoke.mjs'], ['node', 'workbench-git-setup-browser.mjs'],
   ['node', 'terminal-buffer-smoke.mjs'], ['node', 'terminal-v2-browser.mjs'],
   ['electron', 'terminal-v2-electron.cjs'], ['electron', 'workbench-document-electron.cjs'],

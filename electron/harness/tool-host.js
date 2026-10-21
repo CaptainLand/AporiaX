@@ -1,5 +1,6 @@
 import { ToolRegistry, getToolPermission } from "../agent-core.js";
 import { capabilityFromToolDescriptor } from "./capability-registry.js";
+import { isNetworkToolName } from '../runtime/web-tools.js';
 
 export class HarnessToolHost {
   #descriptors = new Map();
@@ -39,7 +40,7 @@ export class HarnessToolHost {
     const descriptor = this.#descriptors.get(key);
     if (!descriptor) return false;
     this.#descriptors.delete(key);
-    const source = descriptor.source || (descriptor.plugin ? "plugin" : key.startsWith("browser_") ? "browser" : "native");
+    const source = descriptor.source || (descriptor.plugin ? "plugin" : isNetworkToolName(key) ? "browser" : "native");
     const capability = this.#capabilities?.find({ kind: "tool", source, name: key });
     if (capability) this.#capabilities.unregister(capability.id);
     this.#eventBus?.emit({ type: "tool.unregistered", tool: key, plugin: descriptor.plugin || null });
@@ -77,7 +78,7 @@ export class HarnessToolHost {
         descriptor.source ||
         (descriptor.plugin
           ? "plugin"
-          : descriptor.name.startsWith("browser_")
+          : isNetworkToolName(descriptor.name)
             ? "browser"
             : "native"),
       plugin: descriptor.plugin || null,
