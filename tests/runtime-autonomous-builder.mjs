@@ -48,7 +48,7 @@ try {
   const result = await runHarness({ runId: "autonomous", workspacePath: root, permission: "workspace-write", approvalMode: "full-auto", signal: controller.signal, language: "en",
     messages: [{ role: "user", content: "Modify one file. Keep the original palette and do not add dependencies." }], onEvent: (e) => events.push(e),
     provider: { id: "fake", name: "fake", vendor: "openai", baseUrl: "https://test.invalid/v1", apiKey: "fake", models: [{ id: "test", supportsTools: true, contextWindow: 32000 }] }, modelId: "test" });
-  assert.equal(result.status, "completed", result.content); assert.equal(result.subagents.length, 1);
+  assert.equal(result.status, "completed", JSON.stringify({ content: result.content, contextBudget: result.contextBudget, requests: result.contextStats?.requests })); assert.equal(result.subagents.length, 1);
   assert.equal(result.subagents[0].acceptance.status, 'accepted');
   assert(events.some((e) => e.type === 'subagent.reviewed'));
   assert.equal(events.filter((e) => e.type === 'tool.started' && e.tool === 'run_command').length, 0, 'Review must not auto-run workspace tests');

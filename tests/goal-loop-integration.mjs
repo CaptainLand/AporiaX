@@ -247,7 +247,7 @@ try {
       assert(body.messages.some((message) => message.content?.includes("Keep old recovery source")));
       return sse({ content: "Continued with a source-backed summary." });
     }, { messages: [...history, { role: "user", content: "Continue" }], provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 32000 }] }, loopPolicy: { maxBriefSummaries: 1 } });
-    assert.equal(run.result.status, "completed", run.result.content); assert(summaryCalls > 0 && summaryCalls <= 8); assert.equal(run.result.rollingContext.revision, summaryCalls);
+    assert.equal(run.result.status, "completed", JSON.stringify({ content: run.result.content, contextBudget: run.result.contextBudget, summaryCalls })); assert(summaryCalls > 0 && summaryCalls <= 8); assert.equal(run.result.rollingContext.revision, summaryCalls);
   });
   await test("actual child loop records scoped evidence and continues the same durable decision session", async () => {
     const session = {}, events = []; let n = 0;
