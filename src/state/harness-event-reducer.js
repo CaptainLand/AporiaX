@@ -14,6 +14,7 @@ export const PURE_TASK_EVENT_TYPES = new Set([
   "plan.updated",
   "witness.updated",
   "response.reset",
+  "response.text.reconciled",
   "subagent.tool.started",
   "subagent.tool.completed",
   "tool.started",
@@ -121,6 +122,7 @@ export function reduceHarnessTaskEvent(
     }));
   }
 
+  if (event.type === 'response.text.reconciled') return updateRunAssistant(tasks, run, message => ({ ...message, content: String(event.content || '') }));
   if (event.type === "response.reset") {
     return updateRunAssistant(tasks, run, (message) => {
       const content = String(message.content || "").trim();

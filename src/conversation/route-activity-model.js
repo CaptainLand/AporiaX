@@ -1,6 +1,7 @@
 import { getRouteToolMeta } from '../p0-model.js';
 import { hasTaskReply } from '../state/task-outcome-view.js';
-import { AGENT_IDENTITIES, agentDisplayName, agentName } from '../../shared/agent-identity.js';
+import { AGENT_IDENTITIES, agentDisplayName } from '../../shared/agent-identity.js';
+import { modelTokenLine } from '../../shared/model-progress-view.js';
 
 const ACTIVE = new Set(['running', 'waiting']);
 const FINAL = new Set(['completed', 'failed', 'interrupted', 'partial', 'blocked', 'needs_input']);
@@ -8,7 +9,7 @@ const text = (language, zh, en) => language === 'en' ? en : zh;
 
 export function activityActor(record, language = 'zh-CN') {
   if (record.actor === 'witness') return 'Witness';
-  if (record.actor !== 'subagent' && !record.agentId) return agentName('main', language);
+  if (record.actor === 'main' || record.agentId === 'main' || (record.actor !== 'subagent' && !record.agentId) || record.role === 'main') return 'AporiaX';
   if (record.profileId || record.profileName || AGENT_IDENTITIES[record.role]) return agentDisplayName({ profileId: record.profileId, role: record.role, profileName: record.profileName }, language);
   return record.role ? `${record.role} Agent` : text(language, '子 Agent', 'Subagent');
 }
@@ -118,7 +119,12 @@ export function describeRouteRecord(record, language = 'zh-CN') {
     const title = record.tool === 'run_command' && !record.capability ? t('运行命令', 'Run command') : meta.title;
     return { title, detail: record.error || record.command || record.path || record.detail || '' };
   }
-  if (record.kind === 'thinking') return { title: ACTIVE.has(record.status) ? t('等待模型响应', 'Waiting for model response') : t('模型响应阶段', 'Model response phase'), detail: t('仅显示响应活动，不推测模型的内部思考。', 'Only response activity is shown; internal reasoning is not inferred.') };
+  if (record.kind === 'thinking') {
+    const progress = record.modelProgress;
+    const details = { waiting: t('正在等待模型响应', 'Waiting for model response'), receiving: t('已收到响应，正在处理', 'Receiving response data'), 'tool-arguments': t('正在生成操作参数，尚未执行', 'Generating action arguments; not executed yet'), text: t('正在输出回复', 'Writing the response') };
+    return { title: ACTIVE.has(record.status) ? t('AporiaX 正在思考或工作中…', 'AporiaX is thinking or working…') : t('AporiaX 响应已结束', 'AporiaX response finished'), detail: modelTokenLine(progress),
+      progressHint: (details[progress?.stage] || details.waiting) + t('。↓ 模型输出；≈ 为实时估算，收到服务商用量后校准，不是网络流量或计费凭证。', '. ↓ Model output; ≈ is a live estimate, reconciled with provider usage. Not network traffic or a billing receipt.') };
+  }
   const titles = {
     'clarification.required': ['等待你的回答', 'Waiting for your answer'], 'clarification.updated': ['提问状态已更新', 'Question updated'],
     'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],

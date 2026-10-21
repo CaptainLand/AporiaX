@@ -20,7 +20,7 @@ const tests = [
   ['node', 'route-activity-browser.mjs'],
   ['node', 'knowledge-projects.mjs'],
   ['node', 'goal-ui-browser.mjs'],
-  ['node', 'side-chat-smoke.mjs'], ['node', 'side-chat-browser.mjs'],
+  ['node', 'side-chat-smoke.mjs'], ['node', 'temporary-side-chat.mjs'], ['node', 'temporary-chat-browser.mjs'],
   ['node', 'workbench-git-smoke.mjs'], ['node', 'workbench-documents-git-browser.mjs'],
   ['node', 'workbench-git-setup-smoke.mjs'], ['node', 'workbench-git-setup-browser.mjs'],
   ['node', 'terminal-buffer-smoke.mjs'], ['node', 'terminal-v2-browser.mjs'],

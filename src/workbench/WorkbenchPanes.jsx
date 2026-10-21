@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import { TerminalPane } from "./TerminalPane.jsx";
 import { ArrowLeft, ArrowRight, ChevronRight, FileText, GitCompare, GitBranch, Globe, RotateCcw, TerminalSquare, MessagesSquare } from "lucide-react";
-import { SideChatPane } from "./SideChatPane.jsx";
+import { TemporaryChatPane as SideChatPane } from "./TemporaryChatPane.jsx";
 import { TeamChatPane } from '../team-chat/TeamChatPane.jsx';
 import { MarkdownPreview } from "./MarkdownPreview.jsx";
 import { DocxPreview } from "./DocxPreview.jsx";
@@ -72,7 +72,7 @@ export function WorkbenchContent({
         <div className="workbench-empty-grid">
           <button type="button" className="workbench-empty-card" onClick={() => workbench.open("sidechat")}>
             <MessagesSquare size={20} strokeWidth={1.6} />
-            {tr("侧边聊天", "Side chat")}
+            {tr("临时聊天", "Temporary chat")}
           </button>
           <button type="button" className="workbench-empty-card" onClick={() => workbench.open("route")}>
             <GitCompare size={20} strokeWidth={1.6} />

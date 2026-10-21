@@ -122,6 +122,7 @@ export function createRunControl({ now = Date.now, networkRetryMs = 15_000 } = {
 // Narrow transport classification: never turn auth, quota, HTTP failures,
 // invalid certificates or arbitrary programming TypeErrors into an endless wait.
 export function isTemporaryNetworkError(error) {
+  if (error?.noAutomaticRetry) return false;
   if (Number(error?.status) > 0) return false;
   const codes = [error?.code, error?.cause?.code];
   if (codes.some((code) => /CERT|TLS|SSL|INVALID_URL/i.test(String(code)))) return false;

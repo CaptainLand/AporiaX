@@ -12,7 +12,7 @@ const LEGACY_MIGRATION_KEY = "legacy-jsonl-v1";
 const databases = new Map();
 const openingDatabases = new Map();
 export const RUN_RESULT_MAX_BYTES = 2_000_000;
-const RESULT_PRIORITY_FIELDS = ["status", "error", "usage", "cumulativeUsage", "usageHistoryComplete", "content", "summary", "workspace", "risks", "artifacts", "workspaceChanges", "selfCheck", "verification", "persistence", "anchor", "changes", "steps"];
+const RESULT_PRIORITY_FIELDS = ["status", "error", "usage", "cumulativeUsage", "usageHistoryComplete", "content", "deliveryDetails", "summary", "workspace", "risks", "artifacts", "workspaceChanges", "selfCheck", "verification", "persistence", "anchor", "changes", "steps"];
 const SECRET_FIELDS = /^(?:api.?key|.*apiKey|password|passphrase|authorization|proxyAuthorization|cookie|setCookie|credentials?|secrets?|clientSecret|accessKey(?:Id)?|secretAccessKey|sessionToken|accessToken|refreshToken|idToken|privateKey|cloudToken|bearerToken|authToken|token)$/i;
 
 // Public task results are data, never live provider/configuration objects. Bound

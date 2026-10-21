@@ -435,6 +435,7 @@ export function buildDockerSandboxArgs({
   cwd = ".",
   containerName,
   protectGit = false,
+  dependencyRoot,
 }) {
   const args = [
     "run",
@@ -485,6 +486,7 @@ export function buildDockerSandboxArgs({
       `${join(workspaceRoot, ".git")}:/workspace/.git:ro`,
     );
   }
+  if (dependencyRoot) args.push("--volume", `${dependencyRoot}:/workspace/node_modules:ro`);
   args.push(SANDBOX_IMAGE, "sh", "-lc", command);
   return args;
 }
@@ -509,6 +511,7 @@ export async function runSandboxedCommand({
   timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
   watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
+  dependencyRoot,
 }) {
   const status = sandboxStatus?.available
     ? sandboxStatus
@@ -533,6 +536,7 @@ export async function runSandboxedCommand({
     cwd: relativeCwd,
     containerName,
     protectGit,
+    dependencyRoot,
   });
 
   const cleanup = () => void stopSandboxContainer(containerName);

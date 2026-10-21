@@ -6,13 +6,14 @@ import { SKILL_RESOURCE_TOOL, SKILL_SEARCH_TOOL } from "../skill-resources.js";
 import { HISTORY_TOOL } from "./conversation-history.js";
 import { OFFICE_TOOL_DEFINITIONS } from "../office-tools.js";
 import { BROWSER_TOOL_DEFINITIONS, BROWSER_TOOL_RISKS } from "../browser-runtime.js";
-import { MAX_SUBAGENT_ROUNDS } from "./subagent-model.js";
 import { AGENT_ROLE_TOOLS } from './agent-role-tools.js';
 import { APPEARANCE_TOOLS } from './appearance-tools.js';
+import { VERIFY_PROJECT_TOOL } from './isolated-verification.js';
 
 export const MAX_SEARCH_RESULTS = 200;
 
 export const TOOL_DEFINITIONS = [
+  VERIFY_PROJECT_TOOL,
   ...AGENT_ROLE_TOOLS,
   ...APPEARANCE_TOOLS,
   CLARIFICATION_TOOL,
@@ -34,10 +35,13 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "finish_task",
-      description: "End this attempt with an explicit outcome and concise user-facing summary. Use partial for unfinished work, blocked for an external obstacle, needs_input for a required user choice, completed only when the requested work is done. Include useful file/preview links. Call alone; no other tools in the same response.",
+      description: "End this attempt with an explicit outcome and result-first user-facing summary, not a per-agent/tool diary or raw receipt. Use partial for unfinished work, blocked for an external obstacle, needs_input for a required user choice, completed only when the requested work is done, not proof of verification. Include useful file/preview links. Call alone; no other tools in the same response.",
       parameters: { type: "object", properties: {
         status: { type: "string", enum: ["completed", "partial", "blocked", "needs_input"] },
-        summary: { type: "string", minLength: 1 },
+        summary: { type: "string", minLength: 1, description: "Always-visible natural delivery: one short result sentence, useful file/preview links, and at most one or two important points. No mandatory report headings, repeated check disclaimers or internal metadata." },
+        details: { type: "string", maxLength: 24000, description: "Optional supporting Markdown for View full reply: analysis, formulas, code, line references and check details. No hidden reasoning or raw internal worker receipts. Important failures or actions must also be in summary/warnings." },
+        limitations: { type: "string", maxLength: 4000, description: "Routine verification scope and limitations for the collapsed full reply, such as code inspected but visual/browser behavior not checked. Do not invent a disclaimer when checks passed; use warnings for consequential failures or actions." },
+        warnings: { type: "string", maxLength: 4000, description: "Always-visible essential warning or user action, in natural language: failed checks, unsafe/unusable output, unresolved issues affecting use, or preview lifetime requirements. Keep to one or two important points. Not for routine verification logs." },
       }, required: ["status", "summary"], additionalProperties: false },
     },
   },
@@ -49,7 +53,7 @@ export const TOOL_DEFINITIONS = [
         ? "Continue an existing worker with its retained context and evidence. A running worker receives guidance at its next boundary. Does not broaden its role or scope."
         : "Cancel one worker in this task without cancelling unrelated workers. Cancellation is cooperative; collect its final status before relying on it.",
       parameters: { type: "object", properties: { agent_id: { type: "string" },
-        ...(name === "followup_subagent" ? { task: { type: "string", minLength: 1, maxLength: 4000 }, max_rounds: { type: "integer", minimum: 2, maximum: 20 } } : {}) },
+        ...(name === "followup_subagent" ? { task: { type: "string", minLength: 1, maxLength: 4000 } } : {}) },
         required: name === "followup_subagent" ? ["agent_id", "task"] : ["agent_id"], additionalProperties: false },
     },
   })),
@@ -65,13 +69,15 @@ export const TOOL_DEFINITIONS = [
           role: {
             type: "string",
             description:
-              "explore searches, review inspects, verify runs checks, curator extracts knowledge. builder implements a scoped change in an isolated Git worktree; requires write_scopes, cannot recursively delegate or run shell commands. Main/verify handles validation after integration.",
+              "explore searches, review inspects, verify runs checks, curator extracts knowledge. builder implements scoped changes in an isolated Git worktree and self-checks with verify_project; requires write_scopes, no arbitrary shell or recursive delegation. Main owns final integration and acceptance.",
           },
           task: {
             type: "string",
             description:
               "A self-contained task with the question, expected evidence, and completion criteria.",
           },
+          skills: { type: "array", maxItems: 64, items: { type: "string" }, description: "Optional workflow names to hand off from Skills already activated or successfully read in this task. Does not grant any new tools or permissions." },
+          context: { type: "string", maxLength: 6000, description: "Concise handoff: confirmed facts, relevant files, interface assumptions and acceptance criteria. Advisory, not proof or authorization. Do not copy hidden reasoning or raw logs." },
             depends_on: { type: "array", maxItems: 12, items: { type: "string" }, description: "Existing worker IDs in this run. Waits without model calls until their reports are accepted. Dependencies always run in background. Failed dependencies block this worker." },
           scope: {
             type: "array",
@@ -89,14 +95,7 @@ export const TOOL_DEFINITIONS = [
           },
           required_for_completion: {
             type: "boolean",
-            description: "Defaults to true. Set false only for optional background explore/curator work that is NOT needed to establish correctness or answer the request. Pending optional work is cancelled at delivery; review and verify remain required.",
-          },
-          max_rounds: {
-            type: "integer",
-            minimum: 2,
-            maximum: MAX_SUBAGENT_ROUNDS,
-            description:
-              "Maximum isolated model rounds. Defaults to 8 and is a safety budget, not the parent task limit.",
+            description: "Background explore/curator defaults to advisory (false) unless it has dependencies; set true when its result is needed. Review, verify and builder remain required. Unneeded advisory work can be cancelled at delivery; never rely on optional work before collecting it.",
           },
         },
         required: ["role", "task"],
@@ -408,9 +407,17 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "delete_file",
+      description: "Recoverably delete ONE exact regular file inside the workspace, including text, images, archives and other binary/large files. Pass its path only, never reproduce or read the full content merely for deletion. Large files use streamed on-disk recovery snapshots, not model context; no fixed 1 MB limit. No directories, links, globs, recursive or external deletion. Uses normal permissions and the recovery journal. Inspect the exact target within the user's scope; expected_sha256 detects stale evidence. dry_run previews metadata without deleting.",
+      parameters: { type: 'object', properties: { path: { type: 'string', minLength: 1 }, expected_sha256: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' }, dry_run: { type: 'boolean' } }, required: ['path'], additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: "apply_patch",
       description:
-        "Apply an exact replacement or a preflighted unified diff containing multiple hunks or files, including creates and deletes.",
+        "Apply an exact replacement, unified diff (--- a/path and +++ b/path), or compact *** Begin Patch / *** Add|Update|Delete File: path / *** End Patch format. Compact updates use @@ and space/+/- prefixed lines. Prefer delete_file for deletion: no full-file deletion diff is needed. Formats are validated before file authorization; no fuzzy edits or renames.",
       parameters: {
         type: "object",
         properties: {
@@ -947,6 +954,7 @@ export const TOOL_DEFINITIONS = [
 ];
 
 export const TOOL_RISKS = {
+  verify_project: 'execute',
   list_aporiax_themes: 'read',
   create_aporiax_theme: 'control',
   list_agent_roles: "read",
@@ -987,6 +995,7 @@ export const TOOL_RISKS = {
   inspect_office_file: "read",
   write_file: "write",
   cleanup_temporary_check: "write",
+  delete_file: "write",
   apply_patch: "write",
   lsp: "read",
   lsp_install: "control",

@@ -587,7 +587,7 @@ try {
     models: ["gpt-5.2", "qwen3-coder"],
   });
   assert.equal(customProvider.models.length, 2);
-  assert.equal(customProvider.models[0].supportsThinking, false);
+  assert.equal(customProvider.models[0].supportsThinking, true);
   const inferredProvider = normalizeProviderInput({
     name: "",
     baseUrl: "https://api.openai.com/v1",
@@ -1100,6 +1100,7 @@ try {
         task: "Inspect architecture.txt in the background.",
         scope: ["architecture.txt"],
         background: true,
+        required_for_completion: true,
         max_rounds: 4,
       }),
     );

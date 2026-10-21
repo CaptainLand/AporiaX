@@ -42,7 +42,10 @@ try {
       harness: { run: async (input) => { state.calls.push({ type: "run", input }); return { content: "完成", status: "completed", steps: [], changes: [], route: [] }; }, onEvent: (listener) => { state.listeners.push(listener); return () => { state.listeners = state.listeners.filter(item => item !== listener); }; }, recoverableRuns: async () => [] },
       sandbox: { status: async () => ({ localAvailable: true }) },
       workbench: { request: async ({ action }) => action === "list" ? [] : true, subscribe: () => () => {} },
-      sideChat: { request: async ({ action }) => action === "load" ? { messages: [] } : {}, subscribe: () => () => {} },
+      sideChat: { request: async input => {
+        return { id: 'onboarding-temporary', taskId: input.taskId, scope: input.scope, revision: 1, messages: [],
+          settings: { providerId: cloud.id, modelId: cloud.models[0].id, thinking: true, effort: 'high' } };
+      }, subscribe: () => () => {} },
     };
   }, createAporiaCloudProvider());
   await page.goto(server.resolvedUrls.local[0]);
@@ -177,25 +180,28 @@ try {
     }
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "打开工作侧栏", exact: true }).click();
-    await page.getByRole("button", { name: "侧边聊天", exact: true }).click();
-    const sideDraft = page.getByRole("textbox", { name: "侧聊输入", exact: true });
+    await page.getByRole("button", { name: "临时聊天", exact: true }).click();
+    const side = page.locator('.temporary-chat');
+    const sideDraft = side.getByRole("textbox", { name: "任务输入", exact: true });
     await sideDraft.fill("侧聊草稿也应保留");
-    assert.equal(await page.getByRole("button", { name: "发送侧聊", exact: true }).isDisabled(), true);
-    await page.getByRole("button", { name: "侧聊模型", exact: true }).click();
-    const sideMenu = page.getByRole("dialog", { name: "选择侧聊模型", exact: true });
-    assert.equal(await sideMenu.getByRole("option").first().isDisabled(), true);
-    assert.equal(await sideMenu.getByRole("option").nth(1).isDisabled(), false, "Own API stays available after Cloud logout");
+    assert.equal(await side.getByRole("button", { name: "发送", exact: true }).isDisabled(), true);
+    await side.getByRole("button", { name: "选择模型", exact: true }).click();
+    const sideMenu = side.getByRole("dialog", { name: "选择模型", exact: true });
+    const sideChoices = sideMenu.locator('.model-choice');
+    assert.equal(await sideChoices.first().isDisabled(), true);
+    assert.equal(await sideChoices.nth(1).isDisabled(), false, "Own API stays available after Cloud logout");
     const search = sideMenu.getByRole("textbox", { name: "搜索模型", exact: true });
     assert.equal(await search.count(), 0, 'small model catalog has no search header');
     await sideMenu.focus();
     await page.keyboard.press('Enter');
     assert.equal(await sideMenu.isVisible(), true, "Enter on the menu must not choose a disabled Cloud model");
     await page.keyboard.press('ArrowDown');
-    assert.equal(await sideMenu.getByRole("option").nth(1).evaluate((el) => el === document.activeElement), true, 'keyboard skips disabled Cloud');
+    assert.equal(await sideChoices.nth(1).evaluate((el) => el === document.activeElement), true, 'keyboard skips disabled Cloud');
     await page.keyboard.press("Enter");
-    assert.equal(await page.getByRole("button", { name: "发送侧聊", exact: true }).isDisabled(), false);
+    assert.equal(await side.getByRole("button", { name: "发送", exact: true }).isDisabled(), false);
     assert.equal(await sideDraft.inputValue(), "侧聊草稿也应保留");
-    await page.getByRole("button", { name: "侧聊模型", exact: true }).click();
+    await page.keyboard.press('Escape');
+    await side.getByRole("button", { name: "选择模型", exact: true }).click();
     await sideMenu.getByRole("button", { name: "添加自己的 API", exact: true }).click();
     assert.equal(await page.getByLabel("API Base URL", { exact: true }).inputValue(), "", "Side chat also opens a blank API form");
     assert.deepEqual(errors, []);

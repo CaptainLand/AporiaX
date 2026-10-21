@@ -11,5 +11,13 @@ export function readTaskOutcome(message, parseArguments) {
   if (!OUTCOMES.has(input.status) || typeof input.summary !== "string" || !input.summary.trim()) {
     throw new Error("INVALID_TASK_OUTCOME: status and a nonempty evidence-backed summary are required.");
   }
-  return { status: input.status, summary: input.summary.trim() };
+  for (const [key, limit] of [['details', 24000], ['limitations', 4000], ['warnings', 4000]]) {
+    if (input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > limit)) {
+      throw new Error(`INVALID_TASK_OUTCOME: ${key} must be text within ${limit} characters.`);
+    }
+  }
+  return { status: input.status, summary: input.summary.trim(),
+    ...(input.details?.trim() ? { details: input.details.trim() } : {}),
+    ...(input.limitations?.trim() ? { limitations: input.limitations.trim() } : {}),
+    ...(input.warnings?.trim() ? { warnings: input.warnings.trim() } : {}) };
 }

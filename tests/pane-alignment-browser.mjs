@@ -51,7 +51,10 @@ try {
         }
         return true;
       }, subscribe: () => () => {} },
-      sideChat: { request: async input => { window.paneCalls.push(input); return { messages: [] }; }, subscribe: () => () => {} },
+      sideChat: { request: async input => { window.paneCalls.push(input); return {
+        id: 'pane-temporary', taskId: input.taskId, scope: input.scope, revision: 1,
+        settings: { providerId: 'own', modelId: 'own-model' }, messages: [],
+      }; }, subscribe: () => () => {} },
     };
   });
   await page.goto(server.resolvedUrls.local[0]);
@@ -64,11 +67,10 @@ try {
   await page.getByRole('button', { name: '打开工作侧栏', exact: true }).click();
   await page.locator('.workbench-chrome').waitFor();
   await page.getByRole('button', { name: '打开内容', exact: true }).click();
-  await page.getByRole('menuitem', { name: '侧边聊天', exact: true }).click();
-  await page.locator('.side-chat-heading').waitFor();
-  await page.getByRole('button', { name: '普通聊天', exact: true }).waitFor();
-  await page.waitForFunction(() => !document.querySelector('.side-chat-modes button')?.disabled);
-  const draft = page.getByRole('textbox', { name: '侧聊输入', exact: true });
+  await page.getByRole('menuitem', { name: '临时聊天', exact: true }).click();
+  const draft = page.locator('.temporary-chat').getByRole('textbox', { name: '任务输入', exact: true });
+  await draft.waitFor();
+  assert.equal(await page.locator('.side-chat-heading, .side-chat-modes').count(), 0, 'Temporary chat has no retired mode toolbar');
   await draft.fill('仅测试布局，不发送模型请求');
   const layout = () => page.evaluate(() => {
     const read = selector => {
@@ -78,7 +80,7 @@ try {
     return {
       title: read('.titlebar'), project: read('.sidebar'), main: read('.thread'),
       heading: read('.thread-header'), navigation: read('.thread-view-tabs'),
-      shell: read('.workbench-shell'), body: read('.workbench-body'), chrome: read('.workbench-chrome'), modes: read('.side-chat-heading'),
+      shell: read('.workbench-shell'), body: read('.workbench-body'), chrome: read('.workbench-chrome'),
       side: read('.side-chat'), resize: read('.workbench-resizer'),
     };
   });
@@ -86,22 +88,19 @@ try {
     const result = await layout();
     if (baseline) {
       assert.notEqual(result.heading.bottom, result.chrome.bottom);
-      assert.notEqual(result.navigation.bottom, result.modes.bottom);
       if (theme === 'light') assert.notEqual(result.chrome.bg, result.main.bg);
     } else {
       assert.equal(result.heading.height, 48);
       assert.equal(result.chrome.height, 48);
       assert.equal(result.navigation.height, 44);
-      assert.equal(result.modes.height, 44);
       assert.ok(Math.abs(result.heading.bottom - result.chrome.bottom) < 1, 'First divider aligns across the split');
-      assert.ok(Math.abs(result.navigation.bottom - result.modes.bottom) < 1, 'Second divider aligns across the split');
+      assert.ok(Math.abs(result.side.y - result.chrome.bottom) < 1, 'Temporary conversation starts directly below its tab bar');
       // Both chats now share invisible separators but retain their physical
       // edges, heights and alignment across the split.
       assert.equal(result.heading.border, 'rgba(0, 0, 0, 0)');
       assert.equal(result.navigation.border, 'rgba(0, 0, 0, 0)');
-      assert.equal(result.chrome.border, result.modes.border);
       assert.equal(result.chrome.border, result.heading.border);
-      for (const pane of ['heading', 'navigation', 'shell', 'body', 'chrome', 'modes', 'side']) assert.equal(result[pane].bg, result.main.bg, `${theme}: ${pane} uses the main surface`);
+      for (const pane of ['heading', 'navigation', 'shell', 'body', 'chrome', 'side']) assert.equal(result[pane].bg, result.main.bg, `${theme}: ${pane} uses the main surface`);
       assert.ok(Math.abs(result.heading.right - result.chrome.x) <= 1, 'No gray gutter separates the panels');
       assert.equal(result.resize.width, 10, 'The drag target remains easy to hit');
       if (theme === 'light') {
@@ -110,7 +109,7 @@ try {
         assert.notEqual(result.title.bg, result.main.bg, 'The global titlebar remains subtly gray');
       }
     }
-    console.log(`${baseline ? 'BASELINE' : 'PASS'} ${theme}: header dividers ${result.heading.bottom}/${result.chrome.bottom}; navigation dividers ${result.navigation.bottom}/${result.modes.bottom}; main ${result.main.bg}; side header ${result.chrome.bg}.`);
+    console.log(`${baseline ? 'BASELINE' : 'PASS'} ${theme}: header dividers ${result.heading.bottom}/${result.chrome.bottom}; main ${result.main.bg}; side header ${result.chrome.bg}.`);
   };
   await mkdir('.tmp/qa', { recursive: true });
   for (const theme of ['light', 'dark']) {
@@ -119,10 +118,6 @@ try {
       await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme);
     }
     await checkAlignment(theme);
-    await page.getByRole('button', { name: '普通聊天', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.side-chat-modes button[aria-pressed="true"]')?.textContent === '普通聊天');
-    await page.getByRole('button', { name: '关联当前任务', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.side-chat-modes button[aria-pressed="true"]')?.textContent === '当前任务');
     assert.equal(await draft.inputValue(), '仅测试布局，不发送模型请求');
     await page.screenshot({ path: `.tmp/qa/pane-alignment-${baseline ? 'baseline-' : production ? 'production-' : ''}${theme}.png` });
   }
@@ -142,11 +137,11 @@ try {
     await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
     assert.equal(await page.locator('.workbench-shell').count(), 0);
     await page.getByRole('button', { name: '打开工作侧栏', exact: true }).click();
-    await page.locator('.side-chat-heading').waitFor();
+    await draft.waitFor();
     await page.setViewportSize({ width: 1000, height: 650 });
     await page.waitForTimeout(150);
     await checkAlignment('dark');
-    const fits = await page.locator('.side-chat-heading').evaluate(el => [...el.children].every(child => child.getBoundingClientRect().right <= el.getBoundingClientRect().right));
+    const fits = await page.locator('.temporary-chat .composer-toolbar').evaluate(el => [...el.children].every(child => child.getBoundingClientRect().right <= el.getBoundingClientRect().right));
     assert.equal(fits, true, 'Controls fit at compact desktop widths');
     assert.equal(await draft.inputValue(), '仅测试布局，不发送模型请求');
     assert.equal(await page.evaluate(() => window.paneCalls.some(call => call.action === 'send')), false, 'Layout checks never send a model request');
@@ -221,5 +216,5 @@ try {
     }
   }
   assert.deepEqual(errors, []);
-  console.log('PASS: mode switches and draft retention; no uncaught browser errors.');
+  console.log('PASS: temporary-chat pane, draft retention and workbench toolbars; no uncaught browser errors.');
 } finally { await browser.close(); await server.close(); }

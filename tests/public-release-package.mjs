@@ -46,6 +46,13 @@ for (const portable of [false, true]) {
     page.on("pageerror", e => errors.push(e.message));
     await page.locator(".ax-welcome__enter").click({ timeout: 45000 });
     if (!older) {
+      assert.equal((await page.evaluate(() => window.desktop.personalChatGPT.status())).available, false,
+        'Experimental personal quota integration must remain unavailable in public builds');
+      assert.equal((await page.evaluate(() => window.desktop.providers.list())).some(provider => provider.id === 'chatgpt-personal'), false);
+      assert.match(await page.evaluate(async () => {
+        try { await window.desktop.personalChatGPT.startLogin(); return 'unexpectedly enabled'; }
+        catch (error) { return error.message; }
+      }), /PERSONAL_CHATGPT_LOCAL_ONLY|仅在本地开发版/);
       await page.locator(".local-account-signin").click();
       let authUrl;
       for (let i = 0; i < 60; i++) {

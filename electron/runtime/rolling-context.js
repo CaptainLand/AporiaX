@@ -202,6 +202,7 @@ export class RollingContext {
           estimatedTokensBefore: tokensBefore, estimatedTokensAfter: estimateConversationTokens(conversation, accounting), contextWindowTokens });
       } catch (error) {
         if (!charged && (error.attemptUsage || error.usage)) await onUsage(error.attemptUsage || error.usage);
+        if (error.noAutomaticRetry) throw error;
         const control = runtimeRunControl();
         if (!signal?.aborted && control && (error.code === "TASK_SUSPENDED" || isTemporaryNetworkError(error))) {
           if (error.code !== "TASK_SUSPENDED") control.waitForNetwork();

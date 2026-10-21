@@ -322,8 +322,8 @@ function EditedFilesCard({
               <span className="legacy-edit-note">
                 {officeFiles.length
                   ? tr(
-                      "{count} 个 Office 工件 · 可审核撤销",
-                      "{count} Office artifact(s) · reviewable and reversible",
+                      "{count} 个文件快照 · 可审核撤销",
+                      "{count} file snapshot(s) · reviewable and reversible",
                       { count: officeFiles.length },
                     )
                   : tr("历史记录 · 无行数统计", "Historical record · no line statistics")}
@@ -943,6 +943,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
               <details>
                 <summary>{tr("查看原始输出", "View original output")}</summary>
                 <MarkdownMessage content={message.content} />
+                {message.deliveryDetails && <MarkdownMessage content={message.deliveryDetails} />}
               </details>
             )}
           </div>
@@ -956,6 +957,14 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning }) {
           <span className="stream-placeholder">{tr("暂无回复内容", "No response content")}</span>
         )}
       </div>
+      {!restored && message.status !== 'running' && typeof message.deliveryDetails === 'string' && message.deliveryDetails.trim() && (
+        <details className="assistant-delivery-details">
+          <summary>{tr('查看完整回复', 'View full reply')}<ChevronDown size={12} /></summary>
+          <div className="assistant-message-content assistant-delivery-details-content">
+            <MarkdownMessage content={message.deliveryDetails} />
+          </div>
+        </details>
+      )}
       {(failed || interrupted || blocked) && message.prompt && (
         <button
           className="retry-message-button"
@@ -1083,9 +1092,10 @@ function describeWitnessRecord(record, tr, language) {
       detail: description.detail,
     };
   }
+  if (record.kind === 'thinking') return describeRouteRecord(record, language);
   const descriptions = {
     "turn.started": [tr("Witness 开始记录", "Witness started recording"), tr("正在建立任务进度账本", "Creating the task progress ledger")],
-    "response.reset": [tr("主 Agent 模型响应阶段", "Main agent response phase"), tr("活动信号来自模型响应，不代表已完成工作", "Response activity does not imply completed work")],
+    "response.reset": [tr("AporiaX 正在思考或工作中…", "AporiaX is thinking or working…"), tr("正在等待模型响应", "Waiting for model response")],
     "plan.updated": [tr("行动路径已更新", "Action route updated"), record.detail],
     "parallel_batch.started": [tr("正在并行处理独立工作", "Running independent work in parallel"), tr("并发执行 {count} 个动作", "Running {count} actions concurrently", { count: record.detail || 0 })],
     "subagent.started": [tr("子 Agent 已开始工作", "Subagent started working"), record.detail],
@@ -1158,8 +1168,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
                   "This run's action record is retained and available below",
                 )
               : activeAgents
-              ? tr("正在监控主 Agent 与 {count} 个子 Agent", "Monitoring the main agent and {count} subagent(s)", { count: activeAgents })
-              : tr("正在记录主 Agent 的可观察行动", "Recording the main agent's observable actions")}
+              ? tr("正在记录 AporiaX 与 {count} 个子 Agent 的行动", "Recording AporiaX and {count} subagent(s)", { count: activeAgents })
+              : tr("正在记录 AporiaX 的行动", "Recording AporiaX activity")}
           </span>
         </div>
         <b>
@@ -1186,7 +1196,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
             {resultDelivered ? tr("本轮结果已输出", "Result delivered") : currentDescription.title ||
               liveProgress.currentEntry?.title}
           </strong>
-          <p>
+          <p title={currentDescription.progressHint}>
             {resultDelivered ? tr("可展开查看本轮行动记录", "Expand to view this run's action record") : currentDescription.detail ||
               liveProgress.currentEntry?.path ||
               liveProgress.currentEntry?.detail}
@@ -1211,7 +1221,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
                 </span>
                 <div>
                   <strong>{description.title}</strong>
-                  {description.detail && <span>{description.detail}</span>}
+                  {description.detail && <span title={description.progressHint}>{description.detail}</span>}
                 </div>
                 <time>{formatWitnessElapsed(record.elapsedMs)}</time>
               </div>
@@ -1238,6 +1248,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
 }
 
 export function Conversation({
+  allowFileActions = true,
   task,
   isRunning,
   approval,
@@ -1367,19 +1378,19 @@ export function Conversation({
             />
             </LinkWorkspace.Provider>
             {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={isRunning && message.status === "running"} onRetry={onRetry ? () => onRetry(message) : null} />)}
-            {!restored && files.length > 0 && (
+            {!restored && !message.unapplied && files.length > 0 && (
               <EditedFilesCard
                 files={files}
                 workspacePath={task.workspacePath}
                 onNotice={onNotice}
-                hasSnapshots={Boolean(message.changes?.length)}
+                hasSnapshots={allowFileActions && Boolean(message.changes?.length)}
                 confirmed={Boolean(message.reviewConfirmedAt)}
-                onReview={(path) =>
+                onReview={(path) => allowFileActions ?
                   setReviewRequest({
                     messageId: message.id,
                     path,
                     mode: path ? "edit" : "diff",
-                  })
+                  }) : workbench?.openFile(path || files[0]?.path)
                 }
               />
             )}

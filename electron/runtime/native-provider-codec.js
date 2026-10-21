@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { claudeReasoningProfile } from "../../shared/model-reasoning.js";
+import { createResponsesTextState } from './responses-text-state.js';
+import { createModelStreamProgress } from './model-stream-progress.js';
 
 export const PROVIDER_PROTOCOLS = Object.freeze(["chat-completions", "deepseek-chat", "responses", "anthropic-messages"]);
 export function normalizeProviderProtocol(value) {
@@ -8,7 +10,8 @@ export function normalizeProviderProtocol(value) {
   return protocol;
 }
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const identity = (provider, model, protocol) => hash([provider.id, provider.baseUrl.replace(/\/+$/, ""), model, protocol]);
+const identity = (provider, model, protocol) => hash([provider.id, provider.baseUrl.replace(/\/+$/, ""), model, protocol,
+  ...(provider.kind === 'chatgpt-personal' ? [provider.personalAccountBinding] : [])]);
 const publicAssistant = (message) => ({ content: message.content ?? "", tool_calls: message.tool_calls || [] });
 const invalid = (code) => Object.assign(new Error(code), { code, retryable: false });
 function removePrivate(message, { deepseek = false } = {}) {
@@ -50,6 +53,8 @@ function maxTokens(provider, body) {
  */
 export function compileProviderWire(provider, body) {
   const protocol = normalizeProviderProtocol(provider.protocol);
+  const personal = provider.kind === 'chatgpt-personal';
+  if (personal && (protocol !== 'responses' || provider.baseUrl !== 'https://api.openai.com/v1' || !provider.personalAccountBinding)) throw invalid('PERSONAL_CHATGPT_ROUTE_INVALID');
   if (provider.kind === "aporia-cloud" && protocol !== "chat-completions") throw invalid("CLOUD_PROTOCOL_MANAGED");
   const binding = identity(provider, body.model, protocol);
   const endpoint = provider.baseUrl.replace(/\/+$/, "").replace(/\/(?:chat\/completions|responses|messages)$/, "");
@@ -79,12 +84,13 @@ export function compileProviderWire(provider, body) {
       if (stored) { input.push(...structuredClone(stored)); continue; }
       if (message.role === "tool") { input.push({ type: "function_call_output", call_id: message.tool_call_id, output: message.content }); continue; }
       const content = parts(message.content, protocol, message.role);
-      if (content.length) input.push({ role: message.role, content });
-      for (const call of message.tool_calls || []) input.push({ type: "function_call", call_id: call.id, name: call.function.name, arguments: call.function.arguments });
+      if (content.length) input.push({ role: personal && message.role === 'system' ? 'developer' : message.role, content });
+      for (const call of message.tool_calls || []) input.push({ type: "function_call", call_id: call.id, name: call.function.name, arguments: call.function.arguments, ...(personal ? { namespace: 'aporiax' } : {}) });
     }
-    return { protocol, binding, url: `${endpoint}/responses`, headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
-      body: { model: body.model, input, stream: true, store: false, include: ["reasoning.encrypted_content"], max_output_tokens: maxTokens(provider, body),
-        ...(tools.length ? { tools, tool_choice: choice && !["auto", "none", "required"].includes(choice) ? { type: "function", name: choice } : choice || "auto" } : {}),
+    return { protocol, binding, url: `${endpoint}/responses`, headers: !personal && provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+      body: { model: body.model, input, stream: true, store: false, include: ["reasoning.encrypted_content"], ...(!personal ? { max_output_tokens: maxTokens(provider, body) } : {}),
+        ...(tools.length ? { tools: personal ? [{ type: 'namespace', name: 'aporiax', description: 'AporiaX local tools. Existing approval and sandbox rules apply.', tools }] : tools,
+          tool_choice: choice && !["auto", "none", "required"].includes(choice) ? { type: "function", name: choice, ...(personal ? { namespace: 'aporiax' } : {}) } : choice || "auto" } : {}),
         ...(body.reasoning_effort ? { reasoning: { effort: body.reasoning_effort } } : {}) } };
   }
   const system = [], nativeMessages = [];
@@ -161,15 +167,18 @@ export function normalizeNativeResponse(response, wire, { observe } = {}) {
   if (!response.ok || !response.body || !["responses", "anthropic-messages"].includes(wire.protocol)) return response;
   async function* normalize() {
     let terminal = false, started = false, content = "", usage = null, reason = null, finalItems = null;
-    const blocks = new Map(), stopped = new Set(), responseItems = new Map();
+    const blocks = new Map(), stopped = new Set(), responseText = createResponsesTextState();
+    const progress = createModelStreamProgress();
     for await (const event of sseEvents(response.body)) {
       // Observe already-decoded native events; never consume the body twice.
       try { observe?.(event); } catch { /* diagnostics never change inference */ }
+      const streamProgress = progress.native(event);
+      if (streamProgress) yield wireEvent({ aporia_stream_progress: streamProgress });
       // Even thinking/ping activity resets the common parser's idle watchdog.
       yield wireEvent({ choices: [] });
       if (event.type === "error" || event.type === "response.failed") {
         const failure = event.error || event.response?.error || {};
-        yield wireEvent({ error: { message: failure.message || failure.type || failure.code || "PROVIDER_NATIVE_ERROR" } }); return;
+        yield wireEvent({ error: { message: failure.message || failure.type || failure.code || "PROVIDER_NATIVE_ERROR", ...(failure.code ? { code: failure.code } : {}) } }); return;
       }
       if (wire.protocol === "anthropic-messages") {
         if (event.type === "message_start") {
@@ -212,13 +221,14 @@ export function normalizeNativeResponse(response, wire, { observe } = {}) {
           });
         }
       } else {
+        if (!responseText.accept(event)) continue;
         if (event.type === "response.output_text.delta") { if (typeof event.delta !== "string") throw invalid("PROVIDER_TEXT_INVALID"); content += event.delta || ""; yield wireEvent({ choices: [{ delta: { content: event.delta || "" } }] }); }
-        if (event.type === "response.output_item.done") responseItems.set(event.output_index, event.item);
         if (["response.completed", "response.incomplete"].includes(event.type)) {
           terminal = true; const result = event.response;
           if (!result || (result.output !== undefined && !Array.isArray(result.output))) throw invalid("PROVIDER_STREAM_INCOMPLETE");
+          if (result.status && result.status !== (event.type === 'response.completed' ? 'completed' : 'incomplete')) throw invalid('PROVIDER_STREAM_INCOMPLETE');
           usage = result.usage || null;
-          finalItems = result.output || [...responseItems.entries()].sort(([a], [b]) => a - b).map(([, item]) => item);
+          finalItems = responseText.finalize(result);
           reason = event.type === "response.completed" ? "end_turn" : result.incomplete_details?.reason === "max_output_tokens" ? "max_tokens" : "unsupported_stop";
         }
       }
@@ -246,8 +256,12 @@ export function normalizeNativeResponse(response, wire, { observe } = {}) {
         else if (item.type !== "reasoning") throw invalid("PROVIDER_NATIVE_OUTPUT_UNSUPPORTED");
       }
     }
-    if (!finalText.startsWith(content)) throw invalid("PROVIDER_TEXT_STREAM_MISMATCH");
-    if (finalText.length > content.length) yield wireEvent({ choices: [{ delta: { content: finalText.slice(content.length) } }] });
+    if (!finalText.startsWith(content)) {
+      if (wire.protocol !== 'responses') throw invalid("PROVIDER_TEXT_STREAM_MISMATCH");
+      // Per-part validation already passed: only the arrival/display ordering
+      // differed. Correct this same response, without another model request.
+      yield wireEvent({ aporia_text_snapshot: finalText });
+    } else if (finalText.length > content.length) yield wireEvent({ choices: [{ delta: { content: finalText.slice(content.length) } }] });
     const message = { content: finalText, ...(calls.length ? { tool_calls: calls } : {}) };
     const finish = ["end_turn", "stop_sequence", "tool_use"].includes(reason) ? calls.length ? "tool_calls" : "stop" : reason === "max_tokens" ? "length" : "content_filter";
     const state = { version: 1, protocol: wire.protocol, binding: wire.binding, messageHash: hash(publicAssistant(message)), items: finalItems, outputTokens: Number(usage?.output_tokens ?? usage?.completion_tokens) || 0 };

@@ -24,7 +24,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "inspect_office_file",
     ]),
     permissions: readPermissions(),
-    maxRounds: 8,
+    maxRounds: null,
     background: false,
     triggers: Object.freeze([]),
     systemPrompt:
@@ -44,7 +44,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "inspect_office_file",
     ]),
     permissions: readPermissions(),
-    maxRounds: 6,
+    maxRounds: null,
     background: true,
     triggers: Object.freeze(["plan.step.completed", "changes.batch.ready"]),
     systemPrompt:
@@ -65,7 +65,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "run_command",
     ]),
     permissions: readPermissions({ run_command: "ask" }),
-    maxRounds: 4,
+    maxRounds: null,
     background: true,
     triggers: Object.freeze(["verification.requested"]),
     systemPrompt:
@@ -85,7 +85,7 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "inspect_office_file",
     ]),
     permissions: readPermissions(),
-    maxRounds: 6,
+    maxRounds: null,
     background: true,
     triggers: Object.freeze(["task.completed"]),
     systemPrompt:
@@ -103,7 +103,10 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       "git_status",
       "git_diff",
       "write_file",
+      "delete_file",
       "apply_patch",
+      "cleanup_temporary_check",
+      "verify_project",
     ]),
     permissions: Object.freeze({
       "*": "deny",
@@ -113,14 +116,17 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
       git_status: "allow",
       git_diff: "allow",
       write_file: "allow",
+      delete_file: "ask",
       apply_patch: "allow",
+      cleanup_temporary_check: "allow",
+      verify_project: "allow",
       task_brief: "allow", replan_strategy: "allow",
     }),
-    maxRounds: 8,
+    maxRounds: null,
     background: true,
     triggers: Object.freeze(["task.builder.ready"]),
     systemPrompt:
-      "Modify only the delegated write scopes. Do not run shell commands, delegate, or publish. Report suggested relevant checks and unverified work to Main/Verify. Never broaden the scope, access unrelated external systems, or edit files owned by another Builder.",
+      "Implement and self-check within delegated write scopes. Use verify_project for parse-only syntax checks or disposable OS-isolated test/build checks, then fix relevant failures. Do not run shell commands, recursively delegate or publish. Never broaden scope or edit another Builder's files. If script isolation is unavailable report those checks as unverified to Main/Verify.",
   }),
 });
 
@@ -212,15 +218,6 @@ function normalizeAgentDefinition(
   if (baseName && !base) {
     throw new Error(`Agent ${name} extends unknown definition: ${baseName}`);
   }
-  const maxRounds = Math.max(
-    2,
-    Math.min(
-      20,
-      Number(
-        input?.maxRounds ?? input?.max_rounds ?? base?.maxRounds ?? 8,
-      ) || 8,
-    ),
-  );
   return Object.freeze({
     name,
     extends: baseName || null,
@@ -236,7 +233,7 @@ function normalizeAgentDefinition(
     ),
     model:
       String(input?.model || base?.model || "inherit").trim() || "inherit",
-    maxRounds,
+    maxRounds: null,
     background:
       typeof input?.background === "boolean"
         ? input.background

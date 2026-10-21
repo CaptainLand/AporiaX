@@ -22,7 +22,7 @@ for (const directory of ["electron", "src", "shared"]) await scan(directory);
 const preload = await readFile("electron/preload.cjs", "utf8");
 const accountBridge = preload.slice(preload.indexOf("  account: {"), preload.indexOf("  tasks: {"));
 const methods = [...accountBridge.matchAll(/^\s+(\w+):/gm)].map(match => match[1]);
-assert.deepEqual(methods, ["account", "get", "signIn", "openCenter", "getRequestHistory", "refresh", "signOut"], 'Read-only account usage history does not restore retired workspace sync methods');
+assert.deepEqual(methods, ["account", "get", "signIn", "openCenter", "getRequestHistory", "refresh", "setAvatarTemplate", "signOut"], 'Account usage and preset-avatar selection do not restore retired workspace sync methods');
 
 const temp = await mkdtemp(join(tmpdir(), "aporia-privacy-cleanup-"));
 try {

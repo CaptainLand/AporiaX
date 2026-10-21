@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isHumanMessage } from './task-conversation.js';
 import { explicitlyReplacesAllConstraints } from './human-constraints.js';
+import { observedWorkerChecks } from '../../shared/agent-report-evidence.js';
 
 const CONTEXT_PREFIX = 'AporiaX inherited user requirements (not a worker summary):\n';
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -62,7 +63,7 @@ export function reviewWorkerResult(record, input, parentEvidence = new Map()) {
   if (!Array.isArray(ids) || ids.length > 16) throw new Error('Invalid evidence_ids.');
   const childEvidence = new Map((record.result.evidence || []).map((item) => [item.evidenceId, item]));
   const successful = (item) => item && !item.error && !item.timedOut && !item.skipped &&
-    (item.tool === 'run_command' ? item.exitCode === 0 : item.exitCode == null || item.exitCode === 0);
+    (['run_command', 'verify_project'].includes(item.tool) ? item.exitCode === 0 : item.exitCode == null || item.exitCode === 0);
   for (const id of ids) if (!successful(parentEvidence.get(id) || childEvidence.get(id))) throw new Error('SUBAGENT_REVIEW_EVIDENCE_INVALID: cite observed, successful evidence only.');
   if (input.decision === 'accepted') {
     if (record.status !== 'completed' && !ids.some((id) => parentEvidence.has(id))) throw new Error('Partial or failed workers require independent parent evidence before acceptance.');
@@ -89,5 +90,6 @@ export function workerSummary(record) {
     status: record.status, background: record.background,
     reportId: record.result?.reportId, acceptance: record.result?.acceptance,
     integrated: record.result?.integrated, summary: record.result?.summary,
+    observedChecks: observedWorkerChecks(record.result),
     rounds: record.session?.roleRounds, activations: record.session?.activationSequence || 0 };
 }

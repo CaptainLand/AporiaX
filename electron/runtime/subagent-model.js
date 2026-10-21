@@ -2,29 +2,20 @@ import { getToolPermission } from "../agent-core.js";
 import { posix, resolve, relative, isAbsolute, dirname, basename } from "node:path";
 import { realpath } from "node:fs/promises";
 import { normalizeBuilderScopes } from "../harness/scope-leases.js";
-import { parsePatch } from "diff";
+import { parseWorkspacePatch } from './workspace-patch.js';
 
-export const DEFAULT_SUBAGENT_ROUNDS = 8;
-export const MAX_SUBAGENT_ROUNDS = 20;
+// null is JSON-safe and explicitly means no round-count cutoff.
+export const DEFAULT_SUBAGENT_ROUNDS = null;
+export const MAX_SUBAGENT_ROUNDS = null;
 export const MAX_SUBAGENT_TASK_CHARS = 4_000;
 export const MAX_SUBAGENT_RESULT_CHARS = 24_000;
 const MAX_SUBAGENT_EVIDENCE_CHARS = 24_000;
-
-const LOW_COMPUTE_ROLES = new Set(["explore", "verify", "curator"]);
 
 export function resolveSubagentReasoningPolicy({
   role,
   thinking = false,
   effort = "high",
 } = {}) {
-  const normalizedRole = String(role || "").trim().toLowerCase();
-  if (LOW_COMPUTE_ROLES.has(normalizedRole)) {
-    return {
-      thinking: false,
-      effort: "low",
-      source: "role-default",
-    };
-  }
   return {
     thinking: Boolean(thinking),
     effort: String(effort || "high"),
@@ -34,8 +25,8 @@ export function resolveSubagentReasoningPolicy({
 
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   builder: Object.freeze({
-    description: "Implement the delegated task only within explicit write scopes in an isolated Git worktree. Return changes, verification evidence and remaining issues. Do not delegate again or publish.",
-    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "cleanup_temporary_check", "apply_patch"]),
+    description: "Implement the delegated task within explicit write scopes in an isolated Git worktree. Use verify_project for isolated self-checks, fix failures, and return changes, observed evidence and remaining issues. Do not delegate again or publish.",
+    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "verify_project"]),
   }),
   explore: Object.freeze({
     description:
@@ -126,30 +117,31 @@ export function normalizeSubagentInput(input, profiles = null) {
       `Subagent task must be between 1 and ${MAX_SUBAGENT_TASK_CHARS} characters.`,
     );
   }
-  const requestedRounds = Number(input?.max_rounds);
-  const maxRounds = Number.isInteger(requestedRounds)
-    ? Math.min(MAX_SUBAGENT_ROUNDS, Math.max(2, requestedRounds))
-    : profile?.maxRounds || DEFAULT_SUBAGENT_ROUNDS;
+  if (input?.context != null && (typeof input.context !== 'string' || input.context.length > 6000)) throw new Error('Subagent handoff context must be at most 6000 characters.');
+  if (input?.skills != null && (!Array.isArray(input.skills) || input.skills.length > 64 || input.skills.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,199}$/i.test(name)))) throw new Error('Invalid delegated Skills.');
   return {
     role,
+    autonomyVersion: 2,
     ...(profile ? { profileId: profile.id, profile } : {}),
     ...((input?.depends_on || input?.dependsOn) ? { dependsOn: input.depends_on || input.dependsOn } : {}),
     task,
+    ...(input?.context ? { context: input.context } : {}),
+    ...(input?.skills?.length ? { skills: [...new Set(input.skills)] } : {}),
     scope: normalizeWorkspaceScope(input?.scope),
     ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
     background: Boolean(input?.background || input?.depends_on?.length || input?.dependsOn?.length),
-    requiredForCompletion: !(input?.background && input?.required_for_completion === false && ["explore", "curator"].includes(role)),
-    maxRounds,
+    requiredForCompletion: !(input?.background && input?.required_for_completion !== true && !input?.depends_on?.length && !input?.dependsOn?.length && ["explore", "curator"].includes(role)),
+    maxRounds: null,
   };
 }
 
 export function subagentToolPaths(toolName, input = {}) {
   if (toolName === "apply_patch" && typeof input.patch === "string") {
-    const patches = parsePatch(input.patch);
+    const patches = parseWorkspacePatch(input.patch);
     if (!patches.length) throw new Error("Patch contains no file changes.");
-    return patches.map((patch) => String(patch.newFileName === "/dev/null" ? patch.oldFileName : patch.newFileName).replace(/^[ab][\\/]/, ""));
+    return patches.map(patch => patch.path);
   }
-  if (toolName === "run_command") return [input.cwd || "."];
+  if (["run_command", "verify_project"].includes(toolName)) return [input.cwd || "."];
   if (toolName === "git_diff") return input.path ? [input.path] : ["."];
   if (
     [
@@ -158,6 +150,7 @@ export function subagentToolPaths(toolName, input = {}) {
       "search_text",
       "inspect_office_file",
       "write_file",
+      "delete_file",
       "cleanup_temporary_check",
       "apply_patch",
     ].includes(toolName)
@@ -215,7 +208,7 @@ export async function assertSubagentRealScope(toolName, input, scope, workspaceR
 }
 
 export function assertSubagentScope(toolName, input, scope) {
-  if (toolName === "run_command" && !scope.includes(".")) {
+  if (["run_command", "verify_project"].includes(toolName) && !scope.includes(".")) {
     throw new Error(
       'run_command requires repository-wide scope (".") because an arbitrary command cannot be reliably confined to a narrower path scope.',
     );
@@ -291,6 +284,7 @@ export function subagentEvidence(toolName, result) {
     query: value.query || null,
     exitCode: typeof value.exitCode === "number" ? value.exitCode : null,
     timedOut: Boolean(value.timedOut),
+    ...(value.parseOnly ? { parseOnly: true } : {}),
     skipped: Boolean(value.skipped),
     error: value.error ? String(value.error).slice(0, 500) : null,
     preview: String(

@@ -23,15 +23,17 @@ import { registerWorkspaceFileMenu } from './workspace-file-menu.js';
 import { registerWorkbench } from "./workbench/service.js";
 import { createFileAccessSettings } from "./runtime/file-access-settings.js";
 import { configureNativeFileAccess } from "./runtime/file-access-policy.js";
+import { configureWorkspaceRecoveryDirectory } from './runtime/workspace-mutations.js';
 import { configureModelResponseDiagnostics } from "./runtime/model-response-diagnostics.js";
 
 export const fileAccessSettingsReady = app.whenReady().then(async () => {
   const settings = await createFileAccessSettings({ dataDirectory: app.getPath("userData") });
   configureNativeFileAccess(settings.policy);
+  configureWorkspaceRecoveryDirectory(() => join(app.getPath('userData'), 'workspace-recovery'));
   return settings;
 });
 fileAccessSettingsReady.catch(() => undefined);
-import { createSideChatService } from "./side-chat/service.js";
+import { createTemporarySideChatService } from "./side-chat/temporary-service.js";
 import { createTeamChatService } from './team-chat/service.js';
 import { createMemberExecutor } from './team-chat/executor.js';
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
@@ -67,6 +69,7 @@ import {
   publicProviderSummary,
 } from "./provider-config.js";
 import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
+import { createPersonalChatGPTService, PERSONAL_CHATGPT_PROVIDER_ID } from './personal-chatgpt/service.js';
 import {
   getSandboxStatus,
   localSandboxRootPath,
@@ -84,6 +87,16 @@ const projectRoot = join(currentDirectory, "..");
 const isDevelopment = process.argv.includes("--dev");
 
 let mainWindow = null;
+let personalChatGPT = null;
+function getPersonalChatGPT() {
+  if (!personalChatGPT) personalChatGPT = createPersonalChatGPTService({
+    directory: join(app.getPath('userData'), 'personal-chatgpt'), safeStorage,
+    openExternal: url => shell.openExternal(url), enabled: !app.isPackaged,
+    onChanged: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('providers:changed'); },
+  });
+  return personalChatGPT;
+}
+app.on('before-quit', () => personalChatGPT?.dispose());
 const applicationUrl = isDevelopment ? "http://127.0.0.1:5173/" : pathToFileURL(join(projectRoot, "dist", "index.html")).href;
 configureTrustedIpc({ getWindow: () => mainWindow, expectedUrl: applicationUrl, development: isDevelopment });
 const workbench = registerWorkbench(() => mainWindow);
@@ -146,10 +159,11 @@ const harnessTaskRuntime = createHarnessTaskRuntime({
 
 function assertTrustedSender(event) { assertTrustedIpcSender(event); }
 
-const sideChat = createSideChatService({
+const sideChat = createTemporarySideChatService({
   dataDirectory: () => app.getPath("userData"),
   resolveProvider,
   loadTask: (taskId) => getTaskHistoryStore().loadTask(taskId),
+  hydrateMessages: messages => hydrateHarnessMessages(messages),
   publish: (payload) => {
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
       mainWindow.webContents.send("side-chat:event", payload);
@@ -341,6 +355,7 @@ function publicAporiaCloudProvider() {
 }
 
 async function resolveProvider(providerId) {
+  if (providerId === PERSONAL_CHATGPT_PROVIDER_ID) return getPersonalChatGPT().resolveProvider();
   if (providerId === APORIA_CLOUD_PROVIDER_ID) {
     const account = getDesktopAccountRuntime();
     return {
@@ -373,6 +388,7 @@ async function resolveProvider(providerId) {
 }
 
 async function saveProvider(input) {
+  if (input?.id === PERSONAL_CHATGPT_PROVIDER_ID || input?.kind === 'chatgpt-personal' || input?.source === 'chatgpt-personal') throw new Error('个人 ChatGPT 仅通过官方账号授权管理，不能作为 API Provider 修改。');
   if (input?.id === APORIA_CLOUD_PROVIDER_ID || input?.kind === "aporia-cloud") {
     throw new Error("Aporia Cloud 由 Aporia Account 管理，不能作为自定义 Provider 修改。");
   }
@@ -440,6 +456,7 @@ async function disableProviderNativeVision(providerId, modelId) {
 }
 
 async function removeProvider(providerId) {
+  if (providerId === PERSONAL_CHATGPT_PROVIDER_ID) throw new Error('请在个人 ChatGPT 页面断开账号。');
   if (providerId === APORIA_CLOUD_PROVIDER_ID) return false;
   const providers = await readStoredProviders();
   const nextProviders = providers.filter(
@@ -963,6 +980,7 @@ handleTrustedIpc(ipcMain, "attachments:store", async (event, request) => {
 export async function listDesktopProviders() {
   return [
     publicAporiaCloudProvider(),
+    ...(!app.isPackaged ? [await getPersonalChatGPT().provider()] : []),
     ...(await loadProviderRecords()).map(publicProviderSummary),
   ];
 }
@@ -974,6 +992,7 @@ handleTrustedIpc(ipcMain, "providers:list", async (event) => {
 
 handleTrustedIpc(ipcMain, "providers:discover", async (event, request) => {
   assertTrustedSender(event);
+  if (request?.id === PERSONAL_CHATGPT_PROVIDER_ID) throw new Error('请在个人 ChatGPT 页面刷新账号模型。');
   if (request?.id === APORIA_CLOUD_PROVIDER_ID) {
     throw new Error("Aporia Cloud 模型目录由 Aporia Account 管理，无需手动发现。");
   }
@@ -1000,6 +1019,11 @@ handleTrustedIpc(ipcMain, "providers:remove", async (event, providerId) => {
   assertTrustedSender(event);
   return removeProvider(providerId);
 });
+
+// Explicit verbs only, main-frame IPC only; no token getters or arbitrary URL.
+for (const action of ['status', 'startLogin', 'cancel', 'signOut', 'refreshModels']) {
+  handleTrustedIpc(ipcMain, `personal-chatgpt:${action}`, async () => getPersonalChatGPT()[action]());
+}
 
 handleTrustedIpc(ipcMain, "sandbox:status", async (event) => {
   assertTrustedSender(event);

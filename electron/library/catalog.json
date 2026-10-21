@@ -126,6 +126,23 @@
       "requirements": []
     },
     {
+      "id": "skill.maimai-b50-roast",
+      "type": "skill",
+      "name": "maimai-b50-roast",
+      "title": "qq号锐评b50",
+      "titleZh": "qq号锐评b50",
+      "titleEn": "QQ B50 Review",
+      "description": "按 QQ 号或水鱼用户名查询公开 B50，校验数据后给出锐评与提升建议。默认内置，按需调用。",
+      "descriptionZh": "按 QQ 号或水鱼用户名查询公开 B50，校验数据后给出锐评与提升建议。默认内置，按需调用。",
+      "descriptionEn": "Look up public maimai B50 results by QQ or Diving Fish username, validate the data and provide evidence-based feedback.",
+      "author": "AporiaX",
+      "version": "1.0.0",
+      "trust": "bundled",
+      "tags": ["skill", "builtin", "maimai", "b50"],
+      "skillFile": "curated/maimai-b50-roast/SKILL.md",
+      "requirements": ["Node.js >= 18", "联网查询仅限用户明确请求的公开成绩；不读取私人 token"]
+    },
+    {
       "id": "skill.hermes-docx",
       "type": "skill",
       "name": "hermes-docx",

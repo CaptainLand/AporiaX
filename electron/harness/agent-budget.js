@@ -14,22 +14,22 @@ const PROFILE_LIMITS = Object.freeze({
     roles: Object.freeze({ explore: 0, review: 0, verify: 0, curator: 0, builder: 0, other: 0 }),
   }),
   read: Object.freeze({
-    maxTotalSubagents: 1,
+    maxTotalSubagents: null,
     maxActiveSubagents: 1,
     roles: Object.freeze({ explore: 1, review: 0, verify: 0, curator: 0, builder: 0, other: 0 }),
   }),
   light: Object.freeze({
-    maxTotalSubagents: 1,
+    maxTotalSubagents: null,
     maxActiveSubagents: 1,
     roles: Object.freeze({ explore: 1, review: 1, verify: 1, curator: 0, builder: 0, other: 0 }),
   }),
   standard: Object.freeze({
-    maxTotalSubagents: 4,
+    maxTotalSubagents: null,
     maxActiveSubagents: 2,
     roles: Object.freeze({ explore: 1, review: 2, verify: 1, curator: 1, builder: 0, other: 1 }),
   }),
   large: Object.freeze({
-    maxTotalSubagents: 7,
+    maxTotalSubagents: null,
     maxActiveSubagents: 4,
     roles: Object.freeze({ explore: 2, review: 2, verify: 1, curator: 1, builder: 2, other: 2 }),
   }),
@@ -65,11 +65,11 @@ function mergeLimits(base, override = {}) {
     const number = Number(value);
     if (Number.isFinite(number) && number >= 0) roleLimits[role] = Math.floor(number);
   }
-  const total = Number(override.maxTotalSubagents);
   const active = Number(override.maxActiveSubagents);
   return Object.freeze({
-    maxTotalSubagents:
-      Number.isFinite(total) && total >= 0 ? Math.floor(total) : base.maxTotalSubagents,
+    // Zero remains an explicit delegation-off switch. Positive historical
+    // lifetime counts no longer cut off a progressing task.
+    maxTotalSubagents: override.maxTotalSubagents === 0 ? 0 : null,
     maxActiveSubagents:
       Number.isFinite(active) && active >= 0 ? Math.floor(active) : base.maxActiveSubagents,
     roles: Object.freeze(roleLimits),
@@ -147,9 +147,6 @@ export function planAgentBudget(options = {}) {
   if (builderCount != null) {
     const extra = Math.max(0, builderCount - PROFILE_LIMITS[profile].roles.builder);
     requestedBudget.roles = { ...requestedBudget.roles, builder: requestedBudget.roles?.builder ?? builderCount };
-    if (requestedBudget.maxTotalSubagents == null) {
-      requestedBudget.maxTotalSubagents = PROFILE_LIMITS[profile].maxTotalSubagents + extra;
-    }
     if (requestedBudget.maxActiveSubagents == null) {
       requestedBudget.maxActiveSubagents = PROFILE_LIMITS[profile].maxActiveSubagents + extra;
     }
@@ -278,8 +275,6 @@ export function enforceAgentBudgetEvent(event) {
     const roleCount = context.state.byRole[role] || 0;
     const continuing = context.state.startedIds.has(agentId);
     const roleLimit = context.limits.roles[role] ?? context.limits.roles.other ?? 0;
-    const renewable = role === "builder" && context.plan.renewableBuilders;
-    const chargedTotal = context.state.totalStarted - (context.plan.renewableBuilders ? context.state.byRole.builder || 0 : 0);
     const activeBuilders = [...context.state.activeRoles.values()].filter((value) => value === "builder").length;
     const detail = {
       agentId,
@@ -293,11 +288,10 @@ export function enforceAgentBudgetEvent(event) {
       roleLimit,
     };
     if (
-      (!continuing && !renewable && chargedTotal >= context.limits.maxTotalSubagents) ||
+      context.limits.maxTotalSubagents === 0 ||
       context.state.activeIds.size >= context.limits.maxActiveSubagents ||
       (role === "builder" && context.plan.builderConcurrency != null && activeBuilders >= context.plan.builderConcurrency) ||
-      (!continuing && !renewable && roleCount >= roleLimit) ||
-      (role === "builder" && roleLimit === 0)
+      roleLimit === 0
     ) {
       notify(context, { type: "agent_budget.denied", ...detail });
       throw budgetError(
@@ -317,7 +311,7 @@ export function enforceAgentBudgetEvent(event) {
       agentId,
       role: event.role || role,
       profile: context.profile,
-      remaining: Math.max(0, context.limits.maxTotalSubagents - context.state.totalStarted),
+      remaining: null,
     });
     return;
   }

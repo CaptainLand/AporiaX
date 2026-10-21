@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { callModelProvider } from "../runtime/provider-stream.js";
-import { modelReasoningParameters } from "../../shared/model-reasoning.js";
+import { chatReasoningParameters } from "../../shared/model-reasoning.js";
 import { SIDE_CHAT_PROMPT, sanitizeSnapshot, taskRecords, taskSnapshot, text } from "./context.js";
 
 const tools = [{ type: "function", function: {
@@ -114,12 +114,14 @@ export function createSideChatService({ dataDirectory, resolveProvider, loadTask
         const completion = await callProvider({ provider: { ...provider, nativeModel: model }, signal: controller.signal,
           body: { model: model.id, messages,
             ...(snapshot && model.supportsTools !== false && round < 3 ? { tools, tool_choice: "auto" } : {}),
-            ...modelReasoningParameters({ ...model, supportsThinking: ["deepseek", "reasoning-effort"].includes(model.thinkingMode) }, { modelId: model.id, thinking: model.thinkingMode === "reasoning-effort", effort: "low" }),
+            ...chatReasoningParameters(model, { thinking: model.thinkingMode === 'reasoning-effort' }),
           },
           onEvent: (event) => {
             if (event.type === "response.delta") {
               answer.content = text(answer.content + event.delta, 64000);
               if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; emit(); }, 80);
+            } else if (event.type === 'response.text.reconciled') {
+              answer.content = text(answer.content.slice(0, roundStart) + event.content, 64000); emit();
             } else if (["response.retry", "response.activity"].includes(event.type)) {
               notify(id, { type: event.type, requestId, attempt: event.attempt, lastActivityAt: new Date().toISOString() });
             }

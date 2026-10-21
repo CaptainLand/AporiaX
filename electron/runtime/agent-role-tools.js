@@ -10,7 +10,7 @@ const fields = {
   skills: { type: 'array', items: { type: 'string' }, maxItems: 64 },
   mcpTools: { type: 'array', items: { type: 'string' }, maxItems: 64 },
   knowledge: { type: 'string', enum: ['off', 'read', 'write'] },
-  maxRounds: { type: 'integer', minimum: 2, maximum: 20 }, maxRequests: { type: 'integer', minimum: 1, maximum: 200 },
+  maxRequests: { type: ['integer', 'null'], minimum: 1, maximum: 1000000, description: 'Optional explicit request budget; null is unlimited. Rounds and lifetime starts are not capped.' },
   maxTokens: { type: ['integer', 'null'], minimum: 1024, maximum: 100000000 },
   maxSeconds: { type: ['integer', 'null'], minimum: 10, maximum: 86400 },
   concurrency: { type: 'integer', minimum: 1, maximum: 6 },

@@ -5,7 +5,7 @@ export function applyProfessionalAgentEvent(items = [], event) {
   let patch = {};
   if (event.type === 'subagent.profile') patch = { profileId: event.profileId, profileName: event.profileName, task: event.task, phase: event.phase, dependsOn: event.dependsOn, systemOwned: event.systemOwned };
   else if (event.type === 'subagent.configured') patch = { configuration: { provider: event.provider, model: event.model, thinking: event.thinking, effort: event.effort, tools: event.tools }, profileName: event.profileName || previous.profileName };
-  else if (event.type === 'subagent.started') patch = { status: 'running', phase: 'model', task: event.task, startedAt: event.timestamp || new Date().toISOString() };
+  else if (event.type === 'subagent.started') patch = { status: 'running', phase: 'model', task: event.task, startedAt: event.timestamp || new Date().toISOString(), previousSummary: previous.summary || previous.previousSummary, summary: '', acceptance: undefined, observedChecks: undefined, elapsedMs: undefined, currentTool: null };
   else if (event.type === 'subagent.budget') patch = { budget: event.budget };
   else if (event.type === 'subagent.phase') patch = { phase: event.phase };
   else if (event.type === 'subagent.profile_result') { const { type, ...result } = event; patch = result; }

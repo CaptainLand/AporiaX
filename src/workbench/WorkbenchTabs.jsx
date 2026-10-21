@@ -20,7 +20,7 @@ const TITLES = {
   terminal: "Terminal",
   process: "Process",
   file: "File",
-  sidechat: "侧边聊天",
+  sidechat: "临时聊天",
   teamchat: "团队消息",
   git: "Git",
 };
@@ -133,7 +133,7 @@ export function WorkbenchTabs({
               <MessagesSquare size={14} /> {tr('团队消息', 'Team messages')}
             </button>
             <button type="button" role="menuitem" onClick={() => { onOpen("sidechat"); setPlusOpen(false); }}>
-              <MessagesSquare size={14} /> {tr("侧边聊天", "Side chat")}
+              <MessagesSquare size={14} /> {tr("临时聊天", "Temporary chat")}
             </button>
             <button type="button" role="menuitem" onClick={() => { onOpen("route"); setPlusOpen(false); }}>
               <GitCompare size={14} /> {tr("变更", "Changes")}

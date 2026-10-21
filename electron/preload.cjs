@@ -142,8 +142,20 @@ contextBridge.exposeInMainWorld("desktop", {
     store: (request) => ipcRenderer.invoke("attachments:store", request),
   },
   ocr: { request: (input) => ipcRenderer.invoke("ocr:request", input) },
+  personalChatGPT: {
+    status: () => ipcRenderer.invoke('personal-chatgpt:status'),
+    startLogin: () => ipcRenderer.invoke('personal-chatgpt:startLogin'),
+    cancel: () => ipcRenderer.invoke('personal-chatgpt:cancel'),
+    signOut: () => ipcRenderer.invoke('personal-chatgpt:signOut'),
+    refreshModels: () => ipcRenderer.invoke('personal-chatgpt:refreshModels'),
+  },
   providers: {
     list: () => ipcRenderer.invoke("providers:list"),
+    onChanged: listener => {
+      const handler = () => listener();
+      ipcRenderer.on('providers:changed', handler);
+      return () => ipcRenderer.removeListener('providers:changed', handler);
+    },
     discover: (request) =>
       ipcRenderer.invoke("providers:discover", request),
     save: (request) => ipcRenderer.invoke("providers:save", request),

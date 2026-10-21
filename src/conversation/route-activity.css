@@ -309,8 +309,7 @@
 .route-activity .ra-load-older { margin-top: 10px; border: 0; border-radius: 12px; background: var(--gray-3); color: var(--text-2); }
 .route-activity .ra-detail { padding-top: 10px; border: 0; border-radius: 12px; background: var(--gray-1); animation: none; }
 .route-activity .ra-record-details > div + div { border: 0; }
-.route-activity .professional-agents .pa-row { margin-top: 7px; padding-inline: 12px; border: 0; border-radius: 14px; background: var(--gray-2); }
-.route-activity .professional-agents .pa-row summary { padding-block: 12px; }
+.route-activity .professional-agents .pa-row { margin-top: 8px; border: 0; border-radius: 10px; background: var(--gray-2); }
 .ra-empty-mark { display: grid; place-items: center; width: 60px; height: 60px; margin-bottom: 16px; border-radius: 18px; background: var(--gray-3); color: var(--text-2); }
 .workbench-panel .route-activity .ra-stat { padding: 14px; gap: 8px; min-height: 84px; border: 0; }
 .workbench-panel .route-activity .ra-stat-state { min-height: 104px; }

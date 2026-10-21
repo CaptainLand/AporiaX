@@ -1,5 +1,5 @@
 import { Brain, Zap } from "lucide-react";
-import { claudeReasoningProfile } from "../../shared/model-reasoning.js";
+import { claudeReasoningProfile, effectiveReasoningProfile } from "../../shared/model-reasoning.js";
 
 export const EMPTY_MODEL = {
   id: "",
@@ -36,6 +36,13 @@ const MODEL_SOURCE_GROUPS = [
     noteEn: "Provided by AporiaX · Uses weekly quota",
   },
   {
+    source: 'chatgpt-personal',
+    titleZh: '个人 ChatGPT',
+    titleEn: 'Personal ChatGPT',
+    noteZh: '使用你授权的个人套餐 · 不使用 Cloud 额度',
+    noteEn: 'Your authorized personal plan · Not Cloud quota',
+  },
+  {
     source: "user-provider",
     titleZh: "你的 Provider",
     titleEn: "Your Providers",
@@ -52,6 +59,7 @@ const MODEL_SOURCE_GROUPS = [
 ];
 
 function providerSource(provider) {
+  if (provider?.id === 'chatgpt-personal' || provider?.kind === 'chatgpt-personal') return 'chatgpt-personal';
   if (provider?.id === "aporia-cloud" || provider?.source === "aporia-cloud" || provider?.kind === "aporia-cloud") {
     return "aporia-cloud";
   }
@@ -60,6 +68,7 @@ function providerSource(provider) {
 }
 
 function modelDescription(provider, source, language) {
+  if (source === 'chatgpt-personal') return language === 'zh' ? '个人 ChatGPT · 套餐额度' : 'Personal ChatGPT · Plan usage';
   if (source === "aporia-cloud") {
     return language === "zh"
       ? "Aporia Cloud · 每周额度"
@@ -87,6 +96,7 @@ export function getAvailableModels(providers) {
     );
     return (provider.models || []).map((model) => ({
       ...model,
+      ...(effectiveReasoningProfile(model, model.id) || {}),
       ...(claudeReasoningProfile(model.id) ? { ...claudeReasoningProfile(model.id), supportsThinking: true } : {}),
       providerId: provider.id,
       providerName: provider.name,

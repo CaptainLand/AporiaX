@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { modelTokenLine } from '../../shared/model-progress-view.js';
 import { applyProfessionalAgentEvent } from '../conversation/professional-agent-events.js';
 import { taskSuspensionLabel } from "../state/task-suspension.js";
 import { splitSteeredReply } from "../state/steering-messages.js";
@@ -85,6 +86,7 @@ export function useHarnessEvents({
       git_status: tr("正在检查 Git 状态", "Inspecting Git status"),
       git_diff: tr("正在读取代码差异", "Reading code diff"),
       write_file: tr("正在修改文件", "Writing file"),
+      delete_file: tr('正在删除文件', 'Deleting file'),
       apply_patch: tr("正在精确修改代码", "Applying a precise code patch"),
       create_word_document: tr("正在生成 Word 文档", "Creating Word document"),
       create_presentation: tr("正在生成 PowerPoint", "Creating PowerPoint presentation"),
@@ -262,14 +264,18 @@ export function useHarnessEvents({
         return;
       }
 
+      if (event.type === 'response.text.reconciled') {
+        flushPendingDeltas(); reduceTaskEvent(); return;
+      }
       if (event.type === "response.reset") {
+        run.modelProgressStage = null;
         flushPendingDeltas();
         reduceTaskEvent();
         setRunStatus({
           title:
               event.phase === "self-check"
               ? tr("AporiaX 正在独立检查", "AporiaX is running an independent check")
-              : tr("AporiaX 正在生成", "AporiaX is responding"),
+              : tr("AporiaX 正在思考或工作中…", "AporiaX is thinking or working…"),
           detail:
             event.phase === "self-check"
               ? tr("正在重新读取本轮修改的代码并检查可改进项", "Re-reading this turn's changes and looking for improvements")
@@ -280,6 +286,13 @@ export function useHarnessEvents({
         return;
       }
 
+      if (event.type === 'response.progress') {
+        const detail = modelTokenLine(event), key = `${event.stage}:${detail}`;
+        if (run.modelProgressStage === key) return;
+        run.modelProgressStage = key;
+        if (['waiting', 'receiving', 'tool-arguments', 'text'].includes(event.stage)) setRunStatus({ title: tr('AporiaX 正在思考或工作中…', 'AporiaX is thinking or working…'), detail });
+        return;
+      }
       if (event.type === "response.delta") {
         const delta = String(event.delta || "");
         if (delta) {

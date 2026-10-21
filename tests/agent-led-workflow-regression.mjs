@@ -64,7 +64,7 @@ try {
     call("write_file", { path: "a.js", content: "export default 1;" }),
     call("complete_self_check", { summary: "Tests passed", checks: ["Claimed test pass"], improvements: [], remaining_risks: [] }),
   ]);
-  assert.equal(fake.receipts.at(-1).reportAccepted, true);
+  assert.equal(fake.receipts.at(-1).reportAccepted, true, JSON.stringify(fake.receipts));
   assert.equal(fake.commands, 0); assert.equal(fake.result.selfCheck.verification.passed, false);
   assert.equal(fake.result.selfCheck.seal, null);
 

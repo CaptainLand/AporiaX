@@ -63,6 +63,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
           : result.message };
     } catch (error) {
       if (!requestIdentity.result && (error?.attemptUsage || error?.usage)) await onFailedUsage(error.attemptUsage || error.usage);
+      if (error.noAutomaticRetry) throw error;
       if (signal?.aborted) throw error;
       if (control && error.cloudQuota && error.safeToRepair) {
         if (error.cloudQuota.truncated) {

@@ -35,6 +35,9 @@ function tokenCounts(value) {
 }
 
 export function beginModelResponseDiagnostic({ protocol, modelId, trace = {} } = {}) {
+  // Temporary conversations never leave response captures on disk and must
+  // not consume a diagnostic capture armed for an ordinary task.
+  if (trace.origin === 'temporary-chat') return null;
   if (!configuration?.remaining) return null;
   // Consume synchronously so concurrent workers cannot all claim one capture.
   const config = configuration; config.remaining--;

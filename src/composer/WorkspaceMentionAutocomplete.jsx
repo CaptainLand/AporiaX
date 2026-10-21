@@ -210,6 +210,7 @@ export function useWorkspaceMentionAutocomplete({
   onAddFiles,
   onAddImages,
   attachmentLoading = false,
+  filesOnly = false,
 }) {
   const [state, setState] = useState(EMPTY_STATE);
   const stateRef = useRef(state);
@@ -292,8 +293,11 @@ export function useWorkspaceMentionAutocomplete({
         Object.assign(categories[0], { group: '项目上下文', groupEn: 'Project context' });
         Object.assign(categories[2], { group: '能力与工具', groupEn: 'Capabilities & tools' });
       }
-      setState({ query, suggestions: [...actions, ...categories], selectedIndex: 0, loading: false });
+      setState({ query, suggestions: [...actions, ...categories.filter(item => !filesOnly || item.category === 'files')], selectedIndex: 0, loading: false });
       return;
+    }
+    if (filesOnly && activeCategory && activeCategory !== 'files') {
+      setState({ query, suggestions: [], selectedIndex: 0, loading: false }); return;
     }
     setState({
       query,
@@ -306,7 +310,7 @@ export function useWorkspaceMentionAutocomplete({
       const explicitKind = activeCategory;
       let paths = [], pending = 0, error = false;
       const catalogs = new Map();
-      if (workspacePath && (!explicitKind || explicitKind === "git")) catalogs.set("git", [{ key: "git:changes", kind: "git", label: "Git changes", token: "git:changes", description: "只读摘要 / read-only summary" }]);
+      if (!filesOnly && workspacePath && (!explicitKind || explicitKind === "git")) catalogs.set("git", [{ key: "git:changes", kind: "git", label: "Git changes", token: "git:changes", description: "只读摘要 / read-only summary" }]);
       const publish = () => {
         if (requestRevision.current !== revision) return;
         const liveValue = valueRef.current;
@@ -331,7 +335,7 @@ export function useWorkspaceMentionAutocomplete({
       };
       // Each source publishes independently. Explicit extension references
       // never scan files or wait for unrelated catalogs/workbench resources.
-      for (const kind of ["skill", "mcp"]) if (!explicitKind || explicitKind === kind)
+      for (const kind of ["skill", "mcp"]) if (!filesOnly && (!explicitKind || explicitKind === kind))
         load(() => buildExtensionMentionIndex(workspacePath, kind), items => catalogs.set(kind, items));
       if (!explicitKind || explicitKind === 'files') load(async () => {
         if (taskId && workspacePath && query.query && window.desktop?.workbench?.request) {
@@ -345,7 +349,7 @@ export function useWorkspaceMentionAutocomplete({
         }
         return indexed;
       }, items => { paths = items; });
-      if ((!explicitKind || ["browser", "terminal"].includes(explicitKind)) && taskId && window.desktop?.workbench?.request)
+      if (!filesOnly && (!explicitKind || ["browser", "terminal"].includes(explicitKind)) && taskId && window.desktop?.workbench?.request)
         load(() => window.desktop.workbench.request({ action: "list", taskId, workspacePath }), resources => catalogs.set("workbench",
           (resources || []).filter(item => ["browser", "terminal", "process"].includes(item.kind)).map(item => {
             const kind = item.kind === "browser" ? "browser" : "terminal";
@@ -354,7 +358,7 @@ export function useWorkspaceMentionAutocomplete({
       publish();
     }, 120);
     return () => { clearTimeout(timer); requestRevision.current += 1; };
-  }, [value, workspacePath, taskId, cursorRevision, textareaRef, close, category, picker, attachmentLoading]);
+  }, [value, workspacePath, taskId, cursorRevision, textareaRef, close, category, picker, attachmentLoading, filesOnly]);
 
   useEffect(() => {
     close();

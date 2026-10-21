@@ -90,12 +90,14 @@ try {
   };
   try {
     const deferred = await runHarness({ runId: 'deferred-curator', workspacePath: root, permission: 'workspace-write', language: 'en',
-      provider: { id: 'mock', name: 'Mock', vendor: 'openai', baseUrl: 'https://test.invalid/v1', apiKey: 'mock', models: [{ id: 'mock', supportsTools: true, contextWindow: 32000 }] }, modelId: 'mock',
+      // This exercises asynchronous curation, not the separate small-window
+      // rejection gate. Leave room for the full native catalog and knowledge.
+      provider: { id: 'mock', name: 'Mock', vendor: 'openai', baseUrl: 'https://test.invalid/v1', apiKey: 'mock', models: [{ id: 'mock', supportsTools: true, contextWindow: 64000 }] }, modelId: 'mock',
       knowledgeEnabled: true, knowledgeProjectId: 'legacy', understandingDirectory, deferUnderstandingCuration: true,
       messages: [{ role: 'user', content: 'Create minimal project metadata in package.json.' }],
       onEvent: (event) => { if (['understanding.skipped', 'understanding.updated', 'understanding.failed'].includes(event.type)) curatorFinished(); } });
     delivered = true;
-    assert.equal(deferred.status, 'completed', deferred.content);
+    assert.equal(deferred.status, 'completed', deferred.content + '\n' + JSON.stringify(deferred.contextBudget));
     assert.equal(deferred.witness.agentActivity.roles.curator.activations, 1, 'Deferred Curator start is captured before final snapshot');
     releaseCurator(); await finished;
     assert(curatorRequested);

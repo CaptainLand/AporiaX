@@ -26,10 +26,10 @@ try {
     assert.equal(await page.locator('.ra-history-controls').count(), 0, 'filters are opt-in with full history');
     const active = page.locator('.ra-current');
     assert.equal(await active.locator('.ra-current-row').count(), 3);
-    assert.equal(await active.locator('.ra-current-row').first().locator('strong').innerText(), '等待模型响应', 'Newest active action first');
+    assert.equal(await active.locator('.ra-current-row').first().locator('strong').innerText(), 'AporiaX 正在思考或工作中…', 'Newest active action first');
     await active.locator('.ra-actor').filter({ hasText: '搭匠' }).waitFor();
     await active.locator('.ra-actor').filter({ hasText: '验准' }).waitFor();
-    await active.getByText('等待模型响应', { exact: true }).waitFor();
+    await active.getByText('AporiaX 正在思考或工作中…', { exact: true }).waitFor();
     assert.equal(await active.getByText(/完成.*创建与修改/).count(), 0);
     await page.screenshot({ path: '.tmp/route-activity/after-light.png', fullPage: true });
     const failed = page.locator('.ra-event.failed');
@@ -133,7 +133,7 @@ try {
     await page.screenshot({ path: '.tmp/route-activity/cloud-queue-light.png', fullPage: true });
     await page.evaluate(() => window.routeFixture.emit({ type: 'response.cloud.admitted', source: 'desktop' }));
     await active.getByText('等待 Cloud 模型槽位', { exact: true }).waitFor({ state: 'hidden' });
-    await active.getByText('等待模型响应', { exact: true }).waitFor();
+    await active.getByText('AporiaX 正在思考或工作中…', { exact: true }).waitFor();
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; window.routeFixture.emit({ type: 'turn.completed', status: 'partial', summary: '部分修改已保存，验证尚未完成' }); });
     await page.locator('.ra-state').filter({ hasText: '已完成' }).waitFor();
     assert.equal(await page.locator('.ra-state').getByText('部分完成', { exact: true }).count(), 0, 'Normal delivered replies use the simplified completion label; detailed records remain inspectable');

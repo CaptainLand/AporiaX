@@ -37,7 +37,9 @@ for (const cap of [1, 6]) {
 await runWithAgentBudget(planAgentBudget({ ...options, agentBudget: { maxTotalSubagents: 1 } }), {}, async () => {
   enforceAgentBudgetEvent({ type: "subagent.started", role: "builder", agentId: "a" });
   enforceAgentBudgetEvent({ type: "subagent.completed", role: "builder", agentId: "a" });
-  assert.throws(() => enforceAgentBudgetEvent({ type: "subagent.started", role: "builder", agentId: "b" }), /budget/);
+  assert.doesNotThrow(() => enforceAgentBudgetEvent({ type: "subagent.started", role: "builder", agentId: "b" }));
+  enforceAgentBudgetEvent({ type: "subagent.completed", role: "builder", agentId: "b" });
+  assert.equal(currentAgentBudget().state.totalStarted, 2, 'historical lifetime quotas do not truncate progressing work');
 });
 await runWithAgentBudget(planAgentBudget({ ...options, builderLimit: 0 }), {}, async () => {
   await assert.rejects(withAgentBudgetAdmission({ role: "builder" }, () => {}), /prohibits/);

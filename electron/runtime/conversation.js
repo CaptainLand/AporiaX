@@ -138,6 +138,9 @@ export function sanitizeConversation(
         ? message.content.slice(0, -(guidance.length + 2)) : message.content;
       const references = String(message.aporiaWorkspaceContext || "");
       if (references && text.endsWith("\n\n" + references)) text = text.slice(0, -(references.length + 2));
+      if (message.role === 'assistant' && typeof message.deliveryDetails === 'string' && message.deliveryDetails.trim()) {
+        text += '\n\n[Supporting details from this assistant reply]\n' + message.deliveryDetails.trim();
+      }
       const provenance = {
         ...(guidance ? { aporiaSkillContext: guidance } : {}),
         ...(references ? { aporiaWorkspaceContext: references } : {}),
@@ -238,6 +241,9 @@ export function formatToolStepDetail(
       ? "Invalid tool arguments; the agent will regenerate them"
       : "工具参数格式无效，Agent 将重新生成参数";
   }
+  if (/^PATCH_FORMAT_|^PATCH_CONTEXT_MISMATCH/.test(error)) return language === 'en'
+    ? (error.startsWith('PATCH_CONTEXT_MISMATCH') ? 'Patch context no longer matches; re-read the file before editing.' : 'Patch syntax is invalid or unsupported; no files were changed. Use delete_file for deletion.')
+    : (error.startsWith('PATCH_CONTEXT_MISMATCH') ? '补丁上下文不匹配，请重新读取文件后修改。' : '补丁格式无效或暂不支持，未修改文件；删除文件请使用 delete_file。');
   if (/Mandatory self-check has not started yet/i.test(error)) {
     return language === "en"
       ? "Harness started the mandatory self-check and will continue reviewing this turn"

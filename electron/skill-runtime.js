@@ -1,6 +1,13 @@
 const MAX_ACTIVE_SKILLS = 2;
 const MAX_SKILL_CONTEXT_CHARS = 90_000;
 
+// External Node cannot execute a script inside Electron's virtual ASAR archive.
+// Only bundled Node packages have a matching explicit asarUnpack build rule.
+export function skillExecutionRoot(skill) {
+  const root = String(skill?.packageRoot || '');
+  return skill?.source === 'builtin' && skill?.metadata?.runtime === 'node' ? root.replace(/\.asar(?=[\\/])/, '.asar.unpacked') : root;
+}
+
 function selectedUserIndex(messages, sourceUserId) {
   if (!Array.isArray(messages) || !messages.length) return -1;
   if (sourceUserId) {
@@ -43,6 +50,7 @@ function buildSkillContext(skills) {
         skill.compatibilityWarnings?.length ? `Compatibility limits: ${skill.compatibilityWarnings.join("; ")}` : "",
         skill.runtime?.executable ? `Configured Python interpreter: ${skill.runtime.executable}. File detected only; verify imports before use. It is outside the versioned package so updates do not replace it.` : "",
         skill.packageRoot ? `Package root: ${skill.packageRoot}\nRead package resources with read_skill_resource(skill="${skill.name}", path="relative/path"). This root is read-only; write outputs to the task workspace. Upstream Bash/terminal commands must use AporiaX run_command and current task permissions, never setup scripts during discovery.` : "",
+        skill.packageRoot && skill.metadata?.runtime === 'node' ? `Node script root: ${skillExecutionRoot(skill)}\nUse this physical root for the package's Node scripts. Script execution and external network access still require the normal task permissions; never execute scripts during discovery or bypass a sandbox.` : '',
         skill.tools?.length
           ? `Recommended tools: ${skill.tools.join(", ")}`
           : "Recommended tools: none declared",

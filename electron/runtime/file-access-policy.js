@@ -2,10 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import { parsePatch } from "diff";
+import { parseWorkspacePatch } from './workspace-patch.js';
 
-export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "inspect_office_file", "write_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
-const WRITES = new Set(["write_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
+export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "inspect_office_file", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
+const WRITES = new Set(["write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const scope = new AsyncLocalStorage();
 let settings = () => ({ enabled: false, protectedPaths: [] });
 // Trusted main-process wiring only. This function is not exposed over IPC or tools.
@@ -97,10 +97,13 @@ export async function assertNativeFileTool({ toolName, input = {}, workspaceRoot
   if (!NATIVE_FILE_TOOLS.has(toolName)) return;
   if (typeof workspaceRoot !== "string" || !workspaceRoot.trim()) throw denied("A workspace is required for native file access.");
   if (toolName === "apply_patch" && input.patch?.trim()) {
-    for (const patch of parsePatch(input.patch)) {
-      const value = patch.newFileName && patch.newFileName !== "/dev/null" ? patch.newFileName : patch.oldFileName;
-      await verifyNativeFileTarget(workspaceRoot, String(value || "").replace(/^[ab][\\/]/, ""), { writable: true });
+    for (const patch of parseWorkspacePatch(input.patch)) {
+      await verifyNativeFileTarget(workspaceRoot, patch.path, { writable: true });
     }
+  } else if (toolName === 'delete_file') {
+    const path = nativeFilePath(workspaceRoot, input.path);
+    if (!filePathInside(workspaceRoot, path) || path === resolve(workspaceRoot)) throw denied('delete_file only accepts one exact file inside the workspace.');
+    await verifyNativeFileTarget(workspaceRoot, input.path, { writable: true });
   } else if (toolName === "read_external_file") await verifyExternalFileTarget(workspaceRoot, input.path);
   else await verifyNativeFileTarget(workspaceRoot, input.path || ".", { writable: WRITES.has(toolName) });
   if (toolName === "create_word_document") for (const block of input.blocks || []) if (block.type === "image") await verifyNativeFileTarget(workspaceRoot, block.path);

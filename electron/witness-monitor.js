@@ -61,6 +61,7 @@ function publicRecord(record, currentTime) {
     ),
     longRunning: Boolean(record.longRunning),
     acceptance: record.acceptance || null,
+    ...(record.modelProgress ? { modelProgress: { ...record.modelProgress } } : {}),
   };
 }
 
@@ -294,6 +295,21 @@ export function createWitnessMonitor({
         const record = recordIndex.get(`cloud-queue:${event.agentId || 'main'}`);
         if (record?.status === "waiting") finishRecord(record.key, { ...event, type: "response.cloud.queue-ended" }, event.status === "completed");
         break;
+      }
+      case 'response.progress': {
+        const record = [...records].reverse().find(item => item.kind === 'thinking' && item.status === 'running');
+        if (record && ['waiting', 'receiving', 'tool-arguments', 'text'].includes(event.stage)) {
+          const previous = record.modelProgress;
+          record.modelProgress = { stage: event.stage, generatedChars: Math.max(0, Number(event.generatedChars) || 0), toolName: /^[a-zA-Z_][a-zA-Z0-9_.:-]{0,119}$/.test(event.toolName || '') ? event.toolName : '', elapsedMs: Math.max(0, Number(event.elapsedMs) || 0) };
+          for (const key of ['inputTokens', 'outputTokens']) record.modelProgress[key] = Number.isSafeInteger(event[key]) && event[key] >= 0 ? event[key] : null;
+          record.modelProgress.inputTokensEstimated = event.inputTokensEstimated !== false;
+          record.modelProgress.outputTokensEstimated = event.outputTokensEstimated !== false;
+          record.lastActivityAt = isoTime(timestamp);
+          if (!previous || previous.stage !== event.stage || previous.inputTokensEstimated !== record.modelProgress.inputTokensEstimated || previous.outputTokensEstimated !== record.modelProgress.outputTokensEstimated || timestamp - (record.progressPublishedAt || 0) >= 500) {
+            record.progressPublishedAt = timestamp; publish('response.progress');
+          }
+        }
+        return;
       }
       case "response.activity":
       case "response.delta":

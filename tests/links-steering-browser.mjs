@@ -64,6 +64,18 @@ try {
   assert.equal(await page.evaluate(() => window.fixtureWorkbench.openHref("report.txt", { workspacePath: "D:/different-task" })), false);
   await page.getByRole("link", { name: "便携版", exact: true }).click();
   assert.equal((await page.evaluate(() => window.linkCalls)).at(-1).action, "open", "installers use native confirm/open, not a binary text pane");
+  for (const href of ["pages/preview.html", "D:/Agent开发/pages/展示.HTM", "file:///D:/Agent开发/pages/preview.html", "pages/preview.html:42"]) {
+    assert.equal(await page.evaluate(href => window.fixtureWorkbench.openHref(href), href), true);
+    await page.waitForFunction(() => window.fixtureWorkbench.layout.active === "browser-html-fixture");
+    const last = await page.evaluate(() => window.workbenchCalls.at(-1));
+    assert.equal(last.action, "preview-html", "HTML links default to the browser rather than the editor");
+    assert.match(last.path, /\.html?$/i);
+  }
+  await page.evaluate(() => window.fixtureWorkbench.openFile("pages/preview.html"));
+  await page.waitForFunction(() => window.fixtureWorkbench.layout.tabs.some(tab => tab.kind === "file" && tab.path === "pages/preview.html"));
+  assert.equal(await page.evaluate(() => window.fixtureWorkbench.layout.tabs.some(tab => tab.kind === "file" && tab.path === "src/example.js")), false);
+  await page.evaluate(() => window.fixtureWorkbench.openHref("src/example.js:12"));
+  await page.waitForFunction(() => window.fixtureWorkbench.layout.tabs.some(tab => tab.kind === "file" && tab.path === "src/example.js" && tab.line === 12));
   assert.deepEqual(errors, []);
   console.log("Browser links, errors, buffered steering chronology: PASS");
 } finally {

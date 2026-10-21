@@ -1,12 +1,13 @@
 import { readTextPage } from "./text-reader.js";
-import { mutateWorkspaceFiles } from "./workspace-mutations.js";
+import { runIsolatedVerification } from './isolated-verification.js';
+import { mutateWorkspaceFiles, prepareFileDeletion } from "./workspace-mutations.js";
 import { cleanupTemporaryCheck, registerTemporaryCheck, validateTemporaryCheckCreation } from "./temporary-check-files.js";
 import { readSkillResource, searchSkills } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, join } from "node:path";
-import { applyPatch as applyUnifiedPatch, parsePatch } from "diff";
+import { parseWorkspacePatch, applyWorkspacePatch } from './workspace-patch.js';
 import {
   MAX_OFFICE_FILE_BYTES,
   OFFICE_CREATE_TOOL_NAMES,
@@ -91,13 +92,6 @@ function paginateContent(content, input, maximumChars) {
   };
 }
 
-function unifiedPatchPath(filePatch) {
-  const value = filePatch?.newFileName && filePatch.newFileName !== "/dev/null"
-    ? filePatch.newFileName
-    : filePatch?.oldFileName;
-  return String(value || "").replace(/^[ab][\\/]/, "").replace(/\\/g, "/");
-}
-
 function normalizeGitPath(value) {
   const path = String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
   if (!path || isAbsolute(path) || path.includes("\0") || path.split("/").includes("..")) {
@@ -175,6 +169,7 @@ export function createNativeToolExecutor({
     signal,
     sandboxExecutor,
     sandboxStatus = null,
+    dependencyWorkspaceRoot = workspaceRoot,
     browserRuntime = null,
     processManager = null,
     lspManager = null,
@@ -426,27 +421,36 @@ export function createNativeToolExecutor({
       };
     }
 
+    if (toolName === 'delete_file') {
+      const { filePath, previous, beforeContent, binary, sha256, bytes, fileBacked } = await prepareFileDeletion(workspaceRoot, input, { signal });
+      let recovery = null;
+      if (!input.dry_run) recovery = await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: previous, after: null }] });
+      return { modelResult: { path: input.path, deleted: !input.dry_run, dryRun: Boolean(input.dry_run), bytes, sha256, recoverable: recovery?.status === 'committed' },
+        ...(input.dry_run ? {} : { change: { path: input.path, beforeContent, afterContent: '', beforeMissing: false, afterMissing: true, deleted: true, created: false, reverted: false, binary,
+          ...(fileBacked ? { source: 'file-deletion', fileSnapshot: { manifestPath: recovery.manifestPath, sha256, bytes }, artifact: { label: '文件快照' }, additions: 0, deletions: 0 } : calculateLineChanges(beforeContent, '')) } }) };
+    }
     if (toolName === "apply_patch") {
       if (typeof input.patch === "string" && input.patch.trim()) {
         if (input.patch.length > maxPatchTextChars) {
           throw new Error(`Unified patch must be at most ${maxPatchTextChars} characters.`);
         }
-        const filePatches = parsePatch(input.patch);
+        const filePatches = parseWorkspacePatch(input.patch);
         if (!filePatches.length || filePatches.length > 50) {
           throw new Error("Unified patch must contain between 1 and 50 file patches.");
         }
         const prepared = [];
         for (const filePatch of filePatches) {
-          const path = unifiedPatchPath(filePatch);
+          const path = filePatch.path;
           if (!path || (!outsideFileAccessEnabled() && (isAbsolute(path) || path.split("/").includes("..")))) {
             throw new Error(`Unsafe unified patch path: ${path || "unknown"}`);
           }
           const filePath = await verifyWritableTarget(workspaceRoot, path);
           let previousContent = "";
-          let created = filePatch.oldFileName === "/dev/null";
-          const deleted = filePatch.newFileName === "/dev/null";
+          let created = filePatch.kind === 'add';
+          const deleted = filePatch.kind === 'delete';
           try {
             previousContent = await readFile(filePath, "utf8");
+            if (created) throw new Error('PATCH_TARGET_EXISTS: Add File cannot overwrite an existing file. Use Update File.');
             created = false;
           } catch (error) {
             if (error?.code !== "ENOENT" || !created) throw error;
@@ -454,7 +458,7 @@ export function createNativeToolExecutor({
           if (input.expected_sha256 && filePatches.length === 1 && sha256(previousContent) !== input.expected_sha256.toLowerCase()) {
             throw new Error("Patch precondition failed because the file SHA-256 changed.");
           }
-          const nextContent = applyUnifiedPatch(previousContent, filePatch);
+          const nextContent = applyWorkspacePatch(previousContent, filePatch);
           if (nextContent === false) {
             throw new Error(`Unified patch context did not match: ${path}`);
           }
@@ -572,6 +576,9 @@ export function createNativeToolExecutor({
       return { modelResult: await installLanguageServer({ language: input.language, signal }) };
     }
 
+    if (toolName === 'verify_project') {
+      return { modelResult: await runIsolatedVerification({ workspaceRoot, dependencyWorkspaceRoot, input, signal, sandboxStatus }) };
+    }
     if (toolName === "run_command") {
       if (
         typeof input.command !== "string" ||

@@ -97,6 +97,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     github_pr_view: "allow",
     github_pr_checks: "allow",
     write_file: "allow",
+    delete_file: "ask",
     cleanup_temporary_check: "allow",
     apply_patch: "allow",
     create_word_document: "allow",
@@ -107,6 +108,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     // The runtime still requires approval for unsandboxed/manual execution and
     // only auto-runs when the current sandbox backend is marked safe.
     run_command: "allow",
+    verify_project: "allow",
     start_process: "ask",
     read_process: "allow",
     wait_process: "allow",
@@ -143,6 +145,7 @@ const DEFAULT_PERMISSION_POLICIES = {
     task_brief: "allow",
     replan_strategy: "allow",
     write_file: "allow",
+    delete_file: "ask",
     cleanup_temporary_check: "allow",
     apply_patch: "allow",
     run_command: "allow",
@@ -273,7 +276,7 @@ export function createEventEmitter(onEvent, options = {}) {
     enforceAgentBudgetEvent(event);
     const enriched = bus.emit(event);
     const sharedBus = getDefaultHarnessEventBus();
-    if (enriched && sharedBus && sharedBus !== bus) {
+    if (enriched && options.forwardShared !== false && sharedBus && sharedBus !== bus) {
       const {
         sequence: runtimeSequence,
         timestamp: runtimeTimestamp,

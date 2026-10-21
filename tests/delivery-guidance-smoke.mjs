@@ -15,6 +15,13 @@ try {
     assert.match(instructions, /whether the service will remain running/);
     assert.match(instructions, /do not shorten in-progress milestone updates/);
     assert.match(instructions, /Never remove an important failure or unverified limitation/);
+    assert.match(instructions, /Result-first delivery:/);
+    assert.match(instructions, /Do not organize the final answer as explore\/review\/verify sections/);
+    assert.match(instructions, /certification, parent-reviewed-not-independent-proof/);
+    assert.match(instructions, /Never put an important failure or action only in the full reply/);
+    assert.match(instructions, /speak naturally to the user, not like an audit report/);
+    assert.match(instructions, /at most one or two genuinely important points/);
+    assert.match(instructions, /a build or syntax check alone does not prove browser\/runtime behavior/);
     return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: "Hello, what would you like to do?" } }] }) + '\n\ndata: [DONE]\n\n');
   };
   const result = await runHarness({

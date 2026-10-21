@@ -13,6 +13,8 @@ import { modelOutputBudget } from "./output-budget.js";
 import { prepareCloudWindDown, observeCloudQuota } from "./cloud-wind-down.js";
 import { assertLocalControlActive, consumeLocalControlModelCall } from "../control/policy.js";
 import { beginModelResponseDiagnostic } from "./model-response-diagnostics.js";
+import { createModelStreamProgress } from './model-stream-progress.js';
+import { estimateConversationTokens } from '../agent-context-core.js';
 
 const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
@@ -121,6 +123,12 @@ function responseError(provider, payload, status, headers, streaming = false) {
     `${provider.name} API returned HTTP ${status}.`;
   const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), status);
   error.providerCode = payload?.error?.code || payload?.code || null;
+  if (provider.kind === 'chatgpt-personal') {
+    error.retryable = false;
+    if (/subscription_sharing_usage_(?:limit_exceeded|unavailable)/.test(String(error.providerCode)))
+      error.message = '个人 ChatGPT 套餐额度已达限制或暂不可用，请在 ChatGPT 设置中查看用量；未切换到 Cloud 或付费 API。';
+    else if ([401, 403].includes(status)) error.message = '个人 ChatGPT 授权不可用，请在模型设置中重新连接；未切换其他计费方式。';
+  }
   error.retryAfterMs = retryAfterMilliseconds(headers);
   if (Number.isSafeInteger(payload?.retryAfterMs) && payload.retryAfterMs >= 0)
     error.retryAfterMs = Math.max(error.retryAfterMs || 0, payload.retryAfterMs);
@@ -179,6 +187,10 @@ function settledQuotaExhausted(receipt) {
 }
 
 async function fetchProviderResponse(provider, init, wire, diagnostic) {
+  if (provider.kind === 'chatgpt-personal') {
+    if (typeof provider.personalFetch !== 'function') throw Object.assign(new Error('请先连接个人 ChatGPT 账号。'), { code: 'PERSONAL_CHATGPT_SIGN_IN_REQUIRED', retryable: false });
+    return normalizeNativeResponse(await provider.personalFetch('/responses', init), wire, { observe: diagnostic?.observe });
+  }
   if (provider.kind === "aporia-cloud") {
     if (typeof provider.authenticatedFetch !== "function") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
@@ -208,7 +220,9 @@ export async function callModelProvider({
   }
   const cloudTrace = prepared?.trace || { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
   let attemptUsage = null;
-  const attemptLimit = Math.max(1, Math.min(PROVIDER_MAX_ATTEMPTS, Number.isInteger(maxAttempts) ? maxAttempts : PROVIDER_MAX_ATTEMPTS));
+  // Personal plan requests have no cross-app idempotency receipt. Never replay
+  // an ambiguous/partially streamed request or silently switch billing routes.
+  const attemptLimit = provider.kind === 'chatgpt-personal' ? 1 : Math.max(1, Math.min(PROVIDER_MAX_ATTEMPTS, Number.isInteger(maxAttempts) ? maxAttempts : PROVIDER_MAX_ATTEMPTS));
   for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
     const budgetTicket = await beginRoleRequest(body);
     const started = performance.now();
@@ -235,6 +249,7 @@ export async function callModelProvider({
       attemptUsage = mergeTokenUsage(attemptUsage, error.usage);
       error.attemptUsage = attemptUsage;
       error.category = providerErrorCategory(error);
+      if (provider.kind === 'chatgpt-personal') Object.assign(error, { retryable: false, noAutomaticRetry: true, safeToRepair: false });
       onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
         status: "failed", category: error.category, usage: error.usage || null });
       const maxAttempts = Math.min(attemptLimit, isProviderTimeoutError(error)
@@ -291,6 +306,9 @@ export function createOpenAICompatibleProvider({
     supportsTools: model.supportsTools !== false,
     supportsThinking: Boolean(model.supportsThinking),
     thinkingMode: model.thinkingMode || "none",
+    supportedEfforts: model.supportedEfforts,
+    defaultEffort: model.defaultEffort,
+    reasoningCapabilitySource: model.reasoningCapabilitySource,
     supportsModel: (modelId) => model.id === modelId,
     complete: ({ body, signal, onStreamEvent, requestTrace = {} }) =>
       callModelProvider({
@@ -355,6 +373,8 @@ export async function callModelProviderOnce({
     }, PROVIDER_IDLE_TIMEOUT_MS);
   };
   resetIdleTimeout();
+  const progress = createModelStreamProgress({ inputTokens: estimateConversationTokens([...(body.messages || []), ...(body.tools?.length ? [{ role: 'system', content: JSON.stringify(body.tools) }] : [])]) });
+  onEvent?.({ type: 'response.progress', ...progress.waiting() });
 
   try {
     const response = await fetchProviderResponse(provider, {
@@ -407,6 +427,11 @@ export async function callModelProviderOnce({
       if (!data) return;
       if (data === "[DONE]") { sawDone = true; if (!nativeProtocol) diagnostic?.observe(data); return; }
       const payload = JSON.parse(data);
+      if (nativeProtocol && payload.aporia_stream_progress) {
+        const metadata = progress.receiveNative(payload.aporia_stream_progress);
+        if (metadata) onEvent?.({ type: 'response.progress', ...metadata });
+        return;
+      }
       if (!nativeProtocol) diagnostic?.observe(payload);
       if (provider.kind === "aporia-cloud" && ["queued", "admitted"].includes(payload.aporiaQueue?.state)) {
         const queue = payload.aporiaQueue;
@@ -422,6 +447,11 @@ export async function callModelProviderOnce({
           ? payload.status : 0;
         throw responseError(provider, payload, status, response.headers, true);
       }
+      if (wire.protocol === 'responses' && typeof payload.aporia_text_snapshot === 'string') {
+        content = payload.aporia_text_snapshot; receivedContent = content;
+        onEvent?.({ type: 'response.text.reconciled', content });
+        return;
+      }
       if (payload.aporia_native_state && ["responses", "anthropic-messages"].includes(wire.protocol)) nativeState = payload.aporia_native_state;
       if (provider.kind === "aporia-cloud" && typeof payload.requestId === "string" && typeof payload.usageState === "string") {
         if (payload.requestId === response.headers.get("x-aporia-request-id")) cloudBilling = payload;
@@ -429,11 +459,19 @@ export async function callModelProviderOnce({
           chargedMicros: Number.isSafeInteger(payload.chargedMicros) ? payload.chargedMicros : null });
         return; // Billing uses a different usage schema; never overwrite model usage.
       }
-      if (payload.usage) { usage = payload.usage; observedUsage = payload.usage; }
+      if (payload.usage) {
+        usage = payload.usage; observedUsage = payload.usage;
+        const metadata = progress.reportUsage(payload.usage);
+        if (metadata) onEvent?.({ type: 'response.progress', ...metadata });
+      }
       const choice = payload?.choices?.[0];
       if (choice?.finish_reason != null) finishReason = choice.finish_reason;
       const delta = choice?.delta;
       if (!delta) return;
+      if (!nativeProtocol) {
+        const streamProgress = progress.chat(delta);
+        if (streamProgress) onEvent?.({ type: 'response.progress', ...streamProgress });
+      }
       if (typeof delta.content === "string" && delta.content) {
         content += delta.content;
         receivedContent = content;
@@ -500,7 +538,10 @@ export async function callModelProviderOnce({
     if (finishReason === "tool_calls" && !toolCalls.filter(Boolean).length) failIncomplete("PROVIDER_TOOL_CALL_INCOMPLETE");
     if (!toolCalls.filter(Boolean).length && !content.trim()) failIncomplete("MODEL_EMPTY_RESPONSE");
 
+    const finalProgress = progress.reportUsage(usage, { final: true }) || progress.flush();
+    if (finalProgress) onEvent?.({ type: 'response.progress', ...finalProgress });
     diagnosticOutcome = "completed";
+    if (provider.kind === 'chatgpt-personal') provider.markPersonalModelVerified?.(body.model);
     return {
       finishReason: finishReason || (toolCalls.length ? "tool_calls" : "stop"),
       streamComplete: true,

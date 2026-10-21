@@ -122,7 +122,7 @@ export function persistableLayout(layout) {
   const next = normalizeLayout(layout);
   return {
     // Inline attachments can be large; their bytes already live in task history.
-    tabs: next.tabs.filter((tab) => tab.kind !== "image" || !tab.src.startsWith("data:")),
+    tabs: next.tabs.filter((tab) => tab.kind !== 'sidechat' && (tab.kind !== "image" || !tab.src.startsWith("data:"))),
     active: next.active,
     open: next.open,
     dock: "right",

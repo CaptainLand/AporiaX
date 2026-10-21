@@ -12,6 +12,7 @@ window.desktop = {
     window.workbenchCalls.push(request);
     if (request.action === "list") return [];
     if (request.action === "file-check") return { status: request.path.includes("missing") ? "missing" : "exists" };
+    if (request.action === "preview-html") return { id: "browser-html-fixture", kind: "browser", title: "HTML Preview", url: "http://127.0.0.1:12345/preview/page.html", taskId: request.taskId, workspacePath: request.workspacePath, owner: "user" };
     return {};
   } },
   links: { activate: async (request) => {

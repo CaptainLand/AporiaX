@@ -40,7 +40,7 @@ function finiteTimes(values) {
 function AgentActivitySummary({ run }) {
   const { tr, language } = useI18n();
   const stats = routeAgentActivity(run);
-  const labels = Object.fromEntries(ACTIVITY_AGENT_ROLES.map(role => [role, agentName(role, language)]));
+  const labels = Object.fromEntries(ACTIVITY_AGENT_ROLES.map(role => [role, role === 'main' ? 'AporiaX' : agentName(role, language)]));
   return <section className="ra-agents" aria-label={tr('本轮 Agent 使用情况', 'Agent activity in this run')}>
     <div className="ra-agent-counts" title={tr('按实际启动次数统计，包含继续执行；模型请求轮数和心跳不重复计数。', 'Counts actual starts, including continuations; model rounds and heartbeats do not count.')}>
       {ACTIVITY_AGENT_ROLES.map((role) => {
@@ -86,7 +86,7 @@ function RecordDetails({ record, now, canOpenFile, onOpenFile, openError, id }) 
   </div>;
 }
 
-export function RouteActivityView({ task, isRunning, approval, approvalResponding, onRespondApproval, onRevert, onSaveChanges, onNotice, onDialogChange }) {
+export function RouteActivityView({ task, isRunning, approval, approvalResponding, onRespondApproval, onRevert, onSaveChanges, onNotice, onDialogChange, onContinueAgent }) {
   const { tr, language } = useI18n();
   const workbench = useWorkbenchContext();
   const runs = useMemo(() => collectTaskRouteRuns(task), [task]);
@@ -282,7 +282,7 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
       </section>
 
       {!selectedRun?.subagents?.length && <AgentActivitySummary run={selectedRun} />}
-      <ProfessionalAgentPanel key={selectedRun?.id} run={selectedRun} taskId={task.id} active={isLatest && isRunning} />
+      <ProfessionalAgentPanel key={selectedRun?.id} run={selectedRun} taskId={task.id} active={isLatest && isRunning} onContinueAgent={onContinueAgent} />
       {!isLatest && <div className="ra-history-notice"><span>{tr('正在查看历史轮次，当前任务不受影响。', 'Viewing history. The current task is unaffected.')}</span><button type="button" onClick={() => chooseRun(runs.at(-1).id)}>{tr('回到最新一轮', 'Back to latest')}<ArrowRight size={13} /></button></div>}
       {isLatest && approval && <ApprovalCard approval={approval} responding={approvalResponding} onRespond={onRespondApproval} />}
 
@@ -307,7 +307,7 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
             <div className="ra-record-copy">
               <div className="ra-actor">{activityActor(record, language)}{record.agentId && <span title={record.agentId}>{record.agentId}</span>}</div>
               <strong>{description.title}</strong>
-              {description.detail && <p className={description.detail === record.path || description.detail === record.command ? 'mono' : undefined}>{description.detail}</p>}
+              {description.detail && <p title={description.progressHint} className={description.detail === record.path || description.detail === record.command ? 'mono' : undefined}>{description.detail}</p>}
               <small>{activityRecordStatus(record, language)} · {activityAt ? tr('最近信号 {time}', 'Last signal {time}', { time: timeLabel(activityAt, language) }) : tr('等待活动信号', 'Waiting for activity')}</small>
             </div>
             <time className="ra-duration">{formatActivityElapsed(activityElapsed(record, now))}</time>{detailToggle(record)}

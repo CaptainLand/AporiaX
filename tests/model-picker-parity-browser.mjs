@@ -29,7 +29,10 @@ try {
       harness: { onEvent: () => () => {}, recoverableRuns: async () => [] }, sandbox: { status: async () => ({ localAvailable: true }) },
       workspace: { listTree: async () => ({ entries: [] }) },
       workbench: { subscribe: () => () => {}, request: async input => { window.pickerCalls.push(input); return input.action === 'list' ? [] : true; } },
-      sideChat: { subscribe: () => () => {}, request: async input => { window.pickerCalls.push(input); return { messages: [] }; } },
+      sideChat: { subscribe: () => () => {}, request: async input => { window.pickerCalls.push(input); return {
+        id: 'picker-temporary', taskId: task.id, scope: input.scope, revision: 1,
+        settings: { providerId: 'own', modelId: 'alpha', thinking: true, effort: 'high' }, messages: [],
+      }; } },
     };
   });
   await page.goto(server.resolvedUrls.local[0]);
@@ -37,11 +40,11 @@ try {
   await page.locator('.assistant-message').waitFor();
   await page.getByRole('button', { name: '打开工作侧栏', exact: true }).click();
   await page.getByRole('button', { name: '打开内容', exact: true }).click();
-  await page.getByRole('menuitem', { name: '侧边聊天', exact: true }).click();
-  const mainTrigger = page.locator('.composer .model-trigger'), sideTrigger = page.getByRole('button', { name: '侧聊模型', exact: true });
-  await sideTrigger.waitFor(); await page.waitForFunction(() => !document.querySelector('.side-chat-modes button')?.disabled);
+  await page.getByRole('menuitem', { name: '临时聊天', exact: true }).click();
+  const mainTrigger = page.locator('.thread .composer .model-trigger'), sideTrigger = page.locator('.temporary-chat .model-trigger');
+  await sideTrigger.waitFor();
   const mainMenu = page.getByRole('dialog', { name: '选择模型', exact: true });
-  const sideMenu = page.getByRole('dialog', { name: '选择侧聊模型', exact: true });
+  const sideMenu = page.getByRole('dialog', { name: '选择模型', exact: true });
   const snapshot = menu => menu.evaluate(el => {
     const style = node => { const c = getComputedStyle(node); return { width: c.width, padding: c.padding, fontSize: c.fontSize, fontWeight: c.fontWeight,
       border: c.border, radius: c.borderRadius, background: c.backgroundColor, color: c.color, opacity: c.opacity }; };
@@ -60,7 +63,7 @@ try {
     await mainMenu.screenshot({ path: `.tmp/qa/model-picker-main-${theme}.png` });
     await mainMenu.getByRole('textbox', { name: '搜索模型' }).press('Escape');
     assert.equal(await mainTrigger.evaluate(el => el === document.activeElement), true);
-    const effortTrigger = page.getByRole('button', { name: '切换思考强度', exact: true });
+    const effortTrigger = page.locator('.thread').getByRole('button', { name: '切换思考强度', exact: true });
     assert.equal(await effortTrigger.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
     assert.equal(await mainTrigger.locator('.lucide-brain').count(), 0);
     assert.equal(await mainTrigger.locator('svg').count(), 0, 'model dropdown chevron removed');
@@ -107,6 +110,8 @@ try {
   await search.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 229, isComposing: true, bubbles: true });
   assert.equal(await sideMenu.isVisible(), true, 'IME composition cannot select a model');
   await search.press('ArrowDown'); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.temporary-chat .model-trigger')?.textContent.includes('Beta'));
+  await page.keyboard.press('Escape');
   await sideMenu.waitFor({ state: 'hidden' });
   assert.match(await sideTrigger.innerText(), /Beta/); assert.match(await mainTrigger.innerText(), /Alpha/);
   await sideTrigger.click(); await sideMenu.waitFor();
@@ -114,7 +119,7 @@ try {
   await sideTrigger.click(); await sideMenu.waitFor({ state: 'hidden' });
   await mainTrigger.click(); await mainMenu.waitFor(); await mainTrigger.click(); await mainMenu.waitFor({ state: 'hidden' });
   await page.setViewportSize({ width: 1000, height: 620 }); await sideTrigger.click(); await sideMenu.waitFor();
-  const menu = await sideMenu.boundingBox(), pane = await page.locator('.side-chat').boundingBox(), composer = await page.locator('.side-chat-composer').boundingBox();
+  const menu = await sideMenu.boundingBox(), pane = await page.locator('.temporary-chat').boundingBox(), composer = await page.locator('.temporary-chat .composer').boundingBox();
   assert.ok(menu.x >= pane.x && menu.x + menu.width <= pane.x + pane.width + 1);
   assert.ok(menu.y >= pane.y && menu.y + menu.height < composer.y);
   await search.press('Escape');

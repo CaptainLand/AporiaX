@@ -82,11 +82,11 @@ export function ProfessionalRolesSettings({ task, providers = [], onUpdateTask, 
     setBusy(true); setError(''); setNotice('');
     try {
       if (scope === 'global') { const saved = await window.desktop.agentProfiles.save(normalizeRoleSettings(global)); setGlobal(saved); setSavedGlobal(saved); window.dispatchEvent(new Event('aporiax:roles-updated')); }
-      else { effectiveRoleSettings(savedGlobal, overrides); await onUpdateTask?.({ professionalRoles: overrides, builderLimit: null }); }
+      else { const next = { ...overrides, schedulingVersion: 2 }; effectiveRoleSettings(savedGlobal, next); await onUpdateTask?.({ professionalRoles: next, builderLimit: null }); }
       setNotice(tr('已保存，下次运行生效。', 'Saved for the next run.'));
     } catch (cause) { setError(cause.message); } finally { setBusy(false); }
   };
-  const numeric = (label, value, min, max, change, optional = false) => <label className="pr-field"><span>{label}</span><input type="number" min={min} max={max} value={value ?? ''} placeholder={tr('沿用系统限制', 'System limit')} onChange={event => change(optional && !event.target.value ? null : Number(event.target.value))} /></label>;
+  const numeric = (label, value, min, max, change, optional = false) => <label className="pr-field"><span>{label}</span><input type="number" min={min} max={max} value={value ?? ''} placeholder={optional ? tr('无限制', 'Unlimited') : tr('沿用系统限制', 'System limit')} onChange={event => change(optional && !event.target.value ? null : Number(event.target.value))} /></label>;
   return <section className="professional-roles" aria-label={tr('专业角色配置', 'Professional role settings')}>
     <header className="pr-heading" ref={headingRef}><h3>{tr('专业角色', 'Professional roles')}</h3><select aria-label={tr('配置范围', 'Configuration scope')} value={scope} onChange={event => { setScope(event.target.value); setError(''); }}><option value="global">{tr('全局默认', 'Global defaults')}</option>{task && <option value="task">{tr('当前任务', 'Current task')}</option>}</select></header>
     <p className="pr-note pr-intro">{tr('为主 Agent 配置可按需调用的专家，复用职责、工具和工作方式。', 'Reusable specialists the main Agent can delegate to, with defined responsibilities, tools and working methods.')}</p>
@@ -120,12 +120,12 @@ export function ProfessionalRolesSettings({ task, providers = [], onUpdateTask, 
         <label className="pr-field"><span>{tr('模型', 'Model')}</span><select value={role.model} onChange={event => patchRole({ model: event.target.value })}><option value="inherit">{tr('继承主 Agent', 'Inherit Main')}</option>{role.model !== 'inherit' && !providers.some(p => p.models?.some(m => JSON.stringify([p.id, m.id]) === role.model)) && <option value={role.model}>{tr('已配置模型当前不可用', 'Configured model unavailable')}</option>}{providers.flatMap(provider => (provider.models || []).map(model => <option key={`${provider.id}/${model.id}`} value={JSON.stringify([provider.id, model.id])}>{provider.name} · {model.name || model.id}</option>))}</select></label>
         <label className="pr-field"><span>{tr('思考强度', 'Reasoning')}</span><select value={role.thinking} onChange={event => patchRole({ thinking: event.target.value })}>{[['default', tr('角色默认', 'Role default')], ['inherit', tr('继承主 Agent', 'Inherit Main')], ['off', tr('关闭', 'Off')], ...['low', 'medium', 'high', 'xhigh', 'max'].map(value => [value, value.toUpperCase()])].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>{tr('不支持的档位会在调用前报错，不静默切换。', 'Unsupported settings are rejected before inference.')}</small></label>
         <div className="pr-limits">
-          {numeric(tr('最大轮次', 'Rounds'), role.maxRounds, 2, 20, maxRounds => patchRole({ maxRounds }))}
-          {numeric(tr('请求上限（含重试）', 'Requests incl. retries'), role.maxRequests, 1, 200, maxRequests => patchRole({ maxRequests }))}
+          {numeric(tr('请求预算（可选，含重试）', 'Optional request budget incl. retries'), role.maxRequests, 1, 1000000, maxRequests => patchRole({ maxRequests }), true)}
           {numeric(tr('角色并发', 'Role concurrency'), role.concurrency, 1, 6, concurrency => patchRole({ concurrency }))}
           {numeric(tr('Token 预算', 'Token budget'), role.maxTokens, 1024, 100000000, maxTokens => patchRole({ maxTokens }), true)}
           {numeric(tr('执行时间上限（秒）', 'Execution limit (seconds)'), role.maxSeconds, 10, 86400, maxSeconds => patchRole({ maxSeconds }), true)}
         </div>
+        <p className="pr-note">{tr('轮次和累计启动次数不限。并发、你设置的消耗预算、暂停/取消和无进展保护仍有效。默认思考强度继承主 Agent。', 'No round or lifetime-start limit. Concurrency, explicit budgets, pause/cancel and no-progress protection still apply. Reasoning inherits Main by default.')}</p>
         {scope === 'global' && <details className="pr-capabilities"><summary>{tr('能力组合', 'Capabilities')} · Skills {role.skills.length} · MCP {role.mcpTools.length}</summary>
           <fieldset><legend>{tr('内置工具 / 验证工具', 'Native / verification tools')}</legend>{NATIVE_ROLE_TOOLS[role.template].map(name => <label className="pr-check" key={name}><input type="checkbox" checked={!role.tools || role.tools.includes(name)} onChange={event => patchRole({ tools: event.target.checked ? [...(role.tools || NATIVE_ROLE_TOOLS[role.template]), name] : (role.tools || NATIVE_ROLE_TOOLS[role.template]).filter(item => item !== name) })} />{name}</label>)}<small>{tr('取消勾选可进一步收窄；父任务权限、文件范围和审批仍是上限。', 'Uncheck to narrow access; parent permissions, scopes and approvals still apply.')}</small></fieldset>
           <fieldset><legend>Skills</legend>{skills.length ? skills.map(skill => <label className="pr-check" key={skill.name}><input type="checkbox" checked={role.skills.includes(skill.name)} onChange={event => patchRole({ skills: event.target.checked ? [...role.skills, skill.name] : role.skills.filter(name => name !== skill.name) })} />{skill.title || skill.name}</label>) : <p>{tr('当前没有可用 Skills，请先在扩展中配置。', 'Configure Skills in Extensions first.')}</p>}{role.skills.filter(name => !skills.some(skill => skill.name === name)).map(name => <label className="pr-check" key={name}><input type="checkbox" checked onChange={() => patchRole({ skills: role.skills.filter(item => item !== name) })} />{name} · {tr('当前不可用', 'Unavailable')}</label>)}</fieldset>
@@ -141,7 +141,7 @@ export function ProfessionalRolesSettings({ task, providers = [], onUpdateTask, 
       </div>
       <details className="pr-scheduling"><summary>{tr('高级调度设置', 'Advanced scheduling')}</summary><div className="pr-limits">
         {numeric(tr('总并发上限', 'Total concurrency'), effective.maxActive, 1, 12, maxActive => patchGlobal({ maxActive }))}
-        {numeric(tr('本轮委派请求上限', 'Delegated requests per run'), effective.maxRequests, 1, 1000, maxRequests => patchGlobal({ maxRequests }))}
+        {numeric(tr('本轮委派请求预算（可选）', 'Optional delegated request budget per run'), effective.maxRequests, 1, 1000000, maxRequests => patchGlobal({ maxRequests }), true)}
       </div></details>
       <footer className="pr-footer"><span role="status">{notice || tr('设置只影响后续运行。费用无可靠计价时显示未知。', 'Applies to future runs. Unknown prices remain unknown.')}</span><button type="button" disabled={busy} onClick={() => void save()}>{busy ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}</button></footer>
     </>}

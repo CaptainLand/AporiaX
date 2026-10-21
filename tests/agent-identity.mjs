@@ -21,7 +21,7 @@ for (const [id, names] of Object.entries(expected)) {
   for (const [index, language] of ['zh-CN', 'en'].entries()) {
     assert.equal(agentName(id, language), names[index]);
     assert.equal(agentDisplayName({ id, name: legacy[id] || 'AporiaX · 主管' }, language), names[index]);
-    assert.equal(activityActor(id === 'main' ? {} : { actor: 'subagent', agentId: `${id}-1`, role: id, profileName: legacy[id] }, language), names[index]);
+    assert.equal(activityActor(id === 'main' ? {} : { actor: 'subagent', agentId: `${id}-1`, role: id, profileName: legacy[id] }, language), id === 'main' ? 'AporiaX' : names[index], 'Witness uses the product name without renaming the office identity');
     const model = buildOfficeModel({ task: { id: 'demo', messages: [] }, settings, language });
     const agent = model.roster.find(role => role.role === id);
     assert.equal(agent.name, names[index]);
@@ -33,6 +33,7 @@ for (const [id, names] of Object.entries(expected)) {
 }
 assert.equal(JSON.stringify(settings), saved, 'legacy stored names/configuration are not overwritten');
 assert.equal(activityActor({ actor: 'subagent', role: 'builder', name: 'write_file' }, 'en'), 'Forge', 'legacy tool names cannot become agent identities');
+assert.equal(activityActor({ actor: 'main', agentId: 'main', profileName: '阿珀' }, 'zh-CN'), 'AporiaX', 'legacy main records also use the product name in Witness');
 const roles = [{ id: 'main', name: 'AporiaX · 主管', template: 'main' }, ...settings.profiles];
 for (const [id, identity] of Object.entries(AGENT_IDENTITIES)) {
   for (const alias of [identity.zh, identity.en, ...identity.aliases]) assert.deepEqual(teamRecipients(`@${alias} 请说明进度`, [], roles), [id]);

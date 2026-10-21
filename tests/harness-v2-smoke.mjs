@@ -44,7 +44,8 @@ const simple = planAgentBudget({
   messages: [{ role: "user", content: "这个函数是什么意思？" }],
 });
 assert.equal(simple.profile, "direct");
-assert.equal(simple.limits.maxTotalSubagents, 0);
+assert.equal(simple.limits.maxTotalSubagents, null, 'no lifetime startup quota; direct tasks still start without active worker slots');
+assert.equal(simple.limits.maxActiveSubagents, 0);
 assert.equal(
   shouldUseBuilderOrchestration(
     {
@@ -63,7 +64,7 @@ const smallWrite = planAgentBudget({
   messages: [{ role: "user", content: "简单修改 README 里的一句话。" }],
 });
 assert.equal(smallWrite.profile, "light");
-assert.equal(smallWrite.limits.maxTotalSubagents, 1);
+assert.equal(smallWrite.limits.maxTotalSubagents, null);
 
 const largeWrite = {
   workspacePath: "C:/repo",
@@ -121,7 +122,7 @@ const largeFourBuilders = planAgentBudget({
 assert.equal(largeFourBuilders.limits.roles.builder, 4);
 assert.equal(
   largeFourBuilders.limits.maxTotalSubagents,
-  large.limits.maxTotalSubagents + 2,
+  null,
 );
 assert.equal(
   largeFourBuilders.limits.maxActiveSubagents,
@@ -302,15 +303,9 @@ runWithAgentBudget(smallWrite, {}, () => {
   });
   emit({ type: "subagent.started", agentId: "b-1", role: "builder" });
   emit({ type: "subagent.started", agentId: "b-2", role: "builder" });
-  assert.throws(
-    () =>
-      emit({
-        type: "subagent.started",
-        agentId: "b-3",
-        role: "builder",
-      }),
-    (error) => error?.code === "APORIAX_AGENT_BUDGET",
-  );
+  assert.doesNotThrow(() => emit({ type: "subagent.started", agentId: "b-3", role: "builder" }), 'role lifetime quota is retired');
+  emit({ type: 'subagent.started', agentId: 'b-4', role: 'builder' });
+  assert.throws(() => emit({ type: 'subagent.started', agentId: 'b-5', role: 'builder' }), error => error?.code === 'APORIAX_AGENT_BUDGET', 'total concurrency is still enforced');
 });
 
 const leases = new ScopeLeaseManager();

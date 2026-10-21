@@ -95,9 +95,10 @@ try {
   assert.equal(peak, 1);
   await runWithAgentBudget(budget, {}, async () => {
     restoreAgentBudget(snapshot);
-    assert.throws(() => enforceAgentBudgetEvent({ type: "subagent.started", agentId: "new", role: "explore" }), /budget/i);
+    assert.doesNotThrow(() => enforceAgentBudgetEvent({ type: "subagent.started", agentId: "new", role: "explore" }));
+    enforceAgentBudgetEvent({ type: "subagent.completed", agentId: "new" });
     enforceAgentBudgetEvent({ type: "subagent.started", agentId: "0", role: "explore" });
-    assert.equal(currentAgentBudget().state.totalStarted, 4);
+    assert.equal(currentAgentBudget().state.totalStarted, 5);
   });
 } finally { clearTimeout(timeout); clearDefaultAgentRuntimeBroker(); globalThis.fetch = fetchOriginal; await rm(root, { recursive: true, force: true }); }
 console.log("Autonomous Builder: default no preflight, scoped native tools, isolated integration, durable partial continuation, conflict retention, queued admission and restored budgets: PASS");

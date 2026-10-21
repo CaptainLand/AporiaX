@@ -97,6 +97,7 @@ export function buildToolApprovalRequest({
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
   const commandPolicy = permissionDecision?.commandPolicy || null;
   const approvalTitles = {
+    delete_file: '删除工作区文件（保留恢复快照）',
     lsp_install: "安装语言服务器",
     git_init: "初始化 Git 仓库",
     git_stage: "暂存 Git 变更",

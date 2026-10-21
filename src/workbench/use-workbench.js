@@ -154,7 +154,7 @@ export function useWorkbench(task) {
         kind,
         title:
           value.title ||
-          ({ route: "Route", workspace: "Workspace", understanding: "Understanding", sidechat: "侧边聊天", teamchat: "团队消息", git: "Git" }[kind]) ||
+          ({ route: "Route", workspace: "Workspace", understanding: "Understanding", sidechat: "临时聊天", teamchat: "团队消息", git: "Git" }[kind]) ||
           kind,
         ...value,
       }),
@@ -248,7 +248,11 @@ export function useWorkbench(task) {
       const scopeAtClose = key;
       try {
         if (tab?.kind === "sidechat" && window.desktop?.sideChat) {
-          await window.desktop.sideChat.request({ action: "cancel", taskId: task.id, scope: key });
+          if (!window.confirm('关闭临时聊天？对话和 Witness 将被清空；已写回的文件不会撤销。未写回的文件会保留恢复副本。')) return;
+          const closed = await window.desktop.sideChat.request({ action: "close", taskId: task.id, scope: key,
+            sessionId: drafts.get(draftKey(key, 'temporary:sessionId')) });
+          for (const entry of [...drafts.keys()]) if (entry.startsWith(`${key}:temporary:`) || entry.startsWith(`${key}:sidechat:`)) drafts.delete(entry);
+          if (closed?.retainedWorkspace) window.alert(`临时聊天已关闭。尚未写回的文件已保留：${closed.retainedWorkspace}`);
         }
         if (tab && SESSION_TAB_KINDS.has(tab.kind)) await request({ action: "stop", id, dispose: true });
         if (tab?.kind === "terminal") disposeTerminalSession(key, id);
@@ -296,6 +300,14 @@ export function useWorkbench(task) {
         if (keyRef.current !== openingScope) return true;
         if (check?.status === "missing") throw new Error(`文件不存在或已移动：${link.target}。请核对文件名和所属工作区。`);
         if (check?.directory) return openNative();
+        if (/\.html?$/i.test(link.target)) {
+          const resource = await request({ action: "preview-html", path: link.target });
+          if (keyRef.current !== openingScope) return true;
+          resourcesRef.current = { ...resourcesRef.current, [resource.id]: resource };
+          setResources((all) => ({ ...all, [resource.id]: resource }));
+          open("browser", resource);
+          return true;
+        }
         openFile(link.target, link.line);
         return true;
       }

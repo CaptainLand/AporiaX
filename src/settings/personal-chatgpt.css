@@ -1,0 +1,19 @@
+.personal-chatgpt-panel { max-width:800px; }
+.personal-chatgpt-panel > header { display:flex; align-items:center; gap:12px; }
+.personal-chatgpt-panel > header h4 { margin:0; }
+.personal-chatgpt-panel > header p { margin:5px 0 0; color:var(--text-2); font-size:11px; }
+.personal-chatgpt-symbol { display:grid; place-items:center; width:40px; height:40px; border-radius:10px; background:var(--gray-3); color:var(--text-2); flex:none; }
+.personal-chatgpt-local { margin-left:auto; color:var(--text-3); font-size:10px; }
+.personal-chatgpt-description, .personal-chatgpt-footnote { color:var(--text-2); line-height:1.8; font-size:12px; margin:20px 0; }
+.personal-chatgpt-footnote { font-size:11px; margin-bottom:0; }
+.personal-chatgpt-actions { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.personal-chatgpt-actions > span, .personal-chatgpt-actions > a { display:inline-flex; align-items:center; gap:7px; color:var(--text-2); font-size:12px; text-decoration:none; }
+.personal-chatgpt-actions > a:hover { color:var(--text-1); }
+.personal-chatgpt-actions .danger-text-button { margin-left:auto; }
+.personal-chatgpt-identity { display:flex; gap:10px; align-items:center; padding:14px; margin:18px 0; background:var(--gray-3); border-radius:10px; }
+.personal-chatgpt-identity strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+.personal-chatgpt-identity small { display:block; color:var(--text-2); font-size:11px; line-height:1.7; margin-top:4px; }
+.personal-chatgpt-models { margin-top:24px; }
+.personal-chatgpt-models > div { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; padding:12px 0; }
+.personal-chatgpt-models strong { font-size:12px; font-weight:500; }
+.personal-chatgpt-models small, .personal-chatgpt-models p { color:var(--text-2); font-size:11px; }

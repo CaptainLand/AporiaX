@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { callModelProvider } from '../runtime/provider-stream.js';
-import { modelReasoningParameters } from '../../shared/model-reasoning.js';
+import { chatReasoningParameters } from '../../shared/model-reasoning.js';
 import { clip, projectKey, roleEvidence, workerRecords, meetingMessages, meetingReplyMode, MEMBER_JOB_PROPOSAL_TOOL } from './context.js';
 import { meetingPersona } from './persona.js';
 import { createMemberJobs } from './jobs.js';
@@ -168,9 +168,10 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
         if (JSON.stringify(messages).length > budget) throw new Error('任务资料过长，请选择更大上下文的聊天模型。');
         const result = await callProvider({ provider: { ...provider, nativeModel: model }, signal, maxAttempts: 1,
           body: { model: model.id, messages, ...(canProposeJob && (model.supportsTools ?? provider.supportsTools) !== false ? { tools: [MEMBER_JOB_PROPOSAL_TOOL] } : {}), max_tokens: Math.min(2048, model.maxOutputTokens || provider.maxOutputTokens || 2048),
-            ...modelReasoningParameters({ ...model, supportsThinking: ['deepseek', 'reasoning-effort'].includes(model.thinkingMode) }, { modelId: model.id, thinking: false, effort: 'low' }) },
+            ...chatReasoningParameters(model) },
           onEvent: event => {
             if (signal.aborted || answer.status !== 'running') return;
+            if (event.type === 'response.text.reconciled') { answer.content = clip(event.content, 16000); emit(s.key, room); }
             if (event.type === 'response.delta' && typeof event.delta === 'string' && event.delta.length) {
               answer.content = (answer.content + event.delta).slice(0, 16000);
               answer.firstTokenAt ||= new Date().toISOString();

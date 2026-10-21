@@ -1,5 +1,7 @@
 import { projectCloudProvider } from "../shared/cloud-availability.js";
 import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
+import { PersonalChatGPTPanel } from './settings/PersonalChatGPTPanel.jsx';
+import './settings/personal-chatgpt.css';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollFadeSurface } from './components/ScrollFadeSurface.jsx';
 import { ProjectUnderstandingPanel } from "./understanding/ProjectUnderstandingPanel.jsx";
@@ -1740,6 +1742,7 @@ function TaskWorkspace({
   const workbenchBuiltins = {
     route: (
       <RouteView
+        onContinueAgent={(content) => onSend(content, [], { taskId: task.id })}
         onDialogChange={setRouteDialogOpen}
         key={task.id}
         task={task}
@@ -2034,6 +2037,7 @@ function TaskWorkspace({
             aria-hidden={activeView !== "route"}
           >
             <RouteView
+              onContinueAgent={(content) => onSend(content, [], { taskId: task.id })}
               onDialogChange={setRouteDialogOpen}
               key={task.id}
               task={task}
@@ -2320,6 +2324,8 @@ function ProviderManagerModal({
 }) {
   const { tr } = useI18n();
   const customProviders = providers.filter((provider) => !provider.managed && provider.id !== "aporia-cloud");
+  const hasPersonalChatGPT = providers.some(provider => provider.id === 'chatgpt-personal');
+  const [personalSelected, setPersonalSelected] = useState(!startAdding && !customProviders.length && hasPersonalChatGPT);
   const [form, setForm] = useState(() =>
     !startAdding && customProviders[0] ? providerToForm(customProviders[0]) : emptyProviderForm(),
   );
@@ -2386,6 +2392,7 @@ function ProviderManagerModal({
 
   const submit = async (event) => {
     event.preventDefault();
+    if (personalSelected) return;
     if (
       !form.baseUrl.trim() ||
       !modelIds.length ||
@@ -2479,10 +2486,15 @@ function ProviderManagerModal({
         </header>}
         <div className="provider-manager-body">
           <aside className="provider-list" aria-label={tr("模型服务", "Model services")}>
+            {hasPersonalChatGPT && <button type="button" className={personalSelected ? 'active' : ''} aria-pressed={personalSelected} onClick={() => setPersonalSelected(true)}>
+              <span><strong>{tr('个人 ChatGPT', 'Personal ChatGPT')}</strong><small>{tr('账号授权 · 本地', 'Account authorization · Local')}</small></span>
+              {personalSelected && <Check size={14} />}
+            </button>}
             <button
-              className={!form.id ? "active add-provider" : "add-provider"}
+              className={!personalSelected && !form.id ? "active add-provider" : "add-provider"}
               type="button"
               onClick={() => {
+                setPersonalSelected(false);
                 setForm(emptyProviderForm());
                 setError("");
               }}
@@ -2492,11 +2504,12 @@ function ProviderManagerModal({
             </button>
             {customProviders.map((provider) => (
               <button
-                className={form.id === provider.id ? "active" : ""}
+                className={!personalSelected && form.id === provider.id ? "active" : ""}
                 type="button"
                 key={provider.id}
-                aria-pressed={form.id === provider.id}
+                aria-pressed={!personalSelected && form.id === provider.id}
                 onClick={() => {
+                  setPersonalSelected(false);
                   setForm(providerToForm(provider));
                   setError("");
                 }}
@@ -2505,12 +2518,13 @@ function ProviderManagerModal({
                   <strong>{provider.name}</strong>
                   <small>{tr("{count} 个模型", "{count} model(s)", { count: provider.models?.length || 0 })}</small>
                 </span>
-                {form.id === provider.id && <Check size={14} />}
+                {!personalSelected && form.id === provider.id && <Check size={14} />}
               </button>
             ))}
           </aside>
 
           <div className="provider-editor">
+            {personalSelected ? <PersonalChatGPTPanel onChanged={onChanged} /> : <>
             {!embedded && <ModelSetupActions compact />}
             {!editingProvider && (
               <div className="provider-presets">
@@ -2643,11 +2657,12 @@ function ProviderManagerModal({
               onChange={(modelsById) => setForm((current) => ({ ...current, modelsById }))} />
             </section>
             {error && <p className="api-key-error">{error}</p>}
+            </>}
           </div>
         </div>
 
         <div className="modal-footer api-key-footer">
-          {editingProvider && !editingProvider.environmentKey ? (
+          {!personalSelected && editingProvider && !editingProvider.environmentKey ? (
             <button
               className="danger-text-button"
               type="button"
@@ -2668,7 +2683,7 @@ function ProviderManagerModal({
             >
               {embedded ? tr("返回通用设置", "Back to General") : tr("关闭", "Close")}
             </button>
-            <button
+            {!personalSelected && <button
               className="primary-button"
               type="submit"
               disabled={
@@ -2679,7 +2694,7 @@ function ProviderManagerModal({
             >
               {saving && <LoaderCircle className="spin" size={14} />}
               {form.id ? tr("保存修改", "Save changes") : tr("添加 Provider", "Add provider")}
-            </button>
+            </button>}
           </div>
         </div>
       </form>
@@ -3149,6 +3164,10 @@ function App() {
       return status;
     }
   };
+
+  useEffect(() => window.desktop?.providers?.onChanged?.(() => {
+    void reloadProviders().catch(() => {});
+  }), []);
 
   useEffect(() => {
     tasksRef.current = tasks;
@@ -3776,6 +3795,7 @@ function App() {
                           error: Boolean(result.error),
                           replyDelivered: result.replyDelivered,
                            content: result.content,
+                          deliveryDetails: result.deliveryDetails || null,
                           steps: result.steps || [],
                           changes: result.changes || [],
                           anchor: result.anchor || null,

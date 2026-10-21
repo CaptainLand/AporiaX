@@ -1,5 +1,5 @@
 import { normalizeProviderProtocol } from "./runtime/native-provider-codec.js";
-import { isClaudeModel, claudeReasoningProfile } from "../shared/model-reasoning.js";
+import { isClaudeModel, claudeReasoningProfile, gptReasoningProfile, normalizeReasoningEfforts } from "../shared/model-reasoning.js";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_APORIAX_MODEL_GATEWAY_URL } from '../shared/cloud-endpoints.js';
 import { modelSupportsVision, normalizeImageCapability } from "./model-vision.js";
@@ -143,6 +143,8 @@ export function inferModelContextWindow(modelId, vendor) {
 }
 
 export function inferModelCapabilities(modelId, vendor) {
+  const gpt = gptReasoningProfile(modelId);
+  if (gpt) return { ...gpt, supportsImages: modelSupportsVision({ id: modelId }), supportsTools: true };
   const value = String(modelId || "").toLowerCase();
   const supportsImages = modelSupportsVision({ id: modelId });
   let supportsThinking = false;
@@ -160,7 +162,7 @@ export function inferModelCapabilities(modelId, vendor) {
     supportsThinking = /(?:^|[-_/])(gpt-[5-9]|o1|o3|o4)(?:[-_/.:]|$)/i.test(
       value,
     );
-    thinkingMode = supportsThinking ? "reasoning-effort" : "none";
+    thinkingMode = supportsThinking ? "openai-reasoning" : "none";
   }
   return {
     supportsImages,
@@ -188,7 +190,10 @@ export function normalizeProviderModels(models, vendor) {
     // Older versions persisted host-inferred false/none for relay Claude.
     // Correct that stale inference without touching keys, endpoints or routes.
     const legacyClaude = isClaudeModel(modelId) && source.reasoningCapabilitySource !== "explicit";
-    const profile = claudeReasoningProfile(modelId);
+    const gptProfile = gptReasoningProfile(modelId);
+    const profile = claudeReasoningProfile(modelId) || gptProfile;
+    const legacyGpt = Boolean(gptProfile) && source.reasoningCapabilitySource !== 'explicit';
+    const advertisedEfforts = normalizeReasoningEfforts(source.supportedEfforts);
     normalized.push({
       id: modelId,
       name: String(source.name || modelId).slice(0, 240),
@@ -197,16 +202,19 @@ export function normalizeProviderModels(models, vendor) {
       ).slice(0, 40),
       ...normalizeImageCapability({ ...source, id: modelId }),
       supportsThinking:
-        legacyClaude ? true : typeof source.supportsThinking === "boolean"
+        legacyClaude || legacyGpt ? true : typeof source.supportsThinking === "boolean"
           ? source.supportsThinking
           : inferred.supportsThinking,
-      thinkingMode: legacyClaude ? "reasoning-effort" : ["none", "deepseek", "reasoning-effort"].includes(
+      thinkingMode: legacyClaude ? "reasoning-effort" : legacyGpt ? 'openai-reasoning' : ["none", "deepseek", "reasoning-effort", 'openai-reasoning'].includes(
         source.thinkingMode,
       )
         ? source.thinkingMode
         : inferred.thinkingMode,
       ...(source.reasoningCapabilitySource === "explicit" ? { reasoningCapabilitySource: "explicit" } : {}),
-      ...(profile || {}),
+      ...(source.reasoningCapabilitySource === 'explicit' && source.supportsThinking === false ? {} : profile || {}),
+      ...(advertisedEfforts.length ? { supportedEfforts: advertisedEfforts,
+        defaultEffort: advertisedEfforts.includes(source.defaultEffort) ? source.defaultEffort : advertisedEfforts.includes('medium') ? 'medium' : advertisedEfforts[0] }
+        : inferred.thinkingMode === 'openai-reasoning' && !profile ? { supportedEfforts: ['low', 'medium', 'high'], defaultEffort: 'medium' } : {}),
       supportsTools:
         typeof source.supportsTools === "boolean"
           ? source.supportsTools

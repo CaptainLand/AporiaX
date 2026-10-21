@@ -39,7 +39,10 @@ try {
       }, sandbox: { status: async () => ({ localAvailable: true }) },
       workspace: { listTree: async () => ({ entries: [] }) },
       workbench: { subscribe: () => () => {}, request: async input => { window.alignmentCalls.push(input); return input.action === 'list' ? [] : true; } },
-      sideChat: { subscribe: () => () => {}, request: async input => { window.alignmentCalls.push(input); return { messages: [{ id: 'side-answer', role: 'assistant', status: 'completed', content: '合成侧聊历史。\n\n'.repeat(10) }] }; } },
+      sideChat: { subscribe: () => () => {}, request: async input => { window.alignmentCalls.push(input); return {
+        id: 'alignment-temporary', taskId: task.id, scope: input.scope, revision: 1,
+        settings: { providerId: 'own', modelId: 'model' }, messages: [],
+      }; } },
     };
   });
   await page.goto(server.resolvedUrls.local[0]);
@@ -47,18 +50,17 @@ try {
   await page.locator('.witness-panel').waitFor();
   await page.getByRole('button', { name: '打开工作侧栏', exact: true }).click();
   await page.getByRole('button', { name: '打开内容', exact: true }).click();
-  await page.getByRole('menuitem', { name: '侧边聊天', exact: true }).click();
-  const mainInput = page.getByRole('textbox', { name: '任务输入', exact: true });
-  const sideInput = page.getByRole('textbox', { name: '侧聊输入', exact: true });
+  await page.getByRole('menuitem', { name: '临时聊天', exact: true }).click();
+  const mainInput = page.locator('.thread').getByRole('textbox', { name: '任务输入', exact: true });
+  const sideInput = page.getByRole('region', { name: '临时聊天', exact: true }).getByRole('textbox', { name: '任务输入', exact: true });
   await sideInput.waitFor();
-  await page.waitForFunction(() => !document.querySelector('.side-chat-modes button')?.disabled);
   const atBottom = () => page.evaluate(() => { const body = document.querySelector('.thread-body'); body.scrollTop = body.scrollHeight; });
   const measure = () => page.evaluate(() => {
     const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
-    const main = rect('.composer'), side = rect('.side-chat-composer'), witness = rect('.witness-panel'), body = rect('.thread-body');
+    const main = rect('.thread .composer'), side = rect('.temporary-chat .composer'), witness = rect('.thread .witness-panel'), body = rect('.thread-body');
     return { theme: document.documentElement.dataset.theme, main, side, witness,
       witnessGap: main.top - Math.min(witness.bottom, body.bottom), bottomDelta: side.bottom - main.bottom,
-      mainTextHeight: rect('.composer textarea').height, sideTextHeight: rect('.side-chat-composer textarea').height };
+      mainTextHeight: rect('.thread .composer textarea').height, sideTextHeight: rect('.temporary-chat .composer textarea').height };
   });
   await mkdir('.tmp/qa', { recursive: true });
   const check = async label => {
@@ -88,8 +90,9 @@ try {
     await page.setViewportSize({ width: 1000, height: 620 }); await check('compact-dark');
     console.log('PASS multiline auto-grow/shrink, draft retention and compact viewport; no extra model requests.');
     await mainInput.fill('合成运行：只测试状态提示，不调用任何模型'); await mainInput.press('Enter');
-    await page.locator('.composer-hint').filter({ hasText: '任务运行中' }).waitFor();
     await page.waitForFunction(() => window.alignmentStartedRuns === 1);
+    assert.equal(await page.locator('.composer-hint').count(), 0, 'Ordinary running state has no generic hint or empty status row');
+    assert.equal(await page.locator('.task-workspace').evaluate(el => el.style.getPropertyValue('--main-composer-status-space')), '0px');
     await check('running-status');
     await page.getByRole('button', { name: '暂停当前任务', exact: true }).click();
     await page.locator('.composer-hint').filter({ hasText: '任务已暂停' }).waitFor();
@@ -99,7 +102,7 @@ try {
     await page.waitForTimeout(100);
     const cleared = await measure(); assert.ok(Math.abs(cleared.bottomDelta) < 1);
     assert.equal(await page.locator('.task-workspace').evaluate(el => el.style.getPropertyValue('--main-composer-status-space')), '0px');
-    console.log('PASS running/paused/wrapped status notices align both boxes; completion clears status spacing. Synthetic harness only.');
+    console.log('PASS ordinary running has no hint or status spacing; paused notices align both boxes; completion clears status spacing. Synthetic harness only.');
   }
   assert.deepEqual(errors, []);
   assert.equal(await page.evaluate(() => window.alignmentCalls.some(c => ['send', 'commit', 'push'].includes(c.action || c.operation))), false);

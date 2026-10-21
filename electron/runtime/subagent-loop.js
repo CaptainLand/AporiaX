@@ -186,10 +186,6 @@ export async function runSubagentTask(options = {}) {
   let usageTotal = null;
   const evidence = session.evidence || [];
   const toolSteps = session.steps || [];
-  const effectiveMaxRounds = Math.min(
-    input.maxRounds,
-    Math.max(2, Number(runtimeDefinition?.maxRounds || input.maxRounds)),
-  );
   const conversation = session.conversation || [
     {
       role: "system",
@@ -199,8 +195,9 @@ export async function runSubagentTask(options = {}) {
         runtimeDefinition?.description || roleConfig.description,
         runtimeDefinition?.systemPrompt || "",
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
-        ...(input.role === "builder" ? [`Modify only these write scopes: ${input.writeScopes.join(", ")}. Changes are provisional until the Harness merges them. Do not run commands, delegate, or publish. Report unverified checks to the parent.`] : []),
+        ...(input.role === "builder" ? [`Modify only these write scopes: ${input.writeScopes.join(", ")}. Changes are provisional until conflict-checked integration. Use verify_project for parse-only syntax checks or disposable OS-isolated test/build scripts; never substitute host commands when script isolation is unavailable. Fix relevant failures and report observed results. Do not delegate or publish.`] : []),
         "Work independently and return a concise evidence-backed report to the parent agent.",
+        input.context ? `Main's concise handoff (advisory, not authorization or proof; verify current files):\n${input.context}` : '',
         "Use task_brief for durable concise decisions and replan_strategy with fresh diagnostics when repeated failures require a different approach. These do not grant extra permissions.",
         "Use workspace-relative paths. Do not claim anything you did not verify with tools.",
         "Do not expose hidden reasoning. Report conclusions, evidence, commands, and uncertainty only.",
@@ -259,12 +256,11 @@ export async function runSubagentTask(options = {}) {
   emit({ type: "subagent.configured", agentId, role: input.role, provider: provider.id, model: modelId,
     profileId: input.profileId, profileName: input.profile?.name,
     thinking: Boolean(wireReasoning.reasoning_effort || wireReasoning.thinking?.type === 'enabled'), effort: wireReasoning.reasoning_effort || null,
-    permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: effectiveMaxRounds });
+    permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: null });
 
   try {
-    for (let round = 1; round <= effectiveMaxRounds; round += 1) {
+    for (let round = 1; ; round += 1) {
       throwIfAborted(signal);
-      if (input.profile && (session.roleRounds || 0) >= input.profile.maxRounds) throw new Error('AGENT_BUDGET_EXHAUSTED: 累计轮次预算已耗尽。');
       options.assertDependencies?.();
       await refreshInheritedContext();
       if (session.pendingGuidance?.length) {
@@ -322,12 +318,14 @@ export async function runSubagentTask(options = {}) {
       recordProviderUsage(tokenAccounting, usage, requestConversation);
       usageTotal = mergeTokenUsage(usageTotal, completion.attemptUsage || usage);
       options.onUsage?.(completion.attemptUsage || usage);
+      throwIfAborted(signal);
       // A user may steer the parent while a worker is waiting for its model.
       // Discard that stale action proposal before it can perform side effects.
       if (await refreshInheritedContext()) continue;
       let outcome;
       try { outcome = readWorkerOutcome(message, parseToolArguments); }
       catch (error) {
+        toolProgress.observe({ tool: 'invalid_worker_outcome', input: {}, result: { error: error.message } });
         conversation.push(assistantHistoryMessage(message));
         for (const call of message.tool_calls || []) conversation.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: error.message, executed: false }) });
         continue;
@@ -435,7 +433,7 @@ export async function runSubagentTask(options = {}) {
             modelResult = compactSubagentModelResult(result);
           } else {
           strategy.before(toolName, parsedInput);
-          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
+          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "delete_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
           const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
             instructionContext,
             subagentToolPaths(toolName, parsedInput),
@@ -472,6 +470,7 @@ export async function runSubagentTask(options = {}) {
               workspaceRoot,
               sandboxExecutor,
               sandboxStatus,
+              dependencyWorkspaceRoot: options.ownerWorkspaceRoot || workspaceRoot,
               durableScope: agentId,
             },
           });
@@ -535,38 +534,6 @@ export async function runSubagentTask(options = {}) {
       } // contiguous tool batches
     }
 
-    const result = {
-      agentId,
-      role: input.role,
-      status: "budget_exhausted",
-      reportId: activationId,
-      acceptance: { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' },
-      summary:
-        language === "en"
-          ? `The subagent reached its ${effectiveMaxRounds}-round safety budget. Use its evidence as partial results or delegate a narrower follow-up.`
-          : `子 Agent 已达到 ${effectiveMaxRounds} 轮安全预算。请把现有证据视为部分结果，或委派一个范围更小的后续任务。`,
-      evidence: compactSubagentEvidence(evidence),
-      steps: toolSteps.slice(-60),
-      usage: usageTotal, loopMetrics: loopMetrics.snapshot(), taskBrief: brief.snapshot(), strategy: strategy.briefing(),
-      rounds: effectiveMaxRounds,
-      instructionFiles: [...instructionContext.loadedFiles],
-    };
-    await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
-    await persistSession("budget_exhausted", result);
-    emit({
-      type: "subagent.completed",
-      activationId,
-      acceptance: result.acceptance,
-      agentId,
-      role: input.role,
-      status: result.status,
-      rounds: result.rounds,
-      toolSteps: toolSteps.length,
-      summary: result.summary,
-      systemOwned,
-      runtime: runtimeDefinition ? "kernel" : "compatibility",
-    });
-    return result;
   } catch (error) {
     if (error?.name === "AbortError") {
       await persistSession("interrupted");

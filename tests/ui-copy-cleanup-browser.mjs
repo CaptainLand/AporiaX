@@ -46,7 +46,16 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.fixtureSendCount === 1);
   await page.locator('.composer').locator('..').screenshot({ path: `.tmp/qa/composer-copy-${baseline ? 'baseline' : 'reduced'}.png` });
-  for (const [state, expected] of [['running', '任务运行中'], ['paused', '任务已暂停'], ['locked', '先登录 Cloud']]) {
+  await page.goto(base + 'tests/fixtures/composer-workbench.html?hintState=running');
+  await page.getByRole('button', { name: '暂停当前任务', exact: true }).waitFor();
+  assert.equal(await page.locator('.composer-hint').count(), baseline ? 1 : 0);
+  if (!baseline) assert.equal(await page.locator('.task-workspace').evaluate(el => el.style.getPropertyValue('--main-composer-status-space')), '0px');
+  await page.getByRole('button', { name: '停止当前任务', exact: true }).waitFor();
+  const runningInput = page.getByRole('textbox', { name: '任务输入', exact: true });
+  await runningInput.fill('运行中仍可补充要求');
+  await page.getByRole('button', { name: '发送追问', exact: true }).click();
+  await page.waitForFunction(() => window.fixtureSendCount === 1);
+  for (const [state, expected] of [['paused', '任务已暂停'], ['locked', '先登录 Cloud'], ['steering', '2 条新要求将在下一安全边界应用'], ['queued', '1 条追问已排队']]) {
     await page.goto(base + `tests/fixtures/composer-workbench.html?hintState=${state}`);
     await page.locator('.composer-hint').waitFor();
     assert.match(await page.locator('.composer-hint').innerText(), new RegExp(expected));
@@ -55,5 +64,5 @@ try {
   await page.locator('.extensions-heading h3').waitFor();
   await page.locator('.extensions-heading').screenshot({ path: `.tmp/qa/extensions-heading-${baseline ? 'baseline' : 'reduced'}-dark.png` });
   assert.deepEqual(errors, []);
-  console.log(`${baseline ? 'BASELINE' : 'PASS'} specified headings/hints, run selection, retention warning, Enter/Shift+Enter, running/paused/no-model notices, extension tabs/error states, light/dark, no real model requests.`);
+  console.log(`${baseline ? 'BASELINE' : 'PASS'} specified headings/hints, run selection, retention warning, Enter/Shift+Enter, hidden running hint with follow-up controls intact, paused/no-model/queued notices, extension tabs/error states, light/dark, no real model requests.`);
 } finally { await browser.close(); await server.httpServer.close(); }

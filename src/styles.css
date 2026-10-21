@@ -12789,6 +12789,98 @@ button.anchor-history-heading:hover {
   font-size: var(--text-sm);
 }
 
+/* Share lightweight document typography between reply text and progress. */
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message {
+  font-size: var(--text-base);
+  line-height: 1.75;
+  letter-spacing: -0.01em;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message p {
+  margin: 0 0 10px;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message :is(h1, h2) {
+  margin: 22px 0 10px;
+  font-size: 17px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message :is(h3, h4, h5, h6) {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message :is(ul, ol) {
+  padding-left: 22px;
+  list-style-position: outside;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message li {
+  margin: 0;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message li + li {
+  margin-top: 6px;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message li > p:last-child,
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message > p:last-child {
+  margin-bottom: 0;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message :not(pre) > code {
+  padding: 1px 3px;
+  border: 0;
+  background: color-mix(in srgb, var(--text-1) 4%, transparent);
+  font-size: 0.9em;
+  letter-spacing: normal;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message .code-block {
+  font-size: var(--text-base);
+  line-height: 1.7;
+  letter-spacing: normal;
+}
+
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message table {
+  letter-spacing: normal;
+}
+
+.assistant-delivery-details {
+  margin-top: 10px;
+  white-space: normal;
+}
+
+.assistant-delivery-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.assistant-delivery-details > summary::-webkit-details-marker { display: none; }
+.assistant-delivery-details > summary:hover { color: var(--text-1); }
+.assistant-delivery-details > summary:focus-visible {
+  outline: 2px solid var(--accent-9);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+.assistant-delivery-details[open] > summary svg { transform: rotate(180deg); }
+.assistant-delivery-details-content { margin-top: 10px; }
+
 /* Retain the original composer outline and corners; keep the newer controls. */
 :root[data-theme] .composer {
   border: 1px solid var(--gray-6);

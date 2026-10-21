@@ -5,6 +5,7 @@ import { requireToolResult } from "./task-conversation.js";
 import { projectScriptFingerprint } from "./project-script-trust.js";
 import { assertLocalControlTool, localControlToolRequiresApproval } from "../control/policy.js";
 import { assertNativeFileTool, verifyExternalFileTarget, withNativeFileScope } from "./file-access-policy.js";
+import { prepareFileDeletion } from './workspace-mutations.js';
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -70,6 +71,10 @@ export async function dispatchNativeTool({
   });
   if (decision.denied) {
     throw new Error(`Permission denied for tool: ${toolName}`);
+  }
+  if (toolName === 'delete_file') {
+    const version = await prepareFileDeletion(executeContext.workspaceRoot, input, { signal });
+    input.expected_sha256 = version.sha256;
   }
 
   // Role changes have their own mandatory, revision-bound approval containing

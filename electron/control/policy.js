@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync, statSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { parsePatch } from "diff";
+import { parseWorkspacePatch } from '../runtime/workspace-patch.js';
 import { NATIVE_FILE_TOOLS, outsideFileAccessEnabled, verifyNativeFileTarget } from "../runtime/file-access-policy.js";
 
 // This context is created only from a desktop-approved client grant. It is
@@ -11,8 +11,8 @@ const storage = new AsyncLocalStorage();
 const contexts = new WeakMap();
 const NOOP = () => {};
 const READ_TOOLS = new Set(["list_directory", "read_file", "search_text", "git_status", "git_diff", "git_log", "git_remote_list", "inspect_office_file"]);
-const WRITE_TOOLS = new Set(["write_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
-const COMMAND_TOOLS = new Set(["run_command", "start_process", "read_process", "wait_process", "write_stdin", "kill_process", "git_init", "git_stage", "git_commit", "git_create_branch", "git_remote_add", "git_pull", "git_push", "github_repo_create", "github_pr_create", "github_pr_view", "github_pr_checks", "github_auth_status", "lsp"]);
+const WRITE_TOOLS = new Set(["write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
+const COMMAND_TOOLS = new Set(["verify_project", "run_command", "start_process", "read_process", "wait_process", "write_stdin", "kill_process", "git_init", "git_stage", "git_commit", "git_create_branch", "git_remote_add", "git_pull", "git_push", "github_repo_create", "github_pr_create", "github_pr_view", "github_pr_checks", "github_auth_status", "lsp"]);
 const BROWSER_TOOLS = new Set(["browser_open", "browser_snapshot", "browser_screenshot", "browser_console", "browser_network", "browser_close", "browser_click", "browser_fill", "browser_press"]);
 export const LOCAL_CONTROL_SPECIAL_TOOLS = new Set(["request_user_input", "read_conversation_history", "finish_task", "finish_subagent", "task_brief", "replan_strategy", "delegate_subagent", "followup_subagent", "cancel_subagent", "collect_subagents", "review_subagent_result", "update_plan", "request_self_check", "complete_self_check", "remember_project_fact", "project_knowledge"]);
 const DENIED_TOOLS = new Set(["read_external_file", "lsp_install", "read_skill_resource", "search_skills", "remember_project_fact", "project_knowledge"]);
@@ -251,9 +251,8 @@ export async function assertLocalControlTool({ toolName, input = {}, workspaceRo
     for (const block of input.blocks || []) if (block?.type === "image") await verifyPath(data, block.path, { nativeFile: true });
   }
   if (toolName === "apply_patch" && typeof input.patch === "string" && input.patch.trim()) {
-    for (const patch of parsePatch(input.patch)) {
-      const file = patch.newFileName && patch.newFileName !== "/dev/null" ? patch.newFileName : patch.oldFileName;
-      await verifyPath(data, String(file || "").replace(/^[ab][\\/]/, ""), { writable: true, nativeFile: true });
+    for (const patch of parseWorkspacePatch(input.patch)) {
+      await verifyPath(data, patch.path, { writable: true, nativeFile: true });
     }
   }
   if (toolName === "request_self_check") for (const candidate of input.verification || []) await verifyPath(data, candidate.cwd || ".");

@@ -9,6 +9,7 @@ import { createPersistentProcessManager } from "../runtime/process-runtime.js";
 import { getVerifiedWorkspaceRoot, toWorkspaceRelativePath } from "../runtime/workspace-runtime.js";
 import { checkWorkspaceFileLink } from "../file-link-check.js";
 import { readWorkbenchFile, searchWorkbenchFiles } from "./files.js";
+import { createHtmlPreview } from "./html-preview.js";
 import { acceptLayoutGeneration } from "./layout-token.js";
 import { createWorkbenchGitService } from "./git-service.js";
 import { getGitHubAuthStatus, githubLoginCommand } from "./git-setup.js";
@@ -297,6 +298,32 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       publish(state(session)); return state(session);
     }
     if (input.action === "new-browser") return browser(context).state();
+    if (input.action === "preview-html") {
+      const preview = await createHtmlPreview(context.workspacePath, input.path);
+      let r;
+      try {
+        const existing = [...resources.values()].find(item => scope(item, context) && !item.closed && item.owner === "user" && item.htmlPreviewPath === preview.path);
+        if (existing) {
+          await preview.close();
+          await existing.userNavigate(existing.htmlPreviewUrl);
+          return existing.state();
+        }
+        r = browser(context);
+        r.htmlPreviewPath = preview.path;
+        r.htmlPreviewUrl = preview.url;
+        r.wc.once("destroyed", () => { void preview.close(); });
+        await r.userNavigate(preview.url);
+        return r.state();
+      } catch (error) {
+        await preview.close();
+        if (r) {
+          await r.close();
+          getWindow()?.contentView.removeChildView(r.view);
+          resources.delete(r.id);
+        }
+        throw error;
+      }
+    }
     if (input.action === "new-terminal") return terminal(context);
     if (input.action === "hide") { hide(input.generation); return true; }
     const r = scope(resources.get(input.id), context);

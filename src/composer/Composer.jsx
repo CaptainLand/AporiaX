@@ -125,6 +125,9 @@ function formatAttachmentSize(size) {
 }
 
 export function Composer({
+  layoutScope = 'main',
+  initialDraft = null,
+  onDraftChange,
   quoteRequest,
   task,
   providers,
@@ -142,8 +145,10 @@ export function Composer({
   pendingSteeringCount = 0,
 }) {
   const { tr } = useI18n();
-  const [message, setMessage] = useState("");
-  const [attachments, setAttachments] = useState([]);
+  const [message, setMessage] = useState(() => initialDraft?.content || '');
+  const [attachments, setAttachments] = useState(() => initialDraft?.attachments || []);
+  const draftChangeRef = useRef(onDraftChange); draftChangeRef.current = onDraftChange;
+  useEffect(() => { draftChangeRef.current?.({ content: message, attachments }); }, [message, attachments]);
   const [ocr, setOcr] = useState(null);
   useEffect(() => { setOcr(null); }, [task.id]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
@@ -183,7 +188,11 @@ export function Composer({
     task.modelId,
   );
   const modelReady = Boolean(model.id && !model.disabled);
+  const showStatusHint = isRunning
+    ? isPaused || pendingSteeringCount > 0 || queuedCount > 0
+    : !modelReady;
   useLayoutEffect(() => {
+    if (layoutScope !== 'main') return undefined;
     const shell = textareaRef.current?.closest(".composer-shell");
     const workspace = shell?.closest(".task-workspace");
     if (!shell || !workspace) return undefined;
@@ -206,8 +215,9 @@ export function Composer({
       window.removeEventListener("resize", synchronizeStatusSpace);
       workspace.style.removeProperty("--main-composer-status-space");
     };
-  }, [task.id, isRunning, isPaused, pendingSteeringCount, queuedCount, modelReady, collapsed]);
+  }, [task.id, isRunning, isPaused, pendingSteeringCount, queuedCount, modelReady, collapsed, layoutScope]);
   const mentionAutocomplete = useWorkspaceMentionAutocomplete({
+    filesOnly: layoutScope === 'temporary',
     taskId: task.id,
     value: message,
     setValue: setMessage,
@@ -546,7 +556,7 @@ export function Composer({
                   setModelMenuOpen((open) => !open);
                 }}
               >
-                <span>{modelReady ? model.shortName : tr("选择模型", "Choose a model")}</span>
+                <span>{modelReady ? model.shortName || model.name || model.id : tr("选择模型", "Choose a model")}</span>
               </button>
             </div>
             {modelReady && reasoningState(model, task).thinking && <div className="model-control effort-control">
@@ -618,7 +628,7 @@ export function Composer({
           </div>
         </div>
       </div>
-      {(isRunning || !modelReady) && <p className="composer-hint">
+      {showStatusHint && <p className="composer-hint">
         {isRunning
           ? isPaused
             ? tr(
@@ -637,10 +647,7 @@ export function Composer({
                 "Task running · {count} follow-up(s) queued",
                 { count: queuedCount },
               )
-            : tr(
-                "任务运行中 · 可以继续纠偏，新要求会在安全边界立即接入",
-                "Task running · keep steering; new guidance is applied at a safe boundary",
-              )
+            : null
           : tr("先登录 Cloud 或添加自己的 API，输入内容会保留。", "Sign in to Cloud or add your own API first. Your draft is kept.")}
       </p>}
       {OCR_UI_ENABLED && ocr && <OcrDialog key={task.id} source={ocr.source} onClose={() => setOcr(null)} onAttach={(attachment) => {

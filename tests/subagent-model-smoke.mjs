@@ -25,7 +25,7 @@ assert.deepEqual(
     thinking: true,
     effort: "max",
   }),
-  { thinking: false, effort: "low", source: "role-default" },
+  { thinking: true, effort: "max", source: "parent" },
 );
 assert.deepEqual(
   resolveSubagentReasoningPolicy({
@@ -45,11 +45,12 @@ assert.deepEqual(
   normalizeSubagentInput({ role: "verify", task: "Run tests", scope: ["."], max_rounds: 5 }),
   {
     role: "verify",
+    autonomyVersion: 2,
     task: "Run tests",
     scope: ["."],
     background: false,
     requiredForCompletion: true,
-    maxRounds: 5,
+    maxRounds: null,
   },
 );
 assert.throws(() => normalizeSubagentInput({ role: "builder", task: "x" }), /write scope/i);

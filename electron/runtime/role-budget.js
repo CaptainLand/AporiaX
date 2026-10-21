@@ -29,7 +29,7 @@ export async function beginRoleRequest(body) {
   const ctx = active.getStore();
   if (!ctx) return null;
   const { ledger, total, profile, limit, persist } = ctx;
-  if (ledger.requests >= profile.maxRequests || total.requests >= limit) throw fail('请求次数已达到上限。');
+  if (profile.maxRequests != null && ledger.requests >= profile.maxRequests || limit != null && total.requests >= limit) throw fail('用户设置的请求预算已达到上限。');
   const estimated = Math.ceil(JSON.stringify(body.messages || []).length / 2) + Number(body.max_tokens || body.max_output_tokens || 8192);
   if (profile.maxTokens && ledger.tokens + ledger.reserved + estimated > profile.maxTokens) throw fail('剩余 Token 预算不足以发起下一次请求。');
   ledger.requests++; total.requests++; ledger.reserved += estimated;

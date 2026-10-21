@@ -38,7 +38,7 @@ await loadWorkspaceAgentDefinitions(workspace, { registry });
 const securityReview = registry.get("security-review");
 assert.equal(securityReview.extends, "review");
 assert.deepEqual(securityReview.tools, ["read_file", "search_text"]);
-assert.equal(securityReview.maxRounds, 5);
+assert.equal(securityReview.maxRounds, null, 'legacy agent definitions do not reinstate retired round limits');
 assert.match(securityReview.systemPrompt, /authentication/);
 
 const sessionStore = new HarnessSessionStore({ eventBus: bus });

@@ -74,8 +74,10 @@ function Fixture() {
             onResume={() => {}}
             onUpdateTask={(patch) => setTask((current) => ({ ...current, ...patch }))}
             onNotice={(message) => window.notices.push(message)}
-            isRunning={hintState === "running" || hintState === "paused"}
+            isRunning={["running", "paused", "steering", "queued"].includes(hintState)}
             isPaused={hintState === "paused"}
+            pendingSteeringCount={hintState === "steering" ? 2 : 0}
+            queuedCount={hintState === "queued" ? 1 : 0}
           />
         </section>
         {workbench.layout.open ? (

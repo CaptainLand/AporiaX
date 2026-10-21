@@ -3,6 +3,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'subagent-autonomy.mjs', 'subagent-autonomy-runtime.mjs',
+  'user-facing-delivery.mjs',
   'professional-roles.mjs', 'professional-roles-runtime.mjs', 'professional-role-capabilities.mjs', 'cloud-domain.mjs',
   'claude-compatibility.mjs', 'model-response-capture.mjs', 'model-response-diagnostics.mjs', 'temporary-check-cleanup.mjs',
   'global-file-access.mjs',

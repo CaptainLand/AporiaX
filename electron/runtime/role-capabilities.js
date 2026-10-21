@@ -1,6 +1,6 @@
 import { SUBAGENT_ROLE_CONFIG } from './subagent-model.js';
 import { builtinAgentDefinitions } from '../harness/agent-definitions.js';
-import { modelReasoningParameters, claudeReasoningProfile } from '../../shared/model-reasoning.js';
+import { modelReasoningParameters, claudeReasoningProfile, effectiveReasoningProfile } from '../../shared/model-reasoning.js';
 
 export function roleDefinition(profile, { skills = true, knowledge = false } = {}) {
   const base = builtinAgentDefinitions().find(item => item.name === profile.template);
@@ -15,8 +15,15 @@ export function roleDefinition(profile, { skills = true, knowledge = false } = {
 export function applyRoleThinking(profile, provider, modelId, inherited) {
   if (!profile || ['default', 'inherit'].includes(profile.thinking)) return inherited;
   const thinking = profile.thinking !== 'off', effort = thinking ? profile.thinking : 'low';
+  const model = provider.models?.find(value => value.id === modelId) || provider;
+  const capability = { ...provider, ...model };
+  const gpt = effectiveReasoningProfile(capability, modelId);
+  if (profile.thinking === 'off' && gpt) {
+    if (!gpt.supportedEfforts.includes('none')) throw new Error('该模型不能关闭思考，请选择继承或支持的档位。');
+    return { thinking: false, effort: 'none' };
+  }
   if (profile.thinking === 'off' && claudeReasoningProfile(modelId)?.thinkingAlwaysOn) throw new Error('该模型不能关闭思考，请选择继承或支持的档位。');
-  const wire = modelReasoningParameters(provider, { modelId, thinking, effort });
+  const wire = modelReasoningParameters(capability, { modelId, thinking, effort });
   if (thinking && wire.reasoning_effort !== effort) throw new Error(`该模型不能使用 ${effort} 思考档位，请选择继承或支持的档位。`);
   return { thinking, effort };
 }

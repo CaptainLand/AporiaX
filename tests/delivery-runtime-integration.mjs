@@ -9,8 +9,9 @@ const provider = { id: "test", name: "test", vendor: "openai", baseUrl: "https:/
 const sse = (delta) => new Response('data: ' + JSON.stringify({ choices: [{ delta }] }) + '\n\ndata: [DONE]\n\n');
 const call = (id, name, input) => ({ index: 0, id, type: "function", function: { name, arguments: JSON.stringify(input) } });
 try {
-  for (const waived of [false, true]) {
-    const root = join(temp, String(waived)); await mkdir(root);
+  for (const mode of ['unavailable', 'waived', 'failed']) {
+    const waived = mode === 'waived';
+    const root = join(temp, mode); await mkdir(root);
     await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { test: "node tests.js" } }));
     let mainRounds = 0; let reviews = 0; let commands = 0; let approvals = 0;
     const controller = new AbortController();
@@ -29,10 +30,12 @@ try {
       return sse({ content: `[文件](${join(root, "core.js").replaceAll("\\", "/")})\n\n[不存在](missing.docx)` });
     };
     try {
-      const result = await runHarness({ runId: `delivery-${waived}`, taskId: "test", workspacePath: root, provider, modelId: "test", permission: "workspace-write", approvalMode: "full-auto", thinking: false, signal: controller.signal,
+      const result = await runHarness({ runId: `delivery-${mode}`, taskId: "test", workspacePath: root, provider, modelId: "test", permission: "workspace-write", approvalMode: "full-auto", thinking: false, signal: controller.signal,
         messages: [{ role: "user", content: waived ? "先别测试了，直接交付吧" : "Implement core.js and verify it." }],
         sandboxStatusResolver: async () => ({ available: false, localAvailable: true, state: "unavailable" }),
-        sandboxExecutor: async () => { commands++; throw Object.assign(new Error("ENOENT, not found in release/resources/app.asar"), { code: "ENOENT" }); },
+        sandboxExecutor: async () => { commands++;
+          if (mode === 'failed') return { exitCode: 1, output: 'Fixture assertion failed.', stdout: '', stderr: 'Fixture assertion failed.' };
+          throw Object.assign(new Error("ENOENT, not found in release/resources/app.asar"), { code: "ENOENT" }); },
         requestApproval: async () => { approvals++; return { approved: false }; },
       });
       assert.equal(result.status, "completed", result.content);
@@ -43,8 +46,10 @@ try {
       assert.equal(approvals, 0, "full auto must reach the executor without asking the user");
       assert.equal(await readFile(join(root, "core.js"), "utf8"), "export const ready = true;\n");
       assert.ok(reviews >= 2, "skipping executable tests must retain independent static review");
-      if (waived) { assert.match(result.content, /验证说明：当前版本尚未完成运行验证/); assert.equal(result.selfCheck.verification.waived, true); assert.equal(result.selfCheck.verification.passed, false); }
-      else { assert.match(result.content, /验证说明：实现已保存，执行环境未能完成检查/); assert.equal(result.selfCheck.verification.passed, false); assert.equal(result.selfCheck.verification.results.length, 1); }
+      assert.doesNotMatch(result.content, /验证说明/, 'routine verification notes do not clutter the delivery');
+      if (mode === 'failed') { assert.match(result.content, /检查没有通过/, 'actual failed checks stay visible without report labels'); assert.match(result.deliveryDetails, /验证说明：部分检查未通过/); assert.equal(result.selfCheck.verification.passed, false); }
+      else if (waived) { assert.match(result.deliveryDetails, /验证说明：当前版本尚未完成运行验证/); assert.equal(result.selfCheck.verification.waived, true); assert.equal(result.selfCheck.verification.passed, false); }
+      else { assert.match(result.deliveryDetails, /验证说明：实现已保存，执行环境未能完成检查/); assert.equal(result.selfCheck.verification.passed, false); assert.equal(result.selfCheck.verification.results.length, 1); }
     } finally { clearTimeout(timeout); controller.abort(); }
   }
   console.log("Actual runtime full-auto wiring, saved work on unavailable verification, explicit unverified delivery with static review: PASS");

@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from 'node:fs';
+import { randomUUID } from "node:crypto";
+import { hashFile } from '../storage/file-state.js';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const digest = (value) => createHash("sha256").update(value).digest("hex");
 const same = (a, b) => Boolean(a?.missing) === Boolean(b?.missing) && (a?.missing || a?.hash === b?.hash);
 const absent = () => ({ missing: true, hash: null, content: null });
 
@@ -29,8 +30,8 @@ async function stateAt(target) {
   try {
     const stat = await fs.lstat(target);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Not a regular merge target: ${target}`);
-    const content = await fs.readFile(target);
-    return { missing: false, hash: digest(content), content, mode: stat.mode & 0o777 };
+    const { sha256 } = await hashFile(target);
+    return { missing: false, hash: sha256, content: { filePath: target }, mode: stat.mode & 0o777 };
   } catch (error) { if (error.code === "ENOENT") return absent(); throw error; }
 }
 
@@ -43,7 +44,9 @@ async function atomicWrite(target, content, { mode = 0o600, beforeReplace } = {}
   try {
     handle = await fs.open(temporary, "wx", mode);
     owned = true;
-    await handle.writeFile(content);
+    if (content?.filePath) {
+      for await (const chunk of createReadStream(content.filePath)) await handle.writeFile(chunk);
+    } else await handle.writeFile(content);
     if (process.platform !== "win32") await handle.chmod(mode);
     await handle.sync();
     await handle.close();
@@ -103,7 +106,14 @@ export async function mergeBuilderFiles({ workspaceRoot, paths, before, after, r
       const current = await stateAt(await targetPath(root, entry.path));
       if (!same(current, original)) throw new Error(`Merge target changed concurrently: ${entry.path}`);
       entry.beforeMode = current.mode;
-      if (!original.missing) await atomicWrite(join(recoveryDirectory, entry.backup), original.content);
+      if (!original.missing) {
+        const backup = join(recoveryDirectory, entry.backup);
+        await atomicWrite(backup, original.content);
+        if ((await hashFile(backup)).sha256 !== original.hash) throw new Error(`Snapshot source changed concurrently: ${entry.path}`);
+        // File-backed originals must point at the retained copy for rollback,
+        // not at a live target which may already have been removed.
+        if (original.content?.filePath) original.content = { filePath: backup };
+      }
     }
     manifest.status = "prepared";
     await save();

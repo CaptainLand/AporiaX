@@ -25,6 +25,9 @@ try {
   await roles.getByRole('textbox', { name: '职责', exact: true }).fill('核对界面和证据');
   assert.equal(await roles.locator('.pr-advanced').getAttribute('open'), null);
   await roles.locator('.pr-advanced > summary').click();
+  assert.equal(await roles.getByLabel('最大轮次', { exact: true }).count(), 0, 'retired round cutoff is not editable');
+  assert.equal(await roles.getByLabel('请求预算（可选，含重试）', { exact: true }).inputValue(), '', 'no hidden default request cutoff');
+  assert.match(await roles.innerText(), /轮次和累计启动次数不限/);
   await roles.getByRole('textbox', { name: '角色指令', exact: true }).fill('只使用观察到的证据。');
   await roles.getByRole('combobox', { name: '执行模板', exact: true }).selectOption('verify');
   await roles.getByRole('combobox', { name: '模型', exact: true }).selectOption(JSON.stringify(['fixture', 'specialist']));
@@ -64,10 +67,14 @@ try {
   await roles.getByRole('button', { name: '前端审查', exact: true }).click();
   const panel = page.getByRole('region', { name: '专业 Agent', exact: true });
   assert.equal(await panel.locator('details[open]').count(), 0);
-  await panel.locator('summary').click();
-  assert.match(await panel.innerText(), /部分未知/); assert.match(await panel.innerText(), /无可靠计价/);
+  assert.equal(await panel.getByLabel('追加要求', { exact: true }).count(), 0);
+  assert(!/无可靠计价/.test(await panel.innerText()));
+  await panel.getByRole('button', { name: '查看详情', exact: true }).click();
+  await panel.locator('.pa-technical > summary').click();
+  assert.match(await panel.innerText(), /部分未知/);
+  await panel.getByRole('button', { name: '继续交办', exact: true }).click();
   await panel.getByLabel('追加要求', { exact: true }).fill('请补充验证证据');
-  await panel.getByRole('button', { name: '追加要求', exact: true }).click();
+  await panel.getByRole('button', { name: '发送交办', exact: true }).click();
   await panel.getByRole('button', { name: '停止此 Agent' }).click();
   assert.deepEqual((await page.evaluate(() => window.fixture.calls)).map(item => [item.kind, item.taskId, item.runId, item.agentId]), [['steer', 'fixture', 'run-fixture', 'agent-fixture'], ['stop', 'fixture', 'run-fixture', 'agent-fixture']]);
   await mkdir('.tmp/qa', { recursive: true });
@@ -92,8 +99,10 @@ try {
   await roles.getByRole('button', { name: '保存', exact: true }).click();
   await page.waitForFunction(() => window.fixture.saved.profiles.length === 5);
   await page.evaluate(() => window.fixture.end());
-  await panel.getByText('本轮已结束；如需继续，请在主聊天发送下一轮要求。').waitFor();
-  assert.equal(await panel.getByRole('button').count(), 0);
+  assert.equal(await panel.getByRole('button', { name: '停止此 Agent' }).count(), 0);
+  await panel.getByRole('button', { name: '继续交办', exact: true }).click();
+  await panel.getByText('原轮次已结束，请在主对话中发送下一轮交办。').waitFor();
+  assert.equal(await panel.getByRole('button', { name: '发送新一轮交办' }).isDisabled(), true);
   assert.deepEqual(errors, []);
   console.log('Professional role UI: CRUD, validation, task inheritance, abilities, guidance/stop, theme parity, narrow screen PASS');
 } finally { await browser.close(); await server.close(); }

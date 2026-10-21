@@ -1,0 +1,17 @@
+@import './side-chat.css';
+/* Approved AporiaX tokens and the actual main Conversation/Composer components.
+   Compact geometry only: no parallel palette, typography or chat renderer. */
+.temporary-chat { min-width: 0; overflow: hidden; }
+.temporary-chat-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px 16px; }
+.temporary-chat .message-list { max-width: none; width: 100%; padding: 0; margin: 0; gap: 22px; }
+.temporary-chat .user-message { max-width: 92%; }
+.temporary-chat .composer-shell { flex: 0 0 auto; padding: 0; margin: 10px 16px calc(13px + var(--main-composer-status-space, 0px)); width: auto; max-width: none; }
+.temporary-chat .composer { width: 100%; }
+.temporary-chat .model-trigger { min-width: 0; max-width: 210px; }
+.temporary-chat .model-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.temporary-chat .composer-hint { font-size: var(--text-xs); }
+.temporary-chat .witness-panel { margin-top: 12px; }
+.temporary-chat .message-list > * { min-width: 0; }
+.temporary-chat .approval-card { overflow-wrap: anywhere; }
+.temporary-chat-empty { padding: 30px 4px; color: var(--gray-10); font-size: var(--text-sm); line-height: 1.75; }
+.temporary-chat-error { color: var(--red-10); font-size: var(--text-xs); margin: 6px 16px; overflow-wrap: anywhere; }

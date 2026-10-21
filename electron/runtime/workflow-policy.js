@@ -77,3 +77,19 @@ export function deliveryNotice(assessment, hasChanges, language = "zh-CN") {
   else if (assessment.reviewPending) notices.push(en ? "Independent review coverage is incomplete." : "独立审查尚未覆盖全部改动。" );
   return notices.filter(Boolean).join(" ");
 }
+
+// Routine evidence belongs in the full reply. Consequential failures remain
+// visible regardless of how the model chooses to summarize the result.
+export function deliveryPresentation(assessment, hasChanges, language = "zh-CN") {
+  const details = deliveryNotice(assessment, hasChanges, language);
+  if (!hasChanges) return { warning: '', details };
+  const en = language === 'en';
+  const warnings = [];
+  if (assessment.status === 'failed') warnings.push(en
+    ? 'Some checks did not pass; the result still needs attention before use.'
+    : '还有检查没有通过，使用前需要处理。');
+  if (assessment.findings.length) warnings.push(en
+    ? 'There are unresolved issues affecting this result.'
+    : '还有影响结果的问题尚未解决。');
+  return { warning: warnings.join(' '), details };
+}

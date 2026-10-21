@@ -117,7 +117,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 120px;
   max-width: 180px;
+  flex-shrink: 0;
   min-height: 28px;
   padding: 0 8px;
   border-radius: var(--radius-md);
@@ -140,6 +142,8 @@
 }
 
 .workbench-tab-title {
+  flex: 1;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -159,6 +163,7 @@
 
 .workbench-tab-close {
   display: grid;
+  flex-shrink: 0;
   place-items: center;
   width: 16px;
   height: 16px;

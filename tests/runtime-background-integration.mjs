@@ -38,7 +38,7 @@ try {
       }
       if (++mainRounds === 1) return call("delegate", "delegate_subagent", {
         role: "explore", task: "Inspect notes.txt", scope: ["notes.txt"], background: true,
-        ...(optional ? { required_for_completion: false } : {}),
+        required_for_completion: !optional,
       });
       await childWaiting.promise;
       if (!optional) allowChildFinish.resolve();

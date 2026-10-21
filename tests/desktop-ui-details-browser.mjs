@@ -48,13 +48,15 @@ try {
         if (input.action === 'new-browser') return { ...input, id: 'browser-fixture', kind: 'browser', title: input.url, url: input.url, owner: 'user' };
         return true;
       } },
-      sideChat: { subscribe: () => () => {}, request: async input => { window.uiCalls.push(input); return { messages: [{ id: 'side-answer', role: 'assistant', content: '侧聊选中文字', status: 'completed', createdAt: new Date().toISOString() }] }; } },
+      sideChat: { subscribe: () => () => {}, request: async input => { window.uiCalls.push(input); return {
+        id: 'details-temporary', taskId: task.id, scope: input.scope, revision: 1, settings: { providerId: 'own', modelId: 'test' },
+        messages: [{ id: 'side-answer', role: 'assistant', content: '侧聊选中文字', status: 'completed', createdAt: new Date().toISOString() }] }; } },
     };
   });
   await page.goto(server.resolvedUrls.local[0]);
   if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
   await page.locator('.assistant-message-content').waitFor();
-  const composer = page.locator('.composer textarea');
+  const composer = page.locator('.thread .composer textarea');
   await composer.fill('保留已有草稿');
   const select = async selector => page.locator(selector).evaluate(element => {
     const range = document.createRange(); range.selectNodeContents(element);
@@ -99,13 +101,13 @@ try {
   console.log('PASS main conversation: selected text quoted into existing draft, clipboard/error, link handling, keyboard/outside dismissal, bounded menu; no send.');
   await page.getByRole('button', { name: '打开工作侧栏', exact: true }).click();
   await page.getByRole('button', { name: '打开内容', exact: true }).click();
-  await page.getByRole('menuitem', { name: '侧边聊天', exact: true }).click();
-  await page.locator('.side-chat-message.assistant p').waitFor();
-  const sideDraft = page.getByRole('textbox', { name: '侧聊输入' });
-  await sideDraft.fill('侧聊草稿'); await select('.side-chat-message.assistant p');
+  await page.getByRole('menuitem', { name: '临时聊天', exact: true }).click();
+  await page.locator('.temporary-chat .assistant-message-content p').waitFor();
+  const sideDraft = page.locator('.temporary-chat').getByRole('textbox', { name: '任务输入', exact: true });
+  await sideDraft.fill('侧聊草稿'); await select('.temporary-chat .assistant-message-content p');
   await page.getByRole('menuitem', { name: '添加到对话', exact: true }).click();
   await page.waitForFunction(expected =>
-    document.querySelector('.side-chat-composer textarea')?.value === expected,
+    document.querySelector('.temporary-chat .composer textarea')?.value === expected,
   '侧聊草稿\n\n> 侧聊选中文字\n\n');
   assert.equal(await sideDraft.inputValue(), '侧聊草稿\n\n> 侧聊选中文字\n\n');
   assert.match(await composer.inputValue(), /^保留已有草稿/);
