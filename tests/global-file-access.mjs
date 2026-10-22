@@ -44,8 +44,8 @@ try {
       await denied(() => invoke("read_external_file", { path: "/inside.txt" }));
       await denied(() => invoke("read_external_file", { path: "/" }));
     }
-    for (const toolName of ["read_file", "read_external_file", "list_directory", "search_text", "write_file", "apply_patch"]) {
-      await denied(() => invoke(toolName, { path: toolName === "list_directory" || toolName === "search_text" ? outside : file, content: "bad", search: "original", replace: "bad", query: "outside" }));
+    for (const toolName of ["read_file", "read_external_file", "list_directory", "search_text", "find_files", "write_file", "apply_patch"]) {
+      await denied(() => invoke(toolName, { path: ['list_directory', 'search_text', 'find_files'].includes(toolName) ? outside : file, content: "bad", search: "original", replace: "bad", query: "outside" }));
     }
     assert.match((await invoke("read_file", { path: "inside.txt" })).modelResult.content, /inside/);
     await assert.rejects(() => settings.set({ enabled: true }), /risk confirmation/);
@@ -63,6 +63,9 @@ try {
     assert.equal(await readFile(file, "utf8"), "outside patched\n");
     assert.match((await invoke("read_external_file", { path: file })).modelResult.content, /patched/);
     assert((await invoke("search_text", { path: outside, query: "patched" })).modelResult.results.length);
+    const found = (await invoke('find_files', { path: outside, query: 'note' })).modelResult;
+    assert.equal(found.external, true);
+    assert.deepEqual(found.results.map(entry => entry.path), [file]);
   });
   await check("external edit grants use global policy; read-only and commands do not elevate", async () => {
     const grant = permissionProfile => createLocalControlPolicy({ workspaceRoot: workspace, permissionProfile });
@@ -89,6 +92,9 @@ try {
     const result = await invoke("search_text", { path: data, query: "needle" });
     assert.equal(result.modelResult.results.length, 1);
     assert.match(result.modelResult.results[0].preview, /needle-public/);
+    const names = (await invoke('find_files', { path: data, query: '' })).modelResult.results.map(entry => entry.name);
+    assert(names.includes('public.txt'));
+    assert(!names.includes('aporiax-account-session.json'));
   });
   await check("global revocation while approval waits stops the real executor", async () => {
     await denied(() => invoke("read_external_file", { path: file }, { permissionPolicy: createPermissionPolicy("workspace-write", { read_external_file: "ask" }), requestApproval: async () => { await settings.set({ enabled: false }); return { approved: true }; } }));

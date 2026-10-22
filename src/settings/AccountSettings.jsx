@@ -37,7 +37,7 @@ function AccountSettingsContent({ context, owner }) {
   const filtered = useMemo(() => history.rows.filter(row => (!day || usageDay(row.startedAt) === day) && (status === 'all' || row.billingStatus === status)), [history.rows, day, status]);
   useEffect(() => setPage(0), [day, status]);
   const labels = { settled: tr('已结算', 'Settled'), processing: tr('处理中', 'Processing'), pending: tr('待核对', 'Pending'), unbilled: tr('未计费', 'Unbilled') };
-  const remaining = typeof account.quota?.remainingRatio === 'number' && Number.isFinite(account.quota.remainingRatio) ? Math.max(0, Math.min(1, account.quota.remainingRatio)) : null;
+  const remaining = typeof account.quota?.remainingRatio === 'number' && Number.isFinite(account.quota.remainingRatio) ? Math.max(0, account.quota.remainingRatio) : null;
   const currentYear = Number(usageDay(now).slice(0, 4));
   const oldestYear = history.rows.length ? Math.min(...history.rows.map(row => Number(usageDay(row.startedAt).slice(0, 4)))) : currentYear;
   const openWeb = async () => {
@@ -65,7 +65,7 @@ function AccountSettingsContent({ context, owner }) {
       </section>
       <section className="account-settings-quota" aria-label={tr('周额度', 'Weekly quota')}>
         <div><span>{tr('本周剩余额度', 'Weekly quota remaining')}</span><strong>{ratio(remaining)}</strong></div>
-        <div className="account-settings-track" role="progressbar" aria-label={tr('本周剩余额度', 'Weekly quota remaining')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining == null ? undefined : Math.round(remaining * 100)}><i style={{ width: remaining == null ? 0 : `${remaining * 100}%` }} /></div>
+        <div className="account-settings-track" role="progressbar" aria-label={tr('本周剩余额度', 'Weekly quota remaining')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining == null ? undefined : Math.round(Math.min(1, remaining) * 100)} aria-valuetext={ratio(remaining)}><i style={{ width: remaining == null ? 0 : `${Math.min(1, remaining) * 100}%` }} /></div>
         <small>{quotaResetLabel(account.quota, now, tr)}</small>
       </section>
       <section className="account-settings-usage" aria-busy={history.busy}>

@@ -12885,6 +12885,12 @@ button.anchor-history-heading:hover {
   color: color-mix(in srgb, var(--text-1) 70%, var(--text-2));
 }
 
+/* Give light-mode reading text a little more ink without changing the theme. */
+:root[data-theme="light"] .assistant-message-content > .markdown-message :is(p, li),
+:root[data-theme="light"] .assistant-message-content > .markdown-message :is(p, li) > code {
+  color: color-mix(in srgb, var(--text-1) 85%, #000);
+}
+
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message li > p:last-child,
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message > p:last-child {
   margin-bottom: 0;
@@ -13207,7 +13213,7 @@ button.anchor-history-heading:hover {
   backdrop-filter: none;
 }
 :root[data-theme] .witness-panel { border-color: transparent; }
-:root[data-theme] .markdown-message th { background: var(--gray-3); }
+:root[data-theme] .markdown-message th { background: var(--gray-2); }
 :root[data-theme] .markdown-message tr:hover td { background: var(--gray-3); }
 :root[data-theme] .edited-files-header { background: transparent; }
 :root[data-theme] .edited-files-title strong,

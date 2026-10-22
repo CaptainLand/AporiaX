@@ -1,10 +1,13 @@
+import { hasDeliveredReply } from '../../shared/reply-delivery.js';
+
 const finishedStates = new Set(['completed', 'partial', 'blocked', 'needs_input', 'failed', 'interrupted']);
 
 // A delivered reply is not proof that the task completed. Only explicit outcome
 // states and completed plan steps contribute; tool counts never predict progress.
 export function getLiveRunProgress(message) {
   const witness = message?.witness;
-  const status = message?.error ? 'failed'
+  const status = hasDeliveredReply(message) && (message.error || message.status === 'failed') ? 'partial'
+    : message?.error ? 'failed'
     : finishedStates.has(message?.status) ? message.status
     : witness?.status || message?.status || 'starting';
   const plan = message?.plan?.steps?.length ? message.plan : witness?.plan;

@@ -1,4 +1,5 @@
 import { parseMentionTokens } from "../shared/mention-tokens.js";
+import { hasDeliveredReply } from '../shared/reply-delivery.js';
 import { ROLE_CREATION_COMMAND } from "../shared/role-creation-command.js";
 import { buildWitnessRouteBlocks } from "./p0-model.js";
 
@@ -132,7 +133,7 @@ export function deriveLiveAgentStatus(message = {}, language = "zh-CN") {
   const english = normalizedLanguage(language) === "en";
   const steps = buildAgentProcessSummary(message, language);
   const running = message?.status === "running";
-  const failed = message?.status === "failed" || Boolean(message?.error);
+  const failed = !hasDeliveredReply(message) && (message?.status === "failed" || Boolean(message?.error));
   const interrupted = message?.status === "interrupted";
   const completedSteps = steps.filter((step) => step.status === "completed").length;
   const activeStep = steps.find((step) => step.status === "running") || null;

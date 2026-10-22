@@ -1,3 +1,5 @@
+import { hasDeliveredReply } from '../../shared/reply-delivery.js';
+
 // A task's live status belongs to its latest visible attempt, never to an
 // earlier attempt that happens to have a Witness snapshot.
 export function latestVisibleAssistant(messages = []) {
@@ -8,9 +10,7 @@ export function latestVisibleAssistant(messages = []) {
 // A displayed completion means a reply was delivered, not that verification
 // passed. Preserve the original outcome and evidence for runtime decisions.
 export function hasTaskReply(message) {
-  return Boolean(message && message.replyDelivered !== false && !message.error &&
-    ["completed", "partial", "blocked", "needs_input"].includes(message.status) &&
-    typeof message.content === "string" && message.content.trim());
+  return hasDeliveredReply(message);
 }
 
 export function isHistoricalFailure(message, latest) {

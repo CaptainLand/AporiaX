@@ -10,10 +10,14 @@ import { WEB_TOOL_DEFINITIONS, WEB_TOOL_RISKS } from './web-tools.js';
 import { AGENT_ROLE_TOOLS } from './agent-role-tools.js';
 import { APPEARANCE_TOOLS } from './appearance-tools.js';
 import { VERIFY_PROJECT_TOOL } from './isolated-verification.js';
+import { INSTALL_WORKSPACE_SKILL } from './workspace-skill-install.js';
+import { NUMERIC_CHECK_TOOL } from './numeric-check.js';
 
 export const MAX_SEARCH_RESULTS = 200;
 
 export const TOOL_DEFINITIONS = [
+  INSTALL_WORKSPACE_SKILL,
+  NUMERIC_CHECK_TOOL,
   VERIFY_PROJECT_TOOL,
   ...AGENT_ROLE_TOOLS,
   ...APPEARANCE_TOOLS,
@@ -36,14 +40,14 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "finish_task",
-      description: "End this attempt with an explicit outcome and result-first user-facing summary, not a per-agent/tool diary or raw receipt. Use partial for unfinished work, blocked for an external obstacle, needs_input for a required user choice, completed only when the requested work is done, not proof of verification. Include useful file/preview links. Call alone; no other tools in the same response.",
+      description: "Optional compatibility wrapper for a final reply. Prefer simply answering the user in normal text; calling this tool is not required. Optional status can describe unfinished work: partial, blocked, or needs_input. Completion describes work, not proof of verification. Include useful file/preview links and one or two important points. Other operations in the same response run before finishing.",
       parameters: { type: "object", properties: {
         status: { type: "string", enum: ["completed", "partial", "blocked", "needs_input"] },
-        summary: { type: "string", minLength: 1, description: "Always-visible natural delivery: one short result sentence, useful file/preview links, and at most one or two important points. No mandatory report headings, repeated check disclaimers or internal metadata." },
+        summary: { type: "string", description: "Optional natural reply. A normal assistant text answer is also accepted. Include the result, useful links and at most one or two important points." },
         details: { type: "string", maxLength: 24000, description: "Optional supporting Markdown for Expand reply: analysis, formulas, code, line references and check details, written naturally without report labels. Omit when there is nothing useful to add; do not repeat summary. No hidden reasoning or raw internal worker receipts. Important failures or actions must also be in summary/warnings." },
         limitations: { type: "string", maxLength: 4000, description: "Real scope limitations for the collapsed full reply, phrased conversationally without Verification note or similar report labels. Omit when unnecessary; never invent a disclaimer when checks passed. Use warnings for consequential failures or actions." },
         warnings: { type: "string", maxLength: 4000, description: "Always-visible essential warning or user action, in natural language: failed checks, unsafe/unusable output, unresolved issues affecting use, or preview lifetime requirements. Keep to one or two important points. Not for routine verification logs." },
-      }, required: ["status", "summary"], additionalProperties: false },
+      }, additionalProperties: false },
     },
   },
   ...["followup_subagent", "cancel_subagent"].map((name) => ({
@@ -89,6 +93,7 @@ export const TOOL_DEFINITIONS = [
           },
           write_scopes: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" },
             description: "Required for builder: explicit non-root paths it may modify. Keep write scopes non-overlapping. Integration checks file conflicts, not semantic correctness." },
+          command_scope: { type: 'string', enum: ['none', 'workspace'], description: 'Command access is separate from read scope. For command-based verification with narrow scope, explicitly select workspace; cwd does not confine commands. Parent permissions and isolation still apply.' },
           background: {
             type: "boolean",
             description:
@@ -256,6 +261,25 @@ export const TOOL_DEFINITIONS = [
   },
   {
     type: "function",
+    function: {
+      name: "find_files",
+      description: "Find workspace files by filename or path without reading their contents. Prefer this for locating a file; use search_text for its contents and LSP for semantic definitions/references. Uses a watched file index. Empty query with include_glob can list matching files. A truncated result is not proof that a file is absent.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Filename, path fragment, or space-separated path words; may be empty with include_glob.' },
+          path: { type: 'string', description: 'Workspace-relative directory. Defaults to the workspace root.' },
+          include_glob: { type: 'array', maxItems: 32, items: { type: 'string' } },
+          exclude_glob: { type: 'array', maxItems: 32, items: { type: 'string' } },
+          max_results: { type: 'integer', minimum: 1, maximum: MAX_SEARCH_RESULTS },
+          refresh: { type: 'boolean', description: 'Force a fresh file listing when files changed outside the app.' },
+        },
+        required: ['query'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
     function: {
       name: "list_directory",
       description:
@@ -978,6 +1002,7 @@ export const TOOL_RISKS = {
   read_file: "read",
   read_external_file: "read",
   search_text: "read",
+  find_files: 'read',
   git_status: "read",
   git_diff: "read",
   git_log: "read",
@@ -1001,6 +1026,8 @@ export const TOOL_RISKS = {
   apply_patch: "write",
   lsp: "read",
   lsp_install: "control",
+  install_workspace_skill: 'control',
+  verify_numeric_data: 'read',
   create_word_document: "write",
   create_presentation: "write",
   create_spreadsheet: "write",

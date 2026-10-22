@@ -105,10 +105,13 @@ try {
     assert.equal(result.loopMetrics.recoveries, 1); assert.equal(result.usage.prompt_tokens, 400);
   });
   await test("truncated side-effecting calls never reach the native executor", async () => {
-    const { result, workspace, requests } = await fixture(() => sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a.txt","content":' } }] }, "length"));
+    const { result, workspace, requests } = await fixture((body, n) => {
+      if (n === 3) assert.equal(body.tools, undefined, 'The last request can only deliver a normal reply');
+      return sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a.txt","content":' } }] }, "length");
+    });
     // A complete stream with truncated tool JSON gets one inference repair;
     // neither incomplete call may reach the executor, even if repair truncates.
-    assert.equal(result.status, "failed"); assert.equal(requests, 2);
+    assert.equal(result.status, "failed"); assert.equal(requests, 3, 'One inference repair plus one tools-disabled final reply; neither produced a valid answer');
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD"); assert.equal(result.steps.length, 0);
   });
   await test("invalid terminated call is corrected once before normal tool execution", async () => {

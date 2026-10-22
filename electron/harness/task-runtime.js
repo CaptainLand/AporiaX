@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { validateApprovalResponse } from "./approval-response.js";
 import { withDurableRun } from "../runtime/durable-run.js";
+import { preserveDeliveredReply } from '../../shared/reply-delivery.js';
 import { createRunControl } from "../runtime/run-control.js";
 import { clarificationScope, createClarificationSession } from "../runtime/user-clarification.js";
 import {
@@ -455,6 +456,10 @@ export class HarnessTaskRuntime {
           throw record.persistenceError;
         }
       };
+      let deliveredResult = null;
+      const preserveReply = error => preserveDeliveredReply(deliveredResult,
+        { code: error?.code || 'RUN_PERSISTENCE_FAILED', message: error.message },
+        '回答已保留，但任务记录未能完整保存；请勿直接重复结果不确定的操作。');
       try {
         record.clarification = createClarificationSession({
           state: await readClarificationLedger(this.#directory(), clarificationKey),
@@ -513,16 +518,24 @@ export class HarnessTaskRuntime {
           clarification: record.clarification,
           });
         });
+        deliveredResult = result;
         await control.flush();
         await record.clarification.flush();
         await this.#flushJournal(record);
         if (record.persistenceError) return { ...result, status: "blocked", error: true, content: record.persistenceError.message,
+          ...(preserveReply(record.persistenceError) || {}),
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         await finishRunJournal(this.#directory(), safeRunId, result);
         await this.#notifyFinished(record);
         return result;
       } catch (error) {
         await this.#flushJournal(record);
+        const retained = preserveReply(record.persistenceError || error);
+        if (retained) {
+          const result = { ...retained, persistence: { failed: true, lastSuccessfulContext: record.lastSuccessfulContext || null } };
+          try { await finishRunJournal(this.#directory(), safeRunId, result); } catch { /* The reply remains available even if its journal cannot be written. */ }
+          return result;
+        }
         await finishRunJournal(this.#directory(), safeRunId, {
           status: record.persistenceError ? "blocked" : controller.signal.aborted ? "interrupted" : "failed",
           content: record.persistenceError?.message || error?.message || "Harness run failed.",
@@ -535,7 +548,8 @@ export class HarnessTaskRuntime {
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         throw error;
       } finally {
-        await record.clarification?.flush();
+        try { await record.clarification?.flush(); }
+        catch (error) { if (!preserveReply(error)) throw error; }
         clearTimeout(record.journalTimer);
         unsubscribeControl();
         control.abort();

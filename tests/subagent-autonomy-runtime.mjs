@@ -30,7 +30,7 @@ try {
         return sse({ content: 'Relevant workflow read; no code was executed.' });
       }
       main++;
-      assert.match(text, /two or more independent work blocks/);
+      assert.match(text, /Delegate useful independent blocks early/);
       if (main === 1 && scenario !== 'denied') return call('parent-skill', 'read_skill_resource', { skill: 'fixture', path: 'SKILL.md' });
       if (main === (scenario === 'denied' ? 1 : 2)) return call('delegate', 'delegate_subagent', {
         role: 'explore', task: 'Read the relevant workflow', skills: ['fixture'], context: 'CONFIRMED_INTERFACE: read only; report uncertainty.', background: false,

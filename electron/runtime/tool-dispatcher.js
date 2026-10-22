@@ -55,6 +55,7 @@ export async function dispatchNativeTool({
   }
 
   const input = parseArguments(toolCall);
+  if (toolName === 'install_workspace_skill' && typeof executeContext.skillInstaller !== 'function') throw Error('技能安装仅限当前桌面主 Agent。');
   if (["list_aporiax_themes", "create_aporiax_theme"].includes(toolName) && typeof executeContext.appearanceTools !== 'function') throw new Error('外观工具仅限当前桌面主 Agent。');
   if (["list_agent_roles", "manage_agent_role"].includes(toolName) && typeof executeContext.roleTools !== 'function') throw new Error('角色管理仅限当前桌面主 Agent。');
   await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
@@ -79,7 +80,7 @@ export async function dispatchNativeTool({
 
   // Role changes have their own mandatory, revision-bound approval containing
   // the full diff. Never replace it with a generic/rememberable tool grant.
-  if (decision.requiresApproval && toolName !== "manage_agent_role") {
+  if (decision.requiresApproval && !['manage_agent_role', 'install_workspace_skill'].includes(toolName)) {
     if (typeof requestApproval !== "function") {
       throw new Error(`Tool ${toolName} requires approval.`);
     }

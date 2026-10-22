@@ -1,4 +1,5 @@
 // Shared declarative schema only; no command execution or filesystem access.
+import { normalizeNumericCheck } from './numeric-check.js';
 const text = (value, limit = 2000) => {
   if (typeof value !== "string" || !value.trim() || value.length > limit || value.includes("\0")) throw new Error("ACCEPTANCE_INVALID_TEXT");
   return value;
@@ -22,6 +23,7 @@ export function normalizeTaskContract(input) {
     if (!Array.isArray(item.checks) || item.checks.length > 8) throw new Error("ACCEPTANCE_INVALID_CHECKS");
     const checks = item.checks.map((check) => {
       if (!check || typeof check !== "object") throw new Error("ACCEPTANCE_INVALID_CHECK");
+      if (check.type === 'json_numeric') return { type: check.type, path: path(check.path), ...normalizeNumericCheck(check) };
       if (["file_exists", "file_contains", "json_value"].includes(check.type)) {
         const value = { type: check.type, path: path(check.path) };
         if (check.type === "file_contains") value.text = text(check.text, 4000);

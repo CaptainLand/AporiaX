@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { BROWSER_CAPABILITIES, registerBrowserScreenshot } from '../runtime/browser-evidence.js';
 import { isBrowserConsoleShortcut } from '../../shared/browser-shortcuts.js';
 import {
   isAllowedBrowserNavigation,
@@ -35,14 +36,14 @@ function inspectPage(input = {}, operation = "snapshot") {
       return false;
     });
   }
-  const el = matches.find(visible);
+  const el = matches.find(el => visible(el) || (operation === 'upload' && input.mode !== 'drop' && el.matches('input[type=file]')));
   if (!el) return { found: false };
   el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
   const rect = el.getBoundingClientRect();
   const x = Math.max(0, Math.min(innerWidth - 1, rect.x + rect.width / 2));
   const y = Math.max(0, Math.min(innerHeight - 1, rect.y + rect.height / 2));
   const hit = document.elementFromPoint(x, y);
-  if (!hit || !(el === hit || el.contains(hit))) return { found: false, obscured: true };
+  if (operation !== 'upload' && (!hit || !(el === hit || el.contains(hit)))) return { found: false, obscured: true };
   if (el.disabled) return { found: false, disabled: true };
   if (operation === "focus") el.focus({ preventScroll: true });
   if (operation === "click") el.click();
@@ -57,25 +58,52 @@ function inspectPage(input = {}, operation = "snapshot") {
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
+  if (operation === 'select') {
+    if (el.tagName !== 'SELECT') throw Error('Target is not a native select control.');
+    const options = [...el.options], wanted = input.values;
+    if (!el.multiple && wanted.length !== 1) throw Error('This select accepts one value.');
+    const selected = wanted.map(value => options.find(option => !option.disabled && (input.by === 'label' ? option.label : option.value) === value));
+    if (selected.some(option => !option)) throw Error('Requested select option is unavailable.');
+    for (const option of options) option.selected = selected.includes(option);
+    el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { found: true, selected: [...el.selectedOptions].map(option => option.value) };
+  }
+  if (operation === 'upload') {
+    const dataTransfer = new DataTransfer();
+    for (const file of input.files) dataTransfer.items.add(new File([Uint8Array.from(atob(file.data), char => char.charCodeAt(0))], file.name, { type: file.mimeType }));
+    if (input.mode === 'drop') {
+      if (!visible(el) || !hit || !(el === hit || el.contains(hit))) throw Error('Drop target is not visible and unobscured.');
+      for (const type of ['dragenter', 'dragover', 'drop']) el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+    } else {
+      if (!el.matches('input[type=file]')) throw Error('Target is not a file input.');
+      if (!el.multiple && input.files.length > 1) throw Error('This input accepts one file.');
+      el.files = dataTransfer.files;
+      el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
   return { found: true, x, y };
 }
 
 export class WorkbenchBrowserSession {
-  constructor({ taskId, workspacePath, owner = "user", publish = () => {} }) {
+  constructor({ taskId, workspacePath, owner = "user", profilePartition = '', publish = () => {} }) {
     this.id = `browser_${randomUUID()}`;
     this.kind = "browser";
     this.taskId = taskId; this.workspacePath = workspacePath; this.owner = owner;
+    this.rememberLogin = Boolean(profilePartition);
     this.publish = publish; this.entries = []; this.problems = [];
     this.consoleToggleSeq = 0;
     this.status = "ready"; this.pending = Promise.resolve(); this.action = ""; this.closed = false; this.agentUsed = owner === "agent";
     this.view = new WebContentsView({ webPreferences: {
-      partition: `workbench-${randomUUID()}`, nodeIntegration: false, contextIsolation: true,
+      partition: profilePartition || `workbench-${randomUUID()}`, nodeIntegration: false, contextIsolation: true,
       sandbox: true, webSecurity: true, backgroundThrottling: false,
     } });
     this.wc = this.view.webContents;
     this.wc.session.setPermissionRequestHandler((_wc, _p, callback) => callback(false));
     this.wc.session.setPermissionCheckHandler(() => false);
-    this.wc.session.on("will-download", (event) => { event.preventDefault(); this.note("download", "自动下载已阻止；请通过明确的文件下载流程。"); });
+    const downloadGuard = (event, _item, contents) => { if (contents !== this.wc) return; event.preventDefault(); this.note("download", "自动下载已阻止；请通过明确的文件下载流程。"); };
+    const browserSession = this.wc.session;
+    browserSession.on('will-download', downloadGuard);
+    this.wc.once('destroyed', () => browserSession.removeListener('will-download', downloadGuard));
     this.wc.setWindowOpenHandler(({ url }) => {
       try {
         const next = normalizeBrowserUrl(url);
@@ -114,6 +142,9 @@ export class WorkbenchBrowserSession {
       await this.wc.debugger.sendCommand("Network.enable").catch((e) => this.note("error", e.message));
       return this.applyViewport();
     });
+    // A newly created tab may be closed before its initial frame commits.
+    // Observe that rejection; actions awaiting ready still receive real errors.
+    this.ready.catch(error => { if (!this.closed && !this.closing) this.note('error', error.message); });
     // A user cannot type/click the agent-owned native view by accident.
     this.wc.on("before-input-event", (event, input) => {
       if (this.owner !== "user" && !this.dispatchingInput) { event.preventDefault(); return; }
@@ -156,6 +187,7 @@ export class WorkbenchBrowserSession {
   state() { return { id: this.id, kind: "browser", taskId: this.taskId, workspacePath: this.workspacePath,
     title: this.closed ? "已结束的浏览器" : this.wc.getTitle() || "Browser", url: this.closed ? "" : this.wc.getURL(),
     owner: this.owner, agentUsed: Boolean(this.agentUsed), status: this.closed ? "closed" : this.status, action: this.action,
+    rememberLogin: this.rememberLogin, localPreview: Boolean(this.htmlPreviewPath),
     present: Boolean(this.present), consoleToggleSeq: this.consoleToggleSeq }; }
   changed() { this.publish(this.state()); }
   claimForAgent() {
@@ -188,6 +220,8 @@ export class WorkbenchBrowserSession {
     await this.ready;
     if (this.owner === "user" || this.owner === "handoff") throw new Error("BROWSER_USER_CONTROL: User is operating privately. Wait for control to be returned, then take a fresh snapshot.");
     return { active: true, browser: "AporiaX Workbench", browserSessionId: this.id,
+      capabilities: { ...BROWSER_CAPABILITIES, persistentProfile: this.rememberLogin },
+      lifecycle: { loginState: this.rememberLogin ? 'remembered-for-this-task' : 'temporary', survivesTask: true, localPreview: Boolean(this.htmlPreviewPath), previewStopsWhenTabCloses: Boolean(this.htmlPreviewPath) },
       ...(await this.evaluate({}, "snapshot")), consoleErrors: this.entries.slice(-20), networkProblems: this.problems.slice(-20) };
   }
   async mentionSnapshot() {
@@ -241,11 +275,43 @@ export class WorkbenchBrowserSession {
     return this.snapshot();
   }); }
   async screenshot(input = {}) { return this.actionRun("正在截图", async () => {
+    this.present = true; this.changed();
     const dir = join(tmpdir(), "aporiax-browser"); await mkdir(dir, { recursive: true });
     const path = join(dir, `${this.id}-${Date.now()}.png`);
-    const { data } = await this.wc.debugger.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: Boolean(input.full_page) });
-    await writeFile(path, Buffer.from(data, "base64"));
-    return { path, temporary: true, browserSessionId: this.id, url: this.wc.getURL() };
+    let timer;
+    const capture = async () => {
+      // capturePage wakes painting even when the sidebar is hidden. CDP alone
+      // can otherwise wait indefinitely for a frame that is never scheduled.
+      let image;
+      const deadline = Date.now() + 3000;
+      while (!image) {
+        try { image = await this.wc.capturePage({ x: 0, y: 0, ...this.metrics }, { stayHidden: true, stayAwake: true }); }
+        catch (error) {
+          if (Date.now() >= deadline || !/display surface/i.test(error.message)) throw error;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      if (!input.full_page) return image.toPNG();
+      const layout = await this.wc.debugger.sendCommand('Page.getLayoutMetrics');
+      const size = layout.cssContentSize || layout.contentSize;
+      const width = Math.ceil(size.width), height = Math.ceil(size.height);
+      if (width * height > 16_000_000) throw Error('页面过长，请截取当前可见区域。');
+      const { data } = await this.wc.debugger.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 } });
+      return Buffer.from(data, 'base64');
+    };
+    let bytes;
+    try { bytes = await Promise.race([capture(), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('BROWSER_SCREENSHOT_TIMEOUT: 页面尚未绘制，请显示预览后重试。')), 10000); })]); }
+    finally { clearTimeout(timer); }
+    await writeFile(path, bytes);
+    return { path, temporary: true, browserSessionId: this.id, url: this.wc.getURL(),
+      visualEvidence: registerBrowserScreenshot(bytes, { path, url: this.wc.getURL(), browserSessionId: this.id }) };
+  }); }
+  async select(input) { return this.actionRun('正在选择选项', async () => {
+    const result = await this.locate(input, 'select'); return { selected: result.selected, ...(await this.snapshot()) };
+  }); }
+  async upload(input) { return this.actionRun('正在上传文件', async () => {
+    await this.locate(input, 'upload');
+    return { uploaded: input.files.map(file => ({ name: file.name, bytes: file.bytes, sha256: file.sha256 })), mode: input.mode || 'input', ...(await this.snapshot()) };
   }); }
   console() { return this.owner === "agent" ? { entries: this.entries } : { entries: [], paused: true }; }
   network() { return this.owner === "agent" ? { entries: this.problems } : { entries: [], paused: true }; }

@@ -24,6 +24,8 @@ assert.deepEqual(names, [
   "browser_console",
   "browser_network",
   "browser_close",
+  'browser_select',
+  'browser_upload',
 ]);
 assert(names.every(isBrowserToolName));
 assert.equal(BROWSER_TOOL_RISKS.browser_snapshot, "read");

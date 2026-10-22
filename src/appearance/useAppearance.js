@@ -8,7 +8,7 @@ export function useAppearance(theme, setTheme) {
   const stateRef = useRef(state), baseRef = useRef(theme), writing = useRef(false);
   baseRef.current = theme;
   const accept = useCallback(value => {
-    const { error: recovered, ...record } = value;
+    const { error: recovered, recovery, ...record } = value;
     const next = validateAppearance(record);
     if (next.revision < stateRef.current.revision) return;
     stateRef.current = next; setState(next); setError(recovered || '');

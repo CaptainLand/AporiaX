@@ -128,7 +128,7 @@
 }
 
 .local-account-popover {
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - 130px);
   overflow-y: auto;
   position: absolute;
   z-index: 25;
@@ -351,3 +351,14 @@
 :root[data-theme] .local-account-actions button:hover:not(:disabled) { background:var(--gray-4); color:var(--text-1); }
 :root[data-theme] .local-account-actions button:last-child:hover:not(:disabled) { color:var(--red-11); background:var(--red-3); }
 .local-account-actions button:disabled { opacity:.5; }
+
+.local-account-invite-card { display:flex; flex-direction:column; gap:7px; padding:12px; border-radius:12px; background:var(--gray-2); }
+.local-account-invite-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--account-muted); font-size:11px; }
+.local-account-invite-heading button { display:inline-flex; align-items:center; gap:4px; padding:4px 6px; margin:-4px -6px -4px 0; border:0; border-radius:6px; color:var(--account-accent); background:transparent; font-size:10px; cursor:pointer; }
+.local-account-invite-heading button:hover { background:var(--gray-4); }
+.local-account-invite-heading button:focus-visible { outline:2px solid var(--account-accent); outline-offset:2px; }
+.local-account-invite-code { color:var(--account-ink); font:600 13px/1.45 var(--font-mono); letter-spacing:.06em; overflow-wrap:anywhere; user-select:text; }
+.local-account-invite-reward { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:4px 8px; color:var(--account-muted); font-size:10px; line-height:1.5; }
+.local-account-invite-reward strong { color:var(--account-accent); font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; }
+.local-account-invite-note, .local-account-invite-error { margin:0; color:var(--account-muted); font-size:10px; line-height:1.5; }
+.local-account-invite-error { color:var(--red-11); }

@@ -203,11 +203,11 @@ async function installedSkillPackages(userDataDirectory) {
   })));
 }
 
-export async function importUserSkill({ userDataDirectory, sourceDirectory, onlineSource = null } = {}) {
-  return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => installSkillPackage({ userDataDirectory, sourceDirectory, onlineSource }));
+export async function importUserSkill({ userDataDirectory, sourceDirectory, onlineSource = null, expectedHashes = null } = {}) {
+  return withExtensionWriteLock(userDataDirectory, (userDataDirectory) => installSkillPackage({ userDataDirectory, sourceDirectory, onlineSource, expectedHashes }));
 }
 
-async function installSkillPackage({ userDataDirectory, sourceDirectory, rollback = false, onlineSource = null }) {
+async function installSkillPackage({ userDataDirectory, sourceDirectory, rollback = false, onlineSource = null, expectedHashes = null }) {
   const lexical = resolve(String(sourceDirectory || ""));
   const lexicalStats = await lstat(lexical);
   if (!lexicalStats.isDirectory() || lexicalStats.isSymbolicLink()) throw new Error("Select a real Skill directory, not a symbolic link.");
@@ -218,6 +218,7 @@ async function installSkillPackage({ userDataDirectory, sourceDirectory, rollbac
   const text = await readFile(skillFile, "utf8");
   const parsed = parseSkillDocument(text, { source: "user", fallbackName: source.split(/[\\/]/).at(-1), path: skillFile });
   const packageStats = await inspectSkillDirectory(source);
+  if (expectedHashes && JSON.stringify(packageStats.hashes) !== JSON.stringify(expectedHashes)) throw new Error('Skill 内容在确认后发生变化，请重新确认。');
   const root = join(userDataDirectory, "skills");
   await mkdir(root, { recursive: true });
   if ((await lstat(root)).isSymbolicLink()) throw new Error("Skill store cannot be a symbolic link.");

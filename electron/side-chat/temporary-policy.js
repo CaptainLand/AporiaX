@@ -1,7 +1,7 @@
 // Host-selected execution mode. History and model-authored arguments cannot
 // turn a temporary conversation into a coordinator or alter saved settings.
 const ALLOWED = new Set(['read_conversation_history', 'task_brief', 'replan_strategy', 'update_plan', 'finish_task',
-  'list_directory', 'read_file', 'search_text', 'git_status', 'git_diff', 'inspect_office_file',
+  'list_directory', 'read_file', 'search_text', 'find_files', 'git_status', 'git_diff', 'inspect_office_file',
   'write_file', 'delete_file', 'cleanup_temporary_check', 'apply_patch', 'run_command', 'verify_project',
   'create_word_document', 'create_presentation', 'create_spreadsheet']);
 export function temporaryPermissionPolicy(policy, enabled) {

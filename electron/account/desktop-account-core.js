@@ -78,7 +78,17 @@ export function parseDesktopLoopbackCallback(callbackUrl, { redirectUri, state }
   return { canceled: false, code };
 }
 
-export function projectAccountSnapshot({ me, quota, models, usage, devices }) {
+function projectInviteSummary(invites) {
+  if (!invites || typeof invites.inviteCode !== "string" || !/^[A-Z0-9_-]{4,32}$/i.test(invites.inviteCode)) return null;
+  return {
+    inviteCode: invites.inviteCode,
+    successfulInvites: Number.isSafeInteger(invites.successfulInvites) && invites.successfulInvites >= 0 ? invites.successfulInvites : null,
+    nextRewardPercent: Number.isFinite(invites.nextRewardPercent) && invites.nextRewardPercent > 0 ? invites.nextRewardPercent : null,
+    rewardsExhausted: invites.rewardsExhausted === true,
+  };
+}
+
+export function projectAccountSnapshot({ me, quota, models, usage, devices, invites }) {
   const email = me?.identities?.find((identity) => identity?.type === "email")?.identifier || "";
   const user = me?.user || null;
   const deviceId = me?.session?.deviceId || null;
@@ -101,6 +111,7 @@ export function projectAccountSnapshot({ me, quota, models, usage, devices }) {
     quota: quota || null,
     models: Array.isArray(models) ? models : [],
     usage: usage || null,
+    invites: user ? projectInviteSummary(invites) : null,
     device,
     session: me?.session || null,
   };

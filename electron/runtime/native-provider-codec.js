@@ -15,7 +15,7 @@ const identity = (provider, model, protocol) => hash([provider.id, provider.base
 const publicAssistant = (message) => ({ content: message.content ?? "", tool_calls: message.tool_calls || [] });
 const invalid = (code) => Object.assign(new Error(code), { code, retryable: false });
 function removePrivate(message, { deepseek = false } = {}) {
-  const { aporiaNative, aporiaContinuation, aporiaTaskBrief, aporiaSource, aporiaPinned, aporiaSupersededBy, reasoning_content, ...wire } = message;
+  const { aporiaNative, aporiaContinuation, aporiaTaskBrief, aporiaSource, aporiaPinned, aporiaSupersededBy, aporiaBrowserEvidence, reasoning_content, ...wire } = message;
   return { ...wire, ...(deepseek && typeof reasoning_content === "string" ? { reasoning_content } : {}) };
 }
 function nativeState(message, binding, protocol) {

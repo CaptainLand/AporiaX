@@ -1,6 +1,11 @@
 import { legacyThemeFields, legacyThemeColors } from './appearance-legacy.js';
 export const THEME_SKILL = 'create-aporiax-theme';
 export const THEME_COMMAND = '@skill:create-aporiax-theme';
+export const THEME_CAPABILITIES = Object.freeze({ schemaVersion: 2,
+  creatableFields: ['name', 'base', 'colors', 'backgroundId', 'backgroundStrength'],
+  colorFields: ['accent', 'background', 'panel', 'text'],
+  legacyFieldsPreserved: ['regions', 'components', 'shape', 'gradient', 'secondary', 'quota', 'icon'],
+  legacyOverridesApplied: false, appliesAutomatically: false });
 export const IMAGE_ID = /^bg-[a-f0-9-]{36}$/;
 export const THEME_ID = /^theme-[a-f0-9-]{36}$/;
 export const PRESET_COLORS = Object.freeze({
@@ -62,7 +67,7 @@ export function themeDraft(theme, { includeLegacy = true } = {}) {
   return { name, base, colors: includeLegacy ? { ...colors } : Object.fromEntries(['accent', 'background', 'panel', 'text'].map(key => [key, colors[key]])), backgroundId, backgroundStrength, ...(includeLegacy ? legacyThemeFields(theme) : {}) };
 }
 export function validateAppearance(value) {
-  if (!only(value, ['version', 'revision', 'enabled', 'selectedId', 'base', 'themes', 'images']) || value.version !== 1 || !Number.isInteger(value.revision) || value.revision < 0
+  if (!only(value, ['version', 'revision', 'enabled', 'selectedId', 'base', 'themes', 'images', 'history']) || value.version !== 1 || !Number.isInteger(value.revision) || value.revision < 0
     || typeof value.enabled !== 'boolean' || (value.base != null && !['light', 'dark'].includes(value.base))
     || !Array.isArray(value.themes) || value.themes.length > 40 || !Array.isArray(value.images) || value.images.length > 32) throw Error('APPEARANCE_INVALID');
   const themes = value.themes.map(theme => {
@@ -78,7 +83,30 @@ export function validateAppearance(value) {
   if (new Set(themes.map(theme => theme.id)).size !== themes.length || new Set(images.map(image => image.id)).size !== images.length
     || themes.some(theme => theme.backgroundId && !images.some(image => image.id === theme.backgroundId))
     || (value.selectedId != null && !themes.some(theme => theme.id === value.selectedId))) throw Error('APPEARANCE_INVALID');
-  return { version: 1, revision: value.revision, enabled: value.enabled, selectedId: value.selectedId || null, base: value.base || null, themes, images };
+  const history = Array.isArray(value.history) ? value.history.slice(-100).map(item => {
+    if (!item || !['saved', 'deleted', 'recovered', 'imported'].includes(item.action) || !Number.isFinite(Date.parse(item.at))) throw Error('APPEARANCE_INVALID_HISTORY');
+    return { action: item.action, at: item.at, source: String(item.source || '').slice(0, 40), id: String(item.id || '').slice(0, 100), name: String(item.name || '').slice(0, 60), reason: String(item.reason || '').slice(0, 180) };
+  }) : [];
+  return { version: 1, revision: value.revision, enabled: value.enabled, selectedId: value.selectedId || null, base: value.base || null, themes, images, ...(history.length ? { history } : {}) };
+}
+
+export function recoverAppearance(source) {
+  if (!source || source.version !== 1 || !Array.isArray(source.themes) || !Array.isArray(source.images)) throw Error('APPEARANCE_UNREADABLE');
+  let value = { ...defaultAppearance(), revision: Number.isSafeInteger(source.revision) && source.revision >= 0 ? source.revision : 0 };
+  const issues = [];
+  for (const image of source.images.slice(0, 32)) {
+    try { value = validateAppearance({ ...value, images: [...value.images, image] }); }
+    catch { issues.push({ kind: 'image', id: String(image?.id || '').slice(0, 100), name: String(image?.name || '').slice(0, 60) }); }
+  }
+  for (const theme of source.themes.slice(0, 40)) {
+    try { value = validateAppearance({ ...value, themes: [...value.themes, theme] }); }
+    catch { issues.push({ kind: 'theme', id: String(theme?.id || '').slice(0, 100), name: String(theme?.name || '').slice(0, 60) }); }
+  }
+  value.enabled = source.enabled === true;
+  value.selectedId = value.enabled && value.themes.some(theme => theme.id === source.selectedId) ? source.selectedId : null;
+  value.base = value.themes.find(theme => theme.id === value.selectedId)?.base || (['light', 'dark'].includes(source.base) ? source.base : null);
+  try { value = validateAppearance({ ...value, history: source.history }); } catch { /* original journal retained in recovery backup */ }
+  return { value, issues };
 }
 export function appendThemeCommand(draft) {
   const text = String(draft || '');

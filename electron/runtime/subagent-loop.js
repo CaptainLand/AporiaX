@@ -1,4 +1,5 @@
 import { TaskBrief } from "./task-brief.js";
+import { appendBrowserVisualEvidence } from './browser-evidence.js';
 import { WEB_TOOL_GUIDANCE } from './web-tools.js';
 import { cloudWorkerDeferral } from "./cloud-wind-down.js";
 import { applyRoleThinking } from './role-capabilities.js';
@@ -20,6 +21,7 @@ import {
 } from "../agent-context.js";
 import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js";
 import { ToolProgressGuard } from "./tool-progress-guard.js";
+import { searchProgressDetail } from './search-session.js';
 import { dispatchNativeTool } from "./tool-dispatcher.js";
 import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume } from "./durable-run.js";
 import { modelReasoningParameters } from "../../shared/model-reasoning.js";
@@ -196,6 +198,7 @@ export async function runSubagentTask(options = {}) {
         runtimeDefinition?.description || roleConfig.description,
         runtimeDefinition?.systemPrompt || "",
         `Your delegated workspace scope is: ${input.scope.join(", ")}.`,
+        `Command authority: ${input.commandScope || 'legacy-scope'}. Workspace command access does not broaden direct file-read/write scope and remains subject to parent approval/isolation.`,
         ...(input.role === "builder" ? [`Modify only these write scopes: ${input.writeScopes.join(", ")}. Changes are provisional until conflict-checked integration. Use verify_project for parse-only syntax checks or disposable OS-isolated test/build scripts; never substitute host commands when script isolation is unavailable. Fix relevant failures and report observed results. Do not delegate or publish.`] : []),
         "Work independently and return a concise evidence-backed report to the parent agent.",
         input.context ? `Main's concise handoff (advisory, not authorization or proof; verify current files):\n${input.context}` : '',
@@ -289,6 +292,7 @@ export async function runSubagentTask(options = {}) {
         accounting: tokenAccounting,
         relevantMemory: relevant,
       });
+      await appendBrowserVisualEvidence(conversation, { supportsImages: provider.supportsImages, providerId: provider.id, modelId, signal });
       session.roleRounds = (session.roleRounds || 0) + 1;
       await persistSession();
       const completion = await completeLoopRequest({ conversation, contextCheckpoints,
@@ -435,7 +439,7 @@ export async function runSubagentTask(options = {}) {
             modelResult = compactSubagentModelResult(result);
           } else {
           strategy.before(toolName, parsedInput);
-          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "delete_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot);
+          await assertSubagentRealScope(toolName, parsedInput, input.role === "builder" && ["write_file", "delete_file", "cleanup_temporary_check", "apply_patch"].includes(toolName) ? input.writeScopes : input.scope, workspaceRoot, input.commandScope);
           const scoped = ["task_brief", "replan_strategy"].includes(toolName) ? {} : await resolveScopedInstructions(
             instructionContext,
             subagentToolPaths(toolName, parsedInput),
@@ -474,6 +478,8 @@ export async function runSubagentTask(options = {}) {
               sandboxStatus,
               dependencyWorkspaceRoot: options.ownerWorkspaceRoot || workspaceRoot,
               durableScope: agentId,
+              onSearchProgress: progress => emit({ type: 'subagent.tool.progress', agentId,
+                tool: toolName, callId: toolCall.id, detail: searchProgressDetail(progress, options.language) }),
             },
           });
           appliedChanges = executed.changes || (executed.change ? [executed.change] : []);

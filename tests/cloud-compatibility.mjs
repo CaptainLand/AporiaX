@@ -86,7 +86,7 @@ await test('actual account runtime stays signed in with models empty and never d
  const runtime=createDesktopAccountRuntime(endpointOptions);
  try {
   const snapshot=await runtime.getSnapshot();assert.equal(snapshot.status,'authenticated');assert.equal(snapshot.models.length,0);
-  assert(sent.every(call=>['/auth/refresh','/me','/models','/quota/weekly','/capabilities','/v1/capabilities','/devices','/usage/summary'].includes(call.path)));
+  assert(sent.every(call=>['/auth/refresh','/me','/models','/quota/weekly','/capabilities','/v1/capabilities','/devices','/usage/summary','/invites'].includes(call.path)));
   assert(sent.every(call=>call.method==='GET'||(call.path==='/auth/refresh'&&call.method==='POST')));
   assert.doesNotMatch(JSON.stringify(sent),/PRIVATE_CONVERSATION_PROJECT_SENTINEL/);
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,0);

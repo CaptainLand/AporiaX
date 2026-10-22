@@ -19,6 +19,8 @@ export const PURE_TASK_EVENT_TYPES = new Set([
   "subagent.tool.completed",
   "tool.started",
   "tool.completed",
+  'tool.progress',
+  'subagent.tool.progress',
   "file.changed",
 ]);
 
@@ -205,6 +207,15 @@ export function reduceHarnessTaskEvent(
       };
       return { ...message, route };
     });
+  }
+
+  if (event.type === 'tool.progress' || event.type === 'subagent.tool.progress') {
+    const callId = event.agentId ? `${event.agentId}:${event.callId || ''}` : event.callId;
+    return updateRunAssistant(tasks, run, message => ({ ...message,
+      route: (message.route || []).map(entry => entry.callId === callId && entry.status === 'running'
+        && (event.agentId ? entry.agentId === event.agentId : !entry.agentId)
+        ? { ...entry, detail: event.detail || entry.detail } : entry),
+    }));
   }
 
   if (event.type === "tool.started") {

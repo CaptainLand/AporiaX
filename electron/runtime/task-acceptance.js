@@ -8,6 +8,7 @@ const MAX_FILE = 8 * 1024 * 1024;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 export { normalizeTaskContract } from "./task-contract-schema.js";
 import { normalizeTaskContract } from "./task-contract-schema.js";
+import { evaluateNumericData } from './numeric-check.js';
 
 export async function loadTaskContract(workspaceRoot, supplied, { canRead = true } = {}) {
   if (supplied !== undefined) return normalizeTaskContract(supplied);
@@ -20,7 +21,7 @@ export async function loadTaskContract(workspaceRoot, supplied, { canRead = true
   }
 }
 
-async function readBounded(root, name, limit = MAX_FILE) {
+export async function readBounded(root, name, limit = MAX_FILE) {
   // Canonicalize Windows short-path aliases before the real containment check.
   root = await getVerifiedWorkspaceRoot(root);
   const target = await verifyExistingTarget(root, name);
@@ -127,6 +128,12 @@ export class TaskAcceptance {
           } else {
             if (!this.#root || !this.#canRead) throw new Error("ACCEPTANCE_READ_UNAVAILABLE");
             const bytes = await readBounded(this.#root, check.path);
+            if (check.type === 'json_numeric') {
+              if (!isUtf8(bytes)) throw Error('ACCEPTANCE_NON_UTF8');
+              const result = evaluateNumericData(JSON.parse(bytes.toString('utf8')), check);
+              checks.push({ ...result, type: check.type, path: check.path, sha256: sha(bytes), status: result.passed ? 'passed' : 'failed' });
+              continue;
+            }
             let passed = check.type === "file_exists";
             if (!passed) {
               if (!isUtf8(bytes)) throw new Error("ACCEPTANCE_NON_UTF8");

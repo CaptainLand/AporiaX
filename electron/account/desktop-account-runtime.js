@@ -28,6 +28,7 @@ function emptySnapshot(extra = {}) {
     quota: null,
     models: [],
     usage: null,
+    invites: null,
     device: null,
     session: null,
     error: "",
@@ -290,12 +291,15 @@ export function createDesktopAccountRuntime(options = {}) {
   }
 
   async function hydrateAccount() {
-    const [me, availability, usage, devices] = await Promise.all([
+    const epoch = historyEpoch;
+    const [me, availability, usage, devices, invites] = await Promise.all([
       authenticatedRequest("/me"), readAvailability(),
       authenticatedRequest("/usage/summary?days=7").catch(() => null),
       authenticatedRequest("/devices"),
+      authenticatedRequest("/invites", { timeout: 3000 }).catch(() => null),
     ]);
-    currentSnapshot = { ...projectAccountSnapshot({ me, ...availability, usage, devices }),
+    if (epoch !== historyEpoch) throw new Error("DESKTOP_ACCOUNT_CHANGED");
+    currentSnapshot = { ...projectAccountSnapshot({ me, ...availability, usage, devices, invites }),
       ...availability, endpointSource: endpoints.source, error: "" };
     return currentSnapshot;
   }

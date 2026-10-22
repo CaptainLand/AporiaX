@@ -1,8 +1,8 @@
-const READ_TOOLS = ['task_brief', 'replan_strategy', 'list_directory', 'read_file', 'search_text', 'git_status', 'git_diff', 'inspect_office_file'];
+const READ_TOOLS = ['task_brief', 'replan_strategy', 'list_directory', 'read_file', 'search_text', 'find_files', 'git_status', 'git_diff', 'inspect_office_file'];
 const WEB_READ_TOOLS = ['web_search', 'web_fetch'];
 export const NATIVE_ROLE_TOOLS = Object.freeze({
   explore: [...READ_TOOLS, ...WEB_READ_TOOLS], review: [...READ_TOOLS, ...WEB_READ_TOOLS], curator: READ_TOOLS,
-  verify: [...READ_TOOLS, ...WEB_READ_TOOLS, 'run_command'],
+  verify: [...READ_TOOLS, ...WEB_READ_TOOLS, 'run_command', 'verify_numeric_data'],
   builder: [...READ_TOOLS.filter(tool => tool !== 'inspect_office_file'), 'write_file', 'delete_file', 'cleanup_temporary_check', 'apply_patch', 'verify_project'],
 });
 export const ROLE_TEMPLATES = Object.freeze({

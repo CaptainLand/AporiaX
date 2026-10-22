@@ -229,6 +229,11 @@ export function formatToolStepDetail(
   modelResult,
   language = "zh-CN",
 ) {
+  if (['find_files', 'search_text'].includes(toolName) && Array.isArray(modelResult?.results)) {
+    const count = modelResult.results.length;
+    return language.startsWith('en') ? `${count} matches${modelResult.truncated ? ' · partial results' : ''}`
+      : `找到 ${count} ${toolName === 'find_files' ? '个文件' : '处匹配'}${modelResult.truncated ? ' · 结果未完全列出' : ''}`;
+  }
   if (toolName === 'web_search' && Array.isArray(modelResult?.results)) return language === 'en'
     ? `${modelResult.results.length} web sources · ${modelResult.query}` : `${modelResult.results.length} 条网络来源 · ${modelResult.query}`;
   if (toolName === 'web_fetch' && modelResult?.url) return `${modelResult.title || modelResult.url}${modelResult.truncated ? (language === 'en' ? ' · partial text' : ' · 正文分段') : ''}`;

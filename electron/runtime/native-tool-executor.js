@@ -1,12 +1,15 @@
 import { readTextPage } from "./text-reader.js";
+import { findWorkspaceFiles } from './workspace-file-search.js';
 import { runIsolatedVerification } from './isolated-verification.js';
+import { evaluateNumericData } from './numeric-check.js';
+import { readBounded } from './task-acceptance.js';
 import { mutateWorkspaceFiles, prepareFileDeletion } from "./workspace-mutations.js";
-import { cleanupTemporaryCheck, registerTemporaryCheck, validateTemporaryCheckCreation } from "./temporary-check-files.js";
+import { cleanupTemporaryCheck, registerTemporaryCheck, validateTemporaryCheckCreation, prepareTemporaryCheckUpdate, completeTemporaryCheckUpdate } from "./temporary-check-files.js";
 import { readSkillResource, searchSkills } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { extname, isAbsolute, relative, join } from "node:path";
+import { extname, isAbsolute, relative, join, basename } from "node:path";
 import { parseWorkspacePatch, applyWorkspacePatch } from './workspace-patch.js';
 import {
   MAX_OFFICE_FILE_BYTES,
@@ -24,6 +27,7 @@ import {
 } from "./github-runtime.js";
 import { installLanguageServer as defaultInstallLanguageServer } from "./lsp-installer.js";
 import { toWorkspaceRelativePath } from "./workspace-runtime.js";
+import { fileLinkError } from '../file-link-check.js';
 import { getGitHubAuthStatus } from "../workbench/git-setup.js";
 import { NATIVE_FILE_TOOLS, verifyNativeFileTarget, verifyExternalFileTarget, filePathInside, outsideFileAccessEnabled, requiresGuardedFileSearch } from "./file-access-policy.js";
 
@@ -178,8 +182,14 @@ export function createNativeToolExecutor({
     workbenchPresent = null,
     roleTools = null,
     appearanceTools = null,
+    skillInstaller = null,
+    onSearchProgress = null,
   }) {
     throwIfAborted(signal);
+    if (toolName === 'install_workspace_skill') {
+      if (!skillInstaller) throw Error('技能安装仅限当前桌面主 Agent。');
+      return { modelResult: await skillInstaller(input) };
+    }
     if (["list_aporiax_themes", "create_aporiax_theme"].includes(toolName)) {
       if (!appearanceTools) throw new Error('外观工具仅限桌面主 Agent。');
       return { modelResult: await appearanceTools(toolName, input) };
@@ -199,12 +209,30 @@ export function createNativeToolExecutor({
     if (toolName === "search_skills") {
       return { modelResult: await searchSkills({ workspaceRoot, userSkillsDirectory }, input) };
     }
+    if (toolName === 'verify_numeric_data') {
+      const bytes = await readBounded(workspaceRoot, input.path);
+      return { modelResult: { ...evaluateNumericData(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), input), path: input.path, sha256: createHash('sha256').update(bytes).digest('hex'), checkedAt: new Date().toISOString() } };
+    }
 
     if (isWebToolName(toolName)) {
       if (!webRuntime) throw new Error('AporiaX Web runtime is unavailable.');
       return { modelResult: await webRuntime.execute(toolName, input, { signal }) };
     }
     if (isBrowserToolName(toolName)) {
+      if (toolName === 'browser_select' && (!Array.isArray(input.values) || !input.values.length || input.values.length > 30 || input.values.some(value => typeof value !== 'string'))) throw Error('Invalid select values.');
+      if (toolName === 'browser_upload') {
+        if (input.mode !== undefined && !['input', 'drop'].includes(input.mode)) throw Error('Invalid upload mode.');
+        if (!Array.isArray(input.paths) || !input.paths.length || input.paths.length > 8) throw Error('Choose between one and eight workspace files.');
+        const files = []; let total = 0;
+        for (const path of input.paths) {
+          const target = await workspaceVerifyExisting(workspaceRoot, path);
+          const bytes = await readBounded(workspaceRoot, path, 16 * 1024 * 1024);
+          if ((total += bytes.length) > 32 * 1024 * 1024) throw Error('Upload files exceed the 32 MB total limit.');
+          const mimeType = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json', '.csv': 'text/csv' })[extname(target).toLowerCase()] || 'application/octet-stream';
+          files.push({ name: basename(target), mimeType, bytes: bytes.length, data: bytes.toString('base64'), sha256: createHash('sha256').update(bytes).digest('hex') });
+        }
+        input = { ...input, files };
+      }
       return {
         modelResult: await executeBrowserTool(browserRuntime, toolName, input),
       };
@@ -353,14 +381,15 @@ export function createNativeToolExecutor({
       return { modelResult: { path: input.path, ...page, external: toolName === "read_external_file" || !filePathInside(workspaceRoot, filePath) } };
     }
 
-    if (toolName === "search_text") {
+    if (toolName === "search_text" || toolName === 'find_files') {
       const searchPath = await verifyExistingTarget(workspaceRoot, input.path || ".");
       const external = !filePathInside(workspaceRoot, searchPath);
       const maxResults = Number.isInteger(input.max_results)
         ? Math.min(maxSearchResults, Math.max(1, input.max_results))
         : 80;
       const guarded = await requiresGuardedFileSearch(workspaceRoot, searchPath);
-      const result = await searchWorkspaceText({
+      const search = toolName === 'find_files' ? findWorkspaceFiles : searchWorkspaceText;
+      const result = await search({
           workspaceRoot: external ? searchPath : workspaceRoot,
           requestedPath: external ? "." : input.path || ".",
           authorizePath: guarded ? path => verifyNativeFileTarget(workspaceRoot, path) : null,
@@ -371,6 +400,8 @@ export function createNativeToolExecutor({
           includeGlobs: input.include_glob || [],
           excludeGlobs: input.exclude_glob || [],
           signal,
+          onProgress: onSearchProgress,
+          ...(toolName === 'find_files' ? { refresh: input.refresh === true } : {}),
         });
       return { modelResult: { ...result, path: input.path || ".", external,
         results: external ? result.results.map(entry => ({ ...entry, path: join(searchPath, entry.path) })) : result.results } };
@@ -402,15 +433,18 @@ export function createNativeToolExecutor({
         if (error?.code !== "ENOENT") throw error;
       }
       if (input.temporary_self_check === true) await validateTemporaryCheckCreation(workspaceRoot, input.path, { created, content: input.content });
+      const temporaryUpdate = created ? null : await prepareTemporaryCheckUpdate(workspaceRoot, input.path, previousContent);
       const lineChanges = calculateLineChanges(previousContent, input.content);
       throwIfAborted(signal);
       await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: created ? null : Buffer.from(previousContent), after: Buffer.from(input.content) }] });
+      const temporaryRetained = await completeTemporaryCheckUpdate(temporaryUpdate, input.content);
       if (input.temporary_self_check === true) await registerTemporaryCheck(workspaceRoot, input.path, input.content);
       return {
         modelResult: {
           path: input.path,
           bytesWritten: Buffer.byteLength(input.content, "utf8"),
           created,
+          ...(temporaryUpdate ? { temporarySelfCheck: temporaryRetained, cleanupTool: temporaryRetained ? 'cleanup_temporary_check' : null } : {}),
           ...(input.temporary_self_check === true ? { temporarySelfCheck: true, cleanupTool: "cleanup_temporary_check" } : {}),
           ...lineChanges,
         },
@@ -473,6 +507,7 @@ export function createNativeToolExecutor({
           }
           const lineChanges = calculateLineChanges(previousContent, nextContent);
           prepared.push({
+            temporaryUpdate: created ? null : await prepareTemporaryCheckUpdate(workspaceRoot, path, previousContent),
             path,
             filePath,
             previousContent,
@@ -498,6 +533,7 @@ export function createNativeToolExecutor({
             before: item.created ? null : Buffer.from(item.previousContent),
             after: item.deleted ? null : Buffer.from(item.nextContent),
           })) });
+          for (const item of prepared) await completeTemporaryCheckUpdate(item.temporaryUpdate, item.deleted ? null : item.nextContent);
         }
         return {
           modelResult: {
@@ -548,8 +584,10 @@ export function createNativeToolExecutor({
       }
       const lineChanges = calculateLineChanges(previousContent, nextContent);
       if (!input.dry_run) {
+        const temporaryUpdate = await prepareTemporaryCheckUpdate(workspaceRoot, input.path, previousContent);
         throwIfAborted(signal);
         await mutateWorkspaceFiles({ workspaceRoot, signal, edits: [{ path: filePath, before: Buffer.from(previousContent), after: Buffer.from(nextContent) }] });
+        await completeTemporaryCheckUpdate(temporaryUpdate, nextContent);
       }
       return {
         modelResult: {
@@ -694,13 +732,15 @@ export function createNativeToolExecutor({
       }
       const presented = { files: [], processId: null, browser: false, url: "" };
       for (const path of uniqueFiles) {
-        await verifyExistingTarget(workspaceRoot, path);
+        try { await verifyExistingTarget(workspaceRoot, path); }
+        catch (error) { throw fileLinkError(error, path); }
         const relativePath = toWorkspaceRelativePath(workspaceRoot, path);
         workbenchPresent.file?.(relativePath, input.line);
         presented.files.push(relativePath);
       }
       if (processId) {
-        workbenchPresent.process?.(processId);
+        const lifecycle = workbenchPresent.process?.(processId);
+        if (lifecycle) presented.processLifecycle = lifecycle;
         presented.processId = processId;
       }
       if (url) {
@@ -708,6 +748,7 @@ export function createNativeToolExecutor({
         await browserRuntime.open({ url });
         presented.browser = true;
         presented.url = url;
+        presented.previewLifecycle = workbenchPresent.lifecycle?.(url) || { owner: 'external-or-unknown', survivesTask: 'unknown', stoppedByTask: false };
       }
       if (url || input.show_browser === true) {
         workbenchPresent.browser?.();

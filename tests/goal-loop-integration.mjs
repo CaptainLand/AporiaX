@@ -236,7 +236,10 @@ try {
   });
   await test("automatic rolling summary is bounded before pressure compaction and keeps original user constraints", async () => {
     let summaryCalls = 0;
-    const history = [{ role: "user", content: "Do not delete the original file; preserve KEEP_USER_CONSTRAINT." }, ...Array.from({ length: 45 }, (_, i) => ({ role: "assistant", content: i === 0 ? "We rejected deletion because the old file is the only recovery source." : `old-${i} ` + "中".repeat(1400) }))];
+    // Exercise summary pressure with the expanded tool catalog, rather than
+    // fitting that entire catalog into a legacy 32K fixture by a few tokens.
+    // Oversized pinned-request rejection remains covered by the budget suites.
+    const history = [{ role: "user", content: "Do not delete the original file; preserve KEEP_USER_CONSTRAINT." }, ...Array.from({ length: 90 }, (_, i) => ({ role: "assistant", content: i === 0 ? "We rejected deletion because the old file is the only recovery source." : `old-${i} ` + "中".repeat(1400) }))];
     const run = await fixture((body) => {
       if (body.messages[0].content.startsWith("You are compressing historical conversation")) {
         summaryCalls++; const request = JSON.parse(body.messages[1].content);
@@ -246,7 +249,7 @@ try {
       assert(body.messages.some((message) => message.content === "Do not delete the original file; preserve KEEP_USER_CONSTRAINT."));
       assert(body.messages.some((message) => message.content?.includes("Keep old recovery source")));
       return sse({ content: "Continued with a source-backed summary." });
-    }, { messages: [...history, { role: "user", content: "Continue" }], provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 32000 }] }, loopPolicy: { maxBriefSummaries: 1 } });
+    }, { messages: [...history, { role: "user", content: "Continue" }], provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 64000 }] }, loopPolicy: { maxBriefSummaries: 1 } });
     assert.equal(run.result.status, "completed", JSON.stringify({ content: run.result.content, contextBudget: run.result.contextBudget, summaryCalls })); assert(summaryCalls > 0 && summaryCalls <= 8); assert.equal(run.result.rollingContext.revision, summaryCalls);
   });
   await test("actual child loop records scoped evidence and continues the same durable decision session", async () => {

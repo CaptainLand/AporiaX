@@ -756,6 +756,7 @@ async function startHarnessTask(
           roleSettings,
           roleManagement: { ownerRunId: runId, store: roleStore, overrides: request.professionalRoles || {} },
           themeManagement: { ownerRunId: runId, store: await appearanceStore() },
+          skillManagement: { ownerRunId: runId, userDataDirectory: app.getPath('userData') },
           builderLimit: roleSettings.builderLimit,
           resolveAgentModel: async (selection) => {
             let pair;

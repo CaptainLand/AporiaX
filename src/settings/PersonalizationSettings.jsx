@@ -17,7 +17,7 @@ const explanation = (message, tr) => {
     ['THEME_IMAGE_SIZE', '图片需小于 8MB，且不超过 1600 万像素。', 'Images must be below 8MB and 16 million pixels.'],
     ['THEME_IMAGE_TYPE', '请选择有效的 PNG、JPEG 或 WebP 图片。', 'Select a valid PNG, JPEG or WebP image.'],
     ['THEME_IMAGE_MISSING', '背景图片暂不可用，配色仍可使用。', 'The background image is unavailable; colors still work.'],
-    ['APPEARANCE_RECOVERED', '已恢复内置外观，原主题配置文件损坏。重新保存即可继续使用。', 'Built-in appearance was restored after a damaged configuration. Save again to continue.'],
+    ['APPEARANCE_RECOVERED', '部分主题配置无法读取。有效主题已保留，异常配置也已保留，未直接清空覆盖。', 'Some theme settings could not be read. Valid themes and original recovery data have been retained.'],
     ['APPEARANCE_CHANGED', '主题列表已更新，请重新选择后保存。', 'Themes changed. Select the theme again before saving.'],
     ['THEME_LIMIT', '最多保留 40 个主题，请先删除不需要的主题。', 'You can keep up to 40 themes. Remove an unused theme first.'],
     ['THEME_IMAGE_LIMIT', '最多导入 32 张背景图片。', 'Up to 32 background images can be imported.'],
@@ -62,6 +62,7 @@ export function PersonalizationSettings({ appearance, theme, onCreateWithAgent }
     </div>
     {!available && <p className="personalization-note">{tr('自定义主题需在新版桌面应用中使用。', 'Custom themes require the updated desktop app.')}</p>}
     {error && <p role="alert" className="personalization-error">{explanation(error, tr)}</p>}
+    {!!state.history?.length && <details className="personalization-advanced"><summary>{tr('主题变更记录', 'Theme history')}</summary><ul>{state.history.slice(-20).reverse().map((item, index) => <li key={`${item.at}-${index}`}><time>{new Date(item.at).toLocaleString()}</time>{' · '}{({ saved: tr('保存', 'Saved'), deleted: tr('删除', 'Deleted'), recovered: tr('恢复', 'Recovered'), imported: tr('导入', 'Imported') })[item.action]}{' · '}{item.name || item.reason}{item.source === 'ai' ? ' · AI' : ''}</li>)}</ul></details>}
     {state.enabled && <>
       <div className="personalization-list-heading"><h4>{tr('我的主题', 'My themes')}</h4><div><button type="button" disabled={busy} onClick={() => edit()}><Plus size={14} />{tr('新建', 'New')}</button><button type="button" title={!onCreateWithAgent ? tr('先打开一个对话，再让 AI 设计主题', 'Open a conversation first to design a theme with AI') : undefined} disabled={busy || !onCreateWithAgent} onClick={onCreateWithAgent}><Sparkles size={14} />{tr('让 AI 设计', 'Design with AI')}</button></div></div>
       {!state.themes.length && !editor && <div className="personalization-empty"><p>{tr('从一个颜色开始，或告诉 AI 你想要的风格。', 'Start with a color, or tell AI the look you want.')}</p></div>}

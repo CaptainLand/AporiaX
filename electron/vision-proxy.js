@@ -5,6 +5,7 @@ import { providerChatEndpoint } from "./provider-config.js";
 import { getDesktopAccountRuntime } from "./account/register-desktop-account-ipc.js";
 import { queryCloudVisionCapability, cloudVisionCapabilityError } from "./cloud-vision-capability.js";
 import { modelSupportsVision } from "./model-vision.js";
+import { createOpenAICompatibleProvider } from './runtime/provider-stream.js';
 import {
   buildVisionMessages,
   hasImageAttachments,
@@ -188,4 +189,23 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
       imageCount: proxiedImages,
     },
   };
+}
+
+export async function describeBrowserScreenshot({ providerId, modelId, dataUrl, context, signal }) {
+  // The managed Cloud route must never fall back to a separate personal key.
+  if (providerId === APORIA_CLOUD_PROVIDER_ID) throw Error('当前 Cloud 模型没有可用的截图识图通道。');
+  const records = await readProviderRecords();
+  const main = resolveMainModel(records, { providerId, modelId });
+  if (!main.provider) throw Error('VISION_NOT_CONFIGURED: 未找到当前模型配置。');
+  const candidate = selectVisionCandidate(records, { mainProviderId: providerId, mainModelId: modelId });
+  if (!candidate || candidate.provider.id === providerId && candidate.model.id === modelId) throw Error('VISION_NOT_CONFIGURED: 请配置可用的视觉模型。');
+  const apiKey = decryptProviderKey(candidate.provider);
+  if (!apiKey && candidate.provider.vendor !== 'local' && candidate.provider.source !== 'local') throw Error('视觉模型尚未配置密钥。');
+  const vision = createOpenAICompatibleProvider({ config: { ...candidate.provider, apiKey }, model: candidate.model });
+  const timeout = AbortSignal.timeout(VISION_TIMEOUT_MS);
+  const result = await vision.complete({ signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    body: { model: candidate.model.id, stream: true, max_tokens: VISION_MAX_OUTPUT_TOKENS, messages: buildVisionMessages({ content: context, attachments: [{ kind: 'image', dataUrl }] }) } });
+  const observation = normalizeAssistantContent(result.message?.content);
+  if (!observation) throw Error('视觉模型未返回观察结果。');
+  return `${candidate.provider.name || candidate.provider.id} / ${candidate.model.id}:\n${observation}`;
 }

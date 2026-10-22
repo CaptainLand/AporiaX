@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.7 — 2026-10-22
+
+- Deliver normal final replies without mandatory finish metadata; use one safe, text-only recovery when possible, preserve delivered replies across later storage/connection errors, and retain genuine failures and unfinished work.
+- Synchronize terminal plans and Witness records without treating reply delivery as verification or replaying tool operations.
+- Add watched filename/path search, bounded cancellable content search, progress feedback and packaged ripgrep path fixes.
+- Improve browser screenshot evidence, select/file inputs, persistent browser profiles, workspace links, theme capability/recovery history, approved Skill installation, numeric checks and Builder/check-script recovery.
+- Refine running progress disclosure, light-mode readability, account invite information and quota values above 100%.
+- Publish the Windows x64 installer only. Personal ChatGPT/Codex remains unavailable in packaged builds; Web, Cloud billing and the model gateway are unchanged.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.7.md)
+
 ## 1.0.1 — 2026-10-15
 
 - Withdraw the initial 1.0.0 distribution while investigating an incomplete installed application archive.

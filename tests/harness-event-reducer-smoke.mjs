@@ -138,4 +138,12 @@ assert.equal(tasks[0].messages[1].witness.revision, 7);
 const unchanged = reduceHarnessTaskEvent(tasks, run, { type: "approval.required" }, { tr, now });
 assert.strictEqual(unchanged, tasks);
 
+let progressTasks = reduceHarnessTaskEvent(base, run, { type: 'tool.started', tool: 'search_text', callId: 'search-progress' }, { tr, now });
+progressTasks = reduceHarnessTaskEvent(progressTasks, run, { type: 'tool.progress', tool: 'search_text', callId: 'search-progress', detail: '3 matches · 1s' }, { tr, now });
+assert.equal(progressTasks[0].messages[1].route.length, 1);
+assert.equal(progressTasks[0].messages[1].route[0].detail, '3 matches · 1s');
+progressTasks = reduceHarnessTaskEvent(progressTasks, run, { type: 'subagent.tool.started', agentId: 'worker', role: 'explore', tool: 'find_files', callId: 'find-progress' }, { tr, now });
+progressTasks = reduceHarnessTaskEvent(progressTasks, run, { type: 'subagent.tool.progress', agentId: 'worker', tool: 'find_files', callId: 'find-progress', detail: 'Indexing 200 files' }, { tr, now });
+assert.equal(progressTasks[0].messages[1].route.at(-1).detail, 'Indexing 200 files');
+assert.equal(progressTasks[0].messages[1].route.length, 2, 'Progress updates existing rows rather than adding log entries');
 console.log("Harness event reducer smoke: PASS");

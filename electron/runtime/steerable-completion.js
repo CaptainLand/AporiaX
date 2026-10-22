@@ -1,5 +1,5 @@
 // Cancels only inference, never the run signal or an in-flight tool.
-export async function completeWithSteering({ provider, control, signal, body, onEvent }) {
+export async function completeWithSteering({ provider, control, signal, body, onEvent, maxAttempts }) {
   const controller = new AbortController();
   let interrupted = false;
   let content = "";
@@ -10,7 +10,7 @@ export async function completeWithSteering({ provider, control, signal, body, on
   if (signal?.aborted) abort();
   if (control?.hasSteering?.()) steer();
   try {
-    const result = await provider.complete({ body, signal: controller.signal,
+    const result = await provider.complete({ body, signal: controller.signal, maxAttempts,
       onStreamEvent: (event) => {
         if (controller.signal.aborted) return;
         if (event.type === "response.retry") content = "";

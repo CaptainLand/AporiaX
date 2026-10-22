@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from 'node:string_decoder';
+import { withSearchSession } from './search-session.js';
 import { rgPath } from "@vscode/ripgrep";
 import {
   lstat,
@@ -16,6 +18,10 @@ import {
 import { normalizeLocalPath } from "../link-target.js";
 import { localControlGitOptions } from "../control/policy.js";
 
+// require.resolve keeps the virtual ASAR path even for unpacked files. spawn
+// needs the physical executable; electron-builder already unpacks this package.
+export const ripgrepExecutable = rgPath.replace(/([\\/])app\.asar([\\/])/i, "$1app.asar.unpacked$2");
+
 export const MAX_COMMAND_OUTPUT_CHARS = 80_000;
 export const MAX_SEARCH_FILE_BYTES = 2_000_000;
 export const TREE_IGNORES = new Set([
@@ -27,6 +33,7 @@ export const TREE_IGNORES = new Set([
   "coverage",
   "dist",
   "node_modules",
+  '.tmp', '.cache', '.aporiax', 'build', 'release',
 ]);
 
 const SEARCH_MODES = new Set([
@@ -57,30 +64,41 @@ function normalizeGlobs(value, limit = 32) {
 }
 
 function globExpression(glob) {
-  const source = String(glob || "").replace(/\\/g, "/");
-  let output = "^";
+  return new RegExp(`^${globSource(String(glob || '').replace(/\\/g, '/'))}$`, 'i');
+}
+
+function globSource(source) {
+  let output = '';
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index];
     if (character === "*" && source[index + 1] === "*") {
-      output += ".*";
-      index += 1;
+      if (source[index + 2] === '/') { output += '(?:.*/)?'; index += 2; }
+      else { output += '.*'; index++; }
     } else if (character === "*") {
       output += "[^/]*";
     } else if (character === "?") {
       output += "[^/]";
+    } else if (character === '{' && source.indexOf('}', index + 1) >= 0) {
+      const end = source.indexOf('}', index + 1);
+      output += `(?:${source.slice(index + 1, end).split(',').map(globSource).join('|')})`;
+      index = end;
     } else {
       output += escapeRegex(character);
     }
   }
-  return new RegExp(`${output}$`, "i");
+  return output;
 }
 
-function pathMatchesGlobs(path, includeGlobs, excludeGlobs) {
+export function pathMatchesGlobs(path, includeGlobs, excludeGlobs) {
   const normalized = String(path || "").replace(/\\/g, "/");
-  if (includeGlobs.length && !includeGlobs.some((glob) => globExpression(glob).test(normalized))) {
+  const matches = glob => {
+    const pattern = String(glob).replaceAll('\\', '/');
+    return globExpression(pattern).test(pattern.includes('/') ? normalized : normalized.split('/').at(-1));
+  };
+  if (includeGlobs.length && !includeGlobs.some(matches)) {
     return false;
   }
-  return !excludeGlobs.some((glob) => globExpression(glob.replace(/^!+/, "")).test(normalized));
+  return !excludeGlobs.some((glob) => matches(glob.replace(/^!+/, "")));
 }
 
 function parseRipgrepText(value) {
@@ -101,6 +119,7 @@ async function searchWithRipgrep({
   signal,
   ignores,
   maxFileBytes,
+  onProgress,
 }) {
   const args = [
     "--json",
@@ -112,7 +131,7 @@ async function searchWithRipgrep({
     caseSensitive ? "--case-sensitive" : "--ignore-case",
   ];
   if (mode === "literal") args.push("--fixed-strings");
-  for (const name of ignores) args.push("--glob", `!${name}/**`);
+  for (const name of ignores) args.push("--glob", `!**/${name}/**`);
   for (const glob of includeGlobs) args.push("--glob", glob);
   for (const glob of excludeGlobs) args.push("--glob", `!${glob.replace(/^!+/, "")}`);
   args.push("--", searchPattern(query, mode), ".");
@@ -124,7 +143,8 @@ async function searchWithRipgrep({
     let settled = false;
     let truncated = false;
     let filesScanned = null;
-    const child = spawn(rgPath, args, {
+    const decoder = new StringDecoder('utf8');
+    const child = spawn(ripgrepExecutable, args, {
       cwd: searchRoot,
       shell: false,
       windowsHide: true,
@@ -139,7 +159,7 @@ async function searchWithRipgrep({
     };
     const handleAbort = () => {
       child.kill();
-      finish(rejectPromise, createAbortError());
+      finish(rejectPromise, signal?.reason || createAbortError());
     };
     const consume = (line) => {
       if (!line.trim()) return;
@@ -166,6 +186,7 @@ async function searchWithRipgrep({
         column: Number(submatch.start) + 1 || 1,
         preview: lineText.length > 320 ? `${lineText.slice(0, 317)}...` : lineText,
       });
+      onProgress?.({ engine: 'ripgrep', matches: results.length });
       if (results.length >= maxResults) {
         truncated = true;
         child.kill();
@@ -173,8 +194,9 @@ async function searchWithRipgrep({
     };
 
     signal?.addEventListener("abort", handleAbort, { once: true });
+    if (signal?.aborted) return handleAbort();
     child.stdout.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
+      buffer += decoder.write(chunk);
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || "";
       for (const line of lines) consume(line);
@@ -409,7 +431,13 @@ export async function runGitCommand({
   });
 }
 
-export async function searchWorkspaceText({
+export function searchWorkspaceText(options) {
+  return withSearchSession(options, session => searchWorkspaceTextInSession({
+    ...options, signal: session.signal, onProgress: session.report,
+  }));
+}
+
+async function searchWorkspaceTextInSession({
   workspaceRoot,
   requestedPath,
   query,
@@ -422,7 +450,10 @@ export async function searchWorkspaceText({
   ignores = TREE_IGNORES,
   maxFileBytes = MAX_SEARCH_FILE_BYTES,
   authorizePath = null,
+  onProgress,
 }) {
+  maxResults = Math.min(1000, Math.max(1, Number(maxResults) || 80));
+  onProgress?.({ phase: 'search', engine: authorizePath ? 'node-fallback' : 'ripgrep', matches: 0 }, true);
   if (
     typeof query !== "string" ||
     !query ||
@@ -459,9 +490,10 @@ export async function searchWorkspaceText({
       signal,
       ignores,
       maxFileBytes,
+      onProgress,
     });
   } catch (error) {
-    if (error?.name === "AbortError") throw error;
+    if (signal?.aborted || error?.name === "AbortError" || error?.code === 'SEARCH_TIMEOUT') throw error;
     // Keep a portable fallback for unsupported platforms or damaged optional binaries.
   }
   const normalizedQuery = caseSensitive ? query : query.toLowerCase();
@@ -476,6 +508,7 @@ export async function searchWorkspaceText({
   const results = [];
   let filesScanned = 0;
   let truncated = false;
+  onProgress?.({ phase: 'search', engine: 'node-fallback', filesScanned: 0, matches: 0 }, true);
 
   async function visit(directoryPath) {
     throwIfAborted(signal);
@@ -506,8 +539,9 @@ export async function searchWorkspaceText({
         if (!pathMatchesGlobs(relativePath, normalizedIncludes, normalizedExcludes)) continue;
         const stats = await lstat(entryPath);
         if (stats.size > maxFileBytes) continue;
-        const content = await readFile(entryPath, "utf8");
+        const content = await readFile(entryPath, { encoding: 'utf8', signal });
         filesScanned += 1;
+        onProgress?.({ engine: 'node-fallback', filesScanned, matches: results.length });
         if (content.includes("\0")) continue;
         const lines = content.replace(/\r\n/g, "\n").split("\n");
         for (let index = 0; index < lines.length; index += 1) {

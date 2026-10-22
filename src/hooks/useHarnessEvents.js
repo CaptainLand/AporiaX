@@ -83,6 +83,7 @@ export function useHarnessEvents({
       read_file: tr("正在读取文件", "Reading file"),
       read_external_file: tr("等待批准后读取工作区外文件", "Waiting for approval to read an external file"),
       search_text: tr("正在搜索代码", "Searching code"),
+      find_files: tr('正在查找文件', 'Finding files'),
       git_status: tr("正在检查 Git 状态", "Inspecting Git status"),
       git_diff: tr("正在读取代码差异", "Reading code diff"),
       write_file: tr("正在修改文件", "Writing file"),
@@ -471,6 +472,12 @@ export function useHarnessEvents({
         return;
       }
 
+      if (event.type === 'tool.progress' || event.type === 'subagent.tool.progress') {
+        reduceTaskEvent();
+        if (event.type === 'tool.progress') setRunStatus({ title: toolLabels[event.tool] || tr('正在搜索', 'Searching'), detail: event.detail });
+        return;
+      }
+
       if (event.type === "tool.started") {
         const meta = getRouteToolMeta(
           event.tool,
@@ -698,6 +705,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "turn.completed") {
+        if (event.replyDelivered && typeof event.content === 'string' && event.content.trim()) run.replyDelivered = true;
         if (streamFlushTimer !== null) {
           window.clearTimeout(streamFlushTimer);
           streamFlushTimer = null;
@@ -707,6 +715,8 @@ export function useHarnessEvents({
         setTasks((current) =>
           updateRunAssistant(current, run, (message) => ({
             ...message,
+            ...(run.replyDelivered ? { replyDelivered: true, content: event.content,
+              deliveryDetails: event.deliveryDetails || message.deliveryDetails, error: false, status: event.status || 'completed' } : {}),
             route: [
               ...closeRunningRouteEntries(message.route, now),
               ...((message.route || []).some(

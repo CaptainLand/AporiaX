@@ -10,6 +10,7 @@ import { AppUpdateControls, AppUpdateToast, AppUpdateSidebar, updateToastKey } f
 import { buildAnchorRestoreNotice } from "../electron/anchor-restore-notice.js";
 import { taskApprovalMode } from "./state/approval-mode.js";
 import { hasTaskReply } from './state/task-outcome-view.js';
+import { preserveDeliveredReply } from '../shared/reply-delivery.js';
 import { taskExecutionMode } from "./state/execution-mode.js";
 import { reasoningState } from './models/reasoning-state.js';
 import { providerModelsById, buildProviderModels } from "./state/provider-models.js";
@@ -3794,6 +3795,7 @@ function App() {
                           status: result.status || "completed",
                           error: Boolean(result.error),
                           replyDelivered: result.replyDelivered,
+                          runIssues: result.runIssues || [],
                            content: result.content,
                           deliveryDetails: result.deliveryDetails || null,
                           steps: result.steps || [],
@@ -3844,7 +3846,7 @@ function App() {
         );
         // Explain unfinished work in the reply, not another automatic warning.
         // Actual runtime/storage failures remain visible.
-        if (result.error || result.status === "failed") {
+        if (!hasTaskReply(result) && (result.error || result.status === "failed")) {
           setNotice(tr("Harness 运行失败", "Harness run failed"));
         } else if (result.status === "completed" && hasTaskReply(result)) {
           const summary = summarizeCompletionContent(
@@ -3867,6 +3869,7 @@ function App() {
         }
       })
       .catch((error) => {
+        const delivered = runsRef.current.get(runId)?.replyDelivered;
         const cleanMessage = String(error?.message || tr("Harness 运行失败", "Harness run failed"))
           .replace(/^Error invoking remote method '[^']+':\s*/i, "")
           .replace(/^Error:\s*/i, "");
@@ -3877,7 +3880,8 @@ function App() {
                   ...task,
                   messages: task.messages.map((message) =>
                     message.id === assistantId
-                      ? {
+                      ? preserveDeliveredReply(message, { code: 'RUNTIME_CONNECTION_FAILED', message: cleanMessage },
+                          tr('回答已保留，但任务连接随后中断，记录可能未完整保存。', 'The reply is preserved, but the task connection closed; its record may be incomplete.')) || {
                           ...message,
                           status: "failed",
                           error: true,
@@ -3911,7 +3915,7 @@ function App() {
               : task,
           ),
         );
-        setNotice(tr("Harness 运行失败", "Harness run failed"));
+        if (!delivered) setNotice(tr("Harness 运行失败", "Harness run failed"));
       })
       .finally(() => {
         runsRef.current.delete(runId);

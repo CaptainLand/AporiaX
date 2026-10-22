@@ -13,10 +13,14 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.7",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
+    "test:task-ending": "node --experimental-sqlite tests/task-ending.mjs && node --experimental-sqlite tests/error-final-reply.mjs && node --experimental-sqlite tests/user-facing-delivery.mjs && node tests/witness-progress.mjs",
+    "test:file-search": "node --experimental-sqlite tests/file-search-efficiency.mjs && node tests/workspace-search-asar.mjs && node tests/file-search-browser.mjs",
+    "test:account-invites": "node tests/desktop-account-auth-smoke.mjs && node tests/account-invites-runtime.mjs && node tests/account-invites-browser.mjs",
+    "test:harness-tool-closure": "node --experimental-sqlite tests/harness-tool-closure.mjs && node --experimental-sqlite tests/harness-closure-runtime.mjs && node --experimental-sqlite tests/temporary-check-cleanup.mjs && electron tests/browser-visual-closure-electron.cjs && electron tests/browser-profiles-electron.cjs && electron tests/workbench-html-preview-electron.cjs",
     "test:subagent-autonomy": "node --experimental-sqlite tests/subagent-autonomy.mjs && node --experimental-sqlite tests/subagent-autonomy-runtime.mjs",
     "test:task-efficiency": "node --experimental-sqlite tests/task-operation-efficiency.mjs && node tests/task-operation-progress-browser.mjs",
     "test:gpt-compat": "node --experimental-sqlite tests/gpt-stream-reasoning.mjs && node tests/gpt-compat-browser.mjs",
@@ -83,7 +87,7 @@
     "test:subagent-loop": "node --experimental-sqlite tests/subagent-loop-smoke.mjs",
     "test:agent-coordination": "node --experimental-sqlite scripts/run-audit-checks.mjs agent-activity.mjs subagent-contract.mjs subagent-lifecycle-regression.mjs subagent-model-smoke.mjs subagent-loop-smoke.mjs native-tool-catalog-smoke.mjs self-check-coordinator-smoke.mjs runtime-background-integration.mjs route-activity-model.mjs harness-event-reducer-smoke.mjs runtime-autonomous-builder.mjs runtime-worker-continuation.mjs runtime-context-recovery.mjs harness-long-task-reliability.mjs runtime-smoke.mjs context-continuation-regression.mjs human-constraints.mjs self-check-evidence-smoke.mjs harness-collaboration-smoke.mjs harness-v2-orchestration-smoke.mjs && node tests/agent-activity-browser.mjs && node tests/route-activity-browser.mjs",
     "test:native-tool-executor": "node --experimental-sqlite tests/native-tool-executor-smoke.mjs",
-    "test:workspace-runtime": "node --experimental-sqlite tests/workspace-runtime-smoke.mjs",
+    "test:workspace-runtime": "node --experimental-sqlite tests/workspace-runtime-smoke.mjs && node tests/workspace-search-asar.mjs",
     "test:conversation-runtime": "node --experimental-sqlite tests/conversation-runtime-smoke.mjs",
     "test:self-check-coordinator": "node --experimental-sqlite tests/self-check-coordinator-smoke.mjs",
     "test:native-tool-catalog": "node --experimental-sqlite tests/native-tool-catalog-smoke.mjs",
@@ -210,6 +214,7 @@
       "docs/RELEASE_NOTES_v1.0.3.md",
       "docs/RELEASE_NOTES_v1.0.5.md",
       "docs/RELEASE_NOTES_v1.0.6.md",
+      "docs/RELEASE_NOTES_v1.0.7.md",
       "config/cloud-endpoints.json",
       "shared/**/*",
       "docs/LOCAL_CONTROL.md"

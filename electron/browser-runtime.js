@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { BROWSER_CAPABILITIES, registerBrowserScreenshot } from './runtime/browser-evidence.js';
 
 const MAX_SNAPSHOT_CHARS = 48_000;
 const MAX_BODY_TEXT_CHARS = 24_000;
@@ -108,7 +109,7 @@ export const BROWSER_TOOL_DEFINITIONS = [
     function: {
       name: "browser_screenshot",
       description:
-        "Capture the current page to a temporary PNG evidence file and return the path. This does not modify the authorized workspace.",
+        "Capture the page as PNG evidence. The next model request receives the actual image when vision is available; the receipt identifies the capture. A still image does not prove animation correctness.",
       parameters: {
         type: "object",
         properties: {
@@ -146,7 +147,17 @@ export const BROWSER_TOOL_DEFINITIONS = [
   },
 ];
 
+const browserLocator = { selector: { type: 'string' }, role: { type: 'string' }, name: { type: 'string' }, label: { type: 'string' } };
+BROWSER_TOOL_DEFINITIONS.push(
+  { type: 'function', function: { name: 'browser_select', description: 'Select native dropdown options by exact value or label, then report selected values.', parameters: {
+    type: 'object', properties: { ...browserLocator, values: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 30 }, by: { type: 'string', enum: ['value', 'label'] } }, required: ['values'], additionalProperties: false } } },
+  { type: 'function', function: { name: 'browser_upload', description: 'Upload authorized workspace files into a file input, or send a synthetic file drop to a visible target. May send file contents to the current website. Use only for the user-requested workflow.', parameters: {
+    type: 'object', properties: { ...browserLocator, paths: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 }, mode: { type: 'string', enum: ['input', 'drop'] } }, required: ['paths'], additionalProperties: false } } },
+);
+
 export const BROWSER_TOOL_RISKS = Object.freeze({
+  browser_select: 'control',
+  browser_upload: 'control',
   browser_open: "read",
   browser_snapshot: "read",
   browser_screenshot: "read",
@@ -308,6 +319,7 @@ export class AporiaXBrowserRuntime {
     return {
       active: true,
       browser: this.#launch,
+      capabilities: { ...BROWSER_CAPABILITIES, persistentProfile: false },
       url: page.url(),
       title,
       ariaSnapshot: compact(aria, MAX_SNAPSHOT_CHARS),
@@ -375,18 +387,37 @@ export class AporiaXBrowserRuntime {
       this.#artifactDirectory,
       `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`,
     );
-    await page.screenshot({
+    const bytes = await page.screenshot({
       path,
       type: "png",
       fullPage: Boolean(input.full_page),
     });
     return {
+      visualEvidence: registerBrowserScreenshot(bytes, { url: page.url(), path }),
       path,
       url: page.url(),
       title: await page.title().catch(() => ""),
       fullPage: Boolean(input.full_page),
       temporary: true,
     };
+  }
+
+  async select(input) {
+    const page = await this.#ensurePage();
+    const selected = await locatorFor(page, input).first().selectOption(input.values.map(value => ({ [input.by === 'label' ? 'label' : 'value']: value })));
+    return { selected, ...(await this.snapshot()) };
+  }
+
+  async upload(input) {
+    const page = await this.#ensurePage(), target = locatorFor(page, input).first();
+    if (input.mode === 'drop') {
+      await target.evaluate((el, files) => {
+        const dataTransfer = new DataTransfer();
+        for (const file of files) dataTransfer.items.add(new File([Uint8Array.from(atob(file.data), char => char.charCodeAt(0))], file.name, { type: file.mimeType }));
+        for (const type of ['dragenter', 'dragover', 'drop']) el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+      }, input.files);
+    } else await target.setInputFiles(input.files.map(file => ({ name: file.name, mimeType: file.mimeType, buffer: Buffer.from(file.data, 'base64') })));
+    return { uploaded: input.files.map(file => ({ name: file.name, bytes: file.bytes, sha256: file.sha256 })), mode: input.mode || 'input', ...(await this.snapshot()) };
   }
 
   console() {
@@ -434,6 +465,10 @@ export async function executeBrowserTool(runtime, toolName, input = {}) {
       return runtime.press(input);
     case "browser_screenshot":
       return runtime.screenshot(input);
+    case 'browser_select':
+      return runtime.select(input);
+    case 'browser_upload':
+      return runtime.upload(input);
     case "browser_console":
       return runtime.console();
     case "browser_network":

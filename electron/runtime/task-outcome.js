@@ -1,23 +1,35 @@
 const OUTCOMES = new Set(["completed", "partial", "blocked", "needs_input"]);
 
-// Structured model intent, not a heuristic over prose. Never infer success
-// from transport completion, a stopped worker, or an empty response.
+const STATUS_ALIASES = { done: 'completed', complete: 'completed', success: 'completed',
+  failed: 'partial', failure: 'partial', error: 'partial', incomplete: 'partial',
+  needs_user_input: 'needs_input', waiting_for_user: 'needs_input' };
+const text = value => typeof value === 'string' ? value.trim() : Array.isArray(value)
+  ? value.map(item => typeof item === 'string' ? item : item?.type === 'text' ? item.text : '').filter(item => typeof item === 'string' && item.trim()).join('\n\n').trim() : '';
+
+// Optional presentation metadata. A malformed wrapper must never discard a
+// usable answer or turn completed file operations into a failed runtime.
 export function readTaskOutcome(message, parseArguments) {
   const calls = message?.tool_calls || [];
   const finish = calls.find((call) => call.function?.name === "finish_task");
   if (!finish) return null;
-  if (calls.length !== 1) throw new Error("FINISH_TASK_MUST_BE_ALONE: finish_task cannot be mixed with other operations.");
-  const input = parseArguments(finish);
-  if (!OUTCOMES.has(input.status) || typeof input.summary !== "string" || !input.summary.trim()) {
-    throw new Error("INVALID_TASK_OUTCOME: status and a nonempty evidence-backed summary are required.");
+  let input = {}, issues = [];
+  try {
+    const parsed = parseArguments(finish);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed;
+    else issues.push('arguments_not_object');
+  } catch { issues.push('arguments_not_json'); }
+  const rawStatus = typeof input.status === 'string' ? input.status.trim().toLowerCase() : '';
+  const status = OUTCOMES.has(rawStatus) ? rawStatus : Object.hasOwn(STATUS_ALIASES, rawStatus) ? STATUS_ALIASES[rawStatus] : 'completed';
+  if (rawStatus !== status) issues.push(rawStatus ? 'status_normalized' : 'status_omitted');
+  const summary = text(input.summary) || text(message.content) || text(input.answer) || text(input.response) || text(input.content) || text(input.message);
+  if (!text(input.summary)) issues.push(summary ? 'answer_used_as_summary' : 'answer_missing');
+  const extras = {};
+  for (const key of ['details', 'limitations', 'warnings']) {
+    if (text(input[key])) extras[key] = text(input[key]);
+    else if (input[key] !== undefined) issues.push(`${key}_omitted`);
   }
-  for (const [key, limit] of [['details', 24000], ['limitations', 4000], ['warnings', 4000]]) {
-    if (input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > limit)) {
-      throw new Error(`INVALID_TASK_OUTCOME: ${key} must be text within ${limit} characters.`);
-    }
-  }
-  return { status: input.status, summary: input.summary.trim(),
-    ...(input.details?.trim() ? { details: input.details.trim() } : {}),
-    ...(input.limitations?.trim() ? { limitations: input.limitations.trim() } : {}),
-    ...(input.warnings?.trim() ? { warnings: input.warnings.trim() } : {}) };
+  return { status, summary, ...extras,
+    ...(calls.some(call => call.function?.name !== 'finish_task') ? { deferred: true } : {}),
+    ...(issues.length ? { normalization: { issues } } : {}),
+  };
 }

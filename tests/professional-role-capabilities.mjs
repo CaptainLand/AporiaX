@@ -59,7 +59,7 @@ try {
         if (child === 1) return call('mcp-read', 'mcp__fixture__tool_39', {});
         assert.match(last.content, /LOCAL_MCP_FIXTURE_OK/); return answer('Selected MCP lookup verified.');
       }
-      if (++main === 1) return call('delegate', 'delegate_subagent', { role: 'specialist', task: 'Inspect only the synthetic fixtures', scope: scenario === 'mcp-denied' ? ['src'] : ['.'], background: false });
+      if (++main === 1) return call('delegate', 'delegate_subagent', { role: 'specialist', task: 'Inspect only the synthetic fixtures', scope: scenario === 'mcp-denied' ? ['src'] : ['.'], command_scope: 'workspace', background: false });
       if (main === 2 && scenario !== 'mcp-denied') return call('accept', 'review_subagent_result', { agent_id: `${scenario}-sub-1`, report_id: `${scenario}-sub-1:1`, decision: 'accepted', reason: 'Returned fixture evidence matches the request.', evidence_ids: scenario === 'mcp' ? [`${scenario}-sub-1:1:mcp-read`] : [] });
       return answer('Fixture inspection complete.');
     };

@@ -1,18 +1,27 @@
 import { mkdir, readFile, rename, writeFile, lstat, rm, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { defaultAppearance, validateAppearance, validateTheme, IMAGE_ID } from '../../shared/appearance.js';
+import { defaultAppearance, validateAppearance, validateTheme, recoverAppearance, IMAGE_ID } from '../../shared/appearance.js';
 
 export async function createAppearanceStore(dataDirectory, { onChanged = () => {} } = {}) {
   const directory = join(dataDirectory, 'appearance'), file = join(directory, 'themes.json');
-  let value = defaultAppearance(), error = '', tail = Promise.resolve();
-  try { value = validateAppearance(JSON.parse(await readFile(file, 'utf8'))); }
-  catch (cause) { if (cause.code !== 'ENOENT') error = 'APPEARANCE_RECOVERED'; }
-  const snapshot = () => ({ ...structuredClone(value), ...(error ? { error } : {}) });
+  let value = defaultAppearance(), error = '', tail = Promise.resolve(), issues = [], unreadable = false, recoveryBackup = '';
+  try {
+    const source = JSON.parse(await readFile(file, 'utf8'));
+    try { value = validateAppearance(source); }
+    catch {
+      const recovered = recoverAppearance(source); value = recovered.value; issues = recovered.issues; error = 'APPEARANCE_RECOVERED';
+      recoveryBackup = `themes-recovery-${randomUUID()}.json`;
+      await copyFile(file, join(directory, recoveryBackup));
+    }
+  } catch (cause) { if (cause.code !== 'ENOENT') { error = 'APPEARANCE_RECOVERED'; unreadable = true; } }
+  const snapshot = () => ({ ...structuredClone(value), ...(error ? { error, recovery: { issues, backup: recoveryBackup, writable: !unreadable } } : {}) });
+  const event = (state, entry) => ({ ...state, history: [...(state.history || []), { at: new Date().toISOString(), ...entry }].slice(-100) });
   const commit = async next => {
+    if (unreadable) throw Error('主题配置无法读取，原文件已保留。请先恢复配置，避免覆盖已有主题。');
+    if (error) next = event(next, { action: 'recovered', source: 'system', reason: `保留有效项目；隔离 ${issues.length} 个异常项目。备份：${recoveryBackup}` });
     const updated = validateAppearance({ ...next, revision: value.revision + 1 });
     await mkdir(directory, { recursive: true });
-    if (error) await copyFile(file, join(directory, `themes-recovery-${randomUUID()}.json`));
     const temporary = join(directory, `.themes-${randomUUID()}.tmp`);
     try { await writeFile(temporary, JSON.stringify(updated), { flag: 'wx' }); await rename(temporary, file); }
     finally { await rm(temporary, { force: true }); }
@@ -29,7 +38,7 @@ export async function createAppearanceStore(dataDirectory, { onChanged = () => {
         if(before){if(!Object.entries(draft).every(([key,v])=>JSON.stringify(before[key])===JSON.stringify(v)))throw Error('COMMUNITY_LOCAL_CONFLICT');return before;}
         if(value.themes.length>=40)throw Error('THEME_LIMIT');
         const saved={...draft,id,source:'manual',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-        await commit({...value,themes:[...value.themes,saved]});return saved;
+        await commit(event({...value,themes:[...value.themes,saved]}, { action: 'imported', source: 'community', id, name: saved.name }));return saved;
       });
     },
     change(input, { source = 'manual', signal } = {}) {
@@ -60,12 +69,14 @@ export async function createAppearanceStore(dataDirectory, { onChanged = () => {
               createdAt: before?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
             // Editing an applied theme produces an unapplied candidate until the user applies it.
             next.themes = before ? next.themes.map(item => item.id === theme.id ? theme : item) : [...next.themes, theme];
+            next = event(next, { action: 'saved', source, id: theme.id, name: theme.name });
             if (next.selectedId === theme.id) { next.selectedId = null; next.base = before.base; }
           } else {
             if (source !== 'manual') throw Error('APPEARANCE_USER_ONLY');
             const target = next.themes.find(theme => theme.id === input.id);
             if (!target) throw Error('THEME_NOT_FOUND');
             next.themes = next.themes.filter(theme => theme.id !== input.id);
+            next = event(next, { action: 'deleted', source, id: target.id, name: target.name });
             if (next.selectedId === input.id) { next.selectedId = null; next.base = target.base; }
           }
         }

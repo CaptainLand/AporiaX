@@ -97,6 +97,8 @@ export function buildToolApprovalRequest({
       : `${toolName || "tool"}${input.path ? ` ${input.path}` : ""}`;
   const commandPolicy = permissionDecision?.commandPolicy || null;
   const approvalTitles = {
+    browser_upload: '上传文件到当前网页',
+    browser_select: '选择网页选项',
     delete_file: '删除工作区文件（保留恢复快照）',
     lsp_install: "安装语言服务器",
     git_init: "初始化 Git 仓库",

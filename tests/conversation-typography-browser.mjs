@@ -83,7 +83,16 @@ try {
           assert.equal(metrics.inline.color, expected, 'inline code does not remain glaring white');
           assert.notEqual(metrics.paragraph.color, metrics.body.color, 'the change does not dim headings or the entire UI');
         } else {
-          assert.equal(metrics.paragraph.color, metrics.body.color, 'light reply text stays unchanged');
+          const expected = await body.evaluate(element => {
+            const probe = document.createElement('span');
+            probe.style.color = 'color-mix(in srgb, var(--text-1) 85%, #000)';
+            element.append(probe); const color = getComputedStyle(probe).color; probe.remove();
+            return color;
+          });
+          assert.equal(metrics.paragraph.color, expected, 'light reply text is subtly darker');
+          assert.equal(metrics.item.color, expected, 'light lists use the darker reading color');
+          assert.equal(metrics.inline.color, expected, 'light inline code matches the reading text');
+          assert.notEqual(metrics.paragraph.color, metrics.body.color, 'headings and other UI keep their original colors');
         }
         assert.equal(metrics.inline.borderTopWidth, '0px');
         assert.equal(metrics.inline.fontSize, '12.6px');

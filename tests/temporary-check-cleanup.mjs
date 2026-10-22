@@ -31,6 +31,20 @@ const create = (path, extra = {}) => call('write_file', { path, content: 'consol
 const cleanup = path => call('cleanup_temporary_check', { path });
 const test = async (name, fn) => { const result = await fn(); if (result === 'skip') { skipped++; console.log(`SKIP ${name}`); } else { checks++; console.log(`PASS ${name}`); } };
 try {
+  await test('tracked writes and both patch formats preserve temporary ownership', () => run(async () => {
+    await create('editable.mjs');
+    await call('write_file', { path: 'editable.mjs', content: 'const a = 1;\n' });
+    await call('apply_patch', { path: 'editable.mjs', old_text: 'a = 1', new_text: 'a = 2' });
+    await call('apply_patch', { patch: '*** Begin Patch\n*** Update File: editable.mjs\n@@\n-const a = 2;\n+const a = 3;\n*** End Patch' });
+    assert.equal((await cleanup('editable.mjs')).modelResult.deleted, true);
+  }));
+  await test('explicit re-registration only works for the same owned script', () => run(async () => {
+    await create('register-again.mjs'); await create('register-again.mjs', { content: 'console.log(2);' });
+    assert.equal((await cleanup('register-again.mjs')).modelResult.deleted, true);
+    await create('externally-edited.mjs'); await writeFile(join(workspace, 'externally-edited.mjs'), 'user edit');
+    await call('write_file', { path: 'externally-edited.mjs', content: 'agent edit' });
+    await assert.rejects(cleanup('externally-edited.mjs'), /modified|registered/);
+  }));
   await test('registered script cleans up without asking even in manual mode', () => run(async () => {
     const made = await create('self-check.mjs'); assert.equal(made.modelResult.temporarySelfCheck, true);
     const result = await cleanup('self-check.mjs'); assert.equal(result.modelResult.deleted, true);

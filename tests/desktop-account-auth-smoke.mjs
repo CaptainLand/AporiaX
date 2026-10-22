@@ -72,11 +72,17 @@ const snapshot = projectAccountSnapshot({
   models: [{ slug: "aporia-cloud-default", displayName: "DeepSeek V4 Flash" }],
   usage: { requestCount: 3 },
   devices: [{ id: "device-1", name: "CI Windows PC", type: "desktop" }],
+  invites: { inviteCode: 'ABC123DEF0', successfulInvites: 1, nextRewardPercent: 50, rewardsExhausted: false, privateField: 'not-for-renderer' },
 });
 assert.equal(snapshot.status, "authenticated");
 assert.equal(snapshot.profile.email, "lan@example.com");
 assert.equal(snapshot.device.name, "CI Windows PC");
 assert.equal(snapshot.models[0].displayName, "DeepSeek V4 Flash");
+assert.deepEqual(snapshot.invites, { inviteCode: 'ABC123DEF0', successfulInvites: 1, nextRewardPercent: 50, rewardsExhausted: false });
+assert.equal(projectAccountSnapshot({ invites: snapshot.invites }).invites, null, 'signed-out snapshots never expose invite data');
+assert.equal(projectAccountSnapshot({ me: { user: { id: 'user-1' } }, invites: { inviteCode: '<script>' } }).invites, null);
+assert.deepEqual(projectAccountSnapshot({ me: { user: { id: 'user-1' } }, invites: { inviteCode: 'ABC123DEF0', successfulInvites: -1, nextRewardPercent: Infinity } }).invites,
+  { inviteCode: 'ABC123DEF0', successfulInvites: null, nextRewardPercent: null, rewardsExhausted: false });
 
 for (const file of [
   "electron/account/desktop-account-runtime.js",

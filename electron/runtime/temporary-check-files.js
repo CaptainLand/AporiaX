@@ -10,11 +10,36 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const refused = reason => Object.assign(new Error(`TEMPORARY_CHECK_REFUSED: ${reason}`), { code: 'TEMPORARY_CHECK_REFUSED' });
 const ledger = () => runtimeRunState('temporary-check-files', () => new Map());
 
+export async function prepareTemporaryCheckUpdate(workspaceRoot, path, before) {
+  const records = ledger();
+  if (!records?.size) return null;
+  const root = await realpath(workspaceRoot), target = await verifyNativeFileTarget(root, path, { writable: true });
+  const record = records.get(target);
+  if (!record || record.root !== root || hash(Buffer.from(before || '')) !== record.hash) return null;
+  const info = await lstat(target);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.dev !== record.dev || info.ino !== record.ino) return null;
+  return { ...record, target };
+}
+
+export async function completeTemporaryCheckUpdate(receipt, after) {
+  if (!receipt) return false;
+  const records = ledger();
+  if (records?.get(receipt.target)?.hash !== receipt.hash) return false;
+  // A tracked compare-and-write may replace the inode. Revalidate its resulting
+  // bytes; an external edit cannot renew the original deletion authority.
+  records.delete(receipt.target);
+  if (after == null || Buffer.byteLength(after) > 100_000) return false;
+  try {
+    await registerTemporaryCheck(receipt.root, receipt.target, after);
+    return true;
+  } catch { return false; }
+}
+
 export async function validateTemporaryCheckCreation(workspaceRoot, path, { created, content } = {}) {
   if (!ledger()) throw refused('Temporary scripts require an active task.');
   const root = await realpath(workspaceRoot);
   const target = await verifyNativeFileTarget(root, path, { writable: true });
-  if (!created || !filePathInside(root, target) || target === root) throw refused('Only a newly created workspace file can be registered.');
+  if ((!created && !await prepareTemporaryCheckUpdate(root, path, await readFile(target, 'utf8'))) || !filePathInside(root, target) || target === root) throw refused('Only a newly created workspace file or this task’s unchanged registered script can be registered.');
   if (!scriptExtensions.has(extname(target).toLowerCase()) || typeof content !== 'string' || content.length > 100_000) throw refused('Only a small temporary self-check script can be registered.');
   return target;
 }

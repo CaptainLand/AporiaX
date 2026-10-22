@@ -32,7 +32,9 @@ import {
   TOOL_DEFINITIONS,
   TOOL_RISKS,
 } from "./runtime/native-tool-catalog.js";
-import { prepareVisionProxyRequest, getCloudVisionCapability } from "./vision-proxy.js";
+import { prepareVisionProxyRequest, getCloudVisionCapability, describeBrowserScreenshot } from "./vision-proxy.js";
+import { configureBrowserVisionProxy } from './runtime/browser-evidence.js';
+configureBrowserVisionProxy(describeBrowserScreenshot);
 import { exposeVisionProxyCapabilities } from "./vision-proxy-core.js";
 import {
   prepareWorkspaceMentionMessage,

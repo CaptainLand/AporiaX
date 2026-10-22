@@ -12,9 +12,11 @@ import "./local-account.css";
 import { accountErrorText } from "./account-errors.js";
 import { AccountAvatar } from "./AccountAvatar.jsx";
 import { quotaResetLabel } from './quota-reset.js';
+import { AccountInviteCard } from './AccountInviteCard.jsx';
 
 function quotaPercent(quota) {
-  return Math.min(100, Math.max(0, Math.round(Number(quota?.remainingRatio || 0) * 100)));
+  const ratio = Number(quota?.remainingRatio);
+  return Number.isFinite(ratio) ? Math.max(0, Math.round(ratio * 100)) : 0;
 }
 
 export function LocalAccountPanel({ onOpenAccountSettings }) {
@@ -42,6 +44,7 @@ export function LocalAccountPanel({ onOpenAccountSettings }) {
   const profile = account?.profile;
   const visibleName = profile?.displayName || profile?.email?.split("@")[0] || "AporiaX";
   const remaining = quotaPercent(account?.quota);
+  const barPercent = Math.min(100, remaining);
   const signedIn = account?.status === "authenticated" && profile;
   const openAccountSettings = () => {
     if (busy || !onOpenAccountSettings) return;
@@ -89,12 +92,15 @@ export function LocalAccountPanel({ onOpenAccountSettings }) {
                 role="progressbar"
                 aria-valuemax="100"
                 aria-valuemin="0"
-                aria-valuenow={remaining}
+                aria-valuenow={barPercent}
+                aria-valuetext={`${remaining}%`}
               >
-                <i style={{ width: `${remaining}%` }} />
+                <i style={{ width: `${barPercent}%` }} />
               </span>
               {account.quota?.cycleEnd && <small>{quotaResetLabel(account.quota, now, tr)}</small>}
             </div>
+
+            <AccountInviteCard key={`${profile.id}:${account.invites?.inviteCode || ''}`} invites={account.invites} />
 
             {account?.usage?.unresolvedRequestCount > 0 && <p role="status" className="local-account-local-note">{tr("有用量待核算，尚未计入已确认消费。", "Some usage is pending reconciliation and excluded from confirmed totals.")}</p>}
             <div className="local-account-actions">
@@ -120,7 +126,7 @@ export function LocalAccountPanel({ onOpenAccountSettings }) {
               <small className="local-account-quota-label"><span className="local-account-quota-reset" title={account?.quota?.cycleEnd || tr('尚未取得额度重置时间', 'Quota reset time is unavailable')}>{quotaResetLabel(account?.quota, now, tr)}</span></small>
               <span className="local-account-quota-percent">{remaining}%</span>
             </span>
-            <span className="local-account-quota-track" aria-hidden="true"><i style={{ width: `${remaining}%` }} /></span>
+            <span className="local-account-quota-track" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></span>
           </span>
         </button>
       </div>

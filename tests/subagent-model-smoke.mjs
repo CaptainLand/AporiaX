@@ -48,6 +48,7 @@ assert.deepEqual(
     autonomyVersion: 2,
     task: "Run tests",
     scope: ["."],
+    commandScope: 'workspace',
     background: false,
     requiredForCompletion: true,
     maxRounds: null,

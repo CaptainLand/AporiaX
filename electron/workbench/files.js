@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import JSZip from "jszip";
+import { findWorkspaceFiles } from '../runtime/workspace-file-search.js';
 import { normalizeLocalPath } from "../link-target.js";
 import {
   getVerifiedWorkspaceRoot,
@@ -47,23 +48,11 @@ export async function readWorkbenchFile(workspacePath, requestedPath, { authoriz
   return { kind: mime ? "image" : "docx", mime, data: buffer.toString("base64"), size: stat.size, path: requestedPath };
 }
 
-export async function searchWorkbenchFiles(workspacePath, query) {
+export async function searchWorkbenchFiles(workspacePath, query, options = {}) {
   const root = await getVerifiedWorkspaceRoot(workspacePath);
   const needle = String(query || "").trim().toLowerCase().slice(0, 200);
   if (!needle) return { entries: [], truncated: false };
-  const queue = ["."]; const entries = []; let visited = 0;
-  const ignore = new Set(["node_modules", ".git", "release", "dist", ".next", ".gradle", "build"]);
-  while (queue.length && visited < 20000 && entries.length < 200) {
-    const dir = queue.shift();
-    const verified = await verifyExistingTarget(root, dir);
-    for (const item of await readdir(verified, { withFileTypes: true })) {
-      if (++visited > 20000) break;
-      if (item.isSymbolicLink() || ignore.has(item.name)) continue;
-      const path = dir === "." ? item.name : `${dir}/${item.name}`;
-      if (item.isDirectory()) queue.push(path);
-      if ((item.isFile() || item.isDirectory()) && path.toLowerCase().includes(needle)) entries.push({ path, name: item.name, type: item.isDirectory() ? "directory" : "file" });
-      if (entries.length >= 200) break;
-    }
-  }
-  return { entries, truncated: queue.length > 0 || entries.length >= 200 || visited >= 20000 };
+  const result = await findWorkspaceFiles({ workspaceRoot: root, query: needle, includeDirectories: true, maxResults: 200, ...options });
+  const { results: entries, ...metadata } = result;
+  return { ...metadata, entries };
 }

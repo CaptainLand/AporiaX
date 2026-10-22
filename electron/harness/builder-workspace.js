@@ -11,6 +11,7 @@ import {
   readdir,
   realpath,
   rm,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -294,7 +295,14 @@ async function ensureGitWorkspace(workspaceRoot) {
       "Builder isolation currently requires the selected workspace to be the Git repository root.",
     );
   }
-  await runGit(["rev-parse", "--verify", "HEAD"], workspaceRoot);
+  try { await runGit(["rev-parse", "--verify", "HEAD"], workspaceRoot); return true; }
+  catch {
+    // An unborn branch is valid; broken/detached HEAD is not silently repaired.
+    const branch = (await runGit(['symbolic-ref', '--quiet', 'HEAD'], workspaceRoot)).stdout.toString().trim();
+    if (!branch.startsWith('refs/heads/')) throw Error('Builder requires a valid Git branch.');
+    await runGit(['status', '--porcelain=v1'], workspaceRoot);
+    return false;
+  }
 }
 
 function calculateLineChanges(previousContent, nextContent) {
@@ -397,21 +405,35 @@ export class BuilderWorkspaceManager {
     const lease = this.#leases.acquire(owner, scopes, { workspaceRoot });
     let baseDirectory = null;
     let worktreeRoot = null;
+    let linkedWorktree = false;
     try {
-      await ensureGitWorkspace(workspaceRoot);
+      const hasHead = await ensureGitWorkspace(workspaceRoot);
       await captureScope(workspaceRoot, scopes, this.#limits, true, signal);
       baseDirectory = await mkdtemp(join(tmpdir(), "aporiax-builder-"));
       worktreeRoot = join(baseDirectory, "workspace");
-      await runGit(
+      if (hasHead) { await runGit(
         ["worktree", "add", "--detach", worktreeRoot, "HEAD"],
         workspaceRoot,
-      );
+      ); linkedWorktree = true; }
+      else {
+        await mkdir(worktreeRoot);
+        const snapshot = await captureScope(workspaceRoot, ['.'], this.#limits, false, signal);
+        // The baseline commit is confined to a new private repository. No user
+        // index, branch, hooks, attributes or commits are touched.
+        await runGit(['-c', 'init.templateDir=', 'init'], worktreeRoot);
+        await runGit(['-c', 'user.name=AporiaX', '-c', 'user.email=local@aporiax.invalid', '-c', 'core.hooksPath=' + join(baseDirectory, 'no-hooks'), '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '-m', 'Private Builder baseline'], worktreeRoot);
+        for (const [path, item] of snapshot) {
+          const target = join(worktreeRoot, path); await mkdir(dirname(target), { recursive: true }); await writeFile(target, item.content);
+        }
+        if (changedPaths(snapshot, await captureScope(workspaceRoot, ['.'], this.#limits, false, signal)).length) throw Error('Workspace changed during Builder snapshot; retry once edits settle.');
+      }
       // Use the same physical spelling as verified tool paths on Windows.
       worktreeRoot = await realpath(worktreeRoot);
-      await overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes);
+      if (linkedWorktree) await overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes);
       signal?.throwIfAborted();
       const baseline = await captureScope(workspaceRoot, scopes, this.#limits);
-      const worktreeDirtyBaseline = await snapshotDirtyState(worktreeRoot);
+      const dirtySnapshot = () => linkedWorktree ? snapshotDirtyState(worktreeRoot) : captureScope(worktreeRoot, ['.'], this.#limits);
+      const worktreeDirtyBaseline = await dirtySnapshot();
       this.#eventBus?.emit({
         type: "builder.workspace.created",
         agentId: owner,
@@ -429,7 +451,7 @@ export class BuilderWorkspaceManager {
         }
         closed = true;
         try {
-          await runGit(
+          if (linkedWorktree) await runGit(
             ["worktree", "remove", "--force", worktreeRoot],
             workspaceRoot,
           );
@@ -437,7 +459,7 @@ export class BuilderWorkspaceManager {
           await rm(worktreeRoot, { recursive: true, force: true }).catch(
             () => undefined,
           );
-          await runGit(["worktree", "prune"], workspaceRoot).catch(
+          if (linkedWorktree) await runGit(["worktree", "prune"], workspaceRoot).catch(
             () => undefined,
           );
         }
@@ -453,7 +475,7 @@ export class BuilderWorkspaceManager {
 
       const performMerge = async () => {
         if (closed) throw new Error("Builder workspace is already closed.");
-        const worktreeDirtyAfter = await snapshotDirtyState(worktreeRoot);
+        const worktreeDirtyAfter = await dirtySnapshot();
         const workerTouched = changedDirtyPaths(
           worktreeDirtyBaseline,
           worktreeDirtyAfter,
@@ -556,6 +578,7 @@ export class BuilderWorkspaceManager {
       return Object.freeze({
         agentId: owner,
         workspaceRoot: worktreeRoot,
+        isolationMode: linkedWorktree ? 'git-worktree' : 'private-snapshot',
         writeScopes: Object.freeze([...scopes]),
         merge,
         snapshot,
@@ -563,7 +586,7 @@ export class BuilderWorkspaceManager {
       });
     } catch (error) {
       lease.release();
-      if (worktreeRoot) {
+      if (worktreeRoot && linkedWorktree) {
         await runGit(
           ["worktree", "remove", "--force", worktreeRoot],
           workspaceRoot,

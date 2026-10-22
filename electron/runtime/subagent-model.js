@@ -27,7 +27,7 @@ export function resolveSubagentReasoningPolicy({
 export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   builder: Object.freeze({
     description: "Implement the delegated task within explicit write scopes in an isolated Git worktree. Use verify_project for isolated self-checks, fix failures, and return changes, observed evidence and remaining issues. Do not delegate again or publish.",
-    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "git_status", "git_diff", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "verify_project"]),
+    tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "find_files", "git_status", "git_diff", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "verify_project"]),
   }),
   explore: Object.freeze({
     description:
@@ -36,6 +36,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
       "list_directory",
       "read_file",
       "search_text",
+      'find_files',
       "git_status",
       "git_diff",
       "inspect_office_file",
@@ -48,6 +49,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
       "list_directory",
       "read_file",
       "search_text",
+      'find_files',
       "git_status",
       "git_diff",
       "inspect_office_file",
@@ -60,10 +62,12 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
       "list_directory",
       "read_file",
       "search_text",
+      'find_files',
       "git_status",
       "git_diff",
       "inspect_office_file",
       "run_command",
+      'verify_numeric_data',
     ]),
   }),
   curator: Object.freeze({
@@ -73,6 +77,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
       "list_directory",
       "read_file",
       "search_text",
+      'find_files',
       "git_status",
       "git_diff",
       "inspect_office_file",
@@ -120,6 +125,9 @@ export function normalizeSubagentInput(input, profiles = null) {
   }
   if (input?.context != null && (typeof input.context !== 'string' || input.context.length > 6000)) throw new Error('Subagent handoff context must be at most 6000 characters.');
   if (input?.skills != null && (!Array.isArray(input.skills) || input.skills.length > 64 || input.skills.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,199}$/i.test(name)))) throw new Error('Invalid delegated Skills.');
+  const scope = normalizeWorkspaceScope(input?.scope);
+  const commandScope = input?.command_scope ?? input?.commandScope ?? (scope.includes('.') || role === 'builder' ? 'workspace' : 'none');
+  if (!['workspace', 'none'].includes(commandScope)) throw Error('Invalid command_scope: use workspace or none.');
   return {
     role,
     autonomyVersion: 2,
@@ -128,7 +136,7 @@ export function normalizeSubagentInput(input, profiles = null) {
     task,
     ...(input?.context ? { context: input.context } : {}),
     ...(input?.skills?.length ? { skills: [...new Set(input.skills)] } : {}),
-    scope: normalizeWorkspaceScope(input?.scope),
+    scope, commandScope,
     ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
     background: Boolean(input?.background || input?.depends_on?.length || input?.dependsOn?.length),
     requiredForCompletion: !(input?.background && input?.required_for_completion !== true && !input?.depends_on?.length && !input?.dependsOn?.length && ["explore", "curator"].includes(role)),
@@ -150,7 +158,9 @@ export function subagentToolPaths(toolName, input = {}) {
       "list_directory",
       "read_file",
       "search_text",
+      'find_files',
       "inspect_office_file",
+      'verify_numeric_data',
       "write_file",
       "delete_file",
       "cleanup_temporary_check",
@@ -190,9 +200,11 @@ async function realCandidate(path) {
   }
 }
 
-export async function assertSubagentRealScope(toolName, input, scope, workspaceRoot) {
+export async function assertSubagentRealScope(toolName, input, scope, workspaceRoot, commandScope = null) {
+  if (['run_command', 'verify_project'].includes(toolName) && commandScope === 'none') throw Error('Subagent command access was not delegated.');
   if (isWebToolName(toolName)) return; // Dispatcher still enforces role/parent/network grants.
   if (["task_brief", "replan_strategy"].includes(toolName)) return; // local session controls; dispatch still checks permissions
+  if (['run_command', 'verify_project'].includes(toolName) && commandScope === 'workspace') scope = ['.'];
   assertSubagentScope(toolName, input, scope);
   if (!workspaceRoot) throw new Error("Subagent requires a verified workspace.");
   const root = await realpath(workspaceRoot);
@@ -333,6 +345,7 @@ export function subagentToolsAreParallel(toolCalls) {
         "list_directory",
         "read_file",
         "search_text",
+        'find_files',
         "git_status",
         "git_diff",
         "inspect_office_file",

@@ -23,10 +23,10 @@ assert.deepEqual(outcome({ status: 'partial', summary: '结果', details: '  具
   { status: 'partial', summary: '结果', details: '具体分析', limitations: '未运行浏览器' });
 assert.equal(outcome({ status: 'partial', summary: '结果', warnings: ' 使用前需要修复 ' }).warnings, '使用前需要修复');
 for (const invalid of [{ details: {} }, { details: 'x'.repeat(24001) }, { limitations: [] }, { limitations: 'x'.repeat(4001) }, { warnings: null }, { warnings: 'x'.repeat(4001) }]) {
-  assert.throws(() => outcome({ status: 'completed', summary: 'result', ...invalid }), /INVALID_TASK_OUTCOME/);
+  assert.equal(outcome({ status: 'completed', summary: 'result', ...invalid }).summary, 'result', 'Optional presentation fields never discard the reply');
 }
 const finish = TOOL_DEFINITIONS.find(tool => tool.function.name === 'finish_task').function;
-assert.deepEqual(finish.parameters.required, ['status', 'summary'], 'legacy summaries remain valid');
+assert.equal(finish.parameters.required, undefined, 'Finish metadata is optional; a normal reply is sufficient');
 assert.match(finish.parameters.properties.limitations.description, /collapsed full reply/);
 assert.match(finish.parameters.properties.warnings.description, /Always-visible essential warning/);
 assert.match(finish.parameters.properties.details.description, /Important failures or actions must also be in summary\/warnings/);

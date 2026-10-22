@@ -14,7 +14,7 @@ try {
     localStorage.setItem('aporiax.theme.v2', new URLSearchParams(location.search).get('theme') || 'light');
     localStorage.setItem('aporiax.session-ui.v1', JSON.stringify({ welcomeDismissed: true }));
     const now = Date.now();
-    const account = { status: 'authenticated', profile: { id: 'test-account', displayName: '演示账户', email: 'demo@example.invalid' }, session: { id: 'fixture-session' }, quota: { remainingRatio: .72, cycleEnd: new Date(now + 86400000 * 3).toISOString() }, device: { name: '演示电脑' } };
+    const account = { status: 'authenticated', profile: { id: 'test-account', displayName: '演示账户', email: 'demo@example.invalid' }, session: { id: 'fixture-session' }, quota: { remainingRatio: 3, cycleEnd: new Date(now + 86400000 * 3).toISOString() }, device: { name: '演示电脑' } };
     const rows = Array.from({ length: 106 }, (_, i) => ({ requestId: `request-${i}`, startedAt: new Date(now - i * 86400000).toISOString(), settledAt: new Date(now - i * 86400000 + 5000).toISOString(), model: 'Aporia Cloud', deviceName: '演示电脑', billingStatus: i === 3 ? 'pending' : 'settled', billingSource: 'weekly', quotaUsedRatio: i === 3 ? null : (i % 6 + 1) / 200, tokens: i === 3 ? null : { input: 1000 * (i % 6 + 1), output: 200, total: 1000 * (i % 6 + 1) + 200, cachedInput: 500 }, responseTimeMs: 5000 }));
     window.fixture = { calls: [], account, fail: false, delay: false, opened: 0 };
     let signed = true;
@@ -46,6 +46,10 @@ try {
   };
   for (const theme of ['light', 'dark']) {
     await open(theme);
+    assert.equal(await page.locator('.account-settings-quota strong').innerText(), '300%');
+    assert.equal(await page.locator('.account-settings-track i').evaluate(el => el.style.width), '100%');
+    assert.equal(await page.locator('.account-settings-track').getAttribute('aria-valuenow'), '100');
+    assert.equal(await page.locator('.account-settings-track').getAttribute('aria-valuetext'), '300%');
     assert.equal(await page.evaluate(() => window.fixture.calls.length), 1, 'No automatic full-history fetch');
     assert.equal(await page.getByRole('heading', { name: '已加载用量', exact: true }).count(), 1);
     assert.equal(await page.locator('.account-settings-stats strong').first().textContent(), '100');

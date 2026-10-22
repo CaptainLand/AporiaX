@@ -302,7 +302,7 @@ export function createOpenAICompatibleProvider({
     vendor: config.vendor,
     modelId: model.id,
     protocol: config.protocol,
-    supportsImages: Boolean(model.supportsImages),
+    supportsImages: modelSupportsVision(model),
     supportsTools: model.supportsTools !== false,
     supportsThinking: Boolean(model.supportsThinking),
     thinkingMode: model.thinkingMode || "none",
@@ -310,12 +310,13 @@ export function createOpenAICompatibleProvider({
     defaultEffort: model.defaultEffort,
     reasoningCapabilitySource: model.reasoningCapabilitySource,
     supportsModel: (modelId) => model.id === modelId,
-    complete: ({ body, signal, onStreamEvent, requestTrace = {} }) =>
+    complete: ({ body, signal, onStreamEvent, requestTrace = {}, maxAttempts }) =>
       callModelProvider({
         provider: { ...config, nativeModel: model },
         body,
         signal,
         requestTrace,
+        maxAttempts,
         onEvent:
           typeof onStreamEvent === "function"
             ? onStreamEvent
@@ -609,3 +610,4 @@ export function cloudTraceHeaders(trace) {
     "x-aporia-task-id": trace.taskId, "x-aporia-run-id": trace.runId, "x-aporia-agent-id": trace.agentId || "main", "x-aporia-retry-of": trace.retryOf };
   return Object.fromEntries(Object.entries(entries).filter(([, value]) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/.test(value)));
 }
+import { modelSupportsVision } from '../model-vision.js';

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const READS = new Set(["read_file", "search_text", "list_directory", "git_status", "git_diff", "git_log", "inspect_office_file", "read_process", "wait_process", "mcp_read_result", "read_conversation_history"]);
+const READS = new Set(["read_file", "search_text", "find_files", "list_directory", "git_status", "git_diff", "git_log", "inspect_office_file", "read_process", "wait_process", "mcp_read_result", "read_conversation_history"]);
 const COMMANDS = new Set(["run_command", "start_process"]);
 const PROCESSES = new Set(["read_process", "wait_process", "start_process"]);
 const CONTROLS = new Set(["task_brief", "replan_strategy", "update_plan", "finish_task", "collect_subagents", "cancel_subagent", "kill_process"]);

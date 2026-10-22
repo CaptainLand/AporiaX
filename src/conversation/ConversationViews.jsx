@@ -811,10 +811,15 @@ function FailedRunContent({ message }) {
   </div>;
 }
 
-function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, editedFiles }) {
+function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progressRunning, editedFiles }) {
   const { tr } = useI18n();
   const [retrying, setRetrying] = useState(false);
-  const failed = message.error || message.status === "failed";
+  const [progressExpanded, setProgressExpanded] = useState(progressRunning);
+  // Reset only at run boundaries; streaming updates must preserve manual folding.
+  useEffect(() => {
+    setProgressExpanded(progressRunning);
+  }, [progressRunning]);
+  const failed = !hasTaskReply(message) && (message.error || message.status === "failed");
   const blocked = message.status === "blocked";
   const resultDelivered = hasTaskReply(message);
   const interrupted = message.status === "interrupted";
@@ -871,9 +876,15 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, editedF
       <ExtensionNotices message={message} />
       {Array.isArray(message.progressUpdates) &&
         message.progressUpdates.length > 0 && (
-          <details className="assistant-progress-disclosure">
-            <summary className="assistant-progress-toggle" aria-label={tr('展开任务进展', 'Expand task progress')}
-              title={tr('展开或收起任务进展', 'Expand or collapse task progress')}>
+          <details className="assistant-progress-disclosure" open={progressExpanded}>
+            <summary className="assistant-progress-toggle"
+              aria-label={progressExpanded ? tr('收起任务进展', 'Collapse task progress') : tr('展开任务进展', 'Expand task progress')}
+              aria-expanded={progressExpanded}
+              title={tr('展开或收起任务进展', 'Expand or collapse task progress')}
+              onClick={(event) => {
+                event.preventDefault();
+                setProgressExpanded(open => !open);
+              }}>
               <span className="assistant-progress-line" aria-hidden="true" />
             </summary>
             <div className="assistant-progress-journal">
@@ -1299,6 +1310,7 @@ export function Conversation({
               editedFiles={editedFiles}
               onRetry={onRetry}
               taskRunning={isRunning && latestAssistant?.status === "running"}
+              progressRunning={Boolean(isRunning && message.id === latestAssistant?.id && message.status === "running")}
               onOpenAnchor={(anchorTarget) =>
                 setAnchorRequest({ messageId: anchorTarget.id })
               }

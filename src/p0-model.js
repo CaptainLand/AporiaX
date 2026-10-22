@@ -44,6 +44,7 @@ const ROUTE_TOOL_META = {
   read_file: { stage: "lens", zh: "读取文件", en: "Read file" },
   read_external_file: { stage: "lens", zh: "读取外部文件", en: "Read external file" },
   search_text: { stage: "lens", zh: "定位相关内容", en: "Locate relevant content" },
+  find_files: { stage: 'lens', zh: '查找文件', en: 'Find files' },
   git_status: { stage: "lens", zh: "检查 Git 状态", en: "Inspect Git status" },
   git_diff: { stage: "lens", zh: "检查代码差异", en: "Inspect code diff" },
   write_file: { stage: "forge", zh: "写入文件", en: "Write file" },

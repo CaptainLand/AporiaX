@@ -4,10 +4,11 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { WorkbenchBrowserSession } from "./browser-session.js";
+import { createBrowserProfiles } from './browser-profiles.js';
 import { installWorkbenchProvider } from "./runtime-provider.js";
 import { createPersistentProcessManager } from "../runtime/process-runtime.js";
 import { getVerifiedWorkspaceRoot, toWorkspaceRelativePath } from "../runtime/workspace-runtime.js";
-import { checkWorkspaceFileLink } from "../file-link-check.js";
+import { checkWorkspaceFileLink, fileLinkError } from "../file-link-check.js";
 import { readWorkbenchFile, searchWorkbenchFiles } from "./files.js";
 import { createHtmlPreview } from "./html-preview.js";
 import { acceptLayoutGeneration } from "./layout-token.js";
@@ -27,6 +28,9 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   return result.response === 1;
 } }) {
   const resources = new Map();
+  const fileSearches = new Map();
+  const browserProfiles = createBrowserProfiles(app.getPath('userData'));
+  browserProfiles.ready.catch(() => {}); // reported by the next explicit request
   const activeRuns = new Set();
   const git = createWorkbenchGitService({
     recoveryDirectory: join(app.getPath("userData"), "git-conflict-recovery"),
@@ -69,9 +73,9 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     const matching = [...resources.values()].filter((r) => r.kind === kind || (kind === "browser" && r.view));
     if (matching.filter((r) => r.status !== "exited").length >= 12 || matching.length >= 24) throw new Error("会话数量已达上限，请先关闭不再使用的标签。");
   };
-  function browser(context, owner = "user") {
+  function browser(context, owner = "user", ephemeral = false) {
     reserve("browser");
-    const r = new WorkbenchBrowserSession({ ...context, owner, publish });
+    const r = new WorkbenchBrowserSession({ ...context, owner, publish, profilePartition: ephemeral ? '' : browserProfiles.partition(context) });
     getWindow()?.contentView.addChildView(r.view);
     r.view.setVisible(false);
     resources.set(r.id, r); r.changed(); return r;
@@ -190,11 +194,11 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       let r = ownedBrowsers.get(ownerId);
       if (r && !r.closed) return r;
       r = ownerId === "main" ? adoptBrowser(context) : null;
-      if (!r) r = browser(context, "agent");
+      if (!r) r = browser(context, "agent", ownerId !== 'main');
       ownedBrowsers.set(ownerId, r);
       return r;
     };
-    const facade = (ownerId) => Object.fromEntries(["open", "snapshot", "click", "fill", "press", "screenshot", "console", "network", "close"].map((method) => [method, (...args) => lazy(ownerId)[method](...args)]));
+    const facade = (ownerId) => Object.fromEntries(["open", "snapshot", "click", "fill", "press", "select", "upload", "screenshot", "console", "network", "close"].map((method) => [method, async (...args) => { await browserProfiles.ready; return lazy(ownerId)[method](...args); }]));
     const browserRuntime = { ...facade("main"), forOwner: facade };
     let released = false;
     const manager = createPersistentProcessManager({ emit: (event) => {
@@ -230,6 +234,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       if (!r || r.kind !== "process" || r.manager !== manager) return;
       r.present = true;
       publish(state(r));
+      return { processId, owner: 'this-task', survivesTask: true, stoppedOnAbort: !r.keepAlive, stoppedByClosing: true };
     };
     const presentBrowsers = () => {
       for (const r of browsersInScope(context)) {
@@ -255,6 +260,11 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
         live() {
           presentBrowsers();
           presentRunningProcesses();
+        },
+        lifecycle(url) {
+          const page = [...resources.values()].find(r => r.htmlPreviewUrl === url);
+          return page ? { owner: 'workbench-preview', survivesTask: true, stoppedByClosingTab: true }
+            : { owner: 'external-or-unknown', survivesTask: 'unknown', stoppedByTask: false };
         },
       },
       async release({ aborted } = {}) {
@@ -286,7 +296,18 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       authorizeExternal: input.approveExternal === true ? confirmExternalRead : undefined,
     });
     if (input.action === "file-check") return checkWorkspaceFileLink(context.workspacePath, input.path);
-    if (input.action === "search") return searchWorkbenchFiles(context.workspacePath, input.query);
+    if (input.action === 'cancel-search') {
+      const active = fileSearches.get(context.taskId);
+      if (active?.id === input.searchId) active.controller.abort();
+      return true;
+    }
+    if (input.action === 'search') {
+      fileSearches.get(context.taskId)?.controller.abort();
+      const active = { id: input.searchId, controller: new AbortController() };
+      fileSearches.set(context.taskId, active);
+      try { return await searchWorkbenchFiles(context.workspacePath, input.query, { signal: active.controller.signal }); }
+      finally { if (fileSearches.get(context.taskId) === active) fileSearches.delete(context.taskId); }
+    }
     if (input.action === "git") return git.request({ ...input, workspacePath: context.workspacePath });
     if (input.action === "github-login") {
       const cwd = await getVerifiedWorkspaceRoot(context.workspacePath);
@@ -297,7 +318,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       session.child.write(githubLoginCommand());
       publish(state(session)); return state(session);
     }
-    if (input.action === "new-browser") return browser(context).state();
+    if (input.action === "new-browser") { await browserProfiles.ready; return browser(context).state(); }
     if (input.action === "preview-html") {
       const preview = await createHtmlPreview(context.workspacePath, input.path);
       let r;
@@ -308,7 +329,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
           await existing.userNavigate(existing.htmlPreviewUrl);
           return existing.state();
         }
-        r = browser(context);
+        r = browser(context, 'user', true);
         r.htmlPreviewPath = preview.path;
         r.htmlPreviewUrl = preview.url;
         r.wc.once("destroyed", () => { void preview.close(); });
@@ -328,6 +349,21 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     if (input.action === "hide") { hide(input.generation); return true; }
     const r = scope(resources.get(input.id), context);
     if (!r) return { missing: true };
+    if (input.action === 'remember-browser') {
+      if (r.kind !== 'browser' || r.owner !== 'user' || r.htmlPreviewPath || typeof input.enabled !== 'boolean') throw Error('请先接管普通网页，再调整登录保存方式。');
+      const peers = [...resources.values()].filter(item => item.wc?.session === r.wc.session && !item.closed);
+      if (!input.enabled && peers.some(item => item.owner !== 'user')) throw Error('该浏览器仍在由 Agent 使用，请先接管后清除登录。');
+      const currentUrl = r.wc.getURL(), session = r.wc.session;
+      await browserProfiles.set(context, input.enabled);
+      if (!input.enabled) {
+        for (const peer of peers) { await peer.close(); getWindow()?.contentView.removeChildView(peer.view); resources.delete(peer.id); }
+        await session.clearStorageData();
+        await session.clearAuthCache();
+      }
+      const next = browser(context);
+      try { if (/^https?:/.test(currentUrl)) await next.userNavigate(currentUrl); return next.state(); }
+      catch (error) { await next.close(); resources.delete(next.id); throw error; }
+    }
     if (input.action === "stop") {
       if (visibleId === r.id) hide();
       await r.close();
@@ -422,7 +458,10 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     }
     throw new Error("未知工作台操作。");
   }
-  return { request, acquire, hide, resources, async closeAll() { hide(); await Promise.all([...resources.values()].map((r) => r.close())); resources.clear(); } };
+  return { request, acquire, hide, resources, async closeAll() {
+    for (const active of fileSearches.values()) active.controller.abort();
+    fileSearches.clear(); hide(); await Promise.all([...resources.values()].map((r) => r.close())); resources.clear();
+  } };
 }
 
 export function registerWorkbench(getWindow) {
@@ -432,7 +471,7 @@ export function registerWorkbench(getWindow) {
     if (event.sender !== getWindow()?.webContents || event.senderFrame !== getWindow()?.webContents.mainFrame) throw new Error("Untrusted workbench sender.");
     return Promise.resolve(service.request(input)).catch((error) => {
       if (String(error?.message || "").includes("不属于当前任务")) return { missing: true };
-      throw error;
+      throw ['file', 'preview-html'].includes(input?.action) ? fileLinkError(error, input.path) : error;
     });
   });
   app.on("before-quit", () => { void service.closeAll(); });

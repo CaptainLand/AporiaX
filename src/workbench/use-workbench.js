@@ -161,9 +161,16 @@ export function useWorkbench(task) {
     );
   };
 
-  const openFile = (path, line = 1) => {
+  const openFile = async (path, line = 1) => {
+    const startingKey = keyRef.current;
     const normalized = toWorkspaceRelativePath(task.workspacePath, path);
     if (!normalized) return;
+    try {
+      const checked = await request({ action: 'file-check', path: normalized });
+      if (keyRef.current !== startingKey) return;
+      if (checked?.status === 'missing') { setError(checked.message || `找不到文件：${normalized}`); return; }
+    } catch { /* file reader still performs authoritative validation */ }
+    if (keyRef.current !== startingKey) return;
     open("file", {
       id: `file:${normalized}`,
       title: normalized.split("/").at(-1),

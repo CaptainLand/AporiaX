@@ -143,19 +143,27 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
   const fileContextMenu = useFileContextMenu({ workspacePath: task.workspacePath, onNotice, onOpenFile: path => workbench.openFile(path) });
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState(null);
+  const [searchError, setSearchError] = useState('');
   useEffect(() => {
     let cancelled = false;
+    let started = false;
+    const searchId = crypto.randomUUID();
+    setHits(null); setSearchError('');
     if (!query.trim()) {
       setHits(null);
       return undefined;
     }
     const timer = window.setTimeout(() => {
+      started = true;
       workbench
-        .request({ action: "search", query })
+        .request({ action: "search", query, searchId })
         .then((result) => { if (!cancelled) setHits(result); })
-        .catch((error) => { if (!cancelled) onNotice(error.message); });
+        .catch((error) => { if (!cancelled) setSearchError(error.message); });
     }, 180);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => {
+      cancelled = true; window.clearTimeout(timer);
+      if (started) void workbench.request({ action: 'cancel-search', searchId }).catch(() => {});
+    };
   }, [query, workbench.key, task.id]);
   return (
     <div className="workbench-file workspace-browser">
@@ -171,10 +179,10 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
         <>
           <div className="workbench-search-hint">
             {tr(
-              "已遍历到限额前的文件名结果，已排除 node_modules/.git 等目录。",
-              "Filename results up to the walk limit, excluding node_modules/.git and similar directories.",
+              "按文件名和路径查找，已排除依赖与构建目录。",
+              "Search by filename and path, excluding dependencies and build directories.",
             )}
-            {hits.truncated ? tr(" 结果已截断。", " Results truncated.") : ""}
+            {hits.truncated ? tr(' 结果未完全列出，可输入更完整的文件名。', ' Results are incomplete; enter a more specific filename.') : ''}
           </div>
           <div className="workspace-tree">
             {hits.entries.map((entry) => (
@@ -189,9 +197,13 @@ function WorkspacePane({ task, workbench, onNotice, children }) {
                 <FileText size={14} /><span className="workspace-tree-name">{entry.name || entry.path.split(/[/\\]/).at(-1)}</span><ChevronRight className="workspace-tree-open-file" size={12} />
               </button>
             ))}
-            {!hits.entries.length && <div className="workspace-tree-state">{tr("没有匹配的文件", "No matching files")}</div>}
+            {!hits.entries.length && <div className="workspace-tree-state">{hits.truncated
+              ? tr('尚未找到匹配文件，请缩小范围后重试。', 'No match found yet; narrow the search and retry.')
+              : tr('没有匹配的文件', 'No matching files')}</div>}
           </div>
         </>
+      ) : query.trim() ? (
+        <div className="workspace-tree-state" role="status">{searchError || tr('正在查找文件…', 'Finding files…')}</div>
       ) : (
         <div className="workspace-view-stack workspace-tree-only">{children}</div>
       )}
@@ -588,6 +600,15 @@ function BrowserPane({ tab, resource, workbench, covered }) {
             autoCorrect="off"
           />
         </form>
+        {!resource.localPreview && <button type="button" className="workbench-toolbar-btn" disabled={busy}
+          title={tr('为当前任务保存登录状态；首次启用会打开新的浏览器标签，登录一次后即可复用。', 'Keep login state for this task. Enabling opens a new tab; sign in there once.')}
+          onClick={async () => {
+            try {
+              const next = await workbench.request({ action: 'remember-browser', id: tab.id, enabled: !resource.rememberLogin });
+              if (!next?.id) return;
+              await workbench.close(tab.id); workbench.open('browser', next);
+            } catch (error) { workbench.setError(error.message); }
+          }}>{resource.rememberLogin ? tr('清除登录', 'Clear login') : tr('保存登录', 'Keep login')}</button>}
         {busy ? (
           <button
             type="button"

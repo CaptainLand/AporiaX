@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { homedir } from "node:os";
 import { parseWorkspacePatch } from './workspace-patch.js';
 
-export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "inspect_office_file", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
+export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "find_files", "inspect_office_file", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const WRITES = new Set(["write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const scope = new AsyncLocalStorage();
 let settings = () => ({ enabled: false, protectedPaths: [] });
