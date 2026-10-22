@@ -56,8 +56,25 @@ const witness=createWitnessMonitor({now:()=>time,heartbeatMs:0,emit:()=>{}});
 witness.observe({type:"turn.started"});witness.observe({type:"response.reset",round:1});
 for(let i=0;i<13;i++){time+=10000;witness.observe({type:"response.delta",delta:"visible output"});}
 witness.heartbeat();assert(!witness.snapshot().alerts.some(a=>a.code.startsWith("stalled:")));
-time+=121000;witness.heartbeat();assert(witness.snapshot().alerts.some(a=>a.code.startsWith("stalled:")));
-witness.observe({type:"response.activity"});assert(!witness.snapshot().alerts.some(a=>a.code.startsWith("stalled:")));witness.dispose();
+time+=121000;witness.heartbeat();
+assert(!witness.snapshot().alerts.some(a=>a.code.startsWith("stalled:")), "Model waits belong to the effective-data recovery watchdog, not the generic two-minute tool warning");
+const recovery={type:"response.recovery.status",responseId:"long-task-fixture",connection:"open",maxAttempts:3};
+witness.observe({...recovery,state:"checking",attempt:1});
+assert.equal(witness.snapshot().current.modelRecovery.attempt,1);
+witness.observe({type:"response.activity"});
+assert.equal(witness.snapshot().current.modelRecovery.attempt,1, "Transport keepalive cannot clear recovery state");
+witness.observe({...recovery,state:"waiting",attempt:3});
+time+=3600000;witness.heartbeat();
+assert.equal(witness.snapshot().status,"running");
+assert.equal(witness.snapshot().current.modelRecovery.attempt,3);
+assert(!witness.snapshot().alerts.some(a=>a.code.startsWith("stalled:")));
+witness.observe({...recovery,state:"receiving",attempt:0,disposition:"resumed"});
+assert(!witness.snapshot().current.modelRecovery);
+assert(witness.snapshot().records.some(record=>record.eventType==="response.recovery.resumed"));
+witness.observe({type:"tool.started",callId:"slow-read",tool:"read_file"});
+time+=121000;witness.heartbeat();
+assert(witness.snapshot().alerts.some(a=>a.code.startsWith("stalled:")&&a.detail.includes("read_file")), "Real tool stalls must still warn");
+witness.dispose();
 
 const root=await mkdtemp(join(tmpdir(),"aporia-long-task-"));
 try {
