@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.8 — 2026-10-23
+
+- Detect three minutes without new model data rather than limiting total thinking time; ignore keepalives and duplicate counters, preserve partial work, and perform at most three automatic recovery checks.
+- Keep a usable original stream waiting after the third check, accept its late answer, and retain disconnected requests as nonterminal waits. Only a confirmed zero-charge, released, never-dispatched Cloud receipt can permit a fresh generation; never replay uncertain inference or tool operations.
+- Show honest Witness checking, waiting, disconnected and resumed states; user stop remains authoritative.
+- Remove automatic hardware-acceleration disabling and ignore legacy GPU fallback flags without deleting caches or diagnostics.
+- Publish the Windows x64 installer only. Personal ChatGPT/Codex remains local-development only; Web, Cloud billing and the model gateway are unchanged.
+
+[Release notes](docs/RELEASE_NOTES_v1.0.8.md)
+
 ## 1.0.7 — 2026-10-22
 
 - Deliver normal final replies without mandatory finish metadata; use one safe, text-only recovery when possible, preserve delivered replies across later storage/connection errors, and retain genuine failures and unfinished work.

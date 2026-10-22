@@ -1,5 +1,5 @@
 import { compileProviderWire, normalizeNativeResponse } from "./native-provider-codec.js";
-import { mergeTokenUsage } from "./token-usage.js";
+import { mergeTokenUsage, normalizeTokenUsage } from "./token-usage.js";
 import { beginRoleRequest, finishRoleRequest } from "./role-budget.js";
 import { providerChatEndpoint } from "../provider-config.js";
 import { providerMessages } from "./task-conversation.js";
@@ -8,7 +8,9 @@ import { compileModelRequest } from "./request-compiler.js";
 import { randomUUID } from "node:crypto";
 import { runtimeRequestTrace, runtimeRunControl } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
-import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest } from "./cloud-request-identity.js";
+import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest, rememberModelResponseRecovery } from "./cloud-request-identity.js";
+import { createModelResponseRecovery, probeModelRequest } from './model-response-recovery.js';
+import { saveRuntimeCheckpoint } from './durable-run.js';
 import { modelOutputBudget } from "./output-budget.js";
 import { prepareCloudWindDown, observeCloudQuota } from "./cloud-wind-down.js";
 import { assertLocalControlActive, consumeLocalControlModelCall } from "../control/policy.js";
@@ -16,7 +18,6 @@ import { beginModelResponseDiagnostic } from "./model-response-diagnostics.js";
 import { createModelStreamProgress } from './model-stream-progress.js';
 import { estimateConversationTokens } from '../agent-context-core.js';
 
-const PROVIDER_IDLE_TIMEOUT_MS = 180_000;
 const PROVIDER_MAX_ATTEMPTS = 3;
 const PROVIDER_TIMEOUT_MAX_ATTEMPTS = 2;
 
@@ -346,6 +347,7 @@ export async function callModelProviderOnce({
   signal,
   onEvent,
   cloudTrace,
+  recoveryOptions = {},
 }) {
   throwIfAborted(signal);
   // All callers, including subagents and side chat, share this last boundary.
@@ -361,19 +363,39 @@ export async function callModelProviderOnce({
   const controller = new AbortController();
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });
-  let idleTimedOut = false;
   let receivedStreamBytes = false;
   let observedUsage = null;
   let receivedContent = "";
-  let idleTimeout = null;
-  const resetIdleTimeout = () => {
-    clearTimeout(idleTimeout);
-    idleTimeout = setTimeout(() => {
-      idleTimedOut = true;
-      controller.abort();
-    }, PROVIDER_IDLE_TIMEOUT_MS);
+  let requestId = cloudTrace?.serverRequestId;
+  let modelCharacters = 0, observedOutputTokens = 0, observedModelData = false, safeRetry = null, recoveryFailure = null;
+  const requestIdentity = currentLoopRequestIdentity();
+  observedModelData = requestIdentity?.identity.modelResponseRecovery?.receivedModelData === true;
+  const control = runtimeRunControl();
+  const recovery = createModelResponseRecovery({ ...recoveryOptions,
+    signal: controller.signal, now: recoveryOptions.now || (control ? () => control.activeNow() : Date.now),
+    initialAttempts: requestIdentity?.identity.modelResponseRecovery?.attempt || 0,
+    responseId: requestIdentity?.identity.modelResponseRecovery?.responseId || randomUUID(),
+    isPaused: () => Boolean(control?.paused),
+    onAttempt: ({ signal }) => probeModelRequest(provider, requestId, signal),
+    onState: async state => {
+      state = { ...state, receivedModelData: observedModelData };
+      await rememberModelResponseRecovery(requestIdentity, state);
+      await saveRuntimeCheckpoint({ scopeId: 'incomplete-response:' + (requestIdentity?.scopeId || 'main'),
+        phase: 'model-response-recovery', incomplete: true, content: receivedContent,
+        recovery: state, toolCallsExecuted: false, usage: observedUsage });
+      onEvent?.({ type: 'response.recovery.status', ...state });
+    },
+    onSafeRetry: result => {
+      if (observedModelData) return false; // Contradictory receipt is not authority to replay output.
+      safeRetry = result; controller.abort(); return true;
+    },
+    onError: error => { recoveryFailure = error; controller.abort(); },
+  });
+  const recordProgress = metadata => {
+    if (Number(metadata?.generatedChars) > modelCharacters) {
+      modelCharacters = Number(metadata.generatedChars); observedModelData = true; recovery.noteProgress();
+    }
   };
-  resetIdleTimeout();
   const progress = createModelStreamProgress({ inputTokens: estimateConversationTokens([...(body.messages || []), ...(body.tools?.length ? [{ role: 'system', content: JSON.stringify(body.tools) }] : [])]) });
   onEvent?.({ type: 'response.progress', ...progress.waiting() });
 
@@ -388,13 +410,14 @@ export async function callModelProviderOnce({
       body: JSON.stringify(wire.body),
       signal: controller.signal,
       ...(provider.kind === "aporia-cloud" ? { onCloudQueue: (queue) => {
-        if (queue.state === "queued") clearTimeout(idleTimeout); else resetIdleTimeout();
+        recovery.setQueued(queue.state === 'queued');
         onEvent?.({ type: `response.cloud.${queue.state}`, ...queue });
       } } : {}),
     }, wire, diagnostic);
 
     if (provider.kind === "aporia-cloud") {
-      try { await rememberCloudReceipt(currentLoopRequestIdentity(), response.headers.get("x-aporia-request-id")); }
+      requestId = response.headers.get('x-aporia-request-id');
+      try { await rememberCloudReceipt(currentLoopRequestIdentity(), requestId); }
       catch (error) { await response.body?.cancel(); throw error; }
     }
     if (!response.ok) {
@@ -428,14 +451,17 @@ export async function callModelProviderOnce({
       if (!data) return;
       if (data === "[DONE]") { sawDone = true; if (!nativeProtocol) diagnostic?.observe(data); return; }
       const payload = JSON.parse(data);
+      if (nativeProtocol && payload.aporia_model_data === true) { observedModelData = true; recovery.noteProgress(); }
       if (nativeProtocol && payload.aporia_stream_progress) {
         const metadata = progress.receiveNative(payload.aporia_stream_progress);
+        recordProgress(metadata);
         if (metadata) onEvent?.({ type: 'response.progress', ...metadata });
         return;
       }
       if (!nativeProtocol) diagnostic?.observe(payload);
       if (provider.kind === "aporia-cloud" && ["queued", "admitted"].includes(payload.aporiaQueue?.state)) {
         const queue = payload.aporiaQueue;
+        recovery.setQueued(queue.state === 'queued');
         onEvent?.({ type: `response.cloud.${queue.state}`, state: queue.state, source: "gateway",
           reason: ["quota", "provider-budget"].includes(queue.reason) ? queue.reason : "concurrency",
           limit: Math.min(...[queue.perUser, queue.perDevice, queue.global].filter(v => Number.isSafeInteger(v) && v > 0)),
@@ -449,6 +475,7 @@ export async function callModelProviderOnce({
         throw responseError(provider, payload, status, response.headers, true);
       }
       if (wire.protocol === 'responses' && typeof payload.aporia_text_snapshot === 'string') {
+        if (payload.aporia_text_snapshot.length > receivedContent.length) { observedModelData = true; recovery.noteProgress(); }
         content = payload.aporia_text_snapshot; receivedContent = content;
         onEvent?.({ type: 'response.text.reconciled', content });
         return;
@@ -461,6 +488,10 @@ export async function callModelProviderOnce({
         return; // Billing uses a different usage schema; never overwrite model usage.
       }
       if (payload.usage) {
+        const normalized = normalizeTokenUsage(payload.usage);
+        if (normalized?.completion_tokens > observedOutputTokens) {
+          observedOutputTokens = normalized.completion_tokens; observedModelData = true; recovery.noteProgress();
+        }
         usage = payload.usage; observedUsage = payload.usage;
         const metadata = progress.reportUsage(payload.usage);
         if (metadata) onEvent?.({ type: 'response.progress', ...metadata });
@@ -469,6 +500,9 @@ export async function callModelProviderOnce({
       if (choice?.finish_reason != null) finishReason = choice.finish_reason;
       const delta = choice?.delta;
       if (!delta) return;
+      // Observe every parsed delta, not the throttled UI token estimate.
+      if ([delta.content, delta.reasoning_content, ...(delta.tool_calls || []).map(call => call.function?.arguments)]
+        .some(value => typeof value === 'string' && value.trim().length > 0)) { observedModelData = true; recovery.noteProgress(); }
       if (!nativeProtocol) {
         const streamProgress = progress.chat(delta);
         if (streamProgress) onEvent?.({ type: 'response.progress', ...streamProgress });
@@ -485,7 +519,6 @@ export async function callModelProviderOnce({
     for await (const chunk of response.body) {
       throwIfAborted(signal);
       if (chunk?.byteLength) receivedStreamBytes = true;
-      resetIdleTimeout();
       const activityAt = Date.now();
       if (chunk?.byteLength && activityAt - lastActivityAt >= 1000) {
         lastActivityAt = activityAt;
@@ -540,6 +573,8 @@ export async function callModelProviderOnce({
     if (!toolCalls.filter(Boolean).length && !content.trim()) failIncomplete("MODEL_EMPTY_RESPONSE");
 
     const finalProgress = progress.reportUsage(usage, { final: true }) || progress.flush();
+    if (recovery.snapshot().attempt > 0) recovery.noteProgress();
+    await recovery.flush();
     if (finalProgress) onEvent?.({ type: 'response.progress', ...finalProgress });
     diagnosticOutcome = "completed";
     if (provider.kind === 'chatgpt-personal') provider.markPersonalModelVerified?.(body.model);
@@ -562,6 +597,10 @@ export async function callModelProviderOnce({
       usage,
     };
   } catch (error) {
+    if (recoveryFailure) throw recoveryFailure;
+    if (safeRetry) throw Object.assign(new Error('Original request was confirmed not dispatched; safe recovery requested.'), {
+      code: 'MODEL_RESPONSE_SAFE_RETRY', retryable: false, safeToRepair: true, cloudRequestId: safeRetry.requestId,
+    });
     if (receivedContent && !error.partialMessage) error.partialMessage = { content: receivedContent };
     if (observedUsage && !error.usage) error.usage = observedUsage;
     if (signal?.aborted) throw Object.assign(createAbortError(), { usage: observedUsage, partialMessage: { content: receivedContent } });
@@ -574,17 +613,12 @@ export async function callModelProviderOnce({
     if (provider.kind === "aporia-cloud" && error?.message === "DESKTOP_ACCOUNT_SIGNED_OUT") {
       throw createProviderError(provider, "DESKTOP_ACCOUNT_SIGNED_OUT", 401);
     }
-    if (idleTimedOut) {
-      const timeoutError = createProviderError(
-        provider,
-        provider.kind === "aporia-cloud"
-          ? "APORIA_PROVIDER_TIMEOUT"
-          : `${provider.name} connection was idle for 180 seconds.`,
-        504,
-      );
-      timeoutError.retryable = !receivedStreamBytes;
-      timeoutError.usage = observedUsage;
-      throw timeoutError;
+    const recoveryState = recovery.snapshot();
+    if (recoveryState.attempt > 0 && !['quota', 'authorization', 'context', 'request-size', 'output-limit', 'tool-protocol'].includes(providerErrorCategory(error))) {
+      error.modelResponseRecovery = { ...recoveryState, connection: 'closed', receivedModelData: observedModelData };
+      error.recoverModelConnection = signal => probeModelRequest(provider, requestId, signal);
+      error.retryable = false;
+      error.noAutomaticRetry = true;
     }
     if (error?.name === "AbortError") {
       const abortError = new Error(
@@ -598,10 +632,10 @@ export async function callModelProviderOnce({
     }
     throw error;
   } finally {
-    clearTimeout(idleTimeout);
+    recovery.dispose();
     signal?.removeEventListener("abort", handleAbort);
     // Do not let a slow local disk hold up task completion or tool execution.
-    void diagnostic?.finish({ outcome: diagnosticOutcome, interrupted: signal?.aborted || idleTimedOut });
+    void diagnostic?.finish({ outcome: diagnosticOutcome, interrupted: signal?.aborted });
   }
 }
 

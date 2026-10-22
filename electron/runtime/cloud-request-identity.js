@@ -18,6 +18,12 @@ export function createLoopRequestIdentity(scopeId) {
 }
 export const withLoopRequestIdentity = (state, fn) => storage.run(state, fn);
 export const currentLoopRequestIdentity = () => storage.getStore();
+export async function rememberModelResponseRecovery(state, recovery) {
+  if (!state) return;
+  state.identity.modelResponseRecovery = { attempt: recovery.attempt, responseId: recovery.responseId,
+    receivedModelData: recovery.receivedModelData === true };
+  await persist(state);
+}
 export async function createRepairRequestIdentity(previous, { corrections, compactions, outputTokenLimit }) {
   const state = { scopeId: previous.scopeId, checkpointScope: previous.checkpointScope, result: null,
     identity: { ...fresh(), repairCount: corrections, compactions, repairMaxTokens: outputTokenLimit,

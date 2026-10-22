@@ -3,6 +3,7 @@ export function taskSuspensionLabel(reasons = [], language = "zh-CN") {
   if (reasons.includes("clarification")) return en ? "Waiting for your answer" : "等待你的回答";
   if (reasons.includes("no-progress")) return en ? "No new progress · inspect results before resuming" : "重复规划或读取 · 已暂停并保存进度，请检查后继续";
   if (reasons.includes("user")) return en ? "Task paused by you" : "任务已手动暂停";
+  if (reasons.includes("model-response")) return en ? "Model connection closed · progress retained" : "模型连接已断开 · 进度已保留";
   if (reasons.includes("sleep")) return en ? "System suspended · resumes after wake" : "系统暂停 · 唤醒后自动继续";
   if (reasons.includes("network")) return en ? "Waiting for network · reconnecting automatically" : "等待网络恢复 · 自动重连";
   if (reasons.includes("provider-budget-wait")) return en ? "Waiting for Cloud-wide cost settlement" : "等待 Cloud 全站费用结算 · 自动继续";

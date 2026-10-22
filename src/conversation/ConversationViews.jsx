@@ -13,6 +13,7 @@ import { remarkInlineReplyToggle } from './remark-inline-reply-toggle.js';
 import { diffLines } from "diff";
 import { turnRestorePreview } from './turn-restore-preview.js';
 import { getLiveRunProgress } from './witness-progress.js';
+import { modelRecoveryView } from '../../shared/model-recovery-view.js';
 import { supportingReply } from '../../shared/reply-presentation.js';
 import { createPortal } from "react-dom";
 import {
@@ -999,6 +1000,7 @@ function formatWitnessElapsed(milliseconds) {
 }
 
 function describeWitnessRecord(record, tr, language) {
+  if (record?.modelRecovery) return modelRecoveryView(record.modelRecovery, language);
   if (!record) {
     return {
       title: tr("正在理解任务", "Understanding the task"),
@@ -1016,6 +1018,7 @@ function describeWitnessRecord(record, tr, language) {
   const descriptions = {
     "turn.started": [tr("Witness 开始记录", "Witness started recording"), tr("正在建立任务进度账本", "Creating the task progress ledger")],
     "response.reset": [tr("AporiaX 正在思考或工作中…", "AporiaX is thinking or working…"), tr("正在等待模型响应", "Waiting for model response")],
+    "response.recovery.resumed": [tr("已恢复接收模型数据", "Model data resumed"), tr("沿用原请求继续执行，未重复生成", "Continuing the original request without duplicate generation")],
     "plan.updated": [tr("行动路径已更新", "Action route updated"), record.detail],
     "parallel_batch.started": [tr("正在并行处理独立工作", "Running independent work in parallel"), tr("并发执行 {count} 个动作", "Running {count} actions concurrently", { count: record.detail || 0 })],
     "subagent.started": [tr("子 Agent 已开始工作", "Subagent started working"), record.detail],
@@ -1062,8 +1065,10 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
     failed: ['失败', 'Failed'], interrupted: ['已停止', 'Stopped'],
     paused: ['已暂停', 'Paused'], waiting: ['等待确认', 'Awaiting approval'],
   };
-  const witnessStateLabel = tr(...(stateLabels[liveProgress.status]
-    || (witness?.current?.longRunning ? ['耗时较长', 'Long running'] : ['正在做', 'Now'])));
+  const witnessStateLabel = witness?.current?.modelRecovery && !witnessFinished
+    ? modelRecoveryView(witness.current.modelRecovery, language).badge
+    : tr(...(stateLabels[liveProgress.status]
+      || (witness?.current?.longRunning ? ['耗时较长', 'Long running'] : ['正在做', 'Now'])));
   const progressLabel = liveProgress.completed ? '100%'
     : liveProgress.plan ? tr('已完成 {done}/{total} 步', '{done}/{total} steps done', {
       done: liveProgress.completedCount, total: liveProgress.totalCount,
@@ -1114,7 +1119,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
         </span>
         <div>
           <strong>
-            {resultDelivered ? tr("本轮结果已输出", "Result delivered") : !liveProgress.active ? witnessStateLabel : currentDescription.title ||
+            {resultDelivered ? tr("本轮结果已输出", "Result delivered") : !liveProgress.active && !witness?.current?.modelRecovery ? witnessStateLabel : currentDescription.title ||
               liveProgress.currentEntry?.title}
           </strong>
           <p title={currentDescription.progressHint}>

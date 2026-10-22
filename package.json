@@ -13,10 +13,12 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
+    "test:model-recovery": "node --experimental-sqlite tests/model-response-recovery.mjs && node tests/model-recovery-browser.mjs",
+    "test:gpu-guard": "node tests/gpu-guard-smoke.mjs && electron tests/gpu-guard-electron.cjs",
     "test:task-ending": "node --experimental-sqlite tests/task-ending.mjs && node --experimental-sqlite tests/error-final-reply.mjs && node --experimental-sqlite tests/user-facing-delivery.mjs && node tests/witness-progress.mjs",
     "test:file-search": "node --experimental-sqlite tests/file-search-efficiency.mjs && node tests/workspace-search-asar.mjs && node tests/file-search-browser.mjs",
     "test:account-invites": "node tests/desktop-account-auth-smoke.mjs && node tests/account-invites-runtime.mjs && node tests/account-invites-browser.mjs",
@@ -215,6 +217,7 @@
       "docs/RELEASE_NOTES_v1.0.5.md",
       "docs/RELEASE_NOTES_v1.0.6.md",
       "docs/RELEASE_NOTES_v1.0.7.md",
+      "docs/RELEASE_NOTES_v1.0.8.md",
       "config/cloud-endpoints.json",
       "shared/**/*",
       "docs/LOCAL_CONTROL.md"

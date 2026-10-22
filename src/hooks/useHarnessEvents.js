@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { modelTokenLine } from '../../shared/model-progress-view.js';
+import { modelRecoveryView } from '../../shared/model-recovery-view.js';
 import { applyProfessionalAgentEvent } from '../conversation/professional-agent-events.js';
 import { taskSuspensionLabel } from "../state/task-suspension.js";
 import { splitSteeredReply } from "../state/steering-messages.js";
@@ -287,6 +288,11 @@ export function useHarnessEvents({
         return;
       }
 
+      if (event.type === 'response.recovery.status') {
+        const view = event.state === 'receiving' ? { title: tr('已恢复接收模型数据', 'Model data resumed'), detail: '' } : modelRecoveryView(event, language);
+        setRunStatus({ title: view.title, detail: view.detail });
+        return;
+      }
       if (event.type === 'response.progress') {
         const detail = modelTokenLine(event), key = `${event.stage}:${detail}`;
         if (run.modelProgressStage === key) return;

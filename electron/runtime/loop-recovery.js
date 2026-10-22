@@ -4,7 +4,8 @@ import { providerErrorCategory } from "./provider-errors.js";
 import { conversationTokenMaterial } from "./multimodal-budget.js";
 import { runtimeRunControl, saveRuntimeCheckpoint } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
-import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity, rememberCloudQuotaPause } from "./cloud-request-identity.js";
+import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity, rememberCloudQuotaPause, rememberModelResponseRecovery, rotateCloudRequest } from "./cloud-request-identity.js";
+import { waitForModelRecovery } from './model-response-recovery.js';
 
 // Recover inference, never tool execution. A bounded repair must change the
 // request. Do not replay an already-executed/uncertain external operation.
@@ -63,8 +64,28 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
           : result.message };
     } catch (error) {
       if (!requestIdentity.result && (error?.attemptUsage || error?.usage)) await onFailedUsage(error.attemptUsage || error.usage);
-      if (error.noAutomaticRetry) throw error;
       if (signal?.aborted) throw error;
+      if (error.code === 'MODEL_RESPONSE_SAFE_RETRY' && error.safeToRepair === true) {
+        await rotateCloudRequest(requestIdentity.identity, error.cloudRequestId, requestIdentity);
+        continue;
+      }
+      if (error.code === 'CLOUD_REQUEST_RECONCILIATION_REQUIRED' && requestIdentity.identity.modelResponseRecovery?.attempt > 0)
+        error.modelResponseRecovery = requestIdentity.identity.modelResponseRecovery;
+      if (control && error.modelResponseRecovery) {
+        await persist();
+        const recovered = await waitForModelRecovery({ error, control, signal,
+          onState: async state => {
+            state = { ...state, receivedModelData: error.modelResponseRecovery.receivedModelData === true || Boolean(error.partialMessage?.content) || Boolean(error.partialToolCalls) };
+            await rememberModelResponseRecovery(requestIdentity, state);
+            await saveRuntimeCheckpoint({ scopeId: 'incomplete-response:' + scopeId, phase: 'model-response-recovery',
+              incomplete: true, content: error.partialMessage?.content || '', recovery: state, toolCallsExecuted: false });
+            onEvent({ type: 'response.recovery.status', ...state });
+          },
+        });
+        await rotateCloudRequest(requestIdentity.identity, recovered.requestId, requestIdentity);
+        continue;
+      }
+      if (error.noAutomaticRetry) throw error;
       if (control && error.cloudQuota && error.safeToRepair) {
         if (error.cloudQuota.truncated) {
           await saveRuntimeCheckpoint({ scopeId: "incomplete-response:" + scopeId, phase: "quota-limited-response", incomplete: true,

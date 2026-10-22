@@ -5,20 +5,24 @@
 
 <p align="center">
   <a href="https://aporiax.cloud"><strong>官网 · aporiax.cloud</strong></a>　·　
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.7">下载 1.0.7 正式版</a>　·　
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.8">下载 1.0.8 正式版</a>　·　
   <a href="https://aporiax.cloud/guide/">使用教程</a>
 </p>
 <p align="center">
-  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.7"><img alt="Release 1.0.7" src="https://img.shields.io/badge/release-1.0.7-2689f5"></a>
+  <a href="https://github.com/CaptainLand/AporiaX/releases/tag/v1.0.8"><img alt="Release 1.0.8" src="https://img.shields.io/badge/release-1.0.8-2689f5"></a>
   <a href="https://github.com/CaptainLand/AporiaX/releases"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-24272c?logo=windows"></a>
   <a href="LICENSE"><img alt="Source Available" src="https://img.shields.io/badge/License-Source_Available-6b7280"></a>
 </p>
 
 AporiaX 是 Windows 上的本地优先桌面 Agent：在你授权的工作区里编写代码、运行命令、生成 Word / Excel / PowerPoint，把主对话、文件、终端、浏览器、Git 和专业 Agent 放进同一个工作台。你可以查看行动记录、审查文件改动，并通过 Anchor 回退。
 
-> 当前正式版为 **1.0.7**：改进最终回答与计划收尾、文件定位和浏览器验证，保留真实错误与权限边界。仅提供安装版；安装继续采用原目录覆盖，不清理其他客户端副本。
+> 当前正式版为 **1.0.8**：改进模型长时间无新增数据时的恢复检查，保留原请求与已有工作，取消自动关闭硬件加速。仅提供安装版；安装继续采用原目录覆盖，不清理其他客户端副本。
 
-## 1.0.7 正式版
+## 1.0.8 正式版
+
+- **等待更明确**：连续 3 分钟无新增有效模型数据才进行恢复检查，持续输出不会因耗时较长被打断；最多自动检查 3 次，之后继续等待仍可用的原连接。
+- **不盲目重跑**：保留已完成的操作和已有内容，不重复不确定是否计费的生成；Witness 如实展示检查、等待、断开和恢复状态。
+- **保留硬件加速**：不再因 GPU 进程退出自动持久禁用加速，并忽略旧禁用标记；实际 GPU 能力仍取决于设备和驱动。
 
 - **更稳的交付**：有最终回答就正常展示；必要时进行一次不执行工具的收尾补答，保存或连接异常不会覆盖已送达的回答。
 - **更快的定位**：文件名／路径索引查找，内容搜索支持超时、取消与进展反馈；同步修复安装包中的搜索路径。
@@ -35,14 +39,14 @@ AporiaX 是 Windows 上的本地优先桌面 Agent：在你授权的工作区里
 - **统一权限入口**：权限与审批集中在设置；工作区外文件访问默认关闭。专业角色、Skills 和 MCP 不能突破父任务的授权边界。
 - **安装与更新修复**：恢复 RC5.2 的当前目录覆盖更新流程，保留旧客户端目录定位与快捷方式修复；不整理或搬动其他副本。
 
-[1.0.7 更新说明](docs/RELEASE_NOTES_v1.0.7.md) · [安装修复说明](docs/RELEASE_NOTES_v1.0.1.md) · [更新历史](CHANGELOG.md)
+[1.0.8 更新说明](docs/RELEASE_NOTES_v1.0.8.md) · [安装修复说明](docs/RELEASE_NOTES_v1.0.1.md) · [更新历史](CHANGELOG.md)
 
 ## 下载与开始使用
 
 | Windows x64 | 下载 |
 | --- | --- |
-| 安装版（推荐） | [AporiaX-Setup-1.0.7-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.7/AporiaX-Setup-1.0.7-x64.exe) |
-| 校验文件 | [SHA256SUMS-1.0.7.txt](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.7/SHA256SUMS-1.0.7.txt) |
+| 安装版（推荐） | [AporiaX-Setup-1.0.8-x64.exe](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.8/AporiaX-Setup-1.0.8-x64.exe) |
+| 校验文件 | [SHA256SUMS-1.0.8.txt](https://github.com/CaptainLand/AporiaX/releases/download/v1.0.8/SHA256SUMS-1.0.8.txt) |
 
 新版本仅提供安装版，不再新增便携包；历史便携版保留在对应 Release 中。
 

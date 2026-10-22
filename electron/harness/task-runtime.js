@@ -606,6 +606,7 @@ export class HarnessTaskRuntime {
     record.control.resume("provider-budget-wait");
     record.control.resume("daily-budget");
     record.control.resume("no-progress");
+    record.control.resume("model-response");
     record.control.retryNetwork();
     await record.control.flush();
     return true;

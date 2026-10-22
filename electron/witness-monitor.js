@@ -62,6 +62,7 @@ function publicRecord(record, currentTime) {
     longRunning: Boolean(record.longRunning),
     acceptance: record.acceptance || null,
     ...(record.modelProgress ? { modelProgress: { ...record.modelProgress } } : {}),
+    ...(record.modelRecovery ? { modelRecovery: { ...record.modelRecovery } } : {}),
   };
 }
 
@@ -266,6 +267,28 @@ export function createWitnessMonitor({
     let meaningful = true;
 
     switch (event.type) {
+      case 'response.recovery.status':
+      case 'subagent.response.recovery.status': {
+        const key = `model-recovery:${event.responseId || event.agentId || 'main'}`;
+        const existing = recordIndex.get(key);
+        if (event.state === 'receiving') {
+          if (existing?.kind === 'thinking') {
+            delete existing.modelRecovery;
+            existing.status = 'running'; existing.lastActivityAt = isoTime(timestamp);
+            addRecord({ key: key + ':resumed', timestamp, kind: 'checkpoint', status: 'completed', eventType: 'response.recovery.resumed' });
+          } else if (existing) { finishRecord(key, { ...event, type: 'response.recovery.resumed', detail: '' }); delete existing.modelRecovery; }
+          return publish('response.recovery.resumed');
+        }
+        const record = existing || [...records].reverse().find(item => item.kind === 'thinking' && item.status === 'running' &&
+          (event.agentId ? item.agentId === event.agentId : !item.agentId)) || addRecord({ key, timestamp, kind: 'checkpoint', status: 'waiting',
+          eventType: 'response.recovery.status', actor: event.agentId ? 'subagent' : 'main', agentId: event.agentId, role: event.role });
+        recordIndex.set(key, record);
+        record.modelRecovery = { state: event.state === 'checking' ? 'checking' : 'waiting',
+          attempt: Math.min(3, Math.max(0, Number(event.attempt) || 0)), connection: event.connection === 'closed' ? 'closed' : 'open' };
+        record.status = record.kind === 'thinking' && event.connection !== 'closed' ? 'running' : 'waiting';
+        record.completedAt = null; record.lastActivityAt = isoTime(timestamp);
+        return publish('response.recovery.status');
+      }
       case 'response.quota.low':
       case 'subagent.response.quota.low': {
         const daily = event.source === 'daily';
@@ -725,7 +748,7 @@ export function createWitnessMonitor({
       const age = timestamp - Date.parse(record.startedAt);
       const idle = timestamp - Date.parse(record.lastActivityAt || record.startedAt);
       if (age >= LONG_RUNNING_MS) record.longRunning = true;
-      if (idle >= STALLED_MS && record.status !== "waiting") {
+      if (idle >= STALLED_MS && record.status !== "waiting" && record.kind !== 'thinking') {
         addAlert({
           code: `stalled:${record.id}`,
           severity: "warning",

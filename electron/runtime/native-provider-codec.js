@@ -170,12 +170,16 @@ export function normalizeNativeResponse(response, wire, { observe } = {}) {
     const blocks = new Map(), stopped = new Set(), responseText = createResponsesTextState();
     const progress = createModelStreamProgress();
     for await (const event of sseEvents(response.body)) {
+      if (wire.protocol === 'responses' && !responseText.accept(event)) continue;
       // Observe already-decoded native events; never consume the body twice.
       try { observe?.(event); } catch { /* diagnostics never change inference */ }
       const streamProgress = progress.native(event);
       if (streamProgress) yield wireEvent({ aporia_stream_progress: streamProgress });
-      // Even thinking/ping activity resets the common parser's idle watchdog.
-      yield wireEvent({ choices: [] });
+      // Carry effective-data activity independently of throttled UI counters.
+      // Pings and empty events only indicate that the transport is alive.
+      const dataDelta = typeof event.delta === 'string' ? event.delta
+        : event.type === 'content_block_delta' ? event.delta?.text || event.delta?.thinking || event.delta?.partial_json : '';
+      yield wireEvent({ choices: [], ...(typeof dataDelta === 'string' && dataDelta.trim() ? { aporia_model_data: true } : {}) });
       if (event.type === "error" || event.type === "response.failed") {
         const failure = event.error || event.response?.error || {};
         yield wireEvent({ error: { message: failure.message || failure.type || failure.code || "PROVIDER_NATIVE_ERROR", ...(failure.code ? { code: failure.code } : {}) } }); return;
@@ -221,7 +225,6 @@ export function normalizeNativeResponse(response, wire, { observe } = {}) {
           });
         }
       } else {
-        if (!responseText.accept(event)) continue;
         if (event.type === "response.output_text.delta") { if (typeof event.delta !== "string") throw invalid("PROVIDER_TEXT_INVALID"); content += event.delta || ""; yield wireEvent({ choices: [{ delta: { content: event.delta || "" } }] }); }
         if (["response.completed", "response.incomplete"].includes(event.type)) {
           terminal = true; const result = event.response;
