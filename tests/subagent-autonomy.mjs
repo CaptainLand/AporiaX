@@ -86,8 +86,9 @@ try {
   const stopped = await runSubagentTask({ ...options, agentId: 'no-progress', session: {}, provider: { supportsTools: true, async complete() {
     repeated++; return { message: { content: null, tool_calls: [{ id: `repeat-${repeated}`, type: 'function', function: { name: 'read_file', arguments: '{"path":"same.js"}' } }] } };
   } } });
-  assert.equal(stopped.status, 'failed'); assert.match(stopped.summary, /LOOP_NO_PROGRESS/); assert(repeated < 20);
-  console.log('PASS no-progress protection still stops genuinely repeated work without a round cutoff');
+  assert.equal(stopped.status, 'partial'); assert.equal(stopped.completionGuard.code, 'LOOP_NO_PROGRESS'); assert(repeated < 20);
+  assert.equal(stopped.steps.length, 6, 'the extra handoff cannot execute another repeated tool');
+  console.log('PASS no-progress protection stops repeated execution and preserves a partial report without a round cutoff');
 
   await writeFile(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node check.mjs', publish: 'never' } }));
   await writeFile(join(root, 'safe.mjs'), "import fs from 'node:fs'; fs.writeFileSync('SHOULD_NOT_EXIST', 'bad');\n");

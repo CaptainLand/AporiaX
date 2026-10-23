@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import {
   executeTaskRetry,
   prepareTaskRetry,
+  taskContinuationRequest,
 } from "../src/state/run-retry-core.js";
+
+assert.deepEqual(taskContinuationRequest({ id: 'task' }, { id: 'answer', runId: 'failed-without-restart', sourceUserId: 'user' }), {
+  taskId: 'task', retryAssistantId: 'answer', retrySourceUserId: 'user',
+  recoveryRunId: 'failed-without-restart', retryMode: 'continue', force: true,
+});
+assert.equal(taskContinuationRequest({ id: 'task' }, { id: 'answer', runId: 'old', recoverable: { runId: 'checkpoint' } }).recoveryRunId, 'checkpoint');
+assert.throws(() => taskContinuationRequest({ id: 'task' }, { id: 'answer' }), /未从头重做/);
+assert.throws(() => taskContinuationRequest({ id: 'task' }, { id: 'answer', runId: 'old', anchorRestoredAt: 'now' }), /已回退/);
 
 const staleRendererRuns = new Map([
   ["stale-run", { taskId: "task-1", assistantId: "assistant-1" }],

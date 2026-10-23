@@ -1,3 +1,5 @@
+import { dependencyHandoff } from './subagent-contract.js';
+
 export function createRoleCoordinator(records, signal, limits = { maxActive: 12, builderLimit: 6 }) {
   const listeners = new Set(), active = new Map();
   let totalActive = 0, builders = 0;
@@ -34,20 +36,30 @@ export function createRoleCoordinator(records, signal, limits = { maxActive: 12,
     async enter(record, profile) {
       if (profile.template === 'builder' && !limits.builderLimit) throw new Error('Builder 已在设置中关闭。');
       await wait(() => {
-        return (record.input.dependsOn || []).every(id => {
+        const ready = (record.input.dependsOn || []).every(id => {
           const dep = records.get(id);
           if (!dep || ['failed', 'interrupted', 'cancelled', 'blocked', 'budget_exhausted', 'partial', 'needs_input'].includes(dep.status) || dep.result?.acceptance?.status === 'needs_changes') throw new Error(`DEPENDENCY_BLOCKED: ${id}`);
           return dep.status === 'completed' && dep.result?.acceptance?.status === 'accepted' && (dep.role !== 'builder' || dep.result?.integrated === true);
         });
+        record.phase = ready ? 'queued' : 'waiting_dependencies';
+        if (!ready || totalActive >= limits.maxActive || (active.get(profile.id) || 0) >= profile.concurrency ||
+          (profile.template === 'builder' && builders >= limits.builderLimit)) return false;
+        // Check and reserve in the same synchronous turn. Woken waiters must
+        // see the reservation before any of them can pass this predicate.
+        active.set(profile.id, (active.get(profile.id) || 0) + 1);
+        totalActive++; if (profile.template === 'builder') builders++;
+        record.session.dependencyReports = Object.fromEntries((record.input.dependsOn || []).map(id => [id, records.get(id).result.reportId]));
+        record.session.dependencyHandoff = (record.input.dependsOn || []).map(id => dependencyHandoff(records.get(id)));
+        return true;
       }, record.controller.signal);
-      record.session.dependencyReports = Object.fromEntries((record.input.dependsOn || []).map(id => [id, records.get(id).result.reportId]));
-      record.phase = 'queued'; notify();
-      await wait(() => totalActive < limits.maxActive && (active.get(profile.id) || 0) < profile.concurrency &&
-        (profile.template !== 'builder' || builders < limits.builderLimit), record.controller.signal);
-      active.set(profile.id, (active.get(profile.id) || 0) + 1);
-      totalActive++; if (profile.template === 'builder') builders++;
       let released = false;
-      return () => { if (!released) { released = true; totalActive--; if (profile.template === 'builder') builders--; active.set(profile.id, active.get(profile.id) - 1); notify(); } };
+      const release = () => { if (!released) { released = true; totalActive--; if (profile.template === 'builder') builders--; active.set(profile.id, active.get(profile.id) - 1); notify(); } };
+      try {
+        if (signal?.aborted || record.controller.signal.aborted) throw Object.assign(new Error('子 Agent 已停止。'), { name: 'AbortError' });
+        this.assertDependencies(record);
+      } catch (error) { release(); throw error; }
+      notify();
+      return release;
     },
     assertDependencies(record) {
       for (const [id, reportId] of Object.entries(record.session.dependencyReports || {})) {

@@ -4,6 +4,7 @@ import { roleSettingsStore } from './harness/role-settings.js';
 import { appearanceRequest, appearanceStore } from './appearance/runtime.js';
 import { effectiveRoleSettings } from '../shared/professional-roles.js';
 import { controlWorker } from './runtime/worker-controls.js';
+import { loadTaskContinuation } from './runtime/retry-continuation.js';
 import {
   BrowserWindow,
   Menu,
@@ -705,26 +706,8 @@ async function startHarnessTask(
     throw new Error("The authorized Provider is no longer configured.");
   }
   const messages = await hydrateHarnessMessages(request?.messages);
-  let recoveryContext = null;
-  if (request?.recoveryRunId) {
-    recoveryContext = await harnessTaskRuntime.recoveryContext(
-      request.recoveryRunId,
-    );
-    if (
-      recoveryContext.taskId &&
-      request?.taskId &&
-      recoveryContext.taskId !== request.taskId
-    ) {
-      throw new Error("The recovery checkpoint belongs to another task.");
-    }
-    if (
-      recoveryContext.workspacePath &&
-      request?.workspacePath &&
-      resolve(recoveryContext.workspacePath) !== resolve(request.workspacePath)
-    ) {
-      throw new Error("The recovery checkpoint belongs to another workspace.");
-    }
-  }
+  const recoveryContext = await loadTaskContinuation(request,
+    id => harnessTaskRuntime.recoveryContext(id));
 
   startupSignal?.throwIfAborted();
   return harnessTaskRuntime.start({

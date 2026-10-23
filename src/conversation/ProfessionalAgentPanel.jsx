@@ -49,6 +49,10 @@ function AgentDeliveryCard({ worker, taskId, runId, active, onContinueAgent }) {
     <div className="pa-delivery-body">
       <section className={'pa-conclusion ' + (report.findings.length ? 'has-findings' : '')}>
         <h5>{delivery.conclusion}</h5>
+        {delivery.running && worker.modelProgress && <p className="pa-meta" role="status">{modelTokenLine(worker.modelProgress)}</p>}
+        {delivery.recovery && <p className="pa-meta">{worker.modelRecovery?.connection === 'closed' && worker.modelRecovery?.attempt >= 3
+          ? tr('连接已断开，已有进度已保留。可点「继续交办」重新检查原请求，或停止此成员；其他成员不受影响。', 'Connection closed; progress retained. Follow up to recheck the original request, or stop this member. Other members can continue.')
+          : delivery.recovery.detail}</p>}
         {delivery.previewFindings.map((finding, index) => <p className="pa-finding-preview" key={index}>{finding.message}</p>)}
         {report.malformed && <p>{tr('未把无法解析的内容当作通过结论。原文保留在技术详情中。', 'Unparseable content is not treated as a pass. The original is retained in technical details.')}</p>}
       </section>

@@ -6,13 +6,19 @@ import * as core from "../electron/app-update-core.js";
 import { updateInstallDirectory } from "../electron/app-update-install-path.js";
 import nsisModule from "electron-updater/out/NsisUpdater.js";
 const source = (await readFile("electron/app-update.js", "utf8")).replace(/import[\s\S]*?from\s+"[^"]+";/g, "").replace("export function", "function");
-function fixture({ portable = true, fail = false, downloadFail = '', mirrorMismatch = false, updaterMismatch = false, execPath = 'D:\\aporiax\\AporiaX.exe' } = {}) {
+function fixture({ portable = true, fail = false, downloadFail = '', checkFail = '', mirrorMismatch = false, updaterMismatch = false, metadataFail = '', execPath = 'D:\\aporiax\\AporiaX.exe' } = {}) {
   const events = [], urls = [], opened = [], feeds = [];
   let now = 100_000, active = 0, remote = "1.0.0-preview.4", failure = fail;
   const updater = new EventEmitter();
   updater.setFeedURL = value => feeds.push(value);
-  const hash = 'a'.repeat(86) + '==', downloads = [];
-  updater.checkForUpdates = async () => { updater.emit("update-available", { version: remote }); return { updateInfo: { version: remote,
+  const hash = 'a'.repeat(86) + '==', downloads = [], checks = [];
+  updater.checkForUpdates = async () => {
+    checks.push(feeds.at(-1).url);
+    if (checkFail && (checks.length === 1 || checkFail === 'both')) {
+      const error = new Error(checkFail === 'both' ? 'ECONNRESET' : checkFail);
+      updater.emit('error', error); throw error;
+    }
+    updater.emit("update-available", { version: remote }); return { updateInfo: { version: remote,
     files: [{ url: `AporiaX-Setup-${remote}-x64.exe`, sha512: updaterMismatch ? 'b'.repeat(86)+'==' : hash, size: 12345 }] } }; };
   updater.downloadUpdate = async () => {
     downloads.push(feeds.at(-1).url);
@@ -34,12 +40,13 @@ function fixture({ portable = true, fail = false, downloadFail = '', mirrorMisma
     fetch: async (url, options) => {
       urls.push(url); assert.ok(options.signal); assert.equal(options.cache, "no-store");
       await new Promise(resolve => setTimeout(resolve, 5));
-      if (failure === true || failure === "github" && url.includes("github.com")) throw Error("offline");
+      if (metadataFail && url.includes("github.com")) throw Error(metadataFail);
+      if (failure === true || failure === "github" && url.includes("github.com")) throw Error("ECONNRESET");
       const digest = mirrorMismatch && url.includes('cloud.example.invalid') ? 'b'.repeat(86)+'==' : hash;
       return new Response(`version: ${remote}\nfiles:\n  - url: AporiaX-Setup-${remote}-x64.exe\n    sha512: ${digest}\n    size: 12345\npath: AporiaX-Setup-${remote}-x64.exe\nsha512: ${digest}\n`);
     },
   });
-  return { runtime: create({ getActiveRunCount: () => active }), events, urls, opened, feeds, updater, downloads,
+  return { runtime: create({ getActiveRunCount: () => active }), events, urls, opened, feeds, updater, downloads, checks,
     advance: ms => now += ms, fail: value => failure = value, remote: value => remote = value, active: value => active = value };
 }
 for (const [a,b,want] of [["1.0.0","1.0.0-preview.4",1],["1.0.0-preview.10","1.0.0-preview.4",1],["1.0.0-preview.4","1.0.0-preview.3",1],["1.0.0-preview.4+build","1.0.0-preview.4",0]]) assert.equal(core.compareVersions(a,b),want);
@@ -111,3 +118,82 @@ assert.equal(core.sameUpdateAsset({version:'1',path:'x',sha512:'a'.repeat(86)+'=
 console.log("PASS update runtime: SemVer, every launch, concurrent coalescing, bounded offline retry, trusted mirror, beta, latest channel, task-safe install");
 console.log('PASS download fallback: coalesced retry, same asset only, checksum/certificate rejection, failed sources, metadata race, portable mirror, IPC source allowlist');
 console.log('PASS install destination: running copy overrides old location; spaces, Unicode, UNC, real NSIS arguments; invalid targets remain uninstalled');
+
+const checkFallback = fixture({ portable: false, checkFail: 'ECONNRESET' });
+await Promise.all([checkFallback.runtime.check(), checkFallback.runtime.check()]);
+assert.equal(checkFallback.checks.length, 2);
+assert.match(checkFallback.checks[1], /cloud.example.invalid/);
+assert.equal(checkFallback.runtime.snapshot().phase, 'available');
+assert.equal(checkFallback.runtime.snapshot().downloadSource, 'mirror');
+assert.equal(checkFallback.events.filter(event => event.phase === 'error').length, 0);
+await checkFallback.runtime.download();
+assert.match(checkFallback.downloads[0], /cloud.example.invalid/);
+assert.equal(checkFallback.runtime.snapshot().phase, 'downloaded');
+for (const args of [{ checkFail: 'sha512 checksum mismatch' }, { checkFail: 'certificate invalid' },
+  { checkFail: 'UPDATE_ASSET_MISMATCH' }, { checkFail: 'ECONNRESET', mirrorMismatch: true }]) {
+  const broken = fixture({ portable: false, ...args });
+  await broken.runtime.check(); await broken.runtime.download();
+  assert.equal(broken.checks.length, 1);
+  assert.equal(broken.downloads.length, 0);
+  assert.equal(broken.runtime.snapshot().phase, 'error');
+  assert.equal(broken.events.filter(event => event.phase === 'available').length, 0);
+}
+const failedChecks = fixture({ portable: false, checkFail: 'both' });
+await failedChecks.runtime.check();
+assert.equal(failedChecks.checks.length, 2);
+assert.equal(failedChecks.runtime.snapshot().phase, 'error');
+assert.equal(failedChecks.events.filter(event => event.phase === 'error').length, 1);
+for (const metadataFail of ['certificate invalid', 'INVALID_UPDATE_ASSET']) {
+  const broken = fixture({ portable: false, metadataFail });
+  await broken.runtime.check();
+  assert.equal(broken.urls.length, 1);
+  assert.equal(broken.checks.length, 0);
+  assert.equal(broken.runtime.snapshot().phase, 'error');
+}
+console.log('PASS check fallback: second request retries one trusted mirror, same asset pinned, no integrity downgrade or transient error flash');
+
+// A secondary mirror button must never reset the active check/download phase
+// and allow another operation to switch electron-updater's shared feed.
+const busyCheck = fixture({ portable: false });
+const checking = busyCheck.runtime.check();
+assert.equal(busyCheck.runtime.snapshot().phase, 'checking');
+const checkingOpen = await busyCheck.runtime.openRelease({ source: 'mirror' });
+assert.equal(checkingOpen.phase, 'checking');
+assert.equal(busyCheck.events.filter(event => event.phase === 'error').length, 0);
+await checking;
+assert.equal(busyCheck.urls.length, 1);
+assert.equal(busyCheck.checks.length, 1);
+assert.equal(busyCheck.opened.length, 0);
+
+const busyDownload = fixture({ portable: false });
+await busyDownload.runtime.check();
+let releaseDownload;
+const downloadGate = new Promise(resolve => { releaseDownload = resolve; });
+busyDownload.updater.downloadUpdate = async () => {
+  busyDownload.downloads.push(busyDownload.feeds.at(-1).url);
+  await downloadGate;
+  busyDownload.updater.emit('update-downloaded', { version: '1.0.0-preview.4' });
+};
+const downloading = busyDownload.runtime.download();
+assert.equal(busyDownload.runtime.snapshot().phase, 'downloading');
+const feedsBefore = busyDownload.feeds.length, urlsBefore = busyDownload.urls.length;
+assert.equal((await busyDownload.runtime.openRelease({ source: 'mirror' })).phase, 'downloading');
+assert.equal(busyDownload.runtime.snapshot().busy, true);
+assert.equal((await busyDownload.runtime.check({ force: true })).phase, 'downloading');
+assert.equal(busyDownload.checks.length, 1);
+assert.equal(busyDownload.feeds.length, feedsBefore);
+assert.equal(busyDownload.urls.length, urlsBefore);
+assert.equal(busyDownload.events.filter(event => event.phase === 'error').length, 0);
+assert.equal(busyDownload.opened.length, 0);
+
+// Even if another command changes the presentation state, the operation lock
+// remains authoritative. install() is rejected before a download is complete.
+await busyDownload.runtime.install();
+assert.equal(busyDownload.runtime.snapshot().error, 'NOT_DOWNLOADED');
+await busyDownload.runtime.check({ force: true });
+assert.equal(busyDownload.checks.length, 1);
+assert.equal(busyDownload.feeds.length, feedsBefore);
+releaseDownload();
+await downloading;
+assert.equal(busyDownload.runtime.snapshot().phase, 'downloaded');
+console.log('PASS update concurrency: mirror clicks preserve busy state; active downloads block forced checks and shared-feed changes');

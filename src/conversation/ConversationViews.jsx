@@ -824,6 +824,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
   const blocked = message.status === "blocked";
   const resultDelivered = hasTaskReply(message);
   const interrupted = message.status === "interrupted";
+  const resumablePartial = message.status === 'partial' && Boolean(message.runId || message.recoverable?.runId);
   const hasAnchor = Boolean(message.anchor && message.changes?.length);
   const restored = Boolean(message.anchorRestoredAt);
   const replyDetails = useMemo(() => supportingReply(message.content, message.deliveryDetails), [message.content, message.deliveryDetails]);
@@ -955,7 +956,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
           </div>
         </div>
       )}
-      {(failed || interrupted || blocked) && message.prompt && (
+      {(failed || interrupted || blocked || resumablePartial) && message.prompt && (
         <button
           className="retry-message-button"
           type="button"
@@ -982,7 +983,9 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
             <RotateCcw size={13} />
           )}
           {retrying
-            ? tr("正在重试", "Retrying")
+            ? tr("正在接续", "Resuming")
+            : resumablePartial
+              ? tr("继续本轮", "Continue turn")
             : message.recoverable
               ? tr("恢复任务", "Resume task")
               : tr("重试本轮", "Retry turn")}
@@ -1000,14 +1003,17 @@ function formatWitnessElapsed(milliseconds) {
 }
 
 function describeWitnessRecord(record, tr, language) {
-  if (record?.modelRecovery) return modelRecoveryView(record.modelRecovery, language);
+  if (record?.modelRecovery) {
+    const recovery = modelRecoveryView(record.modelRecovery, language);
+    return record.agentId ? { ...recovery, title: `${activityActor(record, language)} · ${recovery.title}` } : recovery;
+  }
   if (!record) {
     return {
       title: tr("正在理解任务", "Understanding the task"),
       detail: tr("等待第一个可观察动作", "Waiting for the first observable action"),
     };
   }
-  if (record.kind === "tool") {
+  if (record.kind === "tool" || (record.kind === 'agent' && record.modelProgress)) {
     const description = describeRouteRecord(record, language);
     return {
       title: `${activityActor(record, language)} · ${description.title}`,
@@ -1036,7 +1042,7 @@ function describeWitnessRecord(record, tr, language) {
     "approval.required": [tr("等待用户确认", "Waiting for approval"), record.command],
     "control.paused": [tr("任务已暂停", "Task paused"), tr("Witness 将继续保留当前进度", "Witness will preserve the current progress")],
     "control.resumed": [tr("任务继续运行", "Task resumed"), tr("从安全边界继续执行", "Continuing from the safe boundary")],
-    "turn.completed": [record.status === 'completed' ? tr("任务执行完成", "Task execution completed") : tr("本轮已结束", "This run has ended"), tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
+    "turn.completed": [record.status === 'completed' ? tr("任务执行完成", "Task execution completed") : tr("本轮已结束", "This run has ended"), record.detail || tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
     "turn.cancelled": [tr("任务已停止", "Task stopped"), tr("已保留停止前的行动记录", "The action record before interruption was preserved")],
     "turn.failed": [tr("任务运行失败", "Task run failed"), record.detail],
   };

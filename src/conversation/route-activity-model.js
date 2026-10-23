@@ -125,6 +125,9 @@ export function describeRouteRecord(record, language = 'zh-CN') {
     return { title: ACTIVE.has(record.status) ? t('AporiaX 正在思考或工作中…', 'AporiaX is thinking or working…') : t('AporiaX 响应已结束', 'AporiaX response finished'), detail: modelTokenLine(progress),
       progressHint: (details[progress?.stage] || details.waiting) + t('。↓ 模型输出；≈ 为实时估算，收到服务商用量后校准，不是网络流量或计费凭证。', '. ↓ Model output; ≈ is a live estimate, reconciled with provider usage. Not network traffic or a billing receipt.') };
   }
+  if (record.kind === 'agent' && record.modelProgress && ACTIVE.has(record.status)) {
+    return { title: t('正在接收模型输出', 'Receiving model output'), detail: modelTokenLine(record.modelProgress) };
+  }
   const titles = {
     'clarification.required': ['等待你的回答', 'Waiting for your answer'], 'clarification.updated': ['提问状态已更新', 'Question updated'],
     'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],

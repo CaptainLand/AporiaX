@@ -48,6 +48,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   let selectedFeed = LATEST_YML_URL;
   let selectedAsset = null;
   let pendingDownload = false;
+  let selectingInstaller = false;
   let installerReady = false;
   const metadataUrls = [LATEST_YML_URL];
   const endpoints = loadCloudEndpoints();
@@ -81,11 +82,11 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     autoUpdater.allowDowngrade = false;
     autoUpdater.logger = null;
     autoUpdater.on("checking-for-update", () => {
-      if (pendingDownload) return;
+      if (pendingDownload || selectingInstaller) return;
       setStatus({ phase: "checking", availableVersion: status.availableVersion });
     });
     autoUpdater.on("update-available", (info) => {
-      if (pendingDownload) return;
+      if (pendingDownload || selectingInstaller) return;
       downloaded = false;
       setStatus({
         phase: "available",
@@ -93,7 +94,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       });
     });
     autoUpdater.on("update-not-available", () => {
-      if (pendingDownload) return;
+      if (pendingDownload || selectingInstaller) return;
       downloaded = false;
       setStatus({ phase: "not-available", availableVersion: "" });
     });
@@ -113,7 +114,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       });
     });
     autoUpdater.on("error", (failure) => {
-      if (pendingDownload) return; // One final status after the bounded fallback attempt.
+      if (pendingDownload || selectingInstaller) return; // Publish only the checked, bounded attempt's final status.
       setStatus({
         phase: "error",
         availableVersion: status.availableVersion,
@@ -151,7 +152,10 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
         selectedFeed = url;
         selectedAsset = parsed;
         return parsed;
-      } catch (error) { failure = error; }
+      } catch (error) {
+        if (!retryableUpdateFailure(error)) throw error;
+        failure = error;
+      }
     }
     throw failure;
   };
@@ -171,7 +175,21 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
     setStatus({ phase: "checking", availableVersion: status.availableVersion });
     const parsed = await readPublishedUpdate();
     configureUpdater();
-    const result = await selectInstaller(selectedFeed, parsed);
+    // electron-updater fetches metadata again. A healthy first fetch must not
+    // disable the network fallback for that second request. Pin the asset before
+    // changing sources, and never retry integrity/certificate failures.
+    let result;
+    selectingInstaller = true;
+    try {
+      try { result = await selectInstaller(selectedFeed, parsed); }
+      catch (failure) {
+        const fallback = metadataUrls.find(url => url !== selectedFeed);
+        if (!fallback || !retryableUpdateFailure(failure)) throw failure;
+        const asset = await readMetadata(fallback);
+        if (!sameUpdateAsset(parsed, asset)) throw new Error("UPDATE_MIRROR_ASSET_MISMATCH");
+        result = await selectInstaller(fallback, asset);
+      }
+    } finally { selectingInstaller = false; }
     const remote = String(result?.updateInfo?.version || "").trim();
     if (remote && isNewerVersion(remote, currentVersion())) {
       downloaded = false;
@@ -186,7 +204,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       return setStatus({ phase: "dev" });
     }
     if (pendingCheck) return pendingCheck;
-    if (status.busy || downloaded) return status;
+    if (pendingDownload || status.busy || downloaded) return status;
     const retryMs = status.phase === "error" ? 60_000 : undefined;
     if (!force && shouldSkipAutoCheck(lastAttemptAt, Date.now(), retryMs)) return status;
     lastAttemptAt = Date.now();
@@ -275,9 +293,12 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
   };
 
   const openRelease = async ({ source = 'github' } = {}) => {
+    // Busy is owned by the active operation, not by a secondary button click.
+    // Do not publish an error that makes a live download appear idle/recheckable.
+    if (pendingDownload || pendingCheck) return status;
     try {
       if (source === 'mirror') {
-        if (pendingDownload || pendingCheck || !selectedAsset) throw new Error('UPDATE_CHECK_REQUIRED');
+        if (!selectedAsset) throw new Error('UPDATE_CHECK_REQUIRED');
         const mirror = metadataUrls.find(url => url !== LATEST_YML_URL);
         if (!mirror) throw new Error('UPDATE_MIRROR_UNAVAILABLE');
         const asset = await readMetadata(mirror);
@@ -288,6 +309,7 @@ export function installAppUpdate({ getActiveRunCount } = {}) {
       else throw new Error('INVALID_UPDATE_SOURCE');
       return status;
     } catch (failure) {
+      if (pendingDownload || pendingCheck) return status;
       return setStatus({ phase: 'error', availableVersion: status.availableVersion, error: String(failure?.message || failure) });
     }
   };

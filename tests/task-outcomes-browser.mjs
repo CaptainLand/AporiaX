@@ -21,6 +21,22 @@ try {
     if (process.env.NO_SCREENSHOTS !== '1') await page.locator("#completed-headings").screenshot({ path: `.tmp/completed-headings-${theme}.png` });
   }
   assert.equal(await page.getByRole("link", { name: "成果", exact: true }).getAttribute("href"), "https://example.invalid/result");
+  const receipt = page.locator('#quota-receipt');
+  assert.equal(await receipt.locator('.assistant-message.error').count(), 0);
+  assert.equal(await receipt.locator('.assistant-message-heading strong').innerText(), 'AporiaX');
+  assert.match(await receipt.innerText(), /非模型最终答复/);
+  assert.match(await receipt.locator('.witness-panel').innerText(), /余额或额度不足/);
+  await receipt.getByRole('button', { name: '继续本轮', exact: true }).click();
+  const continuation = await page.evaluate(() => window.continueRequest);
+  assert.equal(continuation.recoveryRunId, 'quota-original-run');
+  assert.equal(continuation.retryMode, 'continue');
+  assert.equal(continuation.retrySourceUserId, 'quota-user');
+  await receipt.getByRole('link', { name: 'super-mario.html', exact: true }).click();
+  assert.equal(classifyLink((await page.evaluate(() => window.openedOutcomeFile)).href).target, 'super-mario.html');
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
+    if (process.env.NO_SCREENSHOTS !== '1') await receipt.screenshot({ path: `.tmp/quota-receipt-${theme}.png` });
+  }
   const flow = page.locator("#retry-flow");
   const file = flow.getByRole("link", { name: "资料 #1.docx", exact: true });
   await file.click();

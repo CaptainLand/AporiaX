@@ -5,6 +5,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
   'web-tools.mjs', 'web-tools-runtime.mjs', 'witness-progress.mjs',
   'subagent-autonomy.mjs', 'subagent-autonomy-runtime.mjs',
+  'harness-coordination-resilience.mjs', 'subagent-runtime-resilience.mjs', 'model-recovery-isolation.mjs',
+  'subagent-progress-ui.mjs', 'process-output-decoding.mjs', 'workbench-resource-release.mjs',
   'user-facing-delivery.mjs', 'turn-restore-preview.mjs', 'inline-reply-toggle.mjs',
   'professional-roles.mjs', 'professional-roles-runtime.mjs', 'professional-role-capabilities.mjs', 'cloud-domain.mjs',
   'claude-compatibility.mjs', 'model-response-capture.mjs', 'model-response-diagnostics.mjs', 'temporary-check-cleanup.mjs',
@@ -25,6 +27,7 @@ const files = [
   'audit-reliability.mjs', 'audit-migration-index.mjs', 'task-history-store-smoke.mjs', 'task-store-smoke.mjs',
   'approval-response-regression.mjs', 'builder-merge-regression.mjs', 'builder-merge-crash.mjs',
   'context-continuation-regression.mjs', 'mcp-deferred-catalog.mjs', 'understanding-lock-recovery.mjs',
+  'run-retry-core-smoke.mjs', 'retry-continuation.mjs', 'error-final-reply.mjs',
   'reliability-storage.mjs', 'privacy-no-sync.mjs', 'project-script-trust.mjs', 'human-constraints.mjs', 'release-source.mjs', 'installer-only-release.mjs',
   'task-runtime-rpc-smoke.mjs', 'run-store-sqlite-smoke.mjs',
   'native-tool-executor-smoke.mjs', 'tool-permissions-smoke.mjs', 'tool-dispatcher-smoke.mjs',

@@ -181,7 +181,8 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     );
   }
   function adoptBrowser(context) {
-    const list = browsersInScope(context);
+    // A worker's private page is not a user-owned tab that Main may borrow.
+    const list = browsersInScope(context).filter(r => r.owner === "user");
     if (!list.length) return null;
     const preferred = list.find((r) => r.id === visibleId) || list.at(-1);
     preferred.claimForAgent?.();
@@ -190,15 +191,23 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   function acquire(context) {
     activeRuns.add(context);
     const ownedBrowsers = new Map();
+    const borrowedBrowsers = new Set();
+    const keepBrowser = (r, aborted = false) => borrowedBrowsers.has(r) || r.owner === "user" || r.owner === "handoff" ||
+      Boolean(r.keepPreference ?? (r.keepAlive || (!aborted && r.delivered)));
     const lazy = (ownerId = "main") => {
       let r = ownedBrowsers.get(ownerId);
       if (r && !r.closed) return r;
       r = ownerId === "main" ? adoptBrowser(context) : null;
+      if (r) borrowedBrowsers.add(r);
       if (!r) r = browser(context, "agent", ownerId !== 'main');
       ownedBrowsers.set(ownerId, r);
       return r;
     };
-    const facade = (ownerId) => Object.fromEntries(["open", "snapshot", "click", "fill", "press", "select", "upload", "screenshot", "console", "network", "close"].map((method) => [method, async (...args) => { await browserProfiles.ready; return lazy(ownerId)[method](...args); }]));
+    const facade = (ownerId) => Object.fromEntries(["open", "snapshot", "click", "fill", "press", "select", "upload", "screenshot", "console", "network", "close"].map((method) => [method, async (...args) => {
+      await browserProfiles.ready;
+      const r = lazy(ownerId), result = await r[method](...args);
+      return result?.lifecycle ? { ...result, lifecycle: { ...result.lifecycle, survivesTask: keepBrowser(r) } } : result;
+    }]));
     const browserRuntime = { ...facade("main"), forOwner: facade };
     let released = false;
     const manager = createPersistentProcessManager({ emit: (event) => {
@@ -234,14 +243,16 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       if (!r || r.kind !== "process" || r.manager !== manager) return;
       r.present = true;
       publish(state(r));
-      return { processId, owner: 'this-task', survivesTask: true, stoppedOnAbort: !r.keepAlive, stoppedByClosing: true };
+      return { processId, owner: 'this-task', survivesTask: r.keepPreference !== false, stoppedOnAbort: !r.keepAlive, stoppedByClosing: true };
     };
     const presentBrowsers = () => {
-      for (const r of browsersInScope(context)) {
-        if (r.closed) continue;
-        r.present = true;
-        r.changed();
-      }
+      const r = ownedBrowsers.get("main");
+      if (!r || r.closed) return;
+      r.present = true;
+      // Deliver only Main's current page, not every private worker browser.
+      // Screenshots use `present` too, but do not imply a lasting handoff.
+      r.delivered = true;
+      r.changed();
     };
     const presentRunningProcesses = () => {
       for (const r of resources.values()) {
@@ -268,17 +279,36 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
         },
       },
       async release({ aborted } = {}) {
+        if (released) return;
         activeRuns.delete(context);
         released = true;
+        const failures = [];
+        const settle = async (operation) => { try { await operation(); } catch (error) { failures.push(error); } };
         for (const r of ownedBrowsers.values()) {
           if (r.closed) continue;
-          if (aborted && r.owner !== "user") await r.close();
-          else await r.takeover();
+          await settle(async () => {
+            if (keepBrowser(r, aborted)) await r.takeover();
+            else {
+              if (visibleId === r.id) hide();
+              await r.close();
+              try { getWindow()?.contentView.removeChildView(r.view); } catch { /* already detached */ }
+              resources.delete(r.id);
+            }
+          });
         }
         for (const r of resources.values()) if (r.manager === manager) {
-          if (aborted && !r.keepAlive) await r.close();
-          else { r.owner = "user"; r.keepAlive = true; publish(state(r)); }
+          await settle(async () => {
+            const keep = r.keepPreference ?? (r.keepAlive || (!aborted && r.present));
+            if (keep) { r.owner = "user"; r.keepAlive = true; publish(state(r)); }
+            else {
+              await r.close();
+              // Preserve delivered terminal logs, but do not accumulate hidden
+              // test-process records after their task has finished.
+              if (!r.present) resources.delete(r.id);
+            }
+          });
         }
+        if (failures.length) throw new AggregateError(failures, `Failed to release ${failures.length} task resource(s): ${failures.map(error => error.message).join('; ')}`);
       },
     };
   }
@@ -376,7 +406,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       if (r.owner !== "user" || r.kind !== "terminal" || r.status !== "running") throw new Error("终端不可中断。");
       r.child.write("\x03"); return true;
     }
-    if (input.action === "keep") { r.keepAlive = Boolean(input.value); publish(state(r)); return state(r); }
+    if (input.action === "keep") { r.keepPreference = r.keepAlive = Boolean(input.value); publish(state(r)); return state(r); }
     if (input.action === "read") {
       if (r.kind === "process") return r.manager.read({ processId: r.id, cursor: input.cursor, maxChars: 80000 });
       if (r.kind !== "terminal") throw new Error("不是终端。");

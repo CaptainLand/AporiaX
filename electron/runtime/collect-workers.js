@@ -1,11 +1,12 @@
 // Wait on completion, not on insertion order. Always return to the model within
 // a bounded interval; abort handlers/timers are removed on every exit path.
-export async function waitForWorkers(records, { mode = "any", timeoutMs = 30000, signal } = {}) {
+export async function waitForWorkers(records, { mode = "any", timeoutMs = 30000, signal, onSteering, hasSteering } = {}) {
   const running = records.filter((record) => record.status === "running");
   if (!running.length || (mode === "any" && records.some((record) => record.status !== "running"))) return;
   if (signal?.aborted) throw Object.assign(new Error("Interrupted"), { name: "AbortError" });
   let timer;
   let abort;
+  let unsubscribe;
   try {
     await Promise.race([
       mode === "all" ? Promise.all(running.map((record) => record.promise)) : Promise.race(running.map((record) => record.promise)),
@@ -13,9 +14,11 @@ export async function waitForWorkers(records, { mode = "any", timeoutMs = 30000,
       new Promise((_, reject) => {
         abort = () => reject(Object.assign(new Error("Interrupted"), { name: "AbortError" }));
         signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
       }),
+      new Promise(resolve => { unsubscribe = onSteering?.(resolve); if (hasSteering?.()) resolve(); }),
     ]);
-  } finally { clearTimeout(timer); if (abort) signal?.removeEventListener("abort", abort); }
+  } finally { clearTimeout(timer); unsubscribe?.(); if (abort) signal?.removeEventListener("abort", abort); }
 }
 // Keep the default handoff small; full evidence remains available by id.
 export function workerResultForModel(result, detail = "summary") {

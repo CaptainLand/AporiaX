@@ -67,9 +67,10 @@ import { isAnchorRestoreNotice } from "./anchor-restore-notice.js";
 import { HISTORY_TOOL, readConversationHistory } from "./runtime/conversation-history.js";
 import { snapshotContinuation, restoreContinuation } from "./runtime/continuation-state.js";
 import { waitForWorkers, workerResultForModel } from "./runtime/collect-workers.js";
-import { captureDelegationContext, reviewWorkerResult, pendingWorkerReviews, workerSummary } from './runtime/subagent-contract.js';
+import { retryModelResponseRecovery } from './runtime/model-response-recovery.js';
+import { captureDelegationContext, reviewWorkerResult, pendingWorkerReviews, requiredWorkerIds, workerSummary } from './runtime/subagent-contract.js';
 import { readTaskOutcome } from "./runtime/task-outcome.js";
-import { requestErrorFinalReply } from './runtime/error-final-reply.js';
+import { requestErrorFinalReply, retainedWorkReply } from './runtime/error-final-reply.js';
 import { preserveDeliveredReply } from '../shared/reply-delivery.js';
 import { finishExecutionPlan } from './runtime/plan-lifecycle.js';
 import { currentAgentBudget, restoreAgentBudget, bindAgentBudgetEvents } from "./harness/agent-budget.js";
@@ -397,13 +398,13 @@ function reconcileWorkspaceState(
       ...(current || {}),
       path,
       beforeContent:
-        current?.fileSnapshot ? '' : before ? (binary && !before.binary ? Buffer.from(before.content, 'utf8').toString('base64') : before.content) : current?.beforeContent ?? "",
+        current?.fileSnapshot ? '' : current ? current.beforeContent : before ? (binary && !before.binary ? Buffer.from(before.content, 'utf8').toString('base64') : before.content) : "",
       afterContent: after ? (binary && !after.binary ? Buffer.from(after.content, 'utf8').toString('base64') : after.content) : "",
-      beforeMissing: current?.fileSnapshot ? Boolean(current.beforeMissing) : !before,
+      beforeMissing: current ? Boolean(current.beforeMissing) : !before,
       afterMissing: !after,
       binary,
       artifact: current?.artifact || null,
-      created: !before,
+      created: current ? Boolean(current.beforeMissing) : !before,
       deleted: !after,
       reverted: false,
       source: current?.source || "workspace-snapshot",
@@ -1433,12 +1434,14 @@ export async function runHarness({
     role: "system",
     content: recoveryContext
       ? [
-          `This run explicitly resumes interrupted run ${recoveryContext.runId}.`,
+          `This run explicitly resumes saved run ${recoveryContext.runId}; it is a continuation, NOT a restart of the original task.`,
           "The final user message below is the active request. The current workspace is the source of truth.",
           "Use the recovery journal only to identify completed and remaining work. Re-inspect files before relying on an old result.",
+          "Keep completed plan steps and confirmed work. First inspect the existing artifacts and interruption point, then perform only the remaining work; do not regenerate, replace, or delete already-completed output just because the original request is repeated below.",
           "Unfinished operations may already have taken effect. Inspect actual state first; never blindly replay uncertain effects.",
           "Records marked replaySafe are browser navigation/close operations, not unresolved mutations. Check the current browser state as needed, but do not block unrelated work or ask for recovery approval because of these navigation errors.",
-          JSON.stringify({ checkpoint: recoveryContext.checkpoint, operations: recoveryContext.operations, unresolvedOperations: recoveryContext.unresolvedOperations }),
+          JSON.stringify({ checkpoint: recoveryContext.checkpoint, operations: recoveryContext.operations, unresolvedOperations: recoveryContext.unresolvedOperations,
+            interruption: { status: recoveryContext.status, lastEventType: recoveryContext.lastEventType, events: (recoveryContext.events || []).slice(-4) } }),
           "Saved conversations are restored separately. Recheck current file versions before using older evidence.",
           restoredWorkspace ? restoreBoundary : "",
         ].filter(Boolean).join("\n")
@@ -1611,7 +1614,8 @@ export async function runHarness({
     canRead: canReadAcceptance, continuationBudget: effectiveLoopPolicy.maxCompletionContinuations });
 
 
-  const steps = [];
+  const steps = (savedMain?.steps || recoveryContext?.checkpoint?.main?.steps || [])
+    .map(step => ({ ...step, inheritedFromRunId: step.inheritedFromRunId || recoveryContext.runId }));
   const understandingCandidates = [];
   const changeMap = new Map();
   const contextCheckpoints = savedMain?.contextCheckpoints || [];
@@ -1634,7 +1638,10 @@ export async function runHarness({
   const abortSubagents = () => subagentController.abort();
   signal?.addEventListener("abort", abortSubagents, { once: true });
   let subagentCounter = savedMain?.subagentCounter || 0;
-  let plan = savedMain?.plan || null;
+  const priorPlan = savedMain?.plan || recoveryContext?.checkpoint?.main?.plan;
+  let plan = priorPlan ? { ...priorPlan, status: 'running', finishedAt: null,
+    steps: (priorPlan.steps || []).map(step => ({ ...step })) } : null;
+  if (plan) emit({ type: 'plan.updated', plan, reason: 'task-resumed' });
   let plainReplyRequest = savedMain?.plainReplyRequest || null;
   let finalReplyRecovery = savedMain?.finalReplyRecovery || null;
   let candidateReply = null;
@@ -1723,6 +1730,12 @@ export async function runHarness({
     emit({ type: "runtime.state.restored", verificationWaived: selfCheck.verificationWaived,
       historicalVerifications: selfCheck.verificationResults.length, restoredChanges: changeMap.size,
       changedSinceSave: selfCheck.recoveryChanges.map(({ path }) => path) });
+    conversation.push(harnessFeedback('Continuation preflight (local file comparison, not execution verification): ' + JSON.stringify({
+      unchangedSavedFiles: [...changeMap.keys()],
+      changedOrUnavailableFiles: selfCheck.recoveryChanges.map(({ path, recoveryError }) => ({ path, reason: recoveryError })),
+      plan, recentActions: steps.slice(-15),
+      instruction: 'Continue remaining work only. Inspect changed/unavailable files before edits and preserve external/user edits. Old process/browser handles may be gone; check current state before recreating resources. Never replay uncertain operations blindly.',
+    })));
   }
   let totalUsage = null;
   const previousUsage = savedMain?.cumulativeUsage || savedMain?.usage || null;
@@ -1731,7 +1744,7 @@ export async function runHarness({
   const persistMainContext = async () => {
     await onContextCheckpoint?.();
     return saveRuntimeContext(runId, {
-    kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, plainReplyRequest, finalReplyRecovery, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
+    kind: "main", workspaceRoot, conversation, inputHistory, constraintLedger, plan, steps, plainReplyRequest, finalReplyRecovery, contextCheckpoints, subagentCounter, agentBudget: currentAgentBudget(),
     knowledgeProjectId: knowledgeSession.projectId, knowledgeEnabled: knowledgeSession.enabled,
     roleSettings: roleSnapshot, roleTotal, handoffSkills: [...handoffSkills],
     selectedMcpServerIds: mcpServers.filter(server => server.enabled !== false).map(server => server.id),
@@ -2088,6 +2101,8 @@ export async function runHarness({
         if (event.type === 'subagent.started') { clock.start(); record.phase = 'model'; onStarted?.(); }
         if (event.type === 'subagent.tool.started') record.phase = 'tool';
         if (event.type === 'subagent.tool.completed') record.phase = 'model';
+        if (event.type === 'subagent.response.reset') record.phase = 'model';
+        if (event.type === 'subagent.response.recovery.status') record.phase = event.state === 'receiving' ? 'model' : 'model_recovery';
         emit(event);
       },
       onUsage: (usage) => { totalUsage = mergeTokenUsage(totalUsage, usage); },
@@ -2178,7 +2193,7 @@ export async function runHarness({
     if (record.input.profile?.maxRequests != null && record.session.roleBudget?.requests >= record.input.profile.maxRequests) throw new Error('用户设置的子 Agent 请求预算已耗尽；已有成果保留。');
     (record.session.pendingGuidance ||= []).push(guidance);
     await saveRuntimeContext(agentId, { kind: 'worker', workspaceRoot, input: record.input, session: record.session, status: record.status, result: record.result });
-    if (record.status === 'running') return { agentId, status: 'guidance_queued' };
+    if (record.status === 'running') return { agentId, status: 'guidance_queued', recoveryCheckRestarted: retryModelResponseRecovery(control, agentId) };
     return startSubagent({ ...record.input, role: record.input.profileId || record.role, task: guidance, background: true }, '', { resumeRecord: record });
   };
   const unregisterWorkerControls = registerWorkerControls({ runId, taskId,
@@ -2408,7 +2423,8 @@ export async function runHarness({
     }
     const results = [];
     const running = [];
-    if (wait) await waitForWorkers(records, { mode: rawInput.wait_mode || "any", timeoutMs: rawInput.timeout_ms ?? 30000, signal });
+    if (wait) await waitForWorkers(records, { mode: rawInput.wait_mode || "any", timeoutMs: rawInput.timeout_ms ?? 30000, signal,
+      onSteering: control?.onSteering, hasSteering: control?.hasSteering });
     for (const record of records) {
       if (record.status === "running") {
         running.push({
@@ -2432,28 +2448,39 @@ export async function runHarness({
   };
 
   const collectOutstandingSubagents = async () => {
-    const records = [...subagents.values()].filter(
-      (record) => !record.collected,
-    );
-    if (!records.length) return [];
-    const results = [];
-    for (const record of records) {
-      if (record.requiredForCompletion === false && record.status === "running") {
+    while (true) {
+      const records = [...subagents.values()].filter(record => !record.collected);
+      const required = requiredWorkerIds(subagents.values());
+      const results = [];
+      for (const record of records) {
+        if (record.requiredForCompletion === false && !required.has(record.agentId) && record.status === "running") {
+          record.collected = true;
+          record.controller.abort();
+          emit({ type: "subagent.optional.skipped", agentId: record.agentId, role: record.role, reason: "Not required for final delivery; no correctness gate was skipped." });
+          continue;
+        }
+        // Return ready reports to Main first. Awaiting a dependent here can
+        // deadlock: that dependent needs Main to accept this very report.
+        if (record.status === 'running') continue;
+        const result = await record.promise;
         record.collected = true;
-        if (record.status === "running") record.controller.abort();
-        emit({ type: "subagent.optional.skipped", agentId: record.agentId, role: record.role, reason: "Not required for final delivery; no correctness gate was skipped." });
-        continue;
+        results.push(workerResultForModel(result));
       }
-      const result = await record.promise;
-      record.collected = true;
-      results.push(workerResultForModel(result));
+      const running = records.filter(record => !record.collected && record.status === 'running');
+      const needsParent = running.some(record => (record.input.dependsOn || []).some(id => {
+        const dep = subagents.get(id);
+        return dep?.status !== 'running' && dep?.result?.acceptance?.status !== 'accepted';
+      }));
+      if (results.length || !running.length || needsParent || control?.hasSteering?.()) {
+        emit({ type: "subagent.collected", agentIds: results.map(result => result.agentId),
+          running: running.map(record => record.agentId), automatic: true });
+        return results;
+      }
+      // Healthy required workers may take arbitrarily long. Wait without new
+      // inference/polling costs, but keep cancellation and user steering live.
+      await waitForWorkers(running, { mode: 'any', timeoutMs: 30000, signal,
+        onSteering: control?.onSteering, hasSteering: control?.hasSteering });
     }
-    emit({
-      type: "subagent.collected",
-      agentIds: results.map((result) => result.agentId),
-      automatic: true,
-    });
-    return results;
   };
 
   const refreshAnchorSnapshot = async ({
@@ -2772,6 +2799,10 @@ export async function runHarness({
           for (const worker of subagents.values()) if (worker.status === "running") worker.controller?.abort();
         }
         const outstandingSubagentResults = await collectOutstandingSubagents();
+        if (control?.hasSteering?.()) {
+          conversation.push(assistantHistoryMessage(message));
+          continue;
+        }
         if (outstandingSubagentResults.length && outcomeStatus === "completed") {
           conversation.push(assistantHistoryMessage(message));
           conversation.push(harnessFeedback([
@@ -2791,6 +2822,10 @@ export async function runHarness({
           }
           outcomeStatus = 'partial';
           message = { ...message, content: `${message.content || ''}\n\n${isEnglish ? 'Worker results still need acceptance; work is retained as partial, not verified.' : '子任务成果仍待验收；已保留现有工作，暂记为部分完成，未声称验证通过。'}` };
+          // Main declined the bounded review reminder. Do not leave dependent
+          // workers alive after returning a partial delivery and closing tools.
+          for (const worker of subagents.values()) if (worker.status === 'running') worker.controller?.abort();
+          await waitForWorkers([...subagents.values()], { mode: 'all', timeoutMs: 3000 });
         }
         const acceptanceReport = await taskAcceptance.evaluate({ signal });
         const acceptanceDecision = taskAcceptance.decide(outcomeStatus, acceptanceReport);
@@ -3681,6 +3716,9 @@ export async function runHarness({
       interruptedResult.content = appendSandboxRecoveryNotice(interruptedResult.content, sandboxRecoveries, language);
       return interruptedResult;
     }
+    if (!deliveredReply && !control?.hasSteering?.()) {
+      deliveredReply = retainedWorkReply({ error, changes: buildChanges(changeMap), language });
+    }
     const contextBlocked = error?.code === "CONTEXT_BUDGET_EXCEEDED";
     const verificationBlocked = contextBlocked || error?.code === "VERIFICATION_UNAVAILABLE" || ["LOOP_NO_PROGRESS", "LOOP_STRATEGY_EXHAUSTED"].includes(error?.code);
     const finalStatus = deliveredReply ? (verificationBlocked ? 'blocked' : 'partial') : verificationBlocked ? 'blocked' : 'failed';
@@ -3696,6 +3734,7 @@ export async function runHarness({
     const failedResult = {
       rollingContext: savedMain ? null : rollingContext.handoff(sanitizedHistory),
       replyDelivered: Boolean(deliveredReply),
+      ...(deliveredReply?.replySource ? { replySource: deliveredReply.replySource } : {}),
       status: finalStatus,
       error: !deliveredReply && !verificationBlocked,
       ...(deliveredReply ? { runIssues: [{ code: error?.code || 'RUNTIME_ERROR', message: String(error?.message || error) }, ...(deliveredReply.runIssues || [])] } : {}),
@@ -3748,7 +3787,8 @@ export async function runHarness({
     emit({
       type: deliveredReply ? 'turn.completed' : "turn.failed",
       status: failedResult.status,
-      ...(deliveredReply ? { replyDelivered: true, content: failedResult.content } : { error: failedResult.content }),
+      ...(deliveredReply ? { replyDelivered: true, content: failedResult.content,
+        ...(deliveredReply.replySource ? { replySource: deliveredReply.replySource, detail: deliveredReply.content.split('\n')[0] } : {}) } : { error: failedResult.content }),
       changedFiles: failedResult.changes.length,
       toolSteps: steps.length,
     });

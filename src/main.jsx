@@ -129,6 +129,7 @@ import {
 import {
   executeTaskRetry,
   hasRendererTaskRun,
+  taskContinuationRequest,
 } from "./state/run-retry-core.js";
 import { useTaskStore } from "./state/useTaskStore.js";
 import { useHarnessEvents } from "./hooks/useHarnessEvents.js";
@@ -3747,6 +3748,7 @@ function App() {
       .then(() => window.desktop.harness.run({
         runId,
         recoveryRunId: recoveryRunId || undefined,
+        retryMode: request.retryMode,
         retry: Boolean(retryAssistantId || recoveryRunId),
         taskId: targetTask.id,
         assistantId,
@@ -3795,6 +3797,7 @@ function App() {
                           status: result.status || "completed",
                           error: Boolean(result.error),
                           replyDelivered: result.replyDelivered,
+                          replySource: result.replySource || null,
                           runIssues: result.runIssues || [],
                            content: result.content,
                           deliveryDetails: result.deliveryDetails || null,
@@ -4092,13 +4095,10 @@ function App() {
     const hasRecordedRun = [...runsRef.current.values()].some(
       (run) => run.taskId === task.id,
     );
-    const retryRequest = {
-      taskId: task.id,
-      retryAssistantId: assistantMessage.id,
-      retrySourceUserId: sourceMessage?.id || assistantMessage.sourceUserId,
-      recoveryRunId: assistantMessage.recoverable?.runId || "",
-      force: true,
-    };
+    let retryRequest;
+    try { retryRequest = taskContinuationRequest(task, assistantMessage); }
+    catch (error) { setNotice(error.message); return false; }
+    retryRequest.retrySourceUserId = sourceMessage?.id || assistantMessage.sourceUserId;
     const retryAttachments =
       sourceMessage?.attachments ||
       assistantMessage.inputAttachments ||
@@ -4106,10 +4106,10 @@ function App() {
     setNotice(
       hasRecordedRun
         ? tr(
-            "正在清理残留任务并准备重试…",
-            "Clearing the stale run before retrying…",
+            "正在核对后台状态并准备继续…",
+            "Checking the backend before continuing…",
           )
-        : tr("正在准备重试本轮…", "Preparing to retry this turn…"),
+        : tr("正在恢复执行记录，从已完成处继续…", "Restoring execution records to continue saved work…"),
     );
 
     const retryResult = await executeTaskRetry({
@@ -4165,7 +4165,7 @@ function App() {
     });
 
     if (retryResult.started) {
-      setNotice(tr("已重新启动本轮任务", "This turn has been restarted"));
+      setNotice(tr("已接续本轮任务，将核对现有文件并完成剩余工作", "Continuing this turn: checking existing files and finishing the remaining work"));
       return true;
     }
     if (retryResult.reason === "main-status-unavailable") {

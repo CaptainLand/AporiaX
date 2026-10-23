@@ -139,7 +139,7 @@ export function normalizeSubagentInput(input, profiles = null) {
     scope, commandScope,
     ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
     background: Boolean(input?.background || input?.depends_on?.length || input?.dependsOn?.length),
-    requiredForCompletion: !(input?.background && input?.required_for_completion !== true && !input?.depends_on?.length && !input?.dependsOn?.length && ["explore", "curator"].includes(role)),
+    requiredForCompletion: !(input?.background && (input?.required_for_completion ?? input?.requiredForCompletion) !== true && !input?.depends_on?.length && !input?.dependsOn?.length && ["explore", "curator"].includes(role)),
     maxRounds: null,
   };
 }

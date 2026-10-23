@@ -66,14 +66,17 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
       if (!requestIdentity.result && (error?.attemptUsage || error?.usage)) await onFailedUsage(error.attemptUsage || error.usage);
       if (signal?.aborted) throw error;
       if (error.code === 'MODEL_RESPONSE_SAFE_RETRY' && error.safeToRepair === true) {
+        const responseId = requestIdentity.identity.modelResponseRecovery?.responseId;
         await rotateCloudRequest(requestIdentity.identity, error.cloudRequestId, requestIdentity);
+        // The receipt ended the old request, not proof of new model data.
+        onEvent({ type: 'response.reset', phase: 'model-response-safe-retry', responseId });
         continue;
       }
       if (error.code === 'CLOUD_REQUEST_RECONCILIATION_REQUIRED' && requestIdentity.identity.modelResponseRecovery?.attempt > 0)
         error.modelResponseRecovery = requestIdentity.identity.modelResponseRecovery;
       if (control && error.modelResponseRecovery) {
         await persist();
-        const recovered = await waitForModelRecovery({ error, control, signal,
+        const recovered = await waitForModelRecovery({ error, control, signal, scopeId,
           onState: async state => {
             state = { ...state, receivedModelData: error.modelResponseRecovery.receivedModelData === true || Boolean(error.partialMessage?.content) || Boolean(error.partialToolCalls) };
             await rememberModelResponseRecovery(requestIdentity, state);
@@ -83,6 +86,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
           },
         });
         await rotateCloudRequest(requestIdentity.identity, recovered.requestId, requestIdentity);
+        onEvent({ type: 'response.reset', phase: 'model-response-safe-retry', responseId: error.modelResponseRecovery.responseId });
         continue;
       }
       if (error.noAutomaticRetry) throw error;

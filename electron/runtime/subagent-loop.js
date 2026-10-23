@@ -5,7 +5,7 @@ import { cloudWorkerDeferral } from "./cloud-wind-down.js";
 import { applyRoleThinking } from './role-capabilities.js';
 import { StrategyHistory } from "./strategy-history.js";
 import { normalizeLoopPolicy } from "./completion-policy.js";
-import { assistantHistoryMessage } from "./task-conversation.js";
+import { assistantHistoryMessage, harnessFeedback } from "./task-conversation.js";
 import { completeLoopRequest } from "./loop-recovery.js";
 import { LoopMetrics } from "./loop-metrics.js";
 import { planToolBatches, executeToolBatch as mapWithConcurrency } from "./tool-batch.js";
@@ -23,13 +23,13 @@ import { getDefaultAgentRuntimeBroker } from "../harness/agent-runtime-broker.js
 import { ToolProgressGuard } from "./tool-progress-guard.js";
 import { searchProgressDetail } from './search-session.js';
 import { dispatchNativeTool } from "./tool-dispatcher.js";
-import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume } from "./durable-run.js";
+import { saveRuntimeCheckpoint, saveRuntimeContext, waitForRuntimeResume, isReadOnlyNativeTool } from "./durable-run.js";
 import { modelReasoningParameters } from "../../shared/model-reasoning.js";
 import { providerMessages } from "./task-conversation.js";
 import { runIsolatedBuilder } from "./delegated-builder.js";
 import { withAgentBudgetAdmission } from "../harness/agent-budget.js";
 import { currentLocalControlPolicy, acquireLocalControlWorker, assertLocalControlTool, isLocalControlToolAvailable } from "../control/policy.js";
-import { FINISH_SUBAGENT_TOOL, readWorkerOutcome, syncDelegationContext } from './subagent-contract.js';
+import { FINISH_SUBAGENT_TOOL, readWorkerOutcome, syncDelegationContext, syncDependencyHandoff } from './subagent-contract.js';
 import {
   MAX_SUBAGENT_RESULT_CHARS,
   SUBAGENT_ROLE_CONFIG,
@@ -226,9 +226,12 @@ export async function runSubagentTask(options = {}) {
   const strategy = new StrategyHistory(session.strategyHistory, { mode: loopPolicy.strategyMode, maxInterventions: loopPolicy.maxStrategyInterventions });
   brief.syncSources(conversation);
   Object.assign(session, { conversation, contextCheckpoints, evidence, steps: toolSteps });
-  const persistSession = async (status = "running", result = null) => {
+  const persistSession = async (status = "running", result = null, { snapshot = false } = {}) => {
     session.taskBrief = brief.snapshot(); session.strategyHistory = strategy.snapshot(); session.toolProgress = toolProgress.snapshot();
-    await options.snapshotProvisional?.();
+    // Reads, model waits and bookkeeping cannot change the isolated workspace.
+    // Snapshot after every potentially effectful tool (even failed tools), and
+    // at terminal boundaries. The Builder wrapper also scans before integration.
+    if (snapshot || status !== "running") await options.snapshotProvisional?.();
     await saveRuntimeContext(agentId, {
       kind: "worker", workspaceRoot: options.ownerWorkspaceRoot || workspaceRoot, input, session, status, result,
     });
@@ -240,6 +243,7 @@ export async function runSubagentTask(options = {}) {
   session.activationSequence = (session.activationSequence || 0) + 1;
   const activationId = `${agentId}:${session.activationSequence}`;
   const refreshInheritedContext = async () => {
+    syncDependencyHandoff(conversation, session.dependencyHandoff);
     const context = options.getDelegationContext ? await options.getDelegationContext() : session.delegationContext;
     if (context) { session.delegationContext = context; return syncDelegationContext(conversation, context); }
     return false;
@@ -263,6 +267,10 @@ export async function runSubagentTask(options = {}) {
     thinking: Boolean(wireReasoning.reasoning_effort || wireReasoning.thinking?.type === 'enabled'), effort: wireReasoning.reasoning_effort || null,
     permissions: permissionPolicy, tools: enabledTools.map((tool) => tool.function.name), maxRounds: null });
 
+  let summaryOnlyReason = null;
+  const protectedSummary = () => language === 'en'
+    ? 'Further tool actions were stopped because this approach was not making progress. The work and collected evidence are preserved; the remaining work needs a different approach or new guidance.'
+    : '这个方向暂时没有取得新的进展，已停止继续重复操作。已做的工作和收集到的证据都保留了，剩余部分需要换一种方法或补充要求。';
   try {
     for (let round = 1; ; round += 1) {
       throwIfAborted(signal);
@@ -270,10 +278,16 @@ export async function runSubagentTask(options = {}) {
       await refreshInheritedContext();
       if (session.pendingGuidance?.length) {
         toolProgress.reset(); strategy.reset();
+        summaryOnlyReason = null;
         conversation.push(...session.pendingGuidance.splice(0).map((content) => ({ role: 'user', content, aporiaSource: 'delegation', aporiaPinned: true })));
       }
-      toolProgress.assertBudget();
-      strategy.assertBudget();
+      try { toolProgress.assertBudget(); strategy.assertBudget(); }
+      catch (error) {
+        if (!['LOOP_NO_PROGRESS', 'LOOP_STRATEGY_EXHAUSTED'].includes(error.code)) throw error;
+        summaryOnlyReason = { code: error.code, toolsClosed: true };
+        conversation.push(harnessFeedback('Further tool execution is now closed because this approach exhausted its progress guard. This is one text-only handoff, not a failed task. Summarize the confirmed work, the most important evidence, and what remains blocked or unfinished. Do not claim completion or verification that the evidence does not support. Do not request tools or repeat actions.'));
+        emit({ type: 'subagent.execution.closed', agentId, role: input.role, reason: error.code });
+      }
       brief.syncSources(conversation);
       brief.inject(conversation, { strategy: strategy.briefing() });
       await saveRuntimeCheckpoint({ scopeId: agentId, role: input.role, task: input.task, workspaceRoot, status: "running", round, evidence: compactSubagentEvidence(evidence) });
@@ -303,7 +317,7 @@ export async function runSubagentTask(options = {}) {
         getBody: (requestMessages) => ({
           model: modelId,
           messages: providerMessages(requestMessages),
-          ...(provider.supportsTools && enabledTools.length
+          ...(!summaryOnlyReason && provider.supportsTools && enabledTools.length
             ? { tools: enabledTools, tool_choice: "auto" }
             : {}),
           ...modelReasoningParameters(provider, { modelId, thinking, effort }),
@@ -313,23 +327,31 @@ export async function runSubagentTask(options = {}) {
           return provider.complete({ signal: requestSignal, body, requestTrace: { agentId }, onStreamEvent: (event) => {
             loopMetrics.observe(event);
             if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
-            if (["response.cloud.queued", "response.cloud.admitted"].includes(event.type)) emit({ ...event, type: `subagent.${event.type}`, agentId, role: input.role });
+            if (["response.progress", "response.recovery.status", "response.cloud.queued", "response.cloud.admitted"].includes(event.type)) emit({ ...event, type: `subagent.${event.type}`, agentId, role: input.role });
             if (event.type === "response.attempt.completed") emit({ ...event, type: "subagent.response.attempt.completed", agentId });
           } });
         },
       });
       let { message } = completion;
       const { usage, requestConversation } = completion;
-      if (completion.interrupted) continue;
       recordProviderUsage(tokenAccounting, usage, requestConversation);
       usageTotal = mergeTokenUsage(usageTotal, completion.attemptUsage || usage);
       options.onUsage?.(completion.attemptUsage || usage);
+      // Steering discards obsolete actions, not the usage already incurred to
+      // generate them. Failed attempts are accounted separately by the callback.
+      if (completion.interrupted) continue;
       throwIfAborted(signal);
       // A user may steer the parent while a worker is waiting for its model.
       // Discard that stale action proposal before it can perform side effects.
       if (await refreshInheritedContext()) continue;
       let outcome;
-      try { outcome = readWorkerOutcome(message, parseToolArguments); }
+      if (summaryOnlyReason) {
+        // Defend against providers returning calls despite receiving no tools.
+        // Never execute even a finish call here; keep the outcome explicitly partial.
+        message = { role: 'assistant', content: typeof message?.content === 'string' && message.content.trim()
+          ? message.content : protectedSummary() };
+      }
+      try { if (!summaryOnlyReason) outcome = readWorkerOutcome(message, parseToolArguments); }
       catch (error) {
         toolProgress.observe({ tool: 'invalid_worker_outcome', input: {}, result: { error: error.message } });
         conversation.push(assistantHistoryMessage(message));
@@ -355,7 +377,8 @@ export async function runSubagentTask(options = {}) {
         const result = {
           agentId,
           role: input.role,
-          status: outcome?.status || "completed",
+          status: summaryOnlyReason ? (evidence.length ? 'partial' : 'blocked') : outcome?.status || "completed",
+          ...(summaryOnlyReason ? { completionGuard: summaryOnlyReason } : {}),
           reportId: activationId,
           acceptance: { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' },
           summary:
@@ -398,6 +421,16 @@ export async function runSubagentTask(options = {}) {
       await persistSession();
       for (const batch of planToolBatches(message.tool_calls,
         (call) => subagentToolsAreParallel([call, call]))) {
+      try { toolProgress.assertBudget(); strategy.assertBudget(); }
+      catch (error) {
+        if (!['LOOP_NO_PROGRESS', 'LOOP_STRATEGY_EXHAUSTED'].includes(error.code)) throw error;
+        // A read batch can exhaust the guard before a later write in the same
+        // response. Complete its protocol receipts, but never dispatch that write.
+        for (const toolCall of batch.calls) conversation.push({ role: 'tool', tool_call_id: toolCall.id,
+          content: JSON.stringify({ executed: false, skipped: true, error: error.message }) });
+        await persistSession();
+        continue;
+      }
       const parallelBatch = batch.parallel;
       const executeCall = async (toolCall) => {
         await waitForRuntimeResume(signal);
@@ -519,7 +552,10 @@ export async function runSubagentTask(options = {}) {
         });
         // Builder edits reach durable storage at each tool boundary, not only
         // after its model eventually produces a final answer.
-        if (input.role === "builder") await persistSession();
+        if (input.role === "builder") await persistSession('running', null, {
+          snapshot: appliedChanges.length > 0 || !isReadOnlyNativeTool(toolName)
+            || options.extensionDefinitions?.some(def => def.function.name === toolName),
+        });
         return { toolCall, modelResult };
       };
       const results = await mapWithConcurrency(batch.calls,
@@ -555,23 +591,24 @@ export async function runSubagentTask(options = {}) {
     const result = {
       agentId,
       role: input.role,
-      status: "failed",
+      status: summaryOnlyReason ? (evidence.length ? 'partial' : 'blocked') : "failed",
+      ...(summaryOnlyReason ? { completionGuard: { ...summaryOnlyReason, summaryError: error.message } } : {}),
       reportId: activationId,
       acceptance: { status: systemOwned ? 'consumer_review' : 'pending', certification: 'not-verified' },
-      summary: error.message,
+      summary: summaryOnlyReason ? protectedSummary() : error.message,
       evidence: compactSubagentEvidence(evidence),
       steps: toolSteps.slice(-60),
       usage: usageTotal, loopMetrics: loopMetrics.snapshot(), taskBrief: brief.snapshot(), strategy: strategy.briefing(),
     };
     await saveRuntimeCheckpoint({ scopeId: agentId, ...result });
-    await persistSession("failed", result);
+    await persistSession(result.status, result);
     emit({
-      type: "subagent.failed",
+      type: summaryOnlyReason ? "subagent.completed" : "subagent.failed",
       activationId,
       acceptance: result.acceptance,
       agentId,
       role: input.role,
-      error: error.message,
+      ...(summaryOnlyReason ? { status: result.status, summary: result.summary } : { error: error.message }),
       systemOwned,
       runtime: runtimeDefinition ? "kernel" : "compatibility",
     });

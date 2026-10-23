@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { runHarness } from '../electron/agent-runtime-core.js';
 import { withDurableRun } from '../electron/runtime/durable-run.js';
-import { canRequestErrorReply } from '../electron/runtime/error-final-reply.js';
+import { canRequestErrorReply, retainedWorkReply } from '../electron/runtime/error-final-reply.js';
+import { providerErrorCategory } from '../electron/runtime/provider-errors.js';
 import { preserveDeliveredReply } from '../shared/reply-delivery.js';
 import { hasTaskReply } from '../src/state/task-outcome-view.js';
 import { provider, call, tools, sse } from './goal-loop-fixtures.mjs';
@@ -77,6 +78,39 @@ try {
   assert.equal(runResult.result.steps.filter(step => step.name === 'write_file').length, 1);
   assert.equal(runResult.result.plan.steps.filter(step => step.status === 'completed').length, 0, 'A reply does not complete remaining work');
   assert.equal(runResult.result.witness.status, 'partial');
+
+  for (const status of [402, 500]) {
+    const balanceError = { error: { message: 'Insufficient Balance (request_id: fixture-balance)' } };
+    assert.equal(providerErrorCategory({ status, message: balanceError.error.message }), 'quota');
+    assert.equal(canRequestErrorReply({ status, message: balanceError.error.message }), false);
+    runResult = await run([
+      tools(call('write-before-quota', 'write_file', { path: 'super-mario.html', content: '<h1>Saved game draft</h1>' })),
+      new Response(JSON.stringify(balanceError), { status }),
+    ], { language: 'zh-CN' });
+    assert.equal(runResult.bodies.length, 2, 'Do not retry exhausted provider balance, including a mislabelled HTTP 500');
+    assert.equal(runResult.result.status, 'partial');
+    assert.equal(runResult.result.error, false);
+    assert.equal(runResult.result.replyDelivered, true);
+    assert.equal(runResult.result.replySource, 'local-receipt');
+    assert.equal(hasTaskReply(runResult.result), true);
+    assert.match(runResult.result.content, /余额或额度不足/);
+    assert.match(runResult.result.content, /非模型最终答复/);
+    assert.match(runResult.result.content, /\[super-mario.html\]/);
+    assert.match(runResult.result.content, /尚未全部完成/);
+    assert.equal(await readFile(join(runResult.workspace, 'super-mario.html'), 'utf8'), '<h1>Saved game draft</h1>');
+    assert.ok(!runResult.events.some(event => event.type === 'turn.failed'));
+    assert.equal(runResult.result.witness.status, 'partial');
+    assert.notEqual(runResult.result.selfCheck.verificationPassed, true);
+    assert.match(runResult.result.runIssues[0].message, /Insufficient Balance/);
+  }
+  assert.equal(retainedWorkReply({ error: new Error('No answer'), changes: [] }), null);
+  assert.equal(retainedWorkReply({ error: new Error('No answer'), changes: [{ path: 'a', reverted: true }] }), null);
+  assert.equal(retainedWorkReply({ error: { name: 'AbortError' }, changes: [{ path: 'a' }] }), null);
+  const removedReceipt = retainedWorkReply({ error: new Error('Stopped'), language: 'en', changes: [{ path: 'old.txt', afterMissing: true }] });
+  assert.match(removedReceipt.content, /Removed：old.txt/);
+  assert.ok(!removedReceipt.content.includes('](<'), 'Deleted files must not be offered as working artifact links');
+  const escapedReceipt = retainedWorkReply({ error: new Error('Stopped'), changes: [{ path: '目录/a [b]#(1)?.txt' }] });
+  assert.match(escapedReceipt.content, /%23%281%29%3F/);
 
   for (const status of [401, 403, 429]) {
     const response = new Response(JSON.stringify({ error: { message: 'Not permitted', code: status === 429 ? 'insufficient_quota' : 'denied' } }), { status });

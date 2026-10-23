@@ -721,7 +721,7 @@ export function useHarnessEvents({
         setTasks((current) =>
           updateRunAssistant(current, run, (message) => ({
             ...message,
-            ...(run.replyDelivered ? { replyDelivered: true, content: event.content,
+            ...(run.replyDelivered ? { replyDelivered: true, replySource: event.replySource || null, content: event.content,
               deliveryDetails: event.deliveryDetails || message.deliveryDetails, error: false, status: event.status || 'completed' } : {}),
             route: [
               ...closeRunningRouteEntries(message.route, now),

@@ -1,3 +1,17 @@
+// A retry continues the selected execution, even if it failed without the app
+// restarting. `recoverable` is only a startup decoration, not the source of truth.
+export function taskContinuationRequest(task, message) {
+  const recoveryRunId = message?.recoverable?.runId || message?.runId;
+  if (!task?.id || !message?.id || !recoveryRunId || message.anchorRestoredAt) {
+    throw new Error(message?.anchorRestoredAt
+      ? '这一轮已回退，不能从旧检查点继续；请根据当前文件发起新要求。'
+      : '找不到这一轮的运行记录，未从头重做；现有文件仍保留。');
+  }
+  return { taskId: task.id, retryAssistantId: message.id,
+    retrySourceUserId: message.sourceUserId || '', recoveryRunId,
+    retryMode: 'continue', force: true };
+}
+
 function taskRunEntries(runs, taskId) {
   if (!(runs instanceof Map) || !taskId) return [];
   return [...runs.entries()].filter(([, run]) => run?.taskId === taskId);

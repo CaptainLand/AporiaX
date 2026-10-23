@@ -98,14 +98,61 @@ export async function probeModelRequest(provider, requestId, signal) {
   return { disposition: ['provider', 'reconciled'].includes(receipt.usageState) ? 'result-unavailable' : 'in-flight' };
 }
 
-// Only the user may end an exhausted recovery wait. No tools are returned from
-// an incomplete stream, and no new inference is dispatched by this function.
-export function waitForModelRecovery({ error, control, signal, onState, intervalMs, now }) {
+// An exhausted worker waits locally: it must not pause Main or its siblings.
+// Explicit continuation can check the ORIGINAL request again, but still cannot
+// replay an uncertain/partially received paid inference.
+const recoveryWaits = new WeakMap();
+const recoveryPauses = new WeakMap();
+export function retryModelResponseRecovery(control, scopeId) {
+  const retries = recoveryWaits.get(control)?.get(scopeId);
+  let resumed = false;
+  for (const retry of retries || []) resumed = retry() || resumed;
+  return resumed;
+}
+
+// No tools are returned from an incomplete stream, and no new inference is
+// dispatched by this function. Main retains its existing user-resume gate.
+export function waitForModelRecovery({ error, control, signal, onState = () => {}, intervalMs, now, scopeId = 'main' }) {
   return new Promise((resolve, reject) => {
-    let watcher, unsubscribe, done = false, awaitingUser = false;
+    let watcher, unsubscribe, done = false, awaitingUser = false, pauseClaim = null;
+    const pauseRun = scopeId === 'main';
+    const waits = recoveryWaits.get(control) || new Map();
+    recoveryWaits.set(control, waits);
+    const retries = waits.get(scopeId) || new Set();
+    waits.set(scopeId, retries);
+    const releasePause = (externallyResumed = false) => {
+      if (!pauseClaim) return;
+      const claim = pauseClaim; pauseClaim = null;
+      claim.owners.delete(retry);
+      if (externallyResumed) claim.ownsReason = false;
+      if (!claim.owners.size) {
+        recoveryPauses.delete(control);
+        if (claim.ownsReason) control.resume('model-response');
+      }
+    };
+    const acquirePause = () => {
+      if (pauseClaim) return;
+      const claim = recoveryPauses.get(control) || { owners: new Set(), ownsReason: false };
+      recoveryPauses.set(control, claim);
+      pauseClaim = claim; claim.owners.add(retry);
+      claim.ownsReason = control.pause('model-response') || claim.ownsReason;
+    };
+    const retry = () => {
+      if (done || !awaitingUser) return false;
+      awaitingUser = false;
+      releasePause();
+      watcher.retryChecks();
+      return true;
+    };
+    retries.add(retry);
     const finish = (err, value) => {
       if (done) return; done = true;
       watcher?.dispose(); unsubscribe?.(); signal?.removeEventListener('abort', abort);
+      retries.delete(retry);
+      if (!retries.size) waits.delete(scopeId);
+      if (!waits.size) recoveryWaits.delete(control);
+      // Never remove user, sleep, network, quota, or another owner's pause.
+      releasePause();
       err ? reject(err) : resolve(value);
     };
     const abort = () => finish(Object.assign(new Error('The task was stopped.'), { name: 'AbortError' }));
@@ -116,19 +163,23 @@ export function waitForModelRecovery({ error, control, signal, onState, interval
       onState: async state => {
         await onState(state);
         if (!done && state.state === 'waiting' && state.attempt >= MODEL_RECOVERY_ATTEMPTS) {
-          awaitingUser = true; control.pause('model-response'); await control.flush();
+          awaitingUser = true;
+          if (pauseRun) {
+            acquirePause();
+            await control.flush();
+          }
         }
       },
       onSafeRetry: result => {
         if (error.modelResponseRecovery?.receivedModelData || error.partialMessage?.content || error.partialToolCalls) return false;
         finish(null, result);
-        control.resume('model-response');
         return true;
       }, onError: err => finish(err),
     });
     unsubscribe = control.onChange(state => {
-      if (awaitingUser && !state.pauseReasons.includes('model-response')) {
-        awaitingUser = false; watcher.retryChecks();
+      if (pauseRun && awaitingUser && !state.pauseReasons.includes('model-response')) {
+        releasePause(true);
+        retry();
       }
     });
     signal?.addEventListener('abort', abort, { once: true });

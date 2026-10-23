@@ -174,6 +174,22 @@ export function createWitnessMonitor({
     }
   };
 
+  const clearRequestRecovery = (agentId, timestamp) => {
+    const scope = agentId || null;
+    for (const record of records) {
+      if (record.agentId !== scope || !record.modelRecovery) continue;
+      delete record.modelRecovery;
+      if (record.kind !== 'agent' && record.status === 'waiting') {
+        record.status = 'completed'; record.completedAt = isoTime(timestamp);
+      }
+    }
+    // Recovery keys alias request/agent records. A new request must not keep
+    // referring to the completed request's waiting record.
+    for (const [key, record] of recordIndex) {
+      if (key.startsWith('model-recovery:') && record.agentId === scope) recordIndex.delete(key);
+    }
+  };
+
   const closeAllRunning = (timestamp, nextStatus) => {
     for (const record of records) {
       if (!["running", "waiting"].includes(record.status)) continue;
@@ -269,23 +285,24 @@ export function createWitnessMonitor({
     switch (event.type) {
       case 'response.recovery.status':
       case 'subagent.response.recovery.status': {
-        const key = `model-recovery:${event.responseId || event.agentId || 'main'}`;
+        if (event.agentId && agents.get(event.agentId)?.status !== 'running') return;
+        const key = `model-recovery:${event.agentId || 'main'}:${event.responseId || ''}`;
         const existing = recordIndex.get(key);
         if (event.state === 'receiving') {
-          if (existing?.kind === 'thinking') {
+          if (existing?.kind === 'thinking' || existing?.kind === 'agent') {
             delete existing.modelRecovery;
             existing.status = 'running'; existing.lastActivityAt = isoTime(timestamp);
-            addRecord({ key: key + ':resumed', timestamp, kind: 'checkpoint', status: 'completed', eventType: 'response.recovery.resumed' });
+            addRecord({ key: key + ':resumed', timestamp, kind: 'checkpoint', status: 'completed', eventType: 'response.recovery.resumed', agentId: event.agentId, role: event.role });
           } else if (existing) { finishRecord(key, { ...event, type: 'response.recovery.resumed', detail: '' }); delete existing.modelRecovery; }
           return publish('response.recovery.resumed');
         }
-        const record = existing || [...records].reverse().find(item => item.kind === 'thinking' && item.status === 'running' &&
+        const record = existing || (event.agentId ? recordIndex.get(`agent:${event.agentId}`) : null) || [...records].reverse().find(item => item.kind === 'thinking' && item.status === 'running' &&
           (event.agentId ? item.agentId === event.agentId : !item.agentId)) || addRecord({ key, timestamp, kind: 'checkpoint', status: 'waiting',
           eventType: 'response.recovery.status', actor: event.agentId ? 'subagent' : 'main', agentId: event.agentId, role: event.role });
         recordIndex.set(key, record);
         record.modelRecovery = { state: event.state === 'checking' ? 'checking' : 'waiting',
           attempt: Math.min(3, Math.max(0, Number(event.attempt) || 0)), connection: event.connection === 'closed' ? 'closed' : 'open' };
-        record.status = record.kind === 'thinking' && event.connection !== 'closed' ? 'running' : 'waiting';
+        record.status = ['thinking', 'agent'].includes(record.kind) && event.connection !== 'closed' ? 'running' : 'waiting';
         record.completedAt = null; record.lastActivityAt = isoTime(timestamp);
         return publish('response.recovery.status');
       }
@@ -319,9 +336,11 @@ export function createWitnessMonitor({
         if (record?.status === "waiting") finishRecord(record.key, { ...event, type: "response.cloud.queue-ended" }, event.status === "completed");
         break;
       }
-      case 'response.progress': {
-        const record = [...records].reverse().find(item => item.kind === 'thinking' && item.status === 'running');
-        if (record && ['waiting', 'receiving', 'tool-arguments', 'text'].includes(event.stage)) {
+      case 'response.progress':
+      case 'subagent.response.progress': {
+        const record = event.agentId ? recordIndex.get(`agent:${event.agentId}`)
+          : [...records].reverse().find(item => item.kind === 'thinking' && item.status === 'running' && !item.agentId);
+        if (record && ['running', 'waiting'].includes(record.status) && ['waiting', 'receiving', 'tool-arguments', 'text'].includes(event.stage)) {
           const previous = record.modelProgress;
           record.modelProgress = { stage: event.stage, generatedChars: Math.max(0, Number(event.generatedChars) || 0), toolName: /^[a-zA-Z_][a-zA-Z0-9_.:-]{0,119}$/.test(event.toolName || '') ? event.toolName : '', elapsedMs: Math.max(0, Number(event.elapsedMs) || 0) };
           for (const key of ['inputTokens', 'outputTokens']) record.modelProgress[key] = Number.isSafeInteger(event[key]) && event[key] >= 0 ? event[key] : null;
@@ -364,6 +383,7 @@ export function createWitnessMonitor({
       case "response.reset":
         if (status === "waiting") status = "running";
         phase = event.phase === "self-check" ? "self-check" : "work";
+        clearRequestRecovery(null, timestamp);
         closeThinkingRecords(timestamp);
         addRecord({
           key: `thinking:${event.round || recordCounter + 1}`,
@@ -374,6 +394,16 @@ export function createWitnessMonitor({
           detail: event.phase || "work",
         });
         break;
+      case 'subagent.response.reset': {
+        if (agents.get(event.agentId)?.status !== 'running') return;
+        clearRequestRecovery(event.agentId, timestamp);
+        const record = recordIndex.get(`agent:${event.agentId}`);
+        if (record) {
+          delete record.modelProgress;
+          record.status = 'running'; record.completedAt = null; record.lastActivityAt = isoTime(timestamp);
+        }
+        break;
+      }
       case "plan.updated":
         plan = event.plan || null;
         addRecord({
@@ -543,6 +573,7 @@ export function createWitnessMonitor({
         }
         const finished = finishRecord(`agent:${event.agentId}`, event, success);
         if (finished) {
+          delete finished.modelRecovery;
           if (event.type === 'subagent.cancelled') finished.status = 'interrupted';
           if (event.status === 'budget_exhausted') finished.status = 'partial';
           finished.acceptance = event.acceptance || null;

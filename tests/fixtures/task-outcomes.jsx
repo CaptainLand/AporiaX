@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { I18nProvider } from "../../src/i18n.jsx";
 import { Conversation } from "../../src/conversation/ConversationViews.jsx";
 import { replaceAssistantForRetry } from "../../src/state/task-store-core.js";
+import { taskContinuationRequest } from '../../src/state/run-retry-core.js';
 import "../../src/styles.css";
 localStorage.setItem("aporiax.language.v1", "zh-CN");
 const statuses = ["partial", "needs_input", "blocked", "completed", "failed", "interrupted"];
@@ -46,5 +47,14 @@ function RetryFixture() {
 createRoot(document.getElementById("root")).render(<I18nProvider>
   <section id="static-outcomes">{task.messages.map((message) => <Conversation key={message.id} task={{ id: message.id, messages: [message] }} />)}</section>
   <section id="completed-headings">{completedReplies.map((message) => <Conversation key={message.id} task={{ id: message.id, messages: [message] }} />)}</section>
+  <section id="quota-receipt" style={{ maxWidth: 740, margin: '24px auto', padding: 20 }}>
+    <Conversation onRetry={message => { window.continueRequest = taskContinuationRequest({ id: 'quota-receipt' }, message); }} task={{ id: 'quota-receipt', workspacePath: 'D:/fixture', messages: [{
+      id: 'quota-receipt-message', role: 'assistant', status: 'partial', error: false, replyDelivered: true, replySource: 'local-receipt',
+      runId: 'quota-original-run', sourceUserId: 'quota-user', prompt: 'Finish the game',
+      content: '模型服务返回余额或额度不足，无法继续。请恢复对应服务的余额／额度，或切换模型后继续。\n\n已保留的文件改动（据本地执行记录整理，非模型最终答复）：\n\n- [super-mario.html](<super-mario.html>)\n\n本轮尚未全部完成，这份记录不表示文件已经验证通过。',
+      changes: [{ path: 'super-mario.html', created: true }], steps: [],
+      witness: { status: 'partial', records: [{ id: 'quota-ended', eventType: 'turn.completed', kind: 'status', status: 'partial', detail: '模型服务返回余额或额度不足，无法继续。', elapsedMs: 0 }] },
+    }] }} />
+  </section>
   <RetryFixture />
 </I18nProvider>);

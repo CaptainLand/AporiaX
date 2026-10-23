@@ -1,3 +1,5 @@
+import { modelRecoveryView } from '../../shared/model-recovery-view.js';
+
 const text = (value, limit = 4000) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const compact = (value, limit = 180) => { const clean = text(value).replace(/\s+/g, ' '); return clean.length > limit ? clean.slice(0, limit - 1) + '…' : clean; };
 const strings = value => (Array.isArray(value) ? value : value ? [value] : []).slice(0, 40).map(item => typeof item === 'string' ? text(item) : text(item?.message || item?.summary || item?.description || item?.title)).filter(Boolean);
@@ -89,6 +91,8 @@ export function agentDelivery(worker, language = 'zh-CN') {
   const count = report.findings.length;
   let conclusion = count ? t(`${count} 项待关注`, `${count} issue(s) need attention`) : report.malformed ? t('报告格式未能解析', 'Report could not be parsed') : report.summary ? compact(report.summary, 200) : report.findingsKnown ? t('未报告需关注的问题', 'No issues reported') : report.paragraphs.length ? compact(report.paragraphs[0], 200) : running ? t('正在处理，尚未交付结论。', 'Work is in progress; no conclusion yet.') : t('成员已返回，未提供可展示的结论。', 'The member returned without a displayable conclusion.');
   if (!count && /已验收|验收通过|检查通过|验证通过|测试通过|\bpass(?:ed)?\b/i.test(conclusion)) conclusion = staticReview ? t('静态审查未报告需关注的问题', 'No issues reported by static review') : t('成员报告已返回，验证范围见下方。', 'The report is returned; see the validation scope below.');
+  const recovery = running && worker.modelRecovery ? modelRecoveryView(worker.modelRecovery, language) : null;
+  if (recovery) { status = recovery.badge; conclusion = recovery.title; }
   const scope = [];
   if (checks?.readPaths?.length) scope.push(t('已检查代码。', 'Code was inspected.'));
   else if (report.staticOnly) scope.push(t('报告标注为静态审查。', 'The report describes a static review.'));
@@ -96,7 +100,7 @@ export function agentDelivery(worker, language = 'zh-CN') {
   else if (commands.length) scope.push(t(`记录了 ${commands.length} 条命令执行；${commands.filter(item => item.exitCode !== 0).length ? '存在未通过项。' : '命令结果不代表全部功能通过。'}`, `${commands.length} command(s) recorded; results do not certify full functionality.`));
   const browserRelevant = /canvas|动画|html|界面|前端|浏览器|browser|animation|motion/i.test([worker.task, report.raw].join('\n'));
   scope.push(browserObserved ? t('有浏览器操作记录，具体覆盖范围见完整报告。', 'Browser actions were recorded; see the full report for coverage.') : browserRelevant ? t('未记录浏览器运行验证，实际效果仍需验证。', 'No browser validation was recorded; actual behavior remains unverified.') : runtimeObserved ? t('仅确认记录中的执行范围，未覆盖项仍需验证。', 'Only recorded execution is confirmed; uncovered behavior remains unverified.') : t('未记录独立运行验证。', 'No independent runtime validation was recorded.'));
-  return { report, role, status, running, staticReview, task: agentTaskSummary(worker, report, language), conclusion, scope,
+  return { report, role, status, running, staticReview, recovery, task: agentTaskSummary(worker, report, language), conclusion, scope,
     previewFindings: report.findings.slice(0, 1).map(item => ({ ...item, message: findingPreview(item, language) })),
     next: report.next.slice(0, 2).map(item => compact(item, 160)),
     location: report.findings.find(item => item.location)?.location,
