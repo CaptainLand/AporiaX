@@ -27,7 +27,7 @@ try {
   assert.throws(() => normalizeSubagentInput({ role: 'researcher', task: 'Read' }, [{ ...profile, enabled: false }]));
   const definition = roleDefinition(profile, { knowledge: true });
   const policy = createSubagentPermissionPolicy({ '*': 'allow', read_file: 'ask', project_knowledge: 'deny' }, 'explore', definition);
-  assert.equal(policy.write_file ?? policy['*'], 'deny'); assert.equal(policy.read_file, 'ask'); assert.equal(policy.project_knowledge, 'deny');
+  assert.equal(policy.write_file, 'allow'); assert.equal(policy.read_file, 'ask'); assert.equal(policy.project_knowledge, 'deny');
   assert(definition.tools.includes('read_skill_resource'));
   assert(!roleDefinition(profile, { knowledge: false, skills: false }).tools.includes('project_knowledge'));
   assert.throws(() => applyRoleThinking({ thinking: 'high' }, { supportsThinking: false }, 'plain', {}), /不能/);

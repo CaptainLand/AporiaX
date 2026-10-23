@@ -32,7 +32,8 @@ try {
         children++;
         assert(text.includes('ROLE_INSTRUCTIONS_FIXTURE'));
         assert.equal(body.model, 'specialist');
-        assert(!body.tools.some(tool => ['write_file', 'run_command', 'project_knowledge', 'read_skill_resource'].includes(tool.function.name)));
+        assert(!body.tools.some(tool => ['write_file', 'run_command', 'project_knowledge'].includes(tool.function.name)));
+        assert(body.tools.some(tool => tool.function.name === 'read_skill_resource'));
         if (scenario === 'stop') {
           await controlWorker('stop', { runId: scenario, taskId: 'task', agentId: `${scenario}-sub-1` });
           throw Object.assign(new Error('stopped'), { name: 'AbortError' });

@@ -8,6 +8,7 @@ import { meetingPersona } from './persona.js';
 import { createMemberJobs } from './jobs.js';
 import { teamRecipients } from '../../shared/team-chat.js';
 import { atomicWriteFile } from '../storage/atomic-file.js';
+import { estimateConversationTokens, contextReserveTokens } from '../agent-context.js';
 
 const ID = /^[\w.-]{1,120}$/;
 const MAX_MESSAGES = 300;
@@ -163,9 +164,11 @@ export function createTeamChatService({ dataDirectory, loadTask, loadTasks, load
         timer = setTimeout(() => { timedOut = true; deadline.abort(); }, timeoutMs);
         const signal = AbortSignal.any([controller.signal, deadline.signal]);
         const messages = meetingMessages({ role, persona, evidence, history, content, language: input.language, replyMode });
-        const budget = Math.min(26000, Math.floor((model.contextWindow || 32000) * .6));
-        while (messages.length > 3 && JSON.stringify(messages).length > budget) messages.splice(2, 1);
-        if (JSON.stringify(messages).length > budget) throw new Error('任务资料过长，请选择更大上下文的聊天模型。');
+        const window = model.contextWindow || provider.contextWindow || 128000;
+        const budget = window - contextReserveTokens(window);
+        const toolTokens = canProposeJob ? estimateConversationTokens([{ role: 'system', content: JSON.stringify(MEMBER_JOB_PROPOSAL_TOOL) }]) : 0;
+        while (messages.length > 3 && estimateConversationTokens(messages) + toolTokens > budget) messages.splice(2, 1);
+        if (estimateConversationTokens(messages) + toolTokens > budget) throw new Error('当前资料超过所选模型的实际输入预算；请缩小本次交办或选择更大窗口。');
         const result = await callProvider({ provider: { ...provider, nativeModel: model }, signal, maxAttempts: 1,
           body: { model: model.id, messages, ...(canProposeJob && (model.supportsTools ?? provider.supportsTools) !== false ? { tools: [MEMBER_JOB_PROPOSAL_TOOL] } : {}), max_tokens: Math.min(2048, model.maxOutputTokens || provider.maxOutputTokens || 2048),
             ...chatReasoningParameters(model) },

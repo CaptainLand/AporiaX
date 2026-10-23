@@ -1,4 +1,5 @@
 import { NATIVE_ROLE_TOOLS } from '../../shared/professional-roles.js';
+import { DELEGATED_WRITE_TOOLS, DELEGATED_COMMAND_TOOLS } from '../../shared/delegated-capabilities.js';
 
 const CONTROL = ['task_brief', 'replan_strategy', 'update_plan', 'finish_task', 'present_to_user'];
 const MAIN = [...NATIVE_ROLE_TOOLS.explore, 'write_file', 'apply_patch', 'create_word_document', 'create_presentation', 'create_spreadsheet', 'run_command'];
@@ -12,4 +13,7 @@ export function memberPermissionPolicy(policy, role) {
   const allowed = memberAllowedTools(role);
   return Object.freeze(Object.fromEntries(Object.entries(policy).map(([name, action]) => [name, name !== '*' && allowed.has(name) ? action : 'deny'])));
 }
-export const memberCanWrite = role => ['write_file', 'apply_patch', 'run_command'].some(tool => memberAllowedTools(role).has(tool));
+// Executable checks can produce files too. Run them in the same private,
+// conflict-checked workspace; role names are not permission ceilings.
+export const memberCanWrite = role => [...memberAllowedTools(role)].some(tool =>
+  DELEGATED_WRITE_TOOLS.includes(tool) || DELEGATED_COMMAND_TOOLS.includes(tool));

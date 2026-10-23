@@ -29,7 +29,7 @@ assert.match((await meetingPersona({ id: 'custom', name: '独立角色', descrip
 for (const role of settings.profiles) {
   const policy = memberPermissionPolicy(createPermissionPolicy('workspace-write'), role);
   assert.equal(policy.delegate_subagent, 'deny'); assert.equal(policy.manage_agent_role, 'deny'); assert.equal(policy.read_external_file, 'deny');
-  if (role.template === 'review') assert.equal(policy.write_file, 'deny');
+  if (role.template === 'review') { const readOnly = memberPermissionPolicy(createPermissionPolicy('read-only'), role); assert.equal(readOnly.write_file ?? readOnly['*'], 'deny'); }
 }
 let calls = [], executions = [], reportEvents = [], release, propose = false;
 const task = { id: 'main-task', title: '主任务不变', workspacePath: workspace, accountId: 'account-a', messages: [{ role: 'user', content: 'main-only' }] };
@@ -145,7 +145,8 @@ try {
   assert.equal(actual.status, 'completed'); assert.equal(actualBodies.length, 2);
   const tools = actualBodies[0].tools.map(t => t.function.name);
   assert(tools.includes('read_file'));
-  for (const name of ['write_file', 'run_command', 'delegate_subagent', 'manage_agent_role', 'read_conversation_history']) assert(!tools.includes(name));
+  for (const name of ['write_file', 'run_command', 'verify_project']) assert(tools.includes(name), 'role responsibility is not a capability ceiling');
+  for (const name of ['delegate_subagent', 'manage_agent_role', 'read_conversation_history']) assert(!tools.includes(name));
   assert(actualBodies[1].messages.some(m => m.role === 'tool' && String(m.content).includes('original')));
   await drainModelResponseDiagnostics();
   const diagnostics = await readdir(join(root, 'diagnostics', 'model-responses'));

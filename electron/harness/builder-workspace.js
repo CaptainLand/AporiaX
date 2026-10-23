@@ -12,6 +12,8 @@ import {
   realpath,
   rm,
   writeFile,
+  statfs,
+  open,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -23,6 +25,7 @@ import {
 
 import { sharedScopeLeases } from "./shared-scope-leases.js";
 import { mergeBuilderFiles } from "./builder-merge.js";
+import { saveCheckpointFile } from '../runtime/checkpoint-files.js';
 
 export function builderSnapshotLimits(input = {}) {
   const limit = (key, env, fallback, min, max) => {
@@ -33,9 +36,9 @@ export function builderSnapshotLimits(input = {}) {
     return value;
   };
   const limits = {
-    maxFiles: limit("maxFiles", "APORIAX_BUILDER_MAX_FILES", 3000, 1, 10000),
-    maxBytes: limit("maxBytes", "APORIAX_BUILDER_MAX_BYTES", 32_000_000, 1, 64_000_000),
-    maxFileBytes: limit("maxFileBytes", "APORIAX_BUILDER_MAX_FILE_BYTES", 8_000_000, 1, 16_000_000),
+    maxFiles: limit('maxFiles', 'APORIAX_BUILDER_MAX_FILES', 100000, 1, 1000000),
+    maxBytes: limit('maxBytes', 'APORIAX_BUILDER_MAX_BYTES', 2_000_000_000, 1, 16_000_000_000),
+    maxFileBytes: limit('maxFileBytes', 'APORIAX_BUILDER_MAX_FILE_BYTES', 64_000_000, 1, 1_000_000_000),
   };
   if (limits.maxFileBytes > limits.maxBytes) throw new Error("Invalid Builder limits: maxFileBytes must not exceed maxBytes.");
   return limits;
@@ -46,6 +49,7 @@ const DIR_IGNORES = new Set([
   "dist",
   "release",
   "coverage",
+  '.tmp', '.aporiax', '.cache',
 ]);
 
 function runGit(args, cwd) {
@@ -104,7 +108,7 @@ async function readFileState(root, path, limits, hashOnly = false) {
     if (hashOnly) {
       const digest = createHash("sha256");
       for await (const chunk of createReadStream(absolute)) digest.update(chunk);
-      return { missing: false, hash: digest.digest("hex"), content: null };
+      return { missing: false, hash: digest.digest("hex"), content: hashOnly === 'file' ? { filePath: absolute } : null, bytes: stats.size };
     }
     if (stats.size > limits.maxFileBytes) {
       throw new Error(
@@ -132,7 +136,7 @@ function sameState(left, right) {
   );
 }
 
-async function captureScope(root, scopes, limits, metadataOnly = false, signal) {
+async function captureScope(root, scopes, limits, metadataOnly = false, signal, destination = null) {
   const files = new Map();
   let totalBytes = 0;
 
@@ -157,14 +161,26 @@ async function captureScope(root, scopes, limits, metadataOnly = false, signal) 
         `Builder scope snapshot exceeds ${limits.maxBytes} total bytes. Narrow writeScopes or adjust APORIAX_BUILDER_MAX_BYTES.`,
       );
     }
-    const content = metadataOnly ? Buffer.alloc(0) : await readFile(absolutePath);
-    if (!metadataOnly) {
+    const content = metadataOnly ? null : await readFile(absolutePath);
+    let hash = content ? hashBuffer(content) : null;
+    if (metadataOnly === 'copy') {
+      const target = join(destination, normalizedRelative(root, absolutePath));
+      await mkdir(dirname(target), { recursive: true }); await copyFile(absolutePath, target);
+      const digest = createHash('sha256');
+      for await (const chunk of createReadStream(target)) { signal?.throwIfAborted(); digest.update(chunk); }
+      hash = digest.digest('hex');
+    } else if (metadataOnly === 'hash') {
+      const digest = createHash('sha256');
+      for await (const chunk of createReadStream(absolutePath)) { signal?.throwIfAborted(); digest.update(chunk); }
+      hash = digest.digest('hex');
+    }
+    if (metadataOnly !== true) {
       const latest = await lstat(absolutePath);
-      if (content.length !== stats.size || latest.size !== stats.size || latest.mtimeMs !== stats.mtimeMs) throw new Error(`Builder file changed during snapshot; retry after edits settle: ${normalizedRelative(root, absolutePath)}`);
+      if (content && content.length !== stats.size || latest.size !== stats.size || latest.mtimeMs !== stats.mtimeMs) throw new Error(`Builder file changed during snapshot; retry after edits settle: ${normalizedRelative(root, absolutePath)}`);
     }
     files.set(normalizedRelative(root, absolutePath), {
       missing: false,
-      hash: hashBuffer(content),
+      hash,
       content,
     });
   };
@@ -335,7 +351,28 @@ function calculateLineChanges(previousContent, nextContent) {
   };
 }
 
-function createCheckpoint(path, beforeState, afterState) {
+async function createCheckpoint(path, beforeState, afterState, ownerRoot, budget = { remaining: 8_000_000 }) {
+  // Keep small source diffs convenient, but bound the whole snapshot's inline
+  // payload. File versions beyond that budget live in verified disk storage.
+  const versions = {};
+  let fileBackedBinary = false;
+  for (const [side, state] of [['before', beforeState], ['after', afterState]]) {
+    if (!state?.missing && state?.content?.filePath) {
+      const size = (await lstat(state.content.filePath)).size;
+      if (size <= 128_000 && size <= budget.remaining) {
+        budget.remaining -= size;
+        state.content = await readFile(state.content.filePath);
+        if (hashBuffer(state.content) !== state.hash) throw Error(`Checkpoint changed: ${path}`);
+      } else {
+        versions[side] = await saveCheckpointFile(ownerRoot, path, state.content.filePath, state.hash);
+        const handle = await open(state.content.filePath, 'r');
+        try {
+          const sample = Buffer.alloc(Math.min(size, 8192)); await handle.read(sample, 0, sample.length, 0);
+          fileBackedBinary ||= bufferLooksBinary(sample) || !isUtf8(sample);
+        } finally { await handle.close(); }
+      }
+    }
+  }
   const before = beforeState || {
     missing: true,
     content: Buffer.alloc(0),
@@ -344,29 +381,24 @@ function createCheckpoint(path, beforeState, afterState) {
     missing: true,
     content: Buffer.alloc(0),
   };
-  if (
-    (!before.missing && bufferLooksBinary(before.content)) ||
-    (!after.missing && bufferLooksBinary(after.content))
-  ) {
-    throw new Error(
-      `Builder merge rejects binary changes; keep Builder scopes to source/config text files: ${path}`,
-    );
-  }
+  const encoded = fileBackedBinary || [before, after].some(state => !state.missing && Buffer.isBuffer(state.content) && (bufferLooksBinary(state.content) || !isUtf8(state.content)));
   const beforeContent = before.missing
     ? ""
-    : before.content.toString("utf8");
+    : versions.before ? '' : before.content.toString("utf8");
   const afterContent = after.missing
     ? ""
-    : after.content.toString("utf8");
-  const encoded = (!before.missing && !isUtf8(before.content)) || (!after.missing && !isUtf8(after.content));
+    : versions.after ? '' : after.content.toString("utf8");
   return {
     path,
-    beforeContent: encoded && !before.missing ? before.content.toString("base64") : beforeContent,
-    afterContent: encoded && !after.missing ? after.content.toString("base64") : afterContent,
-    ...(!before.missing && !isUtf8(before.content) ? { beforeBase64: before.content.toString("base64") } : {}),
-    ...(!after.missing && !isUtf8(after.content) ? { afterBase64: after.content.toString("base64") } : {}),
-    beforeHash: before.missing ? null : hashBuffer(before.content),
-    afterHash: after.missing ? null : hashBuffer(after.content),
+    beforeContent: encoded && !before.missing && !versions.before ? before.content.toString("base64") : beforeContent,
+    afterContent: encoded && !after.missing && !versions.after ? after.content.toString("base64") : afterContent,
+    ...(encoded && !before.missing && !versions.before && !isUtf8(before.content) ? { beforeBase64: before.content.toString('base64') } : {}),
+    ...(encoded && !after.missing && !versions.after && !isUtf8(after.content) ? { afterBase64: after.content.toString('base64') } : {}),
+    beforeHash: before.missing ? null : before.hash,
+    afterHash: after.missing ? null : after.hash,
+    beforeBytes: before.missing ? 0 : before.bytes ?? before.content.length,
+    afterBytes: after.missing ? 0 : after.bytes ?? after.content.length,
+    ...(Object.keys(versions).length ? { fileVersions: versions, previewTruncated: true } : {}),
     beforeMissing: Boolean(before.missing),
     afterMissing: Boolean(after.missing),
     binary: encoded,
@@ -375,7 +407,7 @@ function createCheckpoint(path, beforeState, afterState) {
     deleted: Boolean(!before.missing && after.missing),
     reverted: false,
     source: "builder-merge",
-    ...calculateLineChanges(beforeContent, afterContent),
+    ...(encoded || Object.keys(versions).length ? { additions: 0, deletions: 0 } : calculateLineChanges(beforeContent, afterContent)),
   };
 }
 
@@ -396,18 +428,24 @@ export class BuilderWorkspaceManager {
     return this.#leases.list();
   }
 
-  async open({ workspaceRoot, agentId, writeScopes, signal }) {
+  async open({ workspaceRoot, agentId, writeScopes, signal, commandWorkspace = false }) {
     signal?.throwIfAborted();
     const owner = String(agentId || "").trim();
     if (!owner) throw new Error("Builder agentId is required.");
-    const scopes = normalizeBuilderScopes(writeScopes);
+    const scopes = normalizeBuilderScopes(writeScopes, { allowRoot: commandWorkspace });
     workspaceRoot = await realpath(resolve(workspaceRoot));
-    const lease = this.#leases.acquire(owner, scopes, { workspaceRoot });
+    // Inspection/command workers do not reserve the entire repository. Reserve
+    // only the paths they actually changed, at conflict-checked integration.
+    const lease = commandWorkspace ? { release() {} } : this.#leases.acquire(owner, scopes, { workspaceRoot });
     let baseDirectory = null;
     let worktreeRoot = null;
     let linkedWorktree = false;
     try {
-      const hasHead = await ensureGitWorkspace(workspaceRoot);
+      let hasHead;
+      if (commandWorkspace) {
+        try { hasHead = await ensureGitWorkspace(workspaceRoot); }
+        catch { hasHead = false; } // plain folders are valid command workspaces
+      } else hasHead = await ensureGitWorkspace(workspaceRoot);
       await captureScope(workspaceRoot, scopes, this.#limits, true, signal);
       baseDirectory = await mkdtemp(join(tmpdir(), "aporiax-builder-"));
       worktreeRoot = join(baseDirectory, "workspace");
@@ -417,22 +455,38 @@ export class BuilderWorkspaceManager {
       ); linkedWorktree = true; }
       else {
         await mkdir(worktreeRoot);
-        const snapshot = await captureScope(workspaceRoot, ['.'], this.#limits, false, signal);
+        const disk = await statfs(baseDirectory);
+        const free = Number(disk.bavail) * Number(disk.bsize);
+        const copyLimits = { ...this.#limits, maxBytes: Math.min(this.#limits.maxBytes, Math.max(0, Math.floor(free - 512 * 1024 ** 2))) };
+        const snapshot = await captureScope(workspaceRoot, ['.'], copyLimits, 'copy', signal, worktreeRoot);
         // The baseline commit is confined to a new private repository. No user
         // index, branch, hooks, attributes or commits are touched.
-        await runGit(['-c', 'init.templateDir=', 'init'], worktreeRoot);
-        await runGit(['-c', 'user.name=AporiaX', '-c', 'user.email=local@aporiax.invalid', '-c', 'core.hooksPath=' + join(baseDirectory, 'no-hooks'), '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '-m', 'Private Builder baseline'], worktreeRoot);
-        for (const [path, item] of snapshot) {
-          const target = join(worktreeRoot, path); await mkdir(dirname(target), { recursive: true }); await writeFile(target, item.content);
+        try {
+          await runGit(['-c', 'init.templateDir=', 'init'], worktreeRoot);
+          await runGit(['-c', 'user.name=AporiaX', '-c', 'user.email=local@aporiax.invalid', '-c', 'core.hooksPath=' + join(baseDirectory, 'no-hooks'), '-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '-m', 'Private Builder baseline'], worktreeRoot);
+        } catch (error) {
+          if (!commandWorkspace) throw error;
+          this.#eventBus?.emit({ type: 'subagent.resource.warning', agentId: owner,
+            detail: 'Git is unavailable in the private command copy; ordinary command and file checks remain available.', recoverable: true });
         }
-        if (changedPaths(snapshot, await captureScope(workspaceRoot, ['.'], this.#limits, false, signal)).length) throw Error('Workspace changed during Builder snapshot; retry once edits settle.');
+        if (changedPaths(snapshot, await captureScope(workspaceRoot, ['.'], copyLimits, 'hash', signal)).length) throw Error('Workspace changed during Builder snapshot; retry once edits settle.');
       }
       // Use the same physical spelling as verified tool paths on Windows.
       worktreeRoot = await realpath(worktreeRoot);
       if (linkedWorktree) await overlayDirtyWorkspace(workspaceRoot, worktreeRoot, scopes);
       signal?.throwIfAborted();
-      const baseline = await captureScope(workspaceRoot, scopes, this.#limits);
-      const dirtySnapshot = () => linkedWorktree ? snapshotDirtyState(worktreeRoot) : captureScope(worktreeRoot, ['.'], this.#limits);
+      const baselineRoot = join(baseDirectory, 'baseline');
+      const baseline = await captureScope(workspaceRoot, scopes, this.#limits, 'copy', signal, baselineRoot);
+      const materialize = async (root, metadata, paths) => {
+        const content = new Map();
+        for (const path of paths) if (metadata.has(path)) {
+          const state = await readFileState(root, path, this.#limits, 'file');
+          if (!sameState(state, metadata.get(path))) throw Error(`Builder snapshot changed while reading: ${path}`);
+          content.set(path, state);
+        }
+        return content;
+      };
+      const dirtySnapshot = () => linkedWorktree ? snapshotDirtyState(worktreeRoot) : captureScope(worktreeRoot, ['.'], this.#limits, 'hash');
       const worktreeDirtyBaseline = await dirtySnapshot();
       this.#eventBus?.emit({
         type: "builder.workspace.created",
@@ -495,16 +549,24 @@ export class BuilderWorkspaceManager {
           );
         }
 
-        const after = await captureScope(worktreeRoot, scopes, this.#limits);
-        const paths = changedPaths(baseline, after);
-        const checkpoints = paths.map((path) =>
-          createCheckpoint(path, baseline.get(path), after.get(path)),
-        );
+        const afterMetadata = await captureScope(worktreeRoot, scopes, this.#limits, 'hash', signal);
+        const paths = changedPaths(baseline, afterMetadata);
+        if (!paths.length) return { merged: true, conflicts: [], changes: [], checkpoints: [] };
+        let integrationLease;
+        if (commandWorkspace && paths.length) {
+          try { integrationLease = this.#leases.acquire(owner, paths, { workspaceRoot }); }
+          catch { return { merged: false, conflicts: paths, changes: [], checkpoints: [] }; }
+        }
+        try {
+        const before = await materialize(baselineRoot, baseline, paths);
+        const after = await materialize(worktreeRoot, afterMetadata, paths);
+        const checkpoints = [], budget = { remaining: 8_000_000 };
+        for (const path of paths) checkpoints.push(await createCheckpoint(path, before.get(path), after.get(path), workspaceRoot, budget));
 
         const conflicts = [];
         const currentStates = new Map();
         for (const path of paths) {
-          const current = await readFileState(workspaceRoot, path, this.#limits);
+          const current = await readFileState(workspaceRoot, path, this.#limits, 'file');
           currentStates.set(path, current);
           const expected =
             baseline.get(path) || {
@@ -558,6 +620,7 @@ export class BuilderWorkspaceManager {
           checkpoints,
           recovery: mergeRecovery,
         };
+        } finally { integrationLease?.release(); }
       };
 
       const merge = async () => {
@@ -571,8 +634,12 @@ export class BuilderWorkspaceManager {
 
       const snapshot = async () => {
         if (closed) throw new Error("Builder workspace is already closed.");
-        const after = await captureScope(worktreeRoot, scopes, this.#limits);
-        return changedPaths(baseline, after).map((path) => createCheckpoint(path, baseline.get(path), after.get(path)));
+        const metadata = await captureScope(worktreeRoot, scopes, this.#limits, 'hash');
+        const paths = changedPaths(baseline, metadata);
+        const before = await materialize(baselineRoot, baseline, paths), after = await materialize(worktreeRoot, metadata, paths);
+        const checkpoints = [], budget = { remaining: 8_000_000 };
+        for (const path of paths) checkpoints.push(await createCheckpoint(path, before.get(path), after.get(path), workspaceRoot, budget));
+        return checkpoints;
       };
 
       return Object.freeze({

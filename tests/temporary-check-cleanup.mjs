@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, lstat, rm, link, symlink, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, lstat, rm, link, symlink, readdir, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createNativeToolExecutor } from '../electron/runtime/native-tool-executor.js';
@@ -10,6 +10,7 @@ import { withDurableRun } from '../electron/runtime/durable-run.js';
 import { configureNativeFileAccess } from '../electron/runtime/file-access-policy.js';
 import { subagentToolPaths, SUBAGENT_ROLE_CONFIG, assertSubagentScope } from '../electron/runtime/subagent-model.js';
 import { createLocalControlPolicy, withLocalControlPolicy } from '../electron/control/policy.js';
+import { validateTemporaryCheckCreation } from '../electron/runtime/temporary-check-files.js';
 
 const root = await mkdtemp(join(tmpdir(), 'aporiax-temporary-check-tests-'));
 const workspace = join(root, 'workspace'), recovery = join(root, 'recovery');
@@ -29,8 +30,49 @@ const call = (toolName, input, overrides = {}) => dispatchNativeTool({
 });
 const create = (path, extra = {}) => call('write_file', { path, content: 'console.log("self-check");\n', temporary_self_check: true, ...extra });
 const cleanup = path => call('cleanup_temporary_check', { path });
+const refusal = (reason, message) => error => {
+  assert.equal(error.code, 'TEMPORARY_CHECK_REFUSED');
+  assert.equal(error.reason, reason);
+  assert.match(error.message, message);
+  return true;
+};
+const recoveryCopies = async path => {
+  const copies = [];
+  for (const directory of await readdir(recovery)) {
+    const manifest = JSON.parse(await readFile(join(recovery, directory, 'manifest.json'), 'utf8'));
+    for (const entry of manifest.files || manifest.entries || []) if (entry.path === path && entry.afterMissing && entry.backup) copies.push(await readFile(join(recovery, directory, entry.backup), 'utf8'));
+  }
+  return copies;
+};
 const test = async (name, fn) => { const result = await fn(); if (result === 'skip') { skipped++; console.log(`SKIP ${name}`); } else { checks++; console.log(`PASS ${name}`); } };
 try {
+  await test('HTML/HTM test pages register and clean recoverably without a prompt', () => run(async () => {
+    const content = '<!doctype html><meta charset="utf-8"><title>临时测试</title><p>frame</p>\n';
+    for (const path of ['self-check.html', 'self-check.htm', 'self-check-uppercase.HTML']) {
+      const made = await create(path, { content });
+      assert.equal(made.modelResult.temporarySelfCheck, true);
+      assert.equal(made.modelResult.cleanupTool, 'cleanup_temporary_check');
+      const result = await cleanup(path);
+      assert.equal(result.modelResult.deleted, true);
+      assert.equal(result.modelResult.recoverable, true);
+      assert.equal(result.change.beforeContent, content);
+      await assert.rejects(lstat(join(workspace, path)), { code: 'ENOENT' });
+      assert.ok((await recoveryCopies(path)).includes(content));
+    }
+    assert.equal(approvals, 0);
+  }));
+  await test('tracked HTML writes, both patches and re-registration retain cleanup ownership', () => run(async () => {
+    const path = 'editable-page.html';
+    await create(path, { content: '<p>one</p>\n' });
+    const updated = await call('write_file', { path, content: '<p>two</p>\n' });
+    assert.equal(updated.modelResult.temporarySelfCheck, true);
+    await call('apply_patch', { path, old_text: 'two', new_text: 'three' });
+    await call('apply_patch', { patch: '*** Begin Patch\n*** Update File: editable-page.html\n@@\n-<p>three</p>\n+<p>four</p>\n*** End Patch' });
+    await create(path, { content: '<p>five</p>\n' });
+    const result = await cleanup(path);
+    assert.equal(result.modelResult.deleted, true);
+    assert.equal(result.change.beforeContent, '<p>five</p>\n');
+  }));
   await test('tracked writes and both patch formats preserve temporary ownership', () => run(async () => {
     await create('editable.mjs');
     await call('write_file', { path: 'editable.mjs', content: 'const a = 1;\n' });
@@ -50,11 +92,7 @@ try {
     const result = await cleanup('self-check.mjs'); assert.equal(result.modelResult.deleted, true);
     assert.equal(result.change.afterMissing, true); assert.equal(result.modelResult.recoverable, true);
     await assert.rejects(lstat(join(workspace, 'self-check.mjs')), { code: 'ENOENT' }); assert.equal(approvals, 0);
-    const backups = [];
-    for (const directory of await readdir(recovery)) {
-      const manifest = JSON.parse(await readFile(join(recovery, directory, 'manifest.json'), 'utf8'));
-      for (const entry of manifest.files || manifest.entries || []) if (entry.path === 'self-check.mjs' && entry.afterMissing && entry.backup) backups.push(await readFile(join(recovery, directory, entry.backup), 'utf8'));
-    }
+    const backups = await recoveryCopies('self-check.mjs');
     assert.ok(backups.includes('console.log("self-check");\n'), 'deletion must retain original bytes in recovery');
   }));
   await test('filename alone never grants cleanup authority', () => run(async () => {
@@ -74,6 +112,8 @@ try {
   await test('new run/restart cannot inherit exemption from model history', async () => {
     await run(() => create('previous-run.mjs'));
     await run(() => assert.rejects(cleanup('previous-run.mjs'), /not registered/));
+    await run(() => create('previous-run.html', { content: '<p>old task</p>' }));
+    await run(() => assert.rejects(cleanup('previous-run.html'), refusal('NOT_REGISTERED', /not registered/)));
   });
   await test('registration requires a live task', async () => {
     await assert.rejects(create('no-task.mjs'), /active task/);
@@ -82,6 +122,29 @@ try {
   await test('ordinary files without registration stay untouched', () => run(async () => {
     await call('write_file', { path: 'ordinary.mjs', content: 'deliverable' });
     await assert.rejects(cleanup('ordinary.mjs'), /not registered/);
+  }));
+  await test('ordinary and existing HTML files never gain automatic deletion authority', () => run(async () => {
+    const path = 'user-page.html', content = '<p>User deliverable</p>';
+    await call('write_file', { path, content });
+    await assert.rejects(cleanup(path), refusal('NOT_REGISTERED', /not registered/));
+    await assert.rejects(create(path), refusal('NOT_OWNED', /newly created/));
+    assert.equal(await readFile(join(workspace, path), 'utf8'), content);
+  }));
+  await test('externally edited HTML cannot be re-registered or automatically deleted', () => run(async () => {
+    const path = 'user-edited.html';
+    await create(path, { content: '<p>original</p>' });
+    await writeFile(join(workspace, path), '<p>User edit</p>');
+    await assert.rejects(create(path, { content: '<p>agent overwrite</p>' }), refusal('NOT_OWNED', /externally changed/));
+    await assert.rejects(cleanup(path), refusal('FILE_CHANGED', /modified or replaced/));
+    assert.equal(await readFile(join(workspace, path), 'utf8'), '<p>User edit</p>');
+  }));
+  await test('replacing HTML with identical bytes does not bypass file identity checks', () => run(async () => {
+    const path = 'replaced-page.html', content = '<p>same bytes</p>';
+    await create(path, { content });
+    await rename(join(workspace, path), join(workspace, 'replaced-page-original.html'));
+    await writeFile(join(workspace, path), content);
+    await assert.rejects(cleanup(path), refusal('FILE_CHANGED', /modified or replaced/));
+    assert.equal(await readFile(join(workspace, path), 'utf8'), content);
   }));
   await test('external files cannot qualify even with global file access', () => run(async () => {
     configureNativeFileAccess(() => ({ enabled: true, protectedPaths: [] }));
@@ -92,6 +155,10 @@ try {
   await test('hard links never qualify', () => run(async () => {
     await create('linked.mjs'); await link(join(workspace, 'linked.mjs'), join(workspace, 'linked-alias.mjs'));
     await assert.rejects(cleanup('linked.mjs'), /modified or replaced/);
+    await create('linked-page.html', { content: '<p>linked</p>' });
+    await link(join(workspace, 'linked-page.html'), join(workspace, 'linked-page-alias.html'));
+    await assert.rejects(cleanup('linked-page.html'), refusal('FILE_CHANGED', /modified or replaced/));
+    assert.equal(await readFile(join(workspace, 'linked-page-alias.html'), 'utf8'), '<p>linked</p>');
   }));
   await test('symlink replacement never qualifies', () => run(async () => {
     await create('replaced.mjs'); await rm(join(workspace, 'replaced.mjs'));
@@ -100,25 +167,51 @@ try {
     await assert.rejects(cleanup('replaced.mjs'), /link|non-file/);
     assert.equal(await readFile(join(workspace, 'ordinary.mjs'), 'utf8'), 'deliverable');
   }));
-  await test('extension/size restrictions are checked before writing', () => run(async () => {
-    await assert.rejects(create('deliverable.html'), /small temporary/);
-    await assert.rejects(create('huge.mjs', { content: 'x'.repeat(100_001) }), /small temporary/);
-    await assert.rejects(lstat(join(workspace, 'deliverable.html')), { code: 'ENOENT' });
+  await test('unsupported types and oversized content report distinct reasons before writing', () => run(async () => {
+    await assert.rejects(create('unsupported.json'), refusal('UNSUPPORTED_FILE_TYPE', /File type \.json/));
+    await assert.rejects(create('no-extension'), refusal('UNSUPPORTED_FILE_TYPE', /no extension/));
+    await assert.rejects(create('huge.mjs', { content: 'x'.repeat(100_001) }), refusal('CONTENT_TOO_LARGE', /100001 UTF-8 bytes.*100000 bytes/));
+    await assert.rejects(create('huge.html', { content: '测'.repeat(33_334) }), refusal('CONTENT_TOO_LARGE', /100002 UTF-8 bytes.*100000 bytes/));
+    for (const path of ['unsupported.json', 'no-extension', 'huge.mjs', 'huge.html']) await assert.rejects(lstat(join(workspace, path)), { code: 'ENOENT' });
+  }));
+  await test('invalid content has its own registration error', () => run(async () => {
+    await assert.rejects(validateTemporaryCheckCreation(workspace, 'invalid-content.html', { created: true, content: 42 }), refusal('INVALID_CONTENT', /UTF-8 text string/));
+  }));
+  await test('UTF-8 byte limit is consistent at creation and tracked HTML updates', () => run(async () => {
+    const path = 'byte-boundary.html', content = '测'.repeat(33_333) + '\n';
+    assert.equal(Buffer.byteLength(content), 100_000);
+    await create(path, { content });
+    const updated = await call('write_file', { path, content: content.replace('测', '验') });
+    assert.equal(updated.modelResult.temporarySelfCheck, true);
+    assert.equal((await cleanup(path)).modelResult.deleted, true);
+  }));
+  await test('ordinary updates over the temporary limit revoke cleanup instead of deleting the file', () => run(async () => {
+    const path = 'grown-page.html', content = '测'.repeat(33_334);
+    await create(path, { content: '<p>small</p>' });
+    const updated = await call('write_file', { path, content });
+    assert.equal(updated.modelResult.temporarySelfCheck, false);
+    assert.equal(updated.modelResult.cleanupTool, null);
+    await assert.rejects(cleanup(path), refusal('NOT_REGISTERED', /not registered/));
+    assert.equal(await readFile(join(workspace, path), 'utf8'), content);
   }));
   await test('read-only and explicit deny remain authoritative', async () => {
     await run(async () => {
-      await create('denied.mjs');
-      await assert.rejects(call('cleanup_temporary_check', { path: 'denied.mjs' }, { permissionPolicy: createPermissionPolicy('read-only') }), /Permission denied/);
-      await assert.rejects(call('cleanup_temporary_check', { path: 'denied.mjs' }, { permissionPolicy: createPermissionPolicy('workspace-write', { cleanup_temporary_check: 'deny' }) }), /Permission denied/);
-      assert.ok((await lstat(join(workspace, 'denied.mjs'))).isFile());
+      for (const path of ['denied.mjs', 'denied-page.html']) {
+        await create(path);
+        await assert.rejects(call('cleanup_temporary_check', { path }, { permissionPolicy: createPermissionPolicy('read-only') }), /Permission denied/);
+        await assert.rejects(call('cleanup_temporary_check', { path }, { permissionPolicy: createPermissionPolicy('workspace-write', { cleanup_temporary_check: 'deny' }) }), /Permission denied/);
+        assert.ok((await lstat(join(workspace, path))).isFile());
+      }
     });
   });
   await test('explicit ask still prompts and user rejection prevents deletion', () => run(async () => {
-    await create('ask.mjs'); let asked = false;
-    await assert.rejects(call('cleanup_temporary_check', { path: 'ask.mjs' }, {
-      permissionPolicy: createPermissionPolicy('workspace-write', { cleanup_temporary_check: 'ask' }),
-      requestApproval: async () => { asked = true; return { approved: false }; },
-    }), /rejected/); assert.equal(asked, true); assert.ok((await lstat(join(workspace, 'ask.mjs'))).isFile());
+    for (const path of ['ask.mjs', 'ask-page.html']) {
+      await create(path); let asked = false;
+      await assert.rejects(call('cleanup_temporary_check', { path }, {
+        permissionPolicy: createPermissionPolicy('workspace-write', { cleanup_temporary_check: 'ask' }),
+        requestApproval: async () => { asked = true; return { approved: false }; },
+      }), /rejected/); assert.equal(asked, true); assert.ok((await lstat(join(workspace, path))).isFile());
+    }
   }));
   await test('builder write scope recognizes cleanup as a write', async () => {
     assert.ok(SUBAGENT_ROLE_CONFIG.builder.tools.has('cleanup_temporary_check'));

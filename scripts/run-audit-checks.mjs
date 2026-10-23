@@ -3,6 +3,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const files = [
+  'harness-autonomy-review-fixes.mjs',
+  'harness-capability-autonomy.mjs', 'team-chat.mjs', 'team-meetings-member-jobs.mjs', 'sandbox-watchdog-smoke.mjs',
   'web-tools.mjs', 'web-tools-runtime.mjs', 'witness-progress.mjs',
   'subagent-autonomy.mjs', 'subagent-autonomy-runtime.mjs',
   'harness-coordination-resilience.mjs', 'subagent-runtime-resilience.mjs', 'model-recovery-isolation.mjs',

@@ -33,6 +33,7 @@ export function workerResultForModel(result, detail = "summary") {
     agentId: result.agentId, role: result.role, status: result.status, summary, evidence,
     reportId: result.reportId, acceptance: result.acceptance,
     integrated: result.integrated, conflicts: result.conflicts, changes: result.changes,
+    requiresIntegration: result.requiresIntegration, cleanupWarnings: result.cleanupWarnings,
     rounds: result.rounds, usage: result.usage,
     detailAvailable: true,
     detailHint: "Use collect_subagents with this agent_id and detail=full for the retained report and tool evidence.",

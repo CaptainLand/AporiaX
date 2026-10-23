@@ -283,6 +283,13 @@ export function createWitnessMonitor({
     let meaningful = true;
 
     switch (event.type) {
+      case 'subagent.resource.warning': {
+        addRecord({ key: `resource-warning:${event.agentId || 'main'}:${recordCounter + 1}`, timestamp,
+          kind: 'warning', status: 'completed', eventType: event.type, actor: 'subagent',
+          agentId: event.agentId, role: event.role,
+          detail: clipped(event.detail || (event.warnings || []).join('; ')) });
+        break;
+      }
       case 'response.recovery.status':
       case 'subagent.response.recovery.status': {
         if (event.agentId && agents.get(event.agentId)?.status !== 'running') return;

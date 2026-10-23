@@ -18,6 +18,7 @@ const COMMAND_TOOLS = new Set(["verify_project", "run_command", "start_process",
 const BROWSER_TOOLS = new Set(["web_search", "web_fetch", "browser_open", "browser_snapshot", "browser_screenshot", "browser_console", "browser_network", "browser_close", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_upload"]);
 export const LOCAL_CONTROL_SPECIAL_TOOLS = new Set(["request_user_input", "read_conversation_history", "finish_task", "finish_subagent", "task_brief", "replan_strategy", "delegate_subagent", "followup_subagent", "cancel_subagent", "collect_subagents", "review_subagent_result", "update_plan", "request_self_check", "complete_self_check", "remember_project_fact", "project_knowledge"]);
 const DENIED_TOOLS = new Set(["install_workspace_skill", "read_external_file", "lsp_install", "read_skill_resource", "search_skills", "remember_project_fact", "project_knowledge"]);
+LOCAL_CONTROL_SPECIAL_TOOLS.add('read_delegation_context');
 const DEFAULT_LIMITS = Object.freeze({ maxModelCalls: 80, maxToolCalls: 400, maxParallelAgents: 2, maxSubagents: 12, maxDurationSeconds: 1800 });
 
 function policyError(message, code = "LOCAL_CONTROL_FORBIDDEN") {
@@ -80,6 +81,16 @@ export function withLocalControlPolicy(context, callback) {
   return storage.run(context, callback);
 }
 
+// Trusted desktop entry point, never constructed from external API arguments.
+// Keep the workspace/capability boundary, without borrowing public-client quotas.
+export function createMemberControlPolicy(options = {}) {
+  const base = createLocalControlPolicy({ ...options, limits: { maxParallelAgents: 0, maxSubagents: 0 } });
+  const limits = Object.freeze({ ...base.limits, maxModelCalls: options.maxRequests ?? null, maxToolCalls: null, maxDurationSeconds: options.maxSeconds ?? null });
+  const context = Object.freeze({ ...base, internalMember: true, limits, deadlineAt: options.maxSeconds ? Date.now() + options.maxSeconds * 1000 : Infinity });
+  contexts.set(context, { ...contexts.get(base), context });
+  return context;
+}
+
 // Only the trusted Builder workspace manager calls this after creating an
 // isolated worktree. The child gets its own file root, never a new budget.
 export function withLocalControlWorkspace(workspaceRoot, callback) {
@@ -127,7 +138,7 @@ function consume(counter, limit, description) {
   const data = dataFor();
   if (!data) return;
   assertLocalControlActive();
-  if (data.state[counter] >= data.context.limits[limit]) {
+  if (data.context.limits[limit] != null && data.state[counter] >= data.context.limits[limit]) {
     data.state.failure = policyError(`External task ${description} limit reached; saved work is retained.`, "LOCAL_CONTROL_BUDGET_EXCEEDED");
     throw data.state.failure;
   }
@@ -177,7 +188,7 @@ export async function withLocalControlWorker(options, callback) {
 }
 
 function requireCapability(data, capability) {
-  if (data.context.permissionProfile !== "workspace_edit" || !data.context.capabilities[capability]) throw policyError(`External task ${capability} capability was not granted.`);
+  if ((!data.context.internalMember && data.context.permissionProfile !== 'workspace_edit') || !data.context.capabilities[capability]) throw policyError(`External task ${capability} capability was not granted.`);
 }
 
 function checkTool(data, toolName, input = {}) {

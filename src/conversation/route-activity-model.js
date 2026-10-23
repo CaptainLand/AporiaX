@@ -133,6 +133,7 @@ export function describeRouteRecord(record, language = 'zh-CN') {
     'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],
     'turn.failed': ['任务运行失败', 'Run failed'], 'turn.cancelled': ['任务已停止', 'Run stopped'],
     'response.retry': ['模型请求重试', 'Model request retry'],
+    'subagent.resource.warning': ['成员资源清理提示', 'Member resource cleanup notice'],
     'response.quota.low.daily': ['全站额度 ≤5% · 正在收尾', 'Shared daily allowance ≤5% · Winding down'],
     'response.quota.low.weekly': ['周额度 ≤5% · 正在收尾', 'Weekly allowance ≤5% · Winding down'],
     'plan.updated': ['计划已更新', 'Plan updated'], 'parallel_batch.started': ['并行动作已开始', 'Parallel actions started'],

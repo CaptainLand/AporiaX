@@ -208,7 +208,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       const r = lazy(ownerId), result = await r[method](...args);
       return result?.lifecycle ? { ...result, lifecycle: { ...result.lifecycle, survivesTask: keepBrowser(r) } } : result;
     }]));
-    const browserRuntime = { ...facade("main"), forOwner: facade };
+    const browserRuntime = { ...facade(context.ownerId || 'main'), forOwner: facade };
     let released = false;
     const manager = createPersistentProcessManager({ emit: (event) => {
       if (!released) context.emit(event);

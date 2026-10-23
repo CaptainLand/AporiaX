@@ -6,6 +6,7 @@ import { projectScriptFingerprint } from "./project-script-trust.js";
 import { assertLocalControlTool, localControlToolRequiresApproval } from "../control/policy.js";
 import { assertNativeFileTool, verifyExternalFileTarget, withNativeFileScope } from "./file-access-policy.js";
 import { prepareFileDeletion } from './workspace-mutations.js';
+import { verificationCommand } from './isolated-verification.js';
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -124,6 +125,15 @@ export async function dispatchNativeTool({
     }
   }
 
+  // Executable verification is an ordinary command, never an unapproved host
+  // fallback. Re-enter the authoritative command boundary before any code runs.
+  if (toolName === 'verify_project' && ['script', 'command'].includes(input.kind)) {
+    const selected = await verificationCommand(executeContext.workspaceRoot, input);
+    const result = await dispatchNativeTool({ registry, permissionPolicy, approvalMode, requestApproval, sandboxStatus, executionMode, signal,
+      parseArguments, executeAuthorized, executeContext,
+      toolCall: { id: `${toolCall.id}-check`, type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command: selected.command, cwd: input.cwd || '.', verification: true, ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}) }) } } });
+    return { ...result, modelResult: { ...result.modelResult, verification: true, parseOnly: false } };
+  }
   const result = await executeDurableTool(toolName, input, async () => {
     // Revalidate after human approval/durable reconciliation; neither can
     // broaden the client grant or authorize a newly redirected symlink.

@@ -18,7 +18,7 @@ import {
 
 assert.equal(MAX_SUBAGENT_RESULT_CHARS, 24_000);
 assert(SUBAGENT_ROLE_CONFIG.verify.tools.has("run_command"));
-assert(!SUBAGENT_ROLE_CONFIG.review.tools.has("run_command"));
+assert(SUBAGENT_ROLE_CONFIG.review.tools.has('run_command'));
 assert.deepEqual(
   resolveSubagentReasoningPolicy({
     role: "curator",
@@ -74,7 +74,7 @@ assert.throws(
 const parent = createPermissionPolicy("workspace-write");
 const verifyPolicy = createSubagentPermissionPolicy(parent, "verify");
 assert.equal(verifyPolicy.run_command, "allow");
-assert.equal(verifyPolicy.write_file, undefined);
+assert.equal(verifyPolicy.write_file, 'allow', 'capability derives from parent; runtime still requires explicit write scopes');
 
 const compacted = compactSubagentModelResult({ stdout: "x".repeat(14_000) });
 assert.equal(compacted.truncated, true);

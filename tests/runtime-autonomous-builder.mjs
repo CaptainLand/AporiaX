@@ -30,7 +30,8 @@ try {
     const text = body.messages.map((m) => m.content || "").join("\n");
     assert(!text.includes("Harness orchestration preflight"), "default avoids an extra planner round");
     if (text.includes("You are the AporiaX builder subagent.")) {
-      assert(!body.tools.some((tool) => ["delegate_subagent", "run_command", "github_push"].includes(tool.function.name)));
+      assert(!body.tools.some((tool) => ["delegate_subagent", "github_push"].includes(tool.function.name)));
+      assert(body.tools.some(tool => tool.function.name === 'run_command'));
       assert.match(text, /Keep the original palette/);
       assert.doesNotMatch(text, /You may run relevant build/);
       if (++worker === 1) return call("outside", "apply_patch", { path: "src/a.txt", patch: "--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-untouched\n+oops\n" });

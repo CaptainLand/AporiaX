@@ -151,6 +151,16 @@ await takeoverRun.release({ aborted: true });
 assert.equal(takeoverPage.closed, false);
 assert.equal(takeoverPage.owner, 'user');
 
+// Workers belong to the same visible task, but cannot adopt Main's browser.
+const parentContext = context('worker-isolation'), parentRun = service.acquire(parentContext);
+await parentRun.browserRuntime.open({ url: 'parent' });
+const parentPage = [...service.resources.values()].find(resource => resource.taskId === parentContext.taskId && resource.kind === 'browser');
+const workerRun = service.acquire({ ...parentContext, runId: 'worker-1', ownerId: 'worker-1' });
+await workerRun.browserRuntime.open({ url: 'worker' });
+const peers = [...service.resources.values()].filter(resource => resource.taskId === parentContext.taskId && resource.kind === 'browser');
+assert.equal(peers.length, 2); await workerRun.release();
+assert.equal(parentPage.closed, false, 'finishing a worker never closes the parent browser'); await parentRun.release();
+
 // One failed cleanup must not prevent the remaining resources from closing.
 const failureCtx = context('cleanup-failure'), failureRun = service.acquire(failureCtx);
 const badProcess = failureRun.processManager.start(), goodProcess = failureRun.processManager.start();

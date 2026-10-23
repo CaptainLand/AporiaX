@@ -50,23 +50,20 @@ await test('persist-before-notify, same-call coalescing, concurrent question rej
   await assert.rejects(f.session.respond(q.id, { text: 'different' }), /ALREADY_ANSWERED/);
   f.control.abort();
 });
-await test('duplicate questions, new-evidence gate and hard budget of two', async () => {
+await test('duplicate questions rejected; distinct essential questions have no count or evidence quota', async () => {
   const f = fixture();
   let request = f.session.request(input(), 'first');
   await until(() => f.session.snapshot().length);
   await f.session.respond(f.session.snapshot()[0].id, { text: 'Internal users' }); await request;
   await assert.rejects(f.session.request(input(), 'duplicate'), /DUPLICATE/);
-  await assert.rejects(f.session.request(input('format'), 'second'), /NO_NEW_EVIDENCE/);
-  f.session.observeProgress('read_file', { path: 'README.md' }, { error: 'denied' });
-  await assert.rejects(f.session.request(input('format'), 'second'), /NO_NEW_EVIDENCE/);
-  f.session.observeProgress('read_file', { path: 'README.md' }, { content: 'new evidence' });
   request = f.session.request(input('format'), 'second');
   await until(() => f.session.snapshot().length === 2);
   await f.session.respond(f.session.snapshot()[1].id, { optionId: '2' }); await request;
-  f.session.observeProgress('read_file', { path: 'other.md' }, { content: 'more' });
-  await assert.rejects(f.session.request(input('third'), 'third'), /LIMIT_REACHED/);
   const restored = fixture({ state: f.stored() });
-  await assert.rejects(restored.session.request(input('third'), 'third'), /LIMIT_REACHED/);
+  const third = restored.session.request(input('third'), 'third');
+  await until(() => restored.session.snapshot().length === 3);
+  await restored.session.respond(restored.session.snapshot()[2].id, { text: 'Third distinct answer' }); await third;
+  assert.equal(restored.session.snapshot()[2].limit, null);
   f.control.abort(); restored.control.abort();
 });
 await test('crash recovery retains pending question; receipt repair is idempotent and preserves human provenance', async () => {

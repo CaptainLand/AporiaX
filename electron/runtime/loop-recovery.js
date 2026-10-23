@@ -2,10 +2,11 @@ import { compactConversationForRequest, estimateConversationTokens } from "../ag
 import { harnessFeedback } from "./task-conversation.js";
 import { providerErrorCategory } from "./provider-errors.js";
 import { conversationTokenMaterial } from "./multimodal-budget.js";
-import { runtimeRunControl, saveRuntimeCheckpoint } from "./durable-run.js";
+import { runtimeRunControl, saveRuntimeCheckpoint, saveRuntimeContext, runtimeRecoveryContext } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
-import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity, rememberCloudQuotaPause, rememberModelResponseRecovery, rotateCloudRequest } from "./cloud-request-identity.js";
+import { createLoopRequestIdentity, createRepairRequestIdentity, withLoopRequestIdentity, rememberCloudQuotaPause, rememberModelResponseRecovery, rotateCloudRequest, rememberSuccessfulLoopRequest } from "./cloud-request-identity.js";
 import { waitForModelRecovery } from './model-response-recovery.js';
+import { createHash } from 'node:crypto';
 
 // Recover inference, never tool execution. A bounded repair must change the
 // request. Do not replay an already-executed/uncertain external operation.
@@ -16,6 +17,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
   let requestIdentity = createLoopRequestIdentity(scopeId);
   let compactions = requestIdentity.identity.compactions || 0, corrections = requestIdentity.identity.repairCount || 0;
   let repairMaxTokens = requestIdentity.identity.repairMaxTokens || null;
+  const repairState = { outputStalls: 0, protocolStalls: 0, lastOutput: '', protocolBytes: 0, ...(requestIdentity.identity.repairState || {}) };
   const requestBody = (messages) => {
     const body = getBody(messages);
     if (!repairMaxTokens) return body;
@@ -23,7 +25,11 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
     if (body.max_output_tokens !== undefined) return { ...body, max_output_tokens: repairMaxTokens };
     return { ...body, max_tokens: repairMaxTokens };
   };
-  const partialAnswers = [];
+  const savedContinuation = runtimeRecoveryContext(`loop-continuation:${scopeId}`);
+  const partialAnswers = savedContinuation?.continuationId && savedContinuation.continuationId === requestIdentity.identity.continuationId
+    ? [...savedContinuation.parts]
+    : conversation.filter(message => message.aporiaOutputContinuation === requestIdentity.identity.continuationId &&
+      requestIdentity.identity.continuationId && message.role === 'assistant' && typeof message.content === 'string').map(message => message.content);
   const waitForQuota = async (quota) => {
     // Commit history and the pause intent before waiting. A process restart
     // restores the same gate; it does not silently start another paid call.
@@ -56,6 +62,7 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         await waitForQuota(result.cloudQuota);
       await control?.waitIfPaused(signal);
       if (shouldYield()) return { ...result, interrupted: true, requestConversation, partialAnswers };
+      await rememberSuccessfulLoopRequest(requestIdentity);
       return { ...result, requestConversation, partialAnswers,
         // Completed text-only continuation includes the preserved prefix. Tool
         // continuations keep normal protocol messages; they are not concatenated.
@@ -134,21 +141,34 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
           ? measureRequestBytes(conversation) >= bytesBefore || measureRequestBytes(conversation) > inputBudgetBytes
           : after.serialized.length >= before.serialized.length || estimateConversationTokens(conversation, accounting) > inputBudgetTokens)) throw error;
         compactions++;
-      } else if (category === "output-limit" && corrections < 1 && error.streamComplete && error.safeToRepair !== false) {
+      } else if (category === 'output-limit' && error.streamComplete && error.safeToRepair !== false && (() => {
+        const text = !error.partialToolCalls && error.partialMessage?.content?.trim();
+        const fingerprint = text ? createHash('sha256').update(text).digest('hex') : '';
+        const progressed = Boolean(text && fingerprint !== repairState.lastOutput && !partialAnswers.includes(text));
+        repairState.outputStalls = progressed ? 0 : repairState.outputStalls + 1;
+        if (progressed) repairState.lastOutput = fingerprint;
+        return repairState.outputStalls <= 2;
+      })()) {
         if (!error.partialToolCalls && error.partialMessage?.content?.trim()) {
+          requestIdentity.identity.continuationId ||= requestIdentity.identity.logicalRequestId;
           partialAnswers.push(error.partialMessage.content);
-          conversation.push({ role: "assistant", ...error.partialMessage });
+          conversation.push({ role: "assistant", ...error.partialMessage, aporiaOutputContinuation: requestIdentity.identity.continuationId });
           conversation.push(harnessFeedback("The previous answer reached the output limit. Continue from that partial text without repeating it. No tool call from the truncated response was executed. Do not claim an unfinished task is complete."));
         } else {
           // Never insert an incomplete tool JSON or an opaque reasoning-only
           // assistant turn. Previously confirmed tools/history remain intact.
-          conversation.push(harnessFeedback("The previous model generation reached its output limit before producing a complete answer/tool call. NONE of the calls from that truncated response were executed. This is the one bounded repair. Use the confirmed history, keep reasoning concise, and produce smaller complete tool actions one at a time; do not repeat tools that already completed."));
+          conversation.push(harnessFeedback("The previous model generation reached its output limit before a complete answer/tool call. NONE of those incomplete calls were executed. Use confirmed history and smaller complete actions; do not repeat completed tools. Continued new text may be resumed; repeated no-progress generations are bounded separately from protocol repairs."));
         }
         const limit = Number(error.outputTokenLimit), maximum = Number(error.maxOutputTokens);
         if (Number.isSafeInteger(limit) && limit > 0 && Number.isSafeInteger(maximum) && maximum >= limit)
           repairMaxTokens = Math.min(maximum, limit * 2);
         corrections++;
-      } else if (category === "tool-protocol" && corrections < 1 && (error.streamComplete || error.safeToRepair)) {
+      } else if (category === 'tool-protocol' && (error.streamComplete || error.safeToRepair) && error.safeToRepair !== false && (() => {
+        const bytes = Number(error.toolProtocolProgress?.completeArguments) || 0;
+        if (bytes > repairState.protocolBytes) { repairState.protocolStalls = 0; repairState.protocolBytes = bytes; }
+        else repairState.protocolStalls++;
+        return repairState.protocolStalls <= 2;
+      })()) {
         conversation.push(harnessFeedback("The previous model response contained an invalid tool-call argument object or identifier. NONE of its tool calls were executed. Replan and produce complete, valid tool calls, or explain the blocker. Do not assume a side effect occurred."));
         corrections++;
       } else {
@@ -159,8 +179,11 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         throw error;
       }
       await persist();
-      requestIdentity = await createRepairRequestIdentity(requestIdentity, { corrections, compactions, outputTokenLimit: repairMaxTokens });
-      onEvent({ type: "response.recovery", category, compactions, corrections, outputTokenLimit: repairMaxTokens });
+      if (requestIdentity.identity.continuationId) await saveRuntimeContext(`loop-continuation:${scopeId}`, {
+        continuationId: requestIdentity.identity.continuationId, parts: partialAnswers,
+      });
+      requestIdentity = await createRepairRequestIdentity(requestIdentity, { corrections, compactions, outputTokenLimit: repairMaxTokens, repairState });
+      onEvent({ type: "response.recovery", category, compactions, corrections, repairState: { ...repairState }, outputTokenLimit: repairMaxTokens });
       onEvent({ type: "response.reset", phase: "bounded-recovery" });
       // Steering gets another boundary before any subsequent network call.
       if (shouldYield()) return { interrupted: true, message: { content: "" }, usage: null, requestConversation };

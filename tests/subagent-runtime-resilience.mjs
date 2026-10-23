@@ -85,19 +85,18 @@ try {
       executeAuthorizedTool: async () => { reads++; return { modelResult: { path: 'same.txt', content: 'unchanged' } }; },
       provider: { supportsTools: true, async complete({ body }) {
         if (++generated <= 2) return { message: call('read_file', { path: 'same.txt' }, `read-${generated}`) };
-        assert.equal(body.tools, undefined, 'the handoff request has no executable tools');
-        assert.equal(generated, 3, 'exactly one handoff request after the guard');
+        assert(body.tools.length, 'independent tools remain available after repetition');
         if (finish === 'error') throw Error('fixture summary unavailable');
-        return { message: finish === 'text' ? { content: 'Inspected the file, but still need another source to resolve the question.' }
+        return { message: finish === 'text' || generated > 3 ? { content: 'Inspected the file; a different source can resolve the question.' }
           : call('write_file', { path: 'must-not-write.txt', content: 'unsafe' }, 'unsolicited') };
       } },
     });
-    assert.equal(protectedResult.status, 'partial'); assert.equal(reads, 2); assert.equal(generated, 3);
-    assert.equal(protectedResult.completionGuard.code, 'LOOP_NO_PROGRESS');
-    assert.equal(protectedResult.completionGuard.toolsClosed, true);
-    assert.equal(protectedResult.evidence.length, 2); assert(protectedResult.summary.trim());
+    assert.equal(protectedResult.status, finish === 'error' ? 'failed' : 'completed'); assert.equal(reads, 2);
+    assert.equal(generated, finish === 'unsolicited-tools' ? 4 : 3);
+    assert.equal(protectedResult.completionGuard, undefined);
+    assert(protectedResult.evidence.length >= 2); assert(protectedResult.summary.trim());
   }
-  console.log('PASS no-progress guard closes tools and returns a partial handoff, including hostile/failed final replies');
+  console.log('PASS progress warnings do not close tools; forged ungranted writes still fail and real provider errors remain honest');
 
   const priorFailure = { command: 'fixture test', cwd: '.' };
   let strategyRequests = 0;
@@ -106,13 +105,13 @@ try {
     session: { strategyHistory: { version: 1, failures: [], edits: [],
       plans: [{ hypothesis: 'Previously attempted repair.', priorFailure }], pending: priorFailure } },
     provider: { supportsTools: true, async complete({ body }) {
-      strategyRequests++; assert.equal(body.tools, undefined);
+      strategyRequests++; assert(body.tools.length);
       return { message: { content: 'The prior repair did not resolve the issue; a new direction is needed.' } };
     } },
   });
-  assert.equal(blocked.status, 'blocked'); assert.equal(strategyRequests, 1);
-  assert.equal(blocked.completionGuard.code, 'LOOP_STRATEGY_EXHAUSTED');
-  console.log('PASS strict strategy exhaustion also permits one honest text handoff');
+  assert.equal(blocked.status, 'completed'); assert.equal(strategyRequests, 1);
+  assert.equal(blocked.completionGuard, undefined);
+  console.log('PASS strict strategy exhaustion no longer closes all diagnostic tools');
 
   let batchRequests = 0, staleWrites = 0;
   const batchResult = await runSubagentTask({ ...base, __builderIsolated: true,
@@ -126,16 +125,16 @@ try {
       if (++batchRequests === 1) return { message: { content: null, tool_calls: [
         ...call('read_file', { path: 'same.txt' }, 'one').tool_calls,
         ...call('read_file', { path: 'same.txt' }, 'two').tool_calls,
-        ...call('write_file', { path: 'same.txt', content: 'must not execute' }, 'write').tool_calls,
+        ...call('write_file', { path: 'same.txt', content: 'authorized scoped edit' }, 'write').tool_calls,
       ] } };
-      assert.equal(body.tools, undefined);
+      assert(body.tools.length);
       const skipped = body.messages.find(item => item.role === 'tool' && item.tool_call_id === 'write');
-      assert.equal(JSON.parse(skipped.content).executed, false);
+      assert.equal(JSON.parse(skipped.content).error, undefined);
       return { message: { content: 'The repeated inspection did not establish a safe edit.' } };
     } },
   });
-  assert.equal(batchResult.status, 'partial'); assert.equal(staleWrites, 0); assert.equal(batchRequests, 2);
-  console.log('PASS reaching the guard in a read batch also prevents a later write from the same response');
+  assert.equal(batchResult.status, 'completed'); assert.equal(staleWrites, 1); assert.equal(batchRequests, 2);
+  console.log('PASS repeated reads do not prevent a separately authorized scoped edit in the same response');
 
   await writeFile(join(root, 'builder.txt'), 'before');
   for (const failAfterWrite of [false, true]) {

@@ -6,7 +6,7 @@ import { useHarnessEvents } from '../../src/hooks/useHarnessEvents.js';
 import '../../src/styles.css';
 localStorage.setItem('aporiax.language.v1', 'zh-CN');
 let listener;
-const initial = { id: 'question', runId: 'run', taskId: 'task', status: 'pending', ordinal: 1, limit: 2,
+const initial = { id: 'question', runId: 'run', taskId: 'task', status: 'pending', ordinal: 1, limit: null,
   question: '这份报告面向谁？', reason: '内部报告可以包含成本，公开报告需要隐藏这些信息。',
   options: [{ id: '1', label: '内部团队', description: '保留成本和实施细节', recommended: true }, { id: '2', label: '公开发布', description: '仅展示可以公开的内容' }] };
 const state = { calls: [], fail: false };

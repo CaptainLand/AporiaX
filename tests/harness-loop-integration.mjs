@@ -67,32 +67,34 @@ try {
     }, { permission: "read-only" });
     assert.equal(result.status, "completed", result.content); assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD");
   });
-  await test("repeated-evidence budget closes tools but allows one final result explanation", async () => {
-    const { result, requests, events } = await fixture((_body, request) => toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]), { loopPolicy: { maxRepeatedEvidence: 6 } });
-    assert.equal(result.status, "blocked", result.content); assert.match(result.content, /Repeated actions/);
-    assert.equal(requests, 7); assert.equal(events.filter((event) => event.type === "tool.completed").length, 6);
-    assert.equal(events.filter((event) => event.type === "completion.summary").length, 1);
+  await test('repeated evidence suppresses only that action without closing tools', async () => {
+    const { result, requests, events } = await fixture((body, request) => {
+      if (request <= 7) return toolResponse([call('read-' + request, 'read_file', { path: 'a.txt' })]);
+      assert(body.tools.length); assert.match(body.messages.find(message => message.tool_call_id === 'read-7').content, /TOOL_REPEAT_SUPPRESSED/);
+      return sse({ content: 'Inspected the file; use another source if more work is needed.' });
+    }, { loopPolicy: { maxRepeatedEvidence: 6 } });
+    assert.equal(result.status, 'completed', result.content);
+    assert.equal(requests, 8); assert.equal(events.filter(event => event.type === 'tool.completed').length, 7);
+    assert.equal(events.filter(event => event.type === 'completion.summary').length, 0);
   });
   await test("explicit zero progress budget keeps the advisory opt-out", async () => {
     const { result, requests } = await fixture((_body, request) => request <= 12 ? toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]) : sse({ content: "No new evidence; report blocker." }), { loopPolicy: { maxRepeatedEvidence: 0 } });
     assert.equal(result.status, "completed", result.content); assert.equal(requests, 13); assert.equal(result.loopMetrics.noProgressWarnings, 4);
   });
-  await test("a provider cannot bypass the result-only boundary by fabricating a write", async () => {
+  await test('repeated reads do not disable an independently authorized different write', async () => {
     const { result, requests, workspace } = await fixture((body, request) => {
       if (request <= 2) return toolResponse([call('repeat-' + request, 'read_file', { path: 'a.txt' })]);
-      assert.equal(request, 3, 'Only one result-only request is allowed');
-      assert.equal(body.tools, undefined);
-      return toolResponse([call('forbidden-write', 'write_file', { path: 'a.txt', content: 'FORBIDDEN' })]);
+      assert(body.tools.length);
+      return request === 3 ? toolResponse([call('authorized-write', 'write_file', { path: 'a.txt', content: 'UPDATED' })]) : sse({ content: 'Updated the authorized file.' });
     }, { loopPolicy: { maxRepeatedEvidence: 2 } });
-    assert.equal(requests, 3); assert.equal(result.status, 'blocked');
-    assert.equal(result.replyDelivered, true); assert.equal(result.steps.length, 2);
-    assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'OLD');
-    assert.match(result.content, /Remaining work/);
+    assert.equal(requests, 4); assert.equal(result.status, 'completed');
+    assert.equal(result.replyDelivered, true); assert.equal(result.steps.length, 3);
+    assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'UPDATED');
   });
   await test("a real provider error during result-only delivery remains an error without more execution", async () => {
     const { result, requests, workspace } = await fixture((body, request) => {
       if (request <= 2) return toolResponse([call('repeat-' + request, 'read_file', { path: 'a.txt' })]);
-      assert.equal(body.tools, undefined); assert.equal(request, 3);
+      assert(body.tools.length); assert.equal(request, 3);
       return new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), { status: 401, headers: { 'content-type': 'application/json' } });
     }, { loopPolicy: { maxRepeatedEvidence: 2 } });
     assert.equal(result.status, 'failed'); assert.equal(result.error, true); assert.equal(result.replyDelivered, false);
@@ -106,12 +108,12 @@ try {
   });
   await test("truncated side-effecting calls never reach the native executor", async () => {
     const { result, workspace, requests } = await fixture((body, n) => {
-      if (n === 3) assert.equal(body.tools, undefined, 'The last request can only deliver a normal reply');
+      if (n === 4) assert.equal(body.tools, undefined, 'After repeated no-progress generation, the final error reply has no tools');
       return sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a.txt","content":' } }] }, "length");
     });
     // A complete stream with truncated tool JSON gets one inference repair;
     // neither incomplete call may reach the executor, even if repair truncates.
-    assert.equal(result.status, "failed"); assert.equal(requests, 3, 'One inference repair plus one tools-disabled final reply; neither produced a valid answer');
+    assert.equal(result.status, 'failed'); assert.equal(requests, 4, 'Two independent no-progress repairs plus one final reply; no partial tool executed');
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD"); assert.equal(result.steps.length, 0);
   });
   await test("invalid terminated call is corrected once before normal tool execution", async () => {

@@ -24,13 +24,22 @@ export async function rememberModelResponseRecovery(state, recovery) {
     receivedModelData: recovery.receivedModelData === true };
   await persist(state);
 }
-export async function createRepairRequestIdentity(previous, { corrections, compactions, outputTokenLimit }) {
+export async function createRepairRequestIdentity(previous, { corrections, compactions, outputTokenLimit, repairState = previous.identity.repairState }) {
   const state = { scopeId: previous.scopeId, checkpointScope: previous.checkpointScope, result: null,
-    identity: { ...fresh(), repairCount: corrections, compactions, repairMaxTokens: outputTokenLimit,
+    identity: { ...fresh(), repairCount: corrections, compactions, repairMaxTokens: outputTokenLimit, repairState,
+      ...(previous.identity.continuationId ? { continuationId: previous.identity.continuationId } : {}),
       ...(previous.identity.serverRequestId ? { retryOf: previous.identity.serverRequestId } : {}) } };
   // Persist the consumed repair budget before another paid inference can start.
   await persist(state);
   return state;
+}
+export async function rememberSuccessfulLoopRequest(state) {
+  if (!state.identity.repairCount && !state.identity.compactions && !state.identity.repairState) return;
+  // Keep the exact wire token limit for a completed-but-not-yet-consumed receipt.
+  // Clearing it here changes the request fingerprint after a crash and could
+  // turn replay of a saved result into another paid generation.
+  Object.assign(state.identity, { repairCount: 0, compactions: 0, repairState: null });
+  await persist(state);
 }
 async function persist(state) {
   if (state) await saveRuntimeCheckpoint({ scopeId: state.checkpointScope, phase: "cloud-request", identity: { ...state.identity } });

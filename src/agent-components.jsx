@@ -147,10 +147,10 @@ function BinaryCheckpointReview({ change }) {
   const { tr } = useI18n();
   const beforeBytes = change.beforeMissing
     ? 0
-    : estimateBase64Bytes(change.beforeContent);
+    : change.fileVersions?.before?.bytes ?? change.beforeBytes ?? estimateBase64Bytes(change.beforeContent);
   const afterBytes = change.afterMissing
     ? 0
-    : estimateBase64Bytes(change.afterContent);
+    : change.fileVersions?.after?.bytes ?? change.afterBytes ?? estimateBase64Bytes(change.afterContent);
   return (
     <div className="binary-checkpoint-review">
       <span className="binary-checkpoint-icon">
@@ -158,7 +158,7 @@ function BinaryCheckpointReview({ change }) {
       </span>
       <div>
         <strong>
-          {change.deleted || change.afterMissing
+          {change.fileVersions ? tr('文件版本已保存在本地磁盘，可安全回退；此处不加载完整内容。', 'File versions are saved locally for rollback; full contents are not loaded here.') : change.deleted || change.afterMissing
             ? tr("二进制文件已删除", "Binary file deleted")
             : change.created || change.beforeMissing
               ? tr("二进制文件已创建", "Binary file created")
@@ -408,7 +408,7 @@ export function DiffReviewPanel({
     availableChanges[0];
   const rows = useMemo(
     () =>
-      selected && !selected.binary
+      selected && !selected.binary && !selected.fileVersions
         ? buildDiffRows(selected.beforeContent, selected.afterContent)
         : [],
     [selected],
@@ -420,6 +420,7 @@ export function DiffReviewPanel({
     selected &&
       workspacePath &&
       !selected.binary &&
+      !selected.fileVersions &&
       !selected.deleted &&
       !selected.afterMissing &&
       !previewMeta?.readOnly &&
@@ -641,7 +642,7 @@ export function DiffReviewPanel({
                     )}
                   </div>
                   <div className="diff-preview-actions">
-                    {!selected.binary &&
+                    {!selected.binary && !selected.fileVersions &&
                       !selected.deleted &&
                       !selected.afterMissing && (
                         <div
@@ -678,7 +679,7 @@ export function DiffReviewPanel({
                     </button>
                   </div>
                 </div>
-                {selected.binary ? (
+                {selected.fileVersions ? <BinaryCheckpointReview change={selected} /> : selected.binary ? (
                   selected.artifact ? (
                     <OfficeArtifactReview change={selected} />
                   ) : (

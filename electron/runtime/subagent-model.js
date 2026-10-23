@@ -4,11 +4,11 @@ import { realpath } from "node:fs/promises";
 import { normalizeBuilderScopes } from "../harness/scope-leases.js";
 import { parseWorkspacePatch } from './workspace-patch.js';
 import { isWebToolName } from './web-tools.js';
+import { DELEGATED_NATIVE_TOOLS, DELEGATED_WRITE_TOOLS, DELEGATED_COMMAND_TOOLS } from '../../shared/delegated-capabilities.js';
 
 // null is JSON-safe and explicitly means no round-count cutoff.
 export const DEFAULT_SUBAGENT_ROUNDS = null;
 export const MAX_SUBAGENT_ROUNDS = null;
-export const MAX_SUBAGENT_TASK_CHARS = 4_000;
 export const MAX_SUBAGENT_RESULT_CHARS = 24_000;
 const MAX_SUBAGENT_EVIDENCE_CHARS = 24_000;
 
@@ -24,14 +24,14 @@ export function resolveSubagentReasoningPolicy({
   };
 }
 
-export const SUBAGENT_ROLE_CONFIG = Object.freeze({
+const ROLE_RESPONSIBILITIES = Object.freeze({
   builder: Object.freeze({
-    description: "Implement the delegated task within explicit write scopes in an isolated Git worktree. Use verify_project for isolated self-checks, fix failures, and return changes, observed evidence and remaining issues. Do not delegate again or publish.",
+    description: 'Implement the assignment within explicit write scopes and conflict-checked integration. Use parent-authorized checks and return observed evidence. A worktree is not OS isolation. Do not recursively delegate or publish.',
     tools: new Set(["task_brief", "replan_strategy","list_directory", "read_file", "search_text", "find_files", "git_status", "git_diff", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "verify_project"]),
   }),
   explore: Object.freeze({
     description:
-      "Search and understand the codebase. Return concise findings with exact file and line evidence. Do not edit files.",
+      'Focus on research and exact evidence. File edits require an explicitly delegated write scope; the role name grants no authority.',
     tools: new Set(["task_brief", "replan_strategy", 'web_search', 'web_fetch',
       "list_directory",
       "read_file",
@@ -44,7 +44,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   }),
   review: Object.freeze({
     description:
-      "Review existing code or artifacts for correctness, security, completeness, maintainability, and regressions. Report actionable findings with evidence. Do not edit files.",
+      'Focus on correctness, security and regressions. Report actionable evidence. Review is inspection by default; edits require an explicit scoped assignment.',
     tools: new Set(["task_brief", "replan_strategy", 'web_search', 'web_fetch',
       "list_directory",
       "read_file",
@@ -57,7 +57,7 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
   }),
   verify: Object.freeze({
     description:
-      "Verify a focused claim using repository inspection and relevant project commands. Do not edit source files. Report the exact command, exit code, evidence, and remaining uncertainty.",
+      'Verify focused claims with authorized inspection, commands or browser evidence. Report observed results and uncertainty. Source edits require an explicit scoped assignment.',
     tools: new Set(["task_brief", "replan_strategy", 'web_search', 'web_fetch',
       "list_directory",
       "read_file",
@@ -84,6 +84,8 @@ export const SUBAGENT_ROLE_CONFIG = Object.freeze({
     ]),
   }),
 });
+
+export const SUBAGENT_ROLE_CONFIG = Object.freeze(Object.fromEntries(Object.entries(ROLE_RESPONSIBILITIES).map(([role, config]) => [role, Object.freeze({ ...config, tools: new Set(DELEGATED_NATIVE_TOOLS) })])));
 
 export function normalizeWorkspaceScope(values) {
   const input = Array.isArray(values) && values.length ? values : ["."];
@@ -118,40 +120,47 @@ export function normalizeSubagentInput(input, profiles = null) {
     throw new Error("Subagent role must be explore, review, verify, curator, or builder.");
   }
   const task = String(input?.task || "").trim();
-  if (!task || task.length > MAX_SUBAGENT_TASK_CHARS) {
+  if (!task) {
     throw new Error(
-      `Subagent task must be between 1 and ${MAX_SUBAGENT_TASK_CHARS} characters.`,
+      'Subagent task must be nonempty.',
     );
   }
-  if (input?.context != null && (typeof input.context !== 'string' || input.context.length > 6000)) throw new Error('Subagent handoff context must be at most 6000 characters.');
+  if (input?.context != null && typeof input.context !== 'string') throw new Error('Subagent handoff context must be text.');
   if (input?.skills != null && (!Array.isArray(input.skills) || input.skills.length > 64 || input.skills.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,199}$/i.test(name)))) throw new Error('Invalid delegated Skills.');
   const scope = normalizeWorkspaceScope(input?.scope);
-  const commandScope = input?.command_scope ?? input?.commandScope ?? (scope.includes('.') || role === 'builder' ? 'workspace' : 'none');
+  const commandScope = input?.command_scope ?? input?.commandScope ?? (scope.includes('.') || role === 'builder' || input?.write_scopes?.length || input?.writeScopes?.length ? 'workspace' : 'none');
   if (!['workspace', 'none'].includes(commandScope)) throw Error('Invalid command_scope: use workspace or none.');
   return {
     role,
     autonomyVersion: 2,
     ...(profile ? { profileId: profile.id, profile } : {}),
     ...((input?.depends_on || input?.dependsOn) ? { dependsOn: input.depends_on || input.dependsOn } : {}),
+    ...(input?.dependency_requirements ? { dependencyRequirements: Object.fromEntries(input.dependency_requirements.map(edge => {
+      if (!edge || typeof edge.agent_id !== 'string' || !['report', 'changes'].includes(edge.use) || !(input.depends_on || input.dependsOn || []).includes(edge.agent_id)) throw Error('Invalid dependency requirement.');
+      return [edge.agent_id, edge.use];
+    })) } : {}),
     task,
     ...(input?.context ? { context: input.context } : {}),
     ...(input?.skills?.length ? { skills: [...new Set(input.skills)] } : {}),
     scope, commandScope,
-    ...(role === "builder" ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
+    ...(role === 'builder' || input?.write_scopes?.length || input?.writeScopes?.length ? { writeScopes: normalizeBuilderScopes(input?.write_scopes || input?.writeScopes) } : {}),
     background: Boolean(input?.background || input?.depends_on?.length || input?.dependsOn?.length),
-    requiredForCompletion: !(input?.background && (input?.required_for_completion ?? input?.requiredForCompletion) !== true && !input?.depends_on?.length && !input?.dependsOn?.length && ["explore", "curator"].includes(role)),
+    requiredForCompletion: !(input?.background && !input?.write_scopes?.length && !input?.writeScopes?.length && (input?.required_for_completion ?? input?.requiredForCompletion) !== true && !input?.depends_on?.length && !input?.dependsOn?.length && ["explore", "curator"].includes(role)),
     maxRounds: null,
   };
 }
 
 export function subagentToolPaths(toolName, input = {}) {
+  if (toolName === 'browser_upload') return input.paths || [];
+  if (toolName.startsWith('browser_') || ['read_process', 'wait_process', 'write_stdin', 'kill_process'].includes(toolName)) return [];
   if (isWebToolName(toolName)) return []; // Network permissions, not workspace paths.
   if (toolName === "apply_patch" && typeof input.patch === "string") {
     const patches = parseWorkspacePatch(input.patch);
     if (!patches.length) throw new Error("Patch contains no file changes.");
     return patches.map(patch => patch.path);
   }
-  if (["run_command", "verify_project"].includes(toolName)) return [input.cwd || "."];
+  if (['run_command', 'verify_project', 'start_process'].includes(toolName)) return [input.cwd || '.'];
+  if (DELEGATED_WRITE_TOOLS.includes(toolName)) return [input.path || '.'];
   if (toolName === "git_diff") return input.path ? [input.path] : ["."];
   if (
     [
@@ -201,10 +210,10 @@ async function realCandidate(path) {
 }
 
 export async function assertSubagentRealScope(toolName, input, scope, workspaceRoot, commandScope = null) {
-  if (['run_command', 'verify_project'].includes(toolName) && commandScope === 'none') throw Error('Subagent command access was not delegated.');
+  if (DELEGATED_COMMAND_TOOLS.includes(toolName) && commandScope === 'none') throw Error('Subagent command access was not delegated.');
   if (isWebToolName(toolName)) return; // Dispatcher still enforces role/parent/network grants.
   if (["task_brief", "replan_strategy"].includes(toolName)) return; // local session controls; dispatch still checks permissions
-  if (['run_command', 'verify_project'].includes(toolName) && commandScope === 'workspace') scope = ['.'];
+  if (DELEGATED_COMMAND_TOOLS.includes(toolName) && commandScope === 'workspace') scope = ['.'];
   assertSubagentScope(toolName, input, scope);
   if (!workspaceRoot) throw new Error("Subagent requires a verified workspace.");
   const root = await realpath(workspaceRoot);
@@ -248,9 +257,9 @@ export function assertSubagentScope(toolName, input, scope) {
 }
 
 export function createSubagentPermissionPolicy(parentPolicy, role, definition = null) {
-  const base = SUBAGENT_ROLE_CONFIG[role]?.tools;
-  const allowed = base ? new Set([...base, ...(definition?.tools || []).filter(name =>
-    ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(name))]) : null;
+  const base = SUBAGENT_ROLE_CONFIG[role] ? DELEGATED_NATIVE_TOOLS : null;
+  const allowed = base ? new Set([...(definition?.tools || base)].filter(name => base.includes(name) ||
+    ['search_skills', 'read_skill_resource', 'project_knowledge'].includes(name))) : null;
   if (!allowed) throw new Error(`Unknown subagent role: ${role}`);
   const policy = { "*": "deny" };
   const rank = { allow: 0, ask: 1, deny: 2 };

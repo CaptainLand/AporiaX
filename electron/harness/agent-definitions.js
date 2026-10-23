@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { DELEGATED_NATIVE_TOOLS } from '../../shared/delegated-capabilities.js';
 
 const NAME_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/;
 const VALID_PERMISSION_ACTIONS = new Set(["allow", "ask", "deny"]);
@@ -9,7 +10,7 @@ const readPermissions = (extra = {}) => Object.freeze({
   ...extra,
 });
 
-const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
+const ROLE_RESPONSIBILITIES = Object.freeze({
   explore: Object.freeze({
     name: "explore",
     description:
@@ -136,9 +137,14 @@ const BUILTIN_AGENT_DEFINITIONS = Object.freeze({
     background: true,
     triggers: Object.freeze(["task.builder.ready"]),
     systemPrompt:
-      "Implement and self-check within delegated write scopes. Use verify_project for parse-only syntax checks or disposable OS-isolated test/build checks, then fix relevant failures. Do not run shell commands, recursively delegate or publish. Never broaden scope or edit another Builder's files. If script isolation is unavailable report those checks as unverified to Main/Verify.",
+      "Implement and self-check within delegated write scopes. Use parent-authorized commands, browser checks and workflows as needed. A worktree is not OS isolation: normal backend approvals still apply. Do not recursively delegate or publish, broaden write scope or edit another worker's files. Report observed evidence accurately.",
   }),
 });
+
+const BUILTIN_AGENT_DEFINITIONS = Object.freeze(Object.fromEntries(Object.entries(ROLE_RESPONSIBILITIES).map(([name, definition]) => [name, Object.freeze({
+  ...definition, tools: DELEGATED_NATIVE_TOOLS,
+  permissions: Object.freeze({ '*': 'deny', ...Object.fromEntries(DELEGATED_NATIVE_TOOLS.map(tool => [tool, 'allow'])) }),
+})])));
 
 function parseScalar(value) {
   const text = String(value || "").trim();

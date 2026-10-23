@@ -624,6 +624,7 @@ export function createNativeToolExecutor({
       return { modelResult: await runIsolatedVerification({ workspaceRoot, dependencyWorkspaceRoot, input, signal, sandboxStatus }) };
     }
     if (toolName === "run_command") {
+      if (input.timeout_ms !== undefined && (!Number.isSafeInteger(input.timeout_ms) || input.timeout_ms < 1 || input.timeout_ms > 2147483647)) throw Error('Invalid command timeout_ms.');
       if (
         typeof input.command !== "string" ||
         !input.command.trim() ||
@@ -647,6 +648,8 @@ export function createNativeToolExecutor({
         cwd: commandDirectory,
         signal,
         sandboxStatus,
+        timeoutMs: input.timeout_ms ?? null,
+        dependencyWorkspaceRoot,
       });
       return {
         modelResult: {

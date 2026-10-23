@@ -75,12 +75,11 @@ try {
   assert.equal(child.status, 'completed'); assert.equal(session.snapshot().length, 1);
   console.log('PASS child has no question capability and forged tool call is rejected');
   requests = 0;
-  globalThis.fetch = async () => { requests++; return response([call('request_user_input', ask, 'invalid-' + requests)]); };
+  globalThis.fetch = async () => { requests++; return requests <= 4 ? response([call('request_user_input', ask, 'invalid-' + requests)]) : finish(); };
   const blocked = await runHarness({ runId: 'invalid-child', provider, modelId: 'fixture', permission: 'read-only',
     messages: [{ role: 'user', content: 'Do not repeatedly ask me.' }] });
-  assert.equal(blocked.status, 'blocked'); assert.equal(requests, 4);
-  assert.match(blocked.content, /提问|Questions/);
-  console.log('PASS three invalid questions close execution, followed by one text-only result without another question');
+  assert.equal(blocked.status, 'completed'); assert.equal(requests, 5);
+  console.log('PASS four invalid questions remain local errors; normal answering and tools stay available');
 
   const mixedControl = createRunControl();
   const mixedSession = createClarificationSession({ control: mixedControl, runId: 'mixed', taskId: 't',

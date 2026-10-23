@@ -10,6 +10,7 @@ import { useFileContextMenu } from "../workbench/use-file-context-menu.js";
 import remarkGfm from "remark-gfm";
 import { remarkAutolinkBoundary } from "./remark-autolink-boundary.js";
 import { remarkInlineReplyToggle } from './remark-inline-reply-toggle.js';
+import { describeLinkOpenError } from './link-open-error.js';
 import { diffLines } from "diff";
 import { turnRestorePreview } from './turn-restore-preview.js';
 import { getLiveRunProgress } from './witness-progress.js';
@@ -79,6 +80,7 @@ function MarkdownCodeBlock({ children }) {
 }
 
 const LinkWorkspace = createContext("");
+const LinkNotice = createContext(null);
 const ReplyAction = createContext(null);
 
 function MarkdownReplyToggle() {
@@ -87,43 +89,40 @@ function MarkdownReplyToggle() {
 
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
+  const onNotice = useContext(LinkNotice);
   const workbench = useWorkbenchContext();
   const { language, tr } = useI18n();
-  const [error, setError] = useState("");
   const resolvedHref = href;
   const link = classifyLink(resolvedHref);
   const activate = async (event, action) => {
     if (!link || link.kind === "anchor") return;
     if (!window.desktop?.links && link.kind === "web") return;
     event.preventDefault();
-    setError("");
+    onNotice?.("");
     const target = resolvedHref;
     if (action === "open" && workbench?.openHref) {
       try {
         if (await workbench.openHref(target, { workspacePath })) return;
       } catch (failure) {
-        setError(failure.message);
+        onNotice?.(describeLinkOpenError(failure, target, language));
         return;
       }
     }
     if (!window.desktop?.links) {
-      setError(tr("请在桌面端打开本地文件", "Open local files in the desktop app"));
+      onNotice?.(tr("请在桌面端打开本地文件", "Open local files in the desktop app"));
       return;
     }
     try {
       const result = await window.desktop.links.activate({ href: target, action, workspacePath, language });
-      if (!result?.ok) setError(result?.error || tr("无法打开链接", "Could not open link"));
-    } catch (failure) { setError(failure.message); }
+      if (!result?.ok) onNotice?.(describeLinkOpenError(result?.error, target, language));
+    } catch (failure) { onNotice?.(describeLinkOpenError(failure, target, language)); }
   };
   if (!link) return <span>{children}</span>;
-  return <>
-    <a href={resolvedHref} title={title || resolvedHref} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
+  return <a href={resolvedHref} title={title || resolvedHref} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
       onClick={(event) => void activate(event, "open")}
       onContextMenu={(event) => void activate(event, "menu")}
       onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void activate(event, "menu"); }}
-    >{children}</a>
-    {error && <span role="alert"> — {error}</span>}
-  </>;
+    >{children}</a>;
 }
 
 // Model/effort changes leave message text intact. Keep the parsed Markdown tree
@@ -1316,6 +1315,7 @@ export function Conversation({
         const attempt = (
           <React.Fragment key={message.id}>
             <LinkWorkspace.Provider value={task.workspacePath || ""}>
+            <LinkNotice.Provider value={onNotice}>
             <AssistantMessage
               message={message}
               editedFiles={editedFiles}
@@ -1326,6 +1326,7 @@ export function Conversation({
                 setAnchorRequest({ messageId: anchorTarget.id })
               }
             />
+            </LinkNotice.Provider>
             </LinkWorkspace.Provider>
             {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={isRunning && message.status === "running"} onRetry={onRetry ? () => onRetry(message) : null} />)}
             {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}

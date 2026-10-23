@@ -31,7 +31,7 @@ try {
   assert.equal(normalizeSubagentInput({ role: 'explore', task: 'Find', background: true }).requiredForCompletion, false);
   assert.equal(normalizeSubagentInput({ role: 'review', task: 'Review', background: true, required_for_completion: false }).requiredForCompletion, true);
   const policy = createSubagentPermissionPolicy(createPermissionPolicy('workspace-write'), 'builder', roleDefinition(defaultRole('builder')));
-  assert.equal(policy.verify_project, 'allow'); assert.equal(policy.run_command ?? policy['*'], 'deny');
+  assert.equal(policy.verify_project, 'allow'); assert.equal(policy.run_command, 'allow');
   assert.equal(createSubagentPermissionPolicy(createPermissionPolicy('read-only'), 'builder', roleDefinition(defaultRole('builder'))).verify_project, 'deny');
   assert.throws(() => assertSubagentScope('verify_project', { cwd: 'src' }, ['src']), /repository-wide/);
   console.log('PASS unlimited defaults, legacy migration, inherited reasoning, advisory exploration and permission ceilings');
@@ -84,11 +84,13 @@ try {
   console.log('PASS more than 20 model rounds with retained cumulative history, concise handoff and cooperative cancellation');
   let repeated = 0;
   const stopped = await runSubagentTask({ ...options, agentId: 'no-progress', session: {}, provider: { supportsTools: true, async complete() {
-    repeated++; return { message: { content: null, tool_calls: [{ id: `repeat-${repeated}`, type: 'function', function: { name: 'read_file', arguments: '{"path":"same.js"}' } }] } };
+    repeated++;
+    if (repeated === 8) return { message: { content: 'Repeated source was suppressed; independent work is still available.' } };
+    return { message: { content: null, tool_calls: [{ id: `repeat-${repeated}`, type: 'function', function: { name: 'read_file', arguments: '{"path":"same.js"}' } }] } };
   } } });
-  assert.equal(stopped.status, 'partial'); assert.equal(stopped.completionGuard.code, 'LOOP_NO_PROGRESS'); assert(repeated < 20);
-  assert.equal(stopped.steps.length, 6, 'the extra handoff cannot execute another repeated tool');
-  console.log('PASS no-progress protection stops repeated execution and preserves a partial report without a round cutoff');
+  assert.equal(stopped.status, 'completed'); assert.equal(repeated, 8);
+  assert.match(stopped.steps.at(-1).detail, /TOOL_REPEAT_SUPPRESSED/);
+  console.log('PASS repeated action is suppressed without closing the worker or its other tools');
 
   await writeFile(join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node check.mjs', publish: 'never' } }));
   await writeFile(join(root, 'safe.mjs'), "import fs from 'node:fs'; fs.writeFileSync('SHOULD_NOT_EXIST', 'bad');\n");
@@ -99,7 +101,8 @@ try {
   assert.equal(parsed.exitCode, 0); assert.equal(parsed.parseOnly, true);
   await assert.rejects(access(join(root, 'SHOULD_NOT_EXIST')), { code: 'ENOENT' });
   assert.notEqual((await runIsolatedVerification({ workspaceRoot: root, input: { kind: 'node_check', path: 'bad.mjs' } })).exitCode, 0);
-  for (const input of [{ kind: 'script', script: 'publish' }, { kind: 'script', script: 'test; echo bad' }, { kind: 'script', script: 'test', command: 'bad' }, { kind: 'node_check', path: '../outside.js' }]) await assert.rejects(verificationCommand(root, input));
+  assert.match((await verificationCommand(root, { kind: 'script', script: 'publish' })).command, /publish/);
+  for (const input of [{ kind: 'script', script: 'test; echo bad' }, { kind: 'script', script: 'test', command: 'bad' }, { kind: 'node_check', path: '../outside.js' }]) await assert.rejects(verificationCommand(root, input));
   await assert.rejects(runIsolatedVerification({ workspaceRoot: root, input: { kind: 'script', script: 'test' }, statusLoader: async () => ({ available: false }), runner: () => { throw new Error('must not execute'); } }), /ISOLATED_VERIFICATION_UNAVAILABLE/);
   let temporary;
   const isolated = await runIsolatedVerification({ workspaceRoot: root, input: { kind: 'script', script: 'test' }, sandboxStatus: { available: true }, runner: async args => {

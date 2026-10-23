@@ -7,6 +7,7 @@ import { serializeStorage } from '../storage/atomic-file.js';
 import { runtimeRecoveryDirectory, saveRuntimeCheckpoint } from './durable-run.js';
 import { filePathInside, nativeFilePath, nativeMutationScope, verifyNativeFileTarget } from './file-access-policy.js';
 import { hashFile } from '../storage/file-state.js';
+import { configureCheckpointFiles } from './checkpoint-files.js';
 
 const state = (bytes) => bytes == null ? { missing: true, hash: null, content: null }
   : bytes.filePath ? { missing: false, hash: bytes.sha256, content: { filePath: bytes.filePath }, mode: bytes.mode }
@@ -15,7 +16,7 @@ const inlineSnapshotBytes = 128_000;
 let configuredRecoveryDirectory = () => join(tmpdir(), 'aporiax-workspace-recovery');
 const trustedRecoveryRoots = new Set();
 // Main-process configuration only, not exposed to tools or renderer requests.
-export function configureWorkspaceRecoveryDirectory(readDirectory) { configuredRecoveryDirectory = readDirectory; }
+export function configureWorkspaceRecoveryDirectory(readDirectory) { configuredRecoveryDirectory = readDirectory; configureCheckpointFiles(readDirectory); }
 
 // Capture the approved version locally, even if the model only supplies a path.
 // Repeated inspection after approval prevents deletion of newer human edits.

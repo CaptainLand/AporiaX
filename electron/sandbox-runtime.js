@@ -18,7 +18,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { runtimeRunControl } from "./runtime/durable-run.js";
 import { activeTimeout } from "./runtime/run-control.js";
 import { currentExecutionMode } from "./harness/agent-budget.js";
+import { dependencyFingerprint } from './runtime/safe-dependency-session.js';
 import { applySandboxChanges, atomicJson, checkAbort, copyPrivateDependencies, hashSandboxFile, SNAPSHOT_MAX_BYTES, SNAPSHOT_MAX_FILES } from "./sandbox-files.js";
+import { builderSnapshotLimits } from './harness/builder-workspace.js';
 
 export const SANDBOX_IMAGE = "aporiax-sandbox:0.2";
 export const SANDBOX_TIMEOUT_MS = 120_000;
@@ -31,7 +33,10 @@ const MAX_SANDBOX_OUTPUT_CHARS = 80_000;
 const STATUS_TIMEOUT_MS = 8_000;
 const PREPARE_TIMEOUT_MS = 15 * 60_000;
 const LOCAL_SANDBOX_DIRECTORY = "aporiax-local-sandbox";
-const LOCAL_SANDBOX_MAX_FILES = 25_000;
+export function localSandboxSnapshotLimits() {
+  const builder = builderSnapshotLimits();
+  return { maxFiles: Math.max(SNAPSHOT_MAX_FILES, builder.maxFiles), maxBytes: Math.max(SNAPSHOT_MAX_BYTES, builder.maxBytes) };
+}
 const LOCAL_SANDBOX_IGNORED_NAMES = new Set([
   ".git",
   ".hg",
@@ -131,6 +136,7 @@ function runProcess({
       cwd,
       env,
       shell: false,
+      windowsVerbatimArguments: process.platform === 'win32' && /(?:^|[\\/])cmd\.exe$/i.test(program),
       detached: process.platform !== "win32",
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -162,8 +168,8 @@ function runProcess({
     const startedAt = activeNow();
     const slowTimer = activeTimeout(() => {
       if (!settled) notifyWatchdog("slow");
-    }, Math.min(watchdogSlowMs, Math.max(10, timeoutMs - 1)), control);
-    const timeout = activeTimeout(() => {
+    }, timeoutMs > 0 ? Math.min(watchdogSlowMs, Math.max(10, timeoutMs - 1)) : watchdogSlowMs, control);
+    const timeout = timeoutMs > 0 ? activeTimeout(() => {
       timedOut = true;
       notifyWatchdog("intervention", { reason: "timeout" });
       terminateProcessTree(child);
@@ -181,7 +187,7 @@ function runProcess({
         });
       }, 4_000);
       forcedFinish.unref?.();
-    }, timeoutMs, control);
+    }, timeoutMs, control) : () => {};
 
     signal?.addEventListener("abort", handleAbort, { once: true });
     child.stdout.on("data", (chunk) => {
@@ -508,10 +514,11 @@ export async function runSandboxedCommand({
   signal,
   onOutput,
   onWatchdog,
-  timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
+  timeoutMs = null,
   watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
   dependencyRoot,
+  dependencyWorkspaceRoot = workspaceRoot,
 }) {
   const status = sandboxStatus?.available
     ? sandboxStatus
@@ -528,6 +535,14 @@ export async function runSandboxedCommand({
     protectGit = false;
   }
   const containerName = `aporiax-${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+  if (!dependencyRoot && dependencyWorkspaceRoot !== workspaceRoot) {
+    const owner = await realpath(dependencyWorkspaceRoot);
+    const [ownerFiles, workerFiles] = await Promise.all([scanLocalSandboxFiles(owner, signal), scanLocalSandboxFiles(workspaceRoot, signal)]);
+    if (dependencyFingerprint(ownerFiles) === dependencyFingerprint(workerFiles)) {
+      try { const path = join(owner, 'node_modules'), info = await lstat(path); if (info.isDirectory() && !info.isSymbolicLink()) dependencyRoot = path; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
   const relativeCwd =
     relative(workspaceRoot, cwd).replace(/\\/g, "/") || ".";
   const args = buildDockerSandboxArgs({
@@ -626,6 +641,7 @@ function shouldIgnoreLocalSandboxPath(relativePath) {
 }
 
 async function scanLocalSandboxFiles(rootPath, signal) {
+  const limits = localSandboxSnapshotLimits();
   const files = new Map();
   files.bytes = 0;
   const pending = [{ absolutePath: rootPath, relativePath: "" }];
@@ -659,11 +675,11 @@ async function scanLocalSandboxFiles(rootPath, signal) {
         );
       }
       files.bytes += (await lstat(entryAbsolutePath)).size;
-      if (files.bytes > SNAPSHOT_MAX_BYTES) throw new Error("Local sandbox project exceeds the 2 GB snapshot budget.");
+      if (files.bytes > limits.maxBytes) throw new Error('Local sandbox project exceeds the configured workspace snapshot budget.');
       files.set(entryRelativePath, await hashSandboxFile(entryAbsolutePath, signal));
-      if (files.size > LOCAL_SANDBOX_MAX_FILES) {
+      if (files.size > limits.maxFiles) {
         throw new Error(
-          `Local sandbox supports at most ${LOCAL_SANDBOX_MAX_FILES} project files.`,
+          `Local sandbox supports at most ${limits.maxFiles} project files.`,
         );
       }
     }
@@ -766,7 +782,7 @@ function hostShell(command) {
     const systemRoot = process.env.SystemRoot || "C:\\Windows";
     return {
       program: join(systemRoot, "System32", "cmd.exe"),
-      args: ["/d", "/s", "/c", command],
+      args: ['/d', '/s', '/c', `"${command}"`],
     };
   }
   return {
@@ -782,7 +798,7 @@ export async function runLocalSandboxedCommand({
   signal,
   onOutput,
   onWatchdog,
-  timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
+  timeoutMs = null,
   watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
   localSandboxBaseDirectory,
@@ -791,6 +807,7 @@ export async function runLocalSandboxedCommand({
   onRecovery,
   beforeApply,
   dependencySession = null,
+  dependencyWorkspaceRoot = workspaceRoot,
 }) {
   workspaceRoot = await realpath(workspaceRoot);
   cwd = await realpath(cwd);
@@ -834,13 +851,19 @@ export async function runLocalSandboxedCommand({
     await atomicJson(manifestPath, manifest);
     const baselineFiles = await scanLocalSandboxFiles(workspaceRoot, signal);
     const space = await statfs(sandboxDirectory);
-    const maxBytes = Math.min(SNAPSHOT_MAX_BYTES, Math.floor((space.bavail * space.bsize - 512 * 1024 ** 2) / 3));
+    const maxBytes = Math.min(localSandboxSnapshotLimits().maxBytes, Math.floor((space.bavail * space.bsize - 512 * 1024 ** 2) / 3));
     if (baselineFiles.bytes > maxBytes || maxBytes <= 0) throw new Error("Insufficient disk space for a recoverable Safe snapshot; free disk space or narrow the workspace.");
-    const budget = { files: 0, bytes: 0, maxBytes, maxFiles: SNAPSHOT_MAX_FILES };
+    const budget = { files: 0, bytes: 0, maxBytes, maxFiles: localSandboxSnapshotLimits().maxFiles };
+    let dependencySource = dependencySession?.source(workspaceRoot, baselineFiles) || null;
+    if (!dependencySource && dependencyWorkspaceRoot !== workspaceRoot) {
+      const owner = await realpath(dependencyWorkspaceRoot);
+      const ownerFiles = await scanLocalSandboxFiles(owner, signal);
+      if (dependencyFingerprint(ownerFiles) === dependencyFingerprint(baselineFiles)) dependencySource = dependencySession?.source(owner, ownerFiles) || owner;
+    }
     await copyWorkspaceToLocalSandbox(
       workspaceRoot,
       sandboxWorkspace,
-      { budget, signal, dependencySource: dependencySession?.source(workspaceRoot, baselineFiles) || null },
+      { budget, signal, dependencySource },
     );
     const copied = await scanLocalSandboxFiles(sandboxWorkspace, signal);
     if (copied.size !== baselineFiles.size || [...copied].some(([path, hash]) => baselineFiles.get(path) !== hash)) throw new Error("Workspace changed while creating the sandbox snapshot; no command was started.");
@@ -924,7 +947,7 @@ export async function runHostFallbackCommand({
   signal,
   onOutput,
   onWatchdog,
-  timeoutMs = COMMAND_WATCHDOG_INTERVENTION_MS,
+  timeoutMs = null,
   watchdogSlowMs = COMMAND_WATCHDOG_SLOW_MS,
   sandboxStatus,
 }) {

@@ -11,6 +11,7 @@ try {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + 'tests/fixtures/user-clarification.html');
   await page.getByRole('heading', { name: '这份报告面向谁？' }).waitFor();
+  assert.equal(await page.locator('.clarification-card header small').textContent(), '#1');
   const submit = page.getByRole('button', { name: '提交并继续' });
   assert.equal(await page.locator('input:checked').count(), 0, 'Recommended must not be selected automatically');
   assert.equal(await submit.isDisabled(), true);

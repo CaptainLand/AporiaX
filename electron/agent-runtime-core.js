@@ -19,7 +19,6 @@ import { TaskAcceptance, loadTaskContract } from "./runtime/task-acceptance.js";
 import { completeLoopRequest } from "./runtime/loop-recovery.js";
 import { LoopMetrics } from "./runtime/loop-metrics.js";
 import { CompletionPolicy, normalizeLoopPolicy } from "./runtime/completion-policy.js";
-import { resultSummaryStop, resultSummaryInstruction, retainedResultSummary } from './runtime/result-summary.js';
 import { planToolBatches, executeToolBatch as mapWithConcurrency } from "./runtime/tool-batch.js";
 import { createSafeDependencySession } from "./runtime/safe-dependency-session.js";
 import { spawn } from "node:child_process";
@@ -87,7 +86,6 @@ import {
   normalizeSelfCheckReport,
 } from "./runtime/self-check-evidence.js";
 import {
-  MAX_SUBAGENT_TASK_CHARS,
   normalizeSubagentInput,
   normalizeWorkspaceScope,
   resolveSubagentReasoningPolicy,
@@ -139,6 +137,9 @@ import { supportingReply } from '../shared/reply-presentation.js';
 import { isReadOnlyNativeTool } from "./runtime/durable-run.js";
 import { projectSimpleRequestHistory } from './runtime/simple-request-context.js';
 import { inspectWorkspaceSnapshot, restoreWorkspaceSnapshot } from './runtime/workspace-mutations.js';
+import { mutateWorkspaceFiles } from './runtime/workspace-mutations.js';
+import { inspectCheckpointFile, saveCheckpointFile, validCheckpointFile } from './runtime/checkpoint-files.js';
+import { hashFile } from './storage/file-state.js';
 import { cloudWorkerDeferral, cloudWindDownActive } from "./runtime/cloud-wind-down.js";
 import { ToolProgressGuard } from "./runtime/tool-progress-guard.js";
 import { WEB_TOOL_DEFINITIONS, WEB_TOOL_GUIDANCE, isWebToolName, isNetworkToolName } from './runtime/web-tools.js';
@@ -409,6 +410,12 @@ function reconcileWorkspaceState(
       reverted: false,
       source: current?.source || "workspace-snapshot",
     };
+    if (current?.fileVersions) {
+      change.fileVersions = { ...current.fileVersions };
+      // The observed current version may supersede a previous disk reference;
+      // the original version must remain available for rollback.
+      delete change.fileVersions.after;
+    }
     if (binary) {
       change.additions = 0;
       change.deletions = 0;
@@ -873,7 +880,7 @@ function createUnderstandingCuratorTask({
         content: fact.content,
       })),
     ).slice(0, 500)}`,
-  ].join("\n\n").slice(0, MAX_SUBAGENT_TASK_CHARS);
+  ].join('\n\n');
 }
 
 function parseJsonObject(value) {
@@ -1478,11 +1485,11 @@ export async function runHarness({
         "For Git/GitHub work, use native Git tools end-to-end. If the workspace is not a Git repository, use git_init instead of asking the user to run git init. Local init/stage/commit/branch operations may proceed automatically when policy allows; adding remotes, pulling, pushing, creating GitHub repositories, and creating PRs must respect approval boundaries.",
         "Check github_auth_status/git_remote_list first. GitHub login is separate: sidebar Git > repository settings > GitHub > browser login; user authorizes, then recheck. Never inspect/request/print credentials or gh auth token. Stage selected files only, exclude secrets. Remote linking grants no publishing authority; push/create only when requested and claim success only from receipts.",
         "Use read_file line ranges or offset continuation when a file is truncated. Use read_external_file only when the user task genuinely needs a specific file outside the workspace; it remains read-only and uses the configured approval mode.",
-        "Use workspace-relative paths only.",
+        "Use workspace-relative paths for workspace tools; explicitly authorized external paths require the dedicated external-access route.",
         "Never claim a file was changed unless a file-writing tool succeeded or a Builder result explicitly reports integrated=true. Provisional Builder edits are not changes in the parent workspace.",
         "Prefer apply_patch for localized edits and write_file for new files or complete rewrites.",
         "Inspect deletion targets; use delete_file(path, expected_sha256 if known), never reproduce file contents to delete. It preserves recovery and approvals. Fix PATCH_FORMAT_INVALID syntax without bypassing permissions.",
-        "Register new disposable check scripts with temporary_self_check=true, never deliverables. Tracked tool edits preserve eligibility; external changes revoke it. Clean with cleanup_temporary_check, not shell deletion.",
+        "Register new disposable self-check scripts or HTML test pages (.html/.htm, up to 100,000 UTF-8 bytes) with temporary_self_check=true, never deliverables. Tracked tool edits within the size limit preserve eligibility; external changes revoke it. Clean with cleanup_temporary_check, not shell deletion.",
         "Use concise Markdown headings and GFM tables when structure helps.",
         "Link real workspace files with descriptive Markdown labels and relative paths, e.g. [Report](docs/report.pdf) or [code](src/main.js:12); use absolute paths in <angle brackets> only outside the workspace. Never invent paths.",
         "Completion handoff only: outcome, clickable links to the actual deliverable files, important caveats/actions. No diary or repeated inventory; honor requests for detailed reports. File size/version only when verified.",
@@ -1490,8 +1497,8 @@ export async function runHarness({
         "Preview handoff only: link an observed reachable HTTP(S) port/path; state local-only access and whether the service will remain running. Starting a process proves no URL; never invent links or offer stopped previews. Prefer managed persistent dev servers.",
         "Concise handoffs do not shorten in-progress milestone updates, explanations, diagnosis or requested reports. Never remove an important failure or unverified limitation to make delivery look successful.",
         "Put source code in fenced code blocks with an accurate language tag.",
-        "Do not use emoji, pictograms, decorative symbols, or status glyphs anywhere in the final answer.",
-        "Do not generate SVG markup or SVG files unless the user explicitly asks for SVG output.",
+        "Match the user's tone; use visual markers only when they improve clarity.",
+        "Choose suitable implementation formats, including SVG when useful; respect requested deliverable formats.",
         "Use git_status and git_diff to inspect repository changes when the workspace is a Git repository.",
         browserEnabled ? WEB_TOOL_GUIDANCE : 'Web search and retrieval are disabled by the effective Extension Policy. Do not bypass this restriction with Browser, MCP, commands or delegation.',
         browserEnabled
@@ -1502,7 +1509,7 @@ export async function runHarness({
           : "",
         "Use update_plan for complex work, one step in_progress; update completed steps and advance the active step as work proceeds. Simple locate/change/check tasks need no planning ceremony. A finished plan describes work, not independent verification. Preserve authorization, user constraints and relevant verification. Give short initial/milestone updates about results and decisions, never hidden reasoning or raw tool logs.",
         temporaryChat ? "" : "Delegate useful independent blocks early; continue Main work meanwhile. Main owns shared interfaces, integration and judgment. Keep trivial tasks direct; don't invent busywork. Briefly explain when parallelism adds no value. Handoff confirmed facts, files, interfaces and acceptance criteria. Workers must read assigned Skills; Skills add no authority. Background explore/curator are advisory unless required_for_completion=true; Review/Verify/Builder are required. Collect results before relying on them.",
-        temporaryChat ? "" : "Builder edits within hard write_scopes in an isolated worktree (private snapshot for unborn Git). verify_project supports parse-only or Docker-isolated script checks; no arbitrary shell, nested delegation, publishing or host fallback. Report missing Docker/dependencies honestly. integrated=true means conflict-checked merge, not correctness. Worktrees are not OS sandboxes. For narrow-scope Verify needing commands, explicitly set command_scope=workspace; parent permissions still apply.",
+        temporaryChat ? "" : "Worker roles describe responsibilities. Compose parent-authorized commands, browser, web, Skills and MCP for the assignment. Native file edits require explicit write_scopes and conflict-checked integration. Commands use the parent's backend and approval policy and have workspace-wide authority: never use them to evade assigned write scope. Worktrees are NOT OS sandboxes. For narrow readers needing commands, explicitly set command_scope=workspace; none disables commands without rejecting the assignment. No nested delegation or implicit publishing. integrated=true is merge evidence, not correctness.",
         temporaryChat ? "" : "collect_subagents(wait_mode=any) waits boundedly without stopping workers; detail=full retrieves evidence. followup_subagent retains context/scope, even after budget_exhausted; usage still counts. Cancel unneeded work. Workers inherit active human requests; never weaken them. Review required reports via review_subagent_result with reportId/evidence IDs. Main evidence IDs are main:<tool_call_id>. Completed/integrated is not verified; unrun checks never pass.",
         "When safe, permitted work remains possible, continue it instead of ending early. To finish, answer the user directly in normal text; finish_task is an optional compatibility wrapper, never a required ceremony. For unfinished work, explain what is available, what remains and why; you may use partial, blocked or needs_input metadata when useful. Do not return only a generic task-incomplete message or turn an environment problem or unanswered user choice into a success claim.",
         temporaryChat ? "" : "Self-check is adaptive. Do not request it for casual conversation, explanation-only answers, or straightforward work with no meaningful risk. Call request_self_check with a concrete reason when independent review would materially improve confidence. You choose relevant checks; tool errors or a file count alone do not mandate another review cycle.",
@@ -1520,9 +1527,9 @@ export async function runHarness({
         commandUsesContainer
           ? "Use run_command when a command materially helps implement or verify the result. Commands run in a network-disabled OS-level container sandbox with a read-only root filesystem and only the current workspace mounted writable."
           : commandUsesLocalSandbox
-            ? "Use run_command only when it materially verifies the result. Commands run in a temporary copy of the authorized workspace and changes are conflict-checked before being synchronized back. This local sandbox uses the host network and process permissions; never claim OS-level or network isolation. Docker is optional and only adds stronger isolation."
+            ? "Use authorized commands when useful to implement, inspect, transform or verify the requested work. Commands run in a temporary copy of the authorized workspace and changes are conflict-checked before synchronization. This local sandbox uses the host network and process permissions, not OS isolation; Docker optionally adds stronger isolation."
             : commandToolAvailable
-              ? "Use run_command only when it materially verifies the result. No sandbox backend is available, so commands require explicit user approval. Keep commands scoped to the authorized workspace and never claim isolation."
+              ? "Use authorized commands when useful for the user's task. No sandbox backend is available, so commands require explicit user approval. Keep operations in scope and never claim isolation."
             : "Command execution is disabled for this task. Never claim that a build or test was run.",
         canRunCommands
           ? "Use start_process/wait_process/write_stdin/kill_process for servers and interactive commands. They need start approval and use the host with sensitive variables removed. For lifetime, trust the workbench lifecycle receipt; never assume a preview survives or stops at task end."
@@ -1672,8 +1679,6 @@ export async function runHarness({
   let anchorBaselinePromise = null;
   let anchorDirty = false;
   const toolProgress = new ToolProgressGuard({ maxRepeatedEvidence: effectiveLoopPolicy.maxRepeatedEvidence, snapshot: savedMain?.toolProgress });
-  let clarificationFailures = 0;
-  let pendingSummaryStop = null;
   const observeToolProgress = (toolCall, modelResult, changes = []) => {
     let input;
     try { input = parseToolArguments(toolCall); } catch { input = toolCall.function.arguments; }
@@ -1768,7 +1773,7 @@ export async function runHarness({
   });
 
   const applyRuntimeControlBoundary = async () => {
-    const resumingNoProgress = toolProgress.blocked && control?.snapshot?.().pauseReasons?.includes("no-progress");
+    const resumingNoProgress = control?.snapshot?.().pauseReasons?.includes("no-progress");
     await control?.waitIfPaused?.(signal);
     // A recovered paused run also requires explicit resume, but should not
     // immediately re-pause using the exhausted snapshot after that action.
@@ -1971,13 +1976,9 @@ export async function runHarness({
     if (deferred) return deferred;
     const profileList = resumeRecord?.input?.profile ? [{ ...resumeRecord.input.profile, enabled: true }] : roles;
     const input = normalizeSubagentInput(rawInput, profileList);
-    if (input.skills?.some(name => !input.profile.skills.includes(name) && !handoffSkills.has(name))) throw new Error('DELEGATED_SKILL_NOT_GRANTED: hand off only Skills already activated/read in this task or assigned to this role.');
     const profile = input.skills?.length ? { ...input.profile, skills: [...new Set([...input.profile.skills, ...input.skills])] } : input.profile;
     input.profile = profile;
-    if (input.commandScope !== 'workspace' && roleDefinition(profile).tools.some(name => ['run_command', 'verify_project'].includes(name))) {
-      throw Error('DELEGATION_COMMAND_SCOPE_REQUIRED: 此角色需要执行检查，但当前只给了局部读取范围。请显式设置 command_scope="workspace"，或选择仅静态检查的角色；不会自动扩大权限。');
-    }
-    if (input.role === "builder") {
+    if (input.writeScopes?.length) {
       if (permission !== "workspace-write" || !canWriteWorkspace) throw new Error("Builder requires parent workspace-write permission.");
       await ensureAnchorBaseline();
     }
@@ -2021,8 +2022,10 @@ export async function runHarness({
       definition.tools = definition.tools.filter(name => !isNetworkToolName(name));
       definition.permissions = { ...definition.permissions, web_search: 'deny', web_fetch: 'deny' };
     }
-    const mcpAllowed = input.role === 'verify' && input.scope.includes('.') && permission === 'workspace-write' && extensionPolicy.mcp !== false;
-    const selectedMcp = mcpAllowed ? mcpRuntime.selectedToolDefinitions(profile.mcpTools, permission) : [];
+    const mcpAllowed = extensionPolicy.mcp !== false;
+    const mcpDefinitions = () => !mcpAllowed ? [] : profile.mcpTools.length
+      ? mcpRuntime.selectedToolDefinitions(profile.mcpTools, permission) : mcpRuntime.toolDefinitions(permission);
+    const selectedMcp = mcpDefinitions();
     emit({ type: 'subagent.profile', agentId, role: input.role, profileId: profile.id, profileName: profile.name,
       task: input.task, phase: record.phase, dependsOn: input.dependsOn || [], systemOwned });
     record.promise = (async () => {
@@ -2043,17 +2046,17 @@ export async function runHarness({
         emit: budget => emit({ type: 'subagent.budget', agentId, budget }),
       }, () => runSubagentTask({
       agentId,
+      taskId,
       input,
       agentDefinition: definition,
       assertDependencies: () => roleCoordinator.assertDependencies(record),
       extensionDefinitions: selectedMcp,
-      executeRoleExtension: async ({ toolName, input: args, signal: workerSignal, requestApproval: approve }) => {
-        await assertLocalControlTool({ toolName, input: args, workspaceRoot, count: false });
-        if (profile.mcpTools.includes(toolName)) {
-          if (!mcpAllowed || !selectedMcp.some(def => def.function.name === toolName)) throw new Error('MCP 不满足本角色的权限与范围要求。');
-          if (!(await approve({ toolName, kind: 'control', title: `专业角色 ${profile.name} 调用 MCP`, command: toolName,
-            description: '此外部工具不受文件路径沙箱约束，仅在父任务授权范围内执行。', input: args }))?.approved) throw new Error('MCP 调用未获授权。');
-          return executeDurableTool(toolName, args, () => mcpRuntime.call(toolName, args, { requestApproval: approve, signal: workerSignal }), approve);
+      getExtensionDefinitions: mcpDefinitions,
+      executeRoleExtension: async ({ toolName, input: args, signal: workerSignal, requestApproval: approve, workspaceRoot: workerWorkspace = workspaceRoot }) => {
+        await assertLocalControlTool({ toolName, input: args, workspaceRoot: workerWorkspace, count: false });
+        if (mcpRuntime.hasTool(toolName)) {
+          if (!mcpAllowed || !mcpDefinitions().some(def => def.function.name === toolName)) throw new Error('MCP 不满足父任务授权或显式工具选择。');
+          return executeDurableTool(toolName, args, () => mcpRuntime.call(toolName, args, { requestApproval: approve, signal: workerSignal }), approve, { scope: agentId });
         }
         await authorizeSubagentControl(toolName, args, approve);
         if (toolName === 'project_knowledge') {
@@ -2063,9 +2066,8 @@ export async function runHarness({
           return knowledgeSession.call(args);
         }
         if (extensionPolicy.skill === false) throw new Error('Skills 已禁用。');
-        if (toolName === 'search_skills') return { skills: profile.skills.map(name => ({ name, instructions: 'SKILL.md' })), total: profile.skills.length };
-        if (toolName !== 'read_skill_resource' || !profile.skills.includes(args.skill)) throw new Error('Skill 未授予此角色。');
-        return (await executeTrackedTool({ toolName, input: args, workspaceRoot, signal: workerSignal })).modelResult;
+        if (!['search_skills', 'read_skill_resource'].includes(toolName)) throw new Error('Role extension unavailable.');
+        return (await executeTrackedTool({ toolName, input: args, workspaceRoot: workerWorkspace, signal: workerSignal })).modelResult;
       },
       session: record.session,
       getDelegationContext: () => captureDelegationContext(rollingContext.delegationHistory(), taskAcceptance.briefing()),
@@ -2114,10 +2116,14 @@ export async function runHarness({
           const previous = changeMap.get(change.path);
           if (previous) {
             const binary = Boolean(previous.binary || change.binary);
+            const fileVersions = { ...change.fileVersions };
+            if (previous.fileVersions?.before) fileVersions.before = previous.fileVersions.before;
+            else delete fileVersions.before;
             changeMap.set(change.path, { ...change, binary,
+              ...(Object.keys(fileVersions).length ? { fileVersions } : { fileVersions: undefined }),
               beforeContent: binary && !previous.binary ? Buffer.from(previous.beforeContent, "utf8").toString("base64") : previous.beforeContent,
               afterContent: binary && !change.binary ? Buffer.from(change.afterContent, "utf8").toString("base64") : change.afterContent,
-              beforeBase64: undefined, afterBase64: undefined, beforeHash: undefined, afterHash: undefined,
+              beforeBase64: undefined, afterBase64: undefined, beforeHash: previous.beforeHash, afterHash: change.afterHash,
               beforeMissing: previous.beforeMissing });
           } else changeMap.set(change.path, change);
           emit({ type: "file.changed", path: change.path, source: "builder-merge" });
@@ -2189,7 +2195,7 @@ export async function runHarness({
     if (!record) throw new Error('Unknown subagent id in this task.');
     if (action === 'stop') { record.controller?.abort(); roleCoordinator.notify(); return { agentId, status: record.status === 'running' ? 'cancellation_requested' : record.status }; }
     const guidance = String(task || '').trim();
-    if (!guidance || guidance.length > 4000) throw new Error('追加要求需为 1–4000 字符。');
+    if (!guidance) throw new Error('追加要求不能为空。');
     if (record.input.profile?.maxRequests != null && record.session.roleBudget?.requests >= record.input.profile.maxRequests) throw new Error('用户设置的子 Agent 请求预算已耗尽；已有成果保留。');
     (record.session.pendingGuidance ||= []).push(guidance);
     await saveRuntimeContext(agentId, { kind: 'worker', workspaceRoot, input: record.input, session: record.session, status: record.status, result: record.result });
@@ -2602,19 +2608,8 @@ export async function runHarness({
         applyControlBoundary: applyRuntimeControlBoundary,
       });
       candidateReply = null;
-      let summaryStop = pendingSummaryStop;
-      try { if (!summaryStop) { toolProgress.assertBudget(); strategyHistory.assertBudget(); } }
-      catch (error) { summaryStop = resultSummaryStop(error, language); if (!summaryStop) throw error; }
-      if (summaryStop) {
-        // Keep the execution guard exhausted. One text-only result is allowed;
-        // no further tool, worker, or permission request can run on this path.
-        subagentController.abort();
-        await waitForWorkers([...subagents.values()], { mode: "all", timeoutMs: 3000 });
-        conversation.push(harnessFeedback(resultSummaryInstruction(summaryStop)));
-        await persistMainContext();
-        emit({ type: "completion.summary", reason: summaryStop.code });
-      }
-      if (provider.supportsTools && !summaryStop) {
+      // Progress/strategy guards act at individual tool boundaries, never by cancelling the team.
+      if (provider.supportsTools) {
         await mcpRuntime.refresh({ permissionMode: permission, signal });
         const nextDefinitions = [...resolveToolDefinitions(), ...mcpRuntime.toolDefinitions(permission)];
         if (JSON.stringify(nextDefinitions) !== JSON.stringify(enabledToolDefinitions)) {
@@ -2630,7 +2625,7 @@ export async function runHarness({
       emit({
         type: "response.reset",
         round: step + 1,
-        phase: summaryStop ? "result-summary" : selfCheck.started ? "self-check" : "work",
+        phase: selfCheck.started ? 'self-check' : 'work',
       });
       await appendBrowserVisualEvidence(conversation, { supportsImages, providerId: providerConfig.id, modelId, signal });
       const memoryFacts = []; // Knowledge is only returned by explicit project_knowledge calls.
@@ -2662,7 +2657,7 @@ export async function runHarness({
       const completionBody = (requestMessages) => ({
           model: modelId,
           messages: providerMessages(requestMessages),
-          ...(!summaryStop && !plainReplyRequest && provider.supportsTools && enabledToolDefinitions.length
+          ...(!plainReplyRequest && provider.supportsTools && enabledToolDefinitions.length
             ? {
                 tools: enabledToolDefinitions,
                 tool_choice: "auto",
@@ -2750,8 +2745,7 @@ export async function runHarness({
         assistantSummary: String(message.content || "").slice(0, 6000),
         pendingTools: (message.tool_calls || []).map((call) => ({ id: call.id, tool: call.function?.name })),
       });
-      if (summaryStop) message = retainedResultSummary(message, summaryStop, language);
-      let outcome = summaryStop ? null : readTaskOutcome(message, parseToolArguments);
+      let outcome = readTaskOutcome(message, parseToolArguments);
       if (outcome?.normalization) emit({ type: 'completion.normalized', ...outcome.normalization,
         status: outcome.status, hasAnswer: Boolean(outcome.summary), deferred: Boolean(outcome.deferred) });
       if (outcome?.deferred) outcome = null;
@@ -2787,7 +2781,7 @@ export async function runHarness({
         await persistMainContext();
       }
       plainReplyRequest = null;
-      let outcomeStatus = summaryStop ? "blocked" : outcome?.status || "completed";
+      let outcomeStatus = outcome?.status || 'completed';
       const turnDecision = turnCoordinator.observeModelResponse(message);
       if (turnDecision.kind === "final") {
         candidateReply = { content: message.content, deliveryDetails: message.deliveryDetails, replyDelivered: true };
@@ -3037,7 +3031,6 @@ export async function runHarness({
             if (!clarification || getToolPermission(permissionPolicy, "request_user_input") === "deny") throw new Error("CLARIFICATION_MAIN_ONLY");
             const question = await clarification.request(parseToolArguments(call), call.id);
             result = clarificationResult(question);
-            clarificationFailures = 0;
             const human = { ...clarificationHumanMessage(question), aporiaHistoryIndex: inputHistory.length, aporiaCurrentRequest: true };
             conversation.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) }, human);
             inputHistory.push(human);
@@ -3053,14 +3046,13 @@ export async function runHarness({
           } catch (error) {
             // Storage failures and interruption are fatal; never continue without a durable answer.
             if (error?.name === "AbortError" || !String(error?.message).startsWith("CLARIFICATION_") || error?.message === "CLARIFICATION_LEDGER_CONFLICT") throw error;
-            result = { error: error.message, guidance: "Do not repeat questions or bypass the limit. Inspect available evidence, make only safe reversible assumptions, or finish blocked." };
+            result = { error: error.message, guidance: "Do not repeat this rejected question. Continue independent work, inspect context, or ask a distinct essential question. No tools or teammates were stopped." };
             rejected = true;
             conversation.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
           }
           observeToolProgress(call, result);
         }
         await persistMainContext();
-        if (rejected && ++clarificationFailures >= 3) pendingSummaryStop = resultSummaryStop({ code: 'CLARIFICATION_REPEATED_DENIAL' }, language);
         continue;
       }
 
@@ -3112,6 +3104,7 @@ export async function runHarness({
             let success = true;
             try {
               if (LOCAL_CONTROL_SPECIAL_TOOLS.has(toolName)) await assertLocalControlTool({ toolName, input: parseToolArguments(toolCall), workspaceRoot });
+              toolProgress.before(toolName, parseToolArguments(toolCall), verificationVersion(changeMap));
               strategyHistory.before(toolName, parseToolArguments(toolCall));
               if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
               if (retryAfterScopedInstructions.has(toolCall.id)) throw new Error("Review newly loaded scoped instructions and retry.");
@@ -3245,6 +3238,7 @@ export async function runHarness({
         });
         try {
           if (LOCAL_CONTROL_SPECIAL_TOOLS.has(toolCall.function.name)) await assertLocalControlTool({ toolName: toolCall.function.name, input: parseToolArguments(toolCall), workspaceRoot });
+          toolProgress.before(toolCall.function.name, parseToolArguments(toolCall), verificationVersion(changeMap));
           strategyHistory.before(toolCall.function.name, parseToolArguments(toolCall));
           acceptancePreparation = await taskAcceptance.beforeTool(toolCall.function.name, parseToolArguments(toolCall));
           if (retryAfterScopedInstructions.errors.has(toolCall.id)) throw retryAfterScopedInstructions.errors.get(toolCall.id);
@@ -3974,8 +3968,9 @@ function normalizeCheckpointState(change, side) {
   return {
     missing,
     binary: Boolean(change.binary),
+    ...(!missing && change.fileVersions?.[side] ? { fileVersion: change.fileVersions[side], hash: change.fileVersions[side].sha256 } : {}),
     ...(!missing && before && change.fileSnapshot ? { fileSnapshot: change.fileSnapshot, hash: change.fileSnapshot.sha256 } : {}),
-    maxBytes: change.source === "builder-merge" ? 16_000_000 : checkpointBinaryLimit(change.path),
+    maxBytes: change.source === 'builder-merge' ? 1_000_000_000 : checkpointBinaryLimit(change.path),
     content: missing
       ? ""
       : String(
@@ -3996,14 +3991,16 @@ function validateCheckpoint(change) {
   }
   if (change.fileSnapshot) return change.source === 'file-deletion' && !change.beforeMissing &&
     typeof change.fileSnapshot.manifestPath === 'string' && /^[a-f0-9]{64}$/.test(change.fileSnapshot.sha256 || '');
+  if (change.fileVersions && (change.source !== 'builder-merge' || Object.entries(change.fileVersions).some(([side, ref]) =>
+    !['before', 'after'].includes(side) || !validCheckpointFile(ref)))) return false;
   if (!change.binary) {
-    const maximumText = change.source === "builder-merge" ? 16_000_000 : MAX_FILE_WRITE_CHARS * 6;
+    const maximumText = change.source === 'builder-merge' ? 1_000_000_000 : MAX_FILE_WRITE_CHARS * 6;
     return (
       change.beforeContent.length <= maximumText &&
       change.afterContent.length <= maximumText
     );
   }
-  const maximum = Math.ceil((change.source === "builder-merge" ? 16_000_000 : checkpointBinaryLimit(change.path)) * 1.4);
+  const maximum = Math.ceil((change.source === 'builder-merge' ? 1_000_000_000 : checkpointBinaryLimit(change.path)) * 1.4);
   return (
     change.beforeContent.length <= maximum &&
     change.afterContent.length <= maximum
@@ -4014,7 +4011,7 @@ async function readCheckpointState(
   workspaceRoot,
   requestedPath,
   binary,
-  { missingOnly = false } = {},
+  { missingOnly = false, hashOnly = false } = {},
 ) {
   const filePath = resolveWorkspacePath(workspaceRoot, requestedPath);
   try {
@@ -4027,6 +4024,10 @@ async function readCheckpointState(
       throw new Error("Checkpoint target escapes the workspace.");
     }
     if (missingOnly) return { missing: false, binary, content: '' };
+    if (hashOnly) {
+      const fileVersion = await saveCheckpointFile(workspaceRoot, requestedPath, verifiedPath);
+      return { missing: false, binary, content: '', fileVersion, hash: fileVersion.sha256 };
+    }
     const buffer = await readFile(verifiedPath);
     return {
       missing: false,
@@ -4043,10 +4044,10 @@ async function readCheckpointState(
   }
 }
 
+const hashOfCheckpoint = state => state.hash || createHash('sha256').update(Buffer.from(state.content || '', state.binary ? 'base64' : 'utf8')).digest('hex');
 function checkpointStatesEqual(left, right) {
   if (!left?.missing && !right?.missing && (left.hash || right.hash)) {
-    const hash = state => state.hash || createHash('sha256').update(Buffer.from(state.content || '', state.binary ? 'base64' : 'utf8')).digest('hex');
-    return hash(left) === hash(right);
+    return hashOfCheckpoint(left) === hashOfCheckpoint(right);
   }
   return (
     Boolean(left?.missing) === Boolean(right?.missing) &&
@@ -4062,6 +4063,14 @@ async function writeCheckpointState(
   state,
   expectedState = null,
 ) {
+  if (state.fileVersion) {
+    const source = await inspectCheckpointFile(workspaceRoot, requestedPath, state.fileVersion);
+    const target = resolveWorkspacePath(workspaceRoot, requestedPath);
+    let previous = null;
+    try { previous = { filePath: target, ...await hashFile(target) }; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (expectedState && (expectedState.missing ? previous !== null : !previous || hashOfCheckpoint(expectedState) !== previous.sha256)) throw Error('Checkpoint target changed after preflight.');
+    return mutateWorkspaceFiles({ workspaceRoot, edits: [{ path: target, before: previous, after: source }] });
+  }
   if (state.fileSnapshot) return restoreWorkspaceSnapshot(workspaceRoot, requestedPath, state.fileSnapshot, {
     expectedMissing: expectedState ? expectedState.missing : true,
     expectedHash: expectedState && !expectedState.missing ? expectedState.hash || createHash('sha256').update(Buffer.from(expectedState.content || '', expectedState.binary ? 'base64' : 'utf8')).digest('hex') : null,
@@ -4127,12 +4136,13 @@ export async function revertWorkspaceChanges({
     }
     try {
       if (change.fileSnapshot) await inspectWorkspaceSnapshot(workspaceRoot, change.path, change.fileSnapshot);
+      for (const ref of Object.values(change.fileVersions || {})) await inspectCheckpointFile(workspaceRoot, change.path, ref);
       const expected = normalizeCheckpointState(change, "after");
       const current = await readCheckpointState(
         workspaceRoot,
         change.path,
         expected.binary,
-        { missingOnly: expected.missing },
+        { missingOnly: expected.missing, hashOnly: Boolean(expected.fileVersion || change.fileVersions?.before) },
       );
       if (!checkpointStatesEqual(current, expected)) {
         results.push({
@@ -4217,12 +4227,14 @@ export async function restoreWorkspaceAnchor({
       try { await inspectWorkspaceSnapshot(workspaceRoot, change.path, change.fileSnapshot); }
       catch (error) { conflicts.push({ path: change.path, checkpointId: operation.checkpointId, reason: error.message }); continue; }
     }
+    try { for (const ref of Object.values(change.fileVersions || {})) await inspectCheckpointFile(workspaceRoot, change.path, ref); }
+    catch (error) { conflicts.push({ path: change.path, checkpointId: operation.checkpointId, reason: error.message }); continue; }
     if (!current) {
       current = await readCheckpointState(
         workspaceRoot,
         change.path,
         Boolean(change.binary),
-        { missingOnly: expected.missing },
+        { missingOnly: expected.missing, hashOnly: Boolean(expected.fileVersion || change.fileVersions?.before) },
       );
       originalStates.set(change.path, current);
     }

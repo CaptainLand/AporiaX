@@ -2195,7 +2195,7 @@ function TaskWorkspace({
 
 function Toast({ message }) {
   if (!message) return null;
-  return <div className="toast">{message}</div>;
+  return <div className="toast" role="status" aria-live="polite">{message}</div>;
 }
 
 function summarizeCompletionContent(content, fallback) {

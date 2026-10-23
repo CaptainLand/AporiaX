@@ -9,7 +9,7 @@ export function turnRestorePreview(change) {
   const afterContent = deleted ? '' : String(change.beforeContent ?? '');
   const rows = [];
   let beforeLine = 1, afterLine = 1, additions = 0, deletions = 0;
-  if (!change.binary) for (const part of diffLines(beforeContent, afterContent)) {
+  if (!change.binary && !change.fileVersions) for (const part of diffLines(beforeContent, afterContent)) {
     const lines = part.value.split('\n');
     if (lines.at(-1) === '') lines.pop();
     for (const content of lines) {
@@ -20,5 +20,7 @@ export function turnRestorePreview(change) {
     }
   }
   return { ...change, beforeContent, afterContent, created, deleted,
+    ...(change.fileVersions ? { fileVersions: { before: change.fileVersions.after, after: change.fileVersions.before } } : {}),
+    beforeBytes: change.afterBytes, afterBytes: change.beforeBytes,
     beforeMissing: created, afterMissing: deleted, additions, deletions, rows };
 }

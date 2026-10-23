@@ -61,7 +61,7 @@ const result = await runIsolatedBuilder({ ...builderOptions, onBuilderMerge: asy
 assert.equal(result.integrated, true); assert.deepEqual(await readFile(join(root, "gbk.txt")), changed);
 assert.equal((await revertWorkspaceChanges({ workspacePath: root, changes: checkpoints }))[0].success, true);
 assert.deepEqual(await readFile(join(root, "gbk.txt")), original);
-assert.equal(session.snapshotLimits.maxFiles, 3000);
+assert.equal(session.snapshotLimits.maxFiles, 100000);
 assert.throws(() => builderSnapshotLimits({ maxBytes: -1 }), /Invalid/);
 assert.throws(() => builderSnapshotLimits({ maxFileBytes: 10, maxBytes: 5 }), /maxFileBytes/);
 const manager = createBuilderWorkspaceManager({ snapshotLimits: { maxFileBytes: 1 } });

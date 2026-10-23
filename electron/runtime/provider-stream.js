@@ -554,6 +554,12 @@ export async function callModelProviderOnce({
           error.cloudQuota = { temporary: false, reason: cloudBilling.admission.limitReason, truncated: true };
         }
       error.partialToolCalls = toolCalls.some(Boolean);
+      // Persist only structural progress, never execute/retain malformed arguments
+      // as tool calls or treat differing call IDs as progress.
+      error.toolProtocolProgress = { completeArguments: toolCalls.filter(Boolean).filter(call => {
+        try { const value = JSON.parse(call.function?.arguments || '{}'); return value && typeof value === 'object' && !Array.isArray(value); }
+        catch { return false; }
+      }).length };
       error.partialMessage = { content, ...(reasoningContent ? { reasoning_content: reasoningContent } : {}), ...(nativeState ? { aporiaNative: nativeState } : {}) };
       onEvent?.({ type: "response.incomplete", code, finishReason, usage });
       throw error;

@@ -490,10 +490,11 @@ export async function saveRunContext(dataDirectory, runId, scopeId, state) {
   const parsed = typeof state === "string" ? JSON.parse(state) : state;
   database.exec("BEGIN IMMEDIATE");
   try {
-    const bytes = encodeContext(database, parsed);
-    if (bytes.length > 16_000_000) throw new Error("RUN_CONTEXT_TOO_LARGE: snapshot manifest exceeds 16 MB.");
-    database.prepare("INSERT OR REPLACE INTO run_contexts (run_id, scope_id, updated_at, checksum, payload, format) VALUES (?, ?, ?, ?, ?, 'chunks-v1')")
-      .run(assertRunId(runId), String(scopeId), new Date().toISOString(), digest(bytes), gzipSync(bytes, { level: 1 }));
+    const manifest = encodeContext(database, parsed);
+    const external = manifest.length > 16_000_000;
+    const bytes = external ? Buffer.from(JSON.stringify(storeBytes(database, manifest))) : manifest;
+    database.prepare("INSERT OR REPLACE INTO run_contexts (run_id, scope_id, updated_at, checksum, payload, format) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(assertRunId(runId), String(scopeId), new Date().toISOString(), digest(bytes), gzipSync(bytes, { level: 1 }), external ? 'chunks-manifest-v2' : 'chunks-v1');
     database.exec("COMMIT");
   } catch (error) { database.exec("ROLLBACK"); throw error; }
 }
@@ -503,7 +504,8 @@ function readRunContexts(database, runId) {
   for (const row of database.prepare("SELECT scope_id, checksum, payload, format FROM run_contexts WHERE run_id = ?").all(runId)) {
     const bytes = gunzipSync(row.payload, { maxOutputLength: 16_000_000 });
     if (createHash("sha256").update(bytes).digest("hex") !== row.checksum) throw new Error("RUN_CONTEXT_CORRUPT");
-    result[row.scope_id] = row.format === "chunks-v1" ? decodeContext(database, bytes) : JSON.parse(bytes.toString("utf8"));
+    result[row.scope_id] = row.format === 'chunks-manifest-v2' ? decodeContext(database, loadBytes(database, JSON.parse(bytes.toString('utf8'))))
+      : row.format === "chunks-v1" ? decodeContext(database, bytes) : JSON.parse(bytes.toString("utf8"));
   }
   return result;
 }

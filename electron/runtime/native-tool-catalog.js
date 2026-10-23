@@ -58,7 +58,7 @@ export const TOOL_DEFINITIONS = [
         ? "Continue an existing worker with its retained context and evidence. A running worker receives guidance at its next boundary. Does not broaden its role or scope."
         : "Cancel one worker in this task without cancelling unrelated workers. Cancellation is cooperative; collect its final status before relying on it.",
       parameters: { type: "object", properties: { agent_id: { type: "string" },
-        ...(name === "followup_subagent" ? { task: { type: "string", minLength: 1, maxLength: 4000 } } : {}) },
+        ...(name === "followup_subagent" ? { task: { type: "string", minLength: 1 } } : {}) },
         required: name === "followup_subagent" ? ["agent_id", "task"] : ["agent_id"], additionalProperties: false },
     },
   })),
@@ -74,7 +74,7 @@ export const TOOL_DEFINITIONS = [
           role: {
             type: "string",
             description:
-              "explore searches, review inspects, verify runs checks, curator extracts knowledge. builder implements scoped changes in an isolated Git worktree and self-checks with verify_project; requires write_scopes, no arbitrary shell or recursive delegation. Main owns final integration and acceptance.",
+              "Role labels describe responsibilities, not capability ceilings. Workers may use parent-authorized command, browser, web and workflow tools. Any file edits require write_scopes and conflict-checked worktree integration; worktrees are not OS sandboxes. No recursive delegation or publishing.",
           },
           task: {
             type: "string",
@@ -82,7 +82,8 @@ export const TOOL_DEFINITIONS = [
               "A self-contained task with the question, expected evidence, and completion criteria.",
           },
           skills: { type: "array", maxItems: 64, items: { type: "string" }, description: "Optional workflow names to hand off from Skills already activated or successfully read in this task. Does not grant any new tools or permissions." },
-          context: { type: "string", maxLength: 6000, description: "Concise handoff: confirmed facts, relevant files, interface assumptions and acceptance criteria. Advisory, not proof or authorization. Do not copy hidden reasoning or raw logs." },
+          context: { type: "string", description: "Handoff facts, interfaces and criteria. Actual selected-model context budget applies, not a fixed character limit. Original user requirements remain available separately. No hidden reasoning." },
+          dependency_requirements: { type: 'array', items: { type: 'object', properties: { agent_id: { type: 'string' }, use: { type: 'string', enum: ['report', 'changes'] } }, required: ['agent_id', 'use'], additionalProperties: false }, description: 'Optional edge semantics. report uses accepted findings without requiring all upstream edits integrated; changes (default) requires real integration for writable workers.' },
             depends_on: { type: "array", maxItems: 12, items: { type: "string" }, description: "Existing worker IDs in this run. Waits without model calls until their reports are accepted. Dependencies always run in background. Failed dependencies block this worker." },
           scope: {
             type: "array",
@@ -92,8 +93,8 @@ export const TOOL_DEFINITIONS = [
               "Optional workspace-relative paths the subagent may inspect. Defaults to the whole workspace.",
           },
           write_scopes: { type: "array", minItems: 1, maxItems: 12, items: { type: "string" },
-            description: "Required for builder: explicit non-root paths it may modify. Keep write scopes non-overlapping. Integration checks file conflicts, not semantic correctness." },
-          command_scope: { type: 'string', enum: ['none', 'workspace'], description: 'Command access is separate from read scope. For command-based verification with narrow scope, explicitly select workspace; cwd does not confine commands. Parent permissions and isolation still apply.' },
+            description: "Required for any worker file edits, including Builder: explicit non-root, non-overlapping paths. Worktree integration checks conflicts, not correctness. Omitting this makes native writes unavailable." },
+          command_scope: { type: 'string', enum: ['none', 'workspace'], description: 'Separate command capability. Full-workspace/writing assignments default to workspace; narrowed read-only assignments default to none. Select workspace explicitly when a narrow reader needs commands. Scope/cwd cannot confine arbitrary commands; parent grants and approvals still apply. None disables commands without rejecting the assignment.' },
           background: {
             type: "boolean",
             description:
@@ -146,6 +147,7 @@ export const TOOL_DEFINITIONS = [
       decision: { type: "string", enum: ["accepted", "needs_changes"] },
       reason: { type: "string", minLength: 1, maxLength: 2000 },
       evidence_ids: { type: "array", maxItems: 16, items: { type: "string" } },
+      dependency_ready: { type: 'boolean', description: 'Accepted evidence satisfies downstream use (default true); false accepts the report for review without releasing dependent work.' },
     }, required: ["agent_id", "report_id", "decision", "reason"], additionalProperties: false },
   } },
   {
@@ -408,7 +410,7 @@ export const TOOL_DEFINITIONS = [
           },
           temporary_self_check: {
             type: "boolean",
-            description: "Mark a NEW workspace script as disposable self-check scaffolding (not a deliverable). Only registered, unchanged files can later be removed by cleanup_temporary_check without a deletion prompt. Never mark user files or existing scripts.",
+            description: "Register a NEW disposable workspace self-check script (.js/.mjs/.cjs/.py/.ps1/.sh/.bat/.cmd) or HTML test page (.html/.htm), at most 100,000 UTF-8 bytes, never a deliverable or user file. This active task's unchanged registered files can be updated and cleaned with cleanup_temporary_check without a deletion prompt. Tracked tool edits within the size limit preserve registration; external edits or a task restart revoke it.",
           },
         },
         required: ["path", "content"],
@@ -420,7 +422,7 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "cleanup_temporary_check",
-      description: "Recoverably remove ONE unchanged temporary self-check script created by write_file with temporary_self_check=true in this active task. No shell, recursive deletion, user files, external files, or unregistered scripts. Explicit deny/ask policies and uncertain recovery still apply.",
+      description: "Recoverably remove ONE unchanged temporary self-check script or HTML test page registered by write_file with temporary_self_check=true in this active task. Checks workspace ownership, file identity, single hard link and content hash; tracked tool edits can preserve registration. No shell, recursive deletion, user files, external files, or unregistered files. Explicit deny/ask policies and uncertain recovery still apply.",
       parameters: {
         type: "object",
         properties: { path: { type: "string", description: "Exact workspace-relative path returned by write_file." } },
@@ -568,6 +570,7 @@ export const TOOL_DEFINITIONS = [
               "A short user-facing explanation of why the command is needed.",
           },
           verification: { type: "boolean", description: "Record this relevant check as execution evidence for the current version. Default false." },
+          timeout_ms: { type: 'integer', minimum: 1, maximum: 2147483647, description: 'Optional explicit total deadline. Omit to let a long-running command finish; slow/quiet status does not kill it. Use start_process for servers.' },
         },
         required: ["command", "cwd"],
         additionalProperties: false,

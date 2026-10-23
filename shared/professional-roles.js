@@ -1,13 +1,8 @@
-const READ_TOOLS = ['task_brief', 'replan_strategy', 'list_directory', 'read_file', 'search_text', 'find_files', 'git_status', 'git_diff', 'inspect_office_file'];
-const WEB_READ_TOOLS = ['web_search', 'web_fetch'];
-export const NATIVE_ROLE_TOOLS = Object.freeze({
-  explore: [...READ_TOOLS, ...WEB_READ_TOOLS], review: [...READ_TOOLS, ...WEB_READ_TOOLS], curator: READ_TOOLS,
-  verify: [...READ_TOOLS, ...WEB_READ_TOOLS, 'run_command', 'verify_numeric_data'],
-  builder: [...READ_TOOLS.filter(tool => tool !== 'inspect_office_file'), 'write_file', 'delete_file', 'cleanup_temporary_check', 'apply_patch', 'verify_project'],
-});
+import { DELEGATED_NATIVE_TOOLS } from './delegated-capabilities.js';
+export const NATIVE_ROLE_TOOLS = Object.freeze(Object.fromEntries(['explore', 'review', 'curator', 'verify', 'builder'].map(role => [role, DELEGATED_NATIVE_TOOLS])));
 export const ROLE_TEMPLATES = Object.freeze({
   explore: { name: '探奇', description: '读取项目，定位实现与证据。', maxRounds: null, thinking: 'inherit' },
-  review: { name: '察微', description: '检查正确性、安全与回归风险，不修改文件。', maxRounds: null, thinking: 'inherit' },
+  review: { name: '察微', description: '侧重检查正确性、安全与回归风险；修改需明确交办写入范围。', maxRounds: null, thinking: 'inherit' },
   verify: { name: '验准', description: '运行必要检查，报告命令、证据与未验证项。', maxRounds: null, thinking: 'inherit' },
   curator: { name: '知序', description: '从已验证成果整理可复用的项目知识。', maxRounds: null, thinking: 'inherit' },
   builder: { name: '搭匠', description: '在明确的写入范围和隔离工作区中实现改动。', maxRounds: null, thinking: 'inherit' },
@@ -47,7 +42,7 @@ export function normalizeRole(input) {
   const name = text(input.name, 80, '角色名称');
   if (!name) throw new Error('角色名称不能为空。');
   const tools = input.tools == null ? null : strings(input.tools, '内置工具');
-  if (tools?.some(tool => !NATIVE_ROLE_TOOLS[input.template].includes(tool))) throw new Error('工具不属于此角色的执行模板。');
+  if (tools?.some(tool => !DELEGATED_NATIVE_TOOLS.includes(tool))) throw new Error('工具不属于可委派的原生能力。');
   return { id, name, template: input.template, enabled: input.enabled,
     description: text(input.description, 2000, '职责'), instructions: text(input.instructions, 16000, '指令'),
     model: text(input.model, 256, '模型') || 'inherit', thinking: input.thinking,

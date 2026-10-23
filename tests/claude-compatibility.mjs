@@ -23,10 +23,10 @@ assert.deepEqual(normalizeProviderModels([{ id: "unknown", supportsThinking: fal
 
 const guard = new ToolProgressGuard();
 for (let i = 0; i < 6; i++) guard.observe({ tool: "list_directory", input: { path: "." }, result: { entries: [], resultRef: { id: String(i) } } });
-assert.throws(() => guard.assertBudget(), /LOOP_NO_PROGRESS/, "stop before a seventh paid round");
+guard.assertBudget(); assert.throws(() => guard.before('list_directory', { path: '.' }), /TOOL_REPEAT_SUPPRESSED/);
 const plans = new ToolProgressGuard();
 for (let i = 0; i < 6; i++) plans.observe({ tool: "update_plan", input: { steps: [{ title: `Reword ${i}` }] }, result: { revision: i + 1 } });
-assert.throws(() => plans.assertBudget(), /LOOP_NO_PROGRESS/, "rewording plans is not execution progress");
+plans.assertBudget();
 
 const wire = compileProviderWire({ ...provider, id: "test", protocol: "anthropic-messages", anthropicThinking: "manual" }, { model: model.id, messages: [{ role: "user", content: "fixture" }] });
 assert.equal(wire.body.thinking.type, "adaptive");
@@ -40,7 +40,7 @@ assert.throws(() => modelReasoningParameters(model, { modelId: model.id, effort:
 assert.deepEqual(modelReasoningParameters({ supportsThinking: true, thinkingMode: "deepseek" }, { thinking: false, effort: "low" }), { thinking: { type: "disabled" } });
 assert.deepEqual(modelReasoningParameters({ supportsThinking: true, thinkingMode: "deepseek" }, { thinking: true, effort: "max" }), { thinking: { type: "enabled" }, reasoning_effort: "max" });
 const restored = new ToolProgressGuard({ snapshot: guard.snapshot() });
-assert.throws(() => restored.assertBudget(), /LOOP_NO_PROGRESS/);
+restored.assertBudget(); assert.throws(() => restored.before('list_directory', { path: '.' }), /TOOL_REPEAT_SUPPRESSED/);
 restored.reset(); restored.assertBudget();
 const advancing = new ToolProgressGuard();
 for (let i = 0; i < 10; i++) {
