@@ -1,0 +1,2 @@
+/* Account-specific colors also override the neutral account-avatar background. */
+:root .agent-avatar.account-portrait[data-avatar] { background:var(--account-portrait-color); }

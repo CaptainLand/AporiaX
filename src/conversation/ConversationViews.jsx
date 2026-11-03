@@ -87,6 +87,15 @@ function MarkdownReplyToggle() {
   return useContext(ReplyAction);
 }
 
+function MarkdownTable({ node, children, ...props }) {
+  const { tr } = useI18n();
+  return (
+    <div className="conversation-table-scroll" role="region" tabIndex={0} aria-label={tr("表格，可横向滚动", "Table, scroll horizontally")}>
+      <table {...props}>{children}</table>
+    </div>
+  );
+}
+
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
   const onNotice = useContext(LinkNotice);
@@ -143,6 +152,7 @@ const MarkdownMessage = React.memo(function MarkdownMessage({ content, trailingA
         urlTransform={(url, key) => key === "href" ? messageLinkUrl(url) : defaultUrlTransform(url)}
         components={{
           pre: MarkdownCodeBlock,
+          table: MarkdownTable,
           a: MessageLink,
           img: MessageImage,
           'aporiax-reply-toggle': MarkdownReplyToggle,

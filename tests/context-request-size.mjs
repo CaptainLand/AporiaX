@@ -93,6 +93,27 @@ try {
     await assert.rejects(infer(conversation, cloud), /PROVIDER_REQUEST_TOO_LARGE/);
     assert.equal(count, 0);
   });
+  await test("Cloud image count and total bytes include history and fail before transmission", async () => {
+    let count = 0;
+    const cloud = { ...provider, kind: 'aporia-cloud', authenticatedFetch: async () => { count++; throw Error('must not dispatch'); } };
+    const part = {type: 'image_url', image_url: {url:'data:image/png;base64,AAAA'}};
+    const body = messages => ({model:'aporia-cloud-default', messages});
+    const historyWithImages = [taskRequest({role:'user', content:[part, part, part, part]}), taskRequest({role:'user', content:[part, part, part, part, part]})];
+    await assert.rejects(callModelProvider({provider:cloud, body:body(historyWithImages)}), error => error.code === 'CLOUD_IMAGE_LIMIT_EXCEEDED' && /历史/.test(error.message));
+    const large = [{role:'user', content:[{type:'image_url', image_url:{url:'data:image/png;base64,' + 'A'.repeat(7_333_336)}}]}];
+    await assert.rejects(callModelProvider({provider:cloud, body:body(large)}), error => error.code === 'CLOUD_IMAGE_LIMIT_EXCEEDED');
+    assert.equal(count, 0);
+  });
+  await test("other providers receive all selected images", async () => {
+    let imageCount = 0;
+    globalThis.fetch = async (_url, init) => {
+      imageCount = JSON.parse(init.body).messages[0].content.filter(part => part.type === 'image_url').length;
+      return sse();
+    };
+    const images = Array.from({length:12}, () => ({type:'image_url', image_url:{url:'data:image/png;base64,AAAA'}}));
+    await callModelProvider({provider, body:{model:'fixture', messages:[{role:'user', content:images}]}});
+    assert.equal(imageCount, 12);
+  });
   await test("repeated 413 repair is bounded", async () => {
     let count = 0;
     globalThis.fetch = async () => { count++; return new Response("large", { status: 413 }); };

@@ -35,6 +35,10 @@ const providers = [
 ];
 const reasoningFixture = new URLSearchParams(location.search).get("reasoning");
 const hintState = new URLSearchParams(location.search).get("hintState");
+if (new URLSearchParams(location.search).has('cloud-images')) providers.splice(0, providers.length, {
+  id: 'aporia-cloud', name: 'Cloud', kind: 'aporia-cloud', accountStatus: 'authenticated', cloudCatalogVerified: true,
+  models: [{ id: 'aporia-cloud-default', name: 'Flash', shortName: 'Flash', supportsImages: true }],
+});
 if (hintState === "locked") providers.splice(0);
 if (reasoningFixture) providers[0].models.push({ id: "claude-opus-5-5", name: "Claude Opus 5.5", shortName: "Opus 5.5", supportsThinking: false, thinkingMode: "none", supportsTools: true });
 
@@ -44,8 +48,8 @@ function Fixture() {
     title: "Composer",
     workspacePath: "D:/Fixture",
     workspaceName: "Fixture",
-    providerId: "fake",
-    modelId: reasoningFixture === "claude" ? "claude-opus-5-5" : "vision",
+    providerId: providers[0]?.id || "fake",
+    modelId: providers[0]?.id === 'aporia-cloud' ? 'aporia-cloud-default' : reasoningFixture === "claude" ? "claude-opus-5-5" : "vision",
     thinking: false,
     effort: "high",
     builderLimit: 2,
@@ -68,7 +72,7 @@ function Fixture() {
           <Composer
             task={task}
             providers={providers}
-            onSend={() => { window.fixtureSendCount = (window.fixtureSendCount || 0) + 1; return true; }}
+            onSend={(content, attachments) => { window.fixtureSendCount = (window.fixtureSendCount || 0) + 1; window.fixtureAttachments = attachments; return true; }}
             onStop={() => {}}
             onPause={() => {}}
             onResume={() => {}}

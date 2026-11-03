@@ -1464,6 +1464,8 @@ function TaskWorkspace({
   const [activeView, setActiveView] = useState(() =>
     restoreForTask ? restoredSession.view : "dialogue",
   );
+  // Consent is per task and per app session; never reopen WebGL automatically after a crash.
+  const [enabledOfficeTasks, setEnabledOfficeTasks] = useState(() => new Set());
   const [workspaceFocusPath, setWorkspaceFocusPath] = useState(() =>
     restoreForTask ? restoredSession.workspaceFocusPath || "" : "",
   );
@@ -2095,12 +2097,17 @@ function TaskWorkspace({
             />
           </div>
           {activeView === "office" && <div className="thread-view-panel office-panel active">
-            <React.Suspense fallback={<p role="status">{tr("正在打开工位…", "Opening the office…")}</p>}>
+            {enabledOfficeTasks.has(task.id) ? <React.Suspense fallback={<p role="status">{tr("正在打开工位…", "Opening the office…")}</p>}>
               <AgentOffice key={task.id} task={task} isRunning={isRunning} isPaused={isPaused} approval={approval} theme={theme}
                 onChat={roleId => workbench.open('teamchat', { roomId: roleId ? `role:${roleId}` : '', revision: Date.now() })}
                 onBack={() => switchView("dialogue")} onRoute={() => switchView("route")}
                 onSend={onSend} onStop={onStop} onPause={onPause} onResume={onResume} />
-            </React.Suspense>
+            </React.Suspense> : <section className="office-opt-in" aria-label={tr("Agent 工位实验功能", "Agent office experiment")}>
+              <div className="office-opt-in-content">
+                <p>{tr("Agent 工位仍是实验功能，可能卡顿或闪退；开启仅对当前任务和本次启动有效。", "Agent office is experimental and may slow down or crash; enabling applies only to this task and app session.")}</p>
+                <button type="button" onClick={() => setEnabledOfficeTasks(current => new Set([...current, task.id]))}>{tr("开启 Agent 工位", "Enable Agent office")}</button>
+              </div>
+            </section>}
           </div>}
         </div>
         </ScrollFadeSurface>

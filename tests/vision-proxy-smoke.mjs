@@ -31,6 +31,9 @@ assert.equal(modelSupportsVision({ id: "gemini-2.5-flash" }), true);
 
 assert.equal(hasImageAttachments([{ role: "user", attachments: [image] }]), true);
 assert.equal(imageAttachments({ attachments: [pdf] }).length, 0);
+const manyImages = Array.from({length: 12}, (_, i) => ({...image, name: `image-${i}.png`}));
+assert.equal(imageAttachments({attachments: manyImages}).length, 12, 'vision proxy does not discard images');
+assert.equal(buildVisionMessages({attachments: manyImages})[1].content.filter(part => part.type === 'image_url').length, 12);
 
 const providers = [
   {

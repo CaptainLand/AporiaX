@@ -47,6 +47,13 @@ assert(Array.isArray(history[1].content));
 assert.match(history[1].content[0].text, /document context/);
 assert.equal(history[1].content[1].type, "image_url");
 
+const manyImages = Array.from({length: 12}, (_, i) => ({kind: 'image', name: `image-${i}.png`, dataUrl: 'data:image/png;base64,AAAA'}));
+const mixedHistory = sanitizeConversation([{role: 'user', content: 'inspect', attachments: [...manyImages, {kind: 'document', name: 'notes.txt', content: 'document after images'}]}], {supportsImages: true});
+assert.equal(mixedHistory[0].content.filter(part => part.type === 'image_url').length, 12, 'all selected images reach the model');
+assert.match(mixedHistory[0].content[0].text, /document after images/);
+assert.doesNotMatch(mixedHistory[0].content[0].text, /部分内容未注入/);
+assert.throws(() => sanitizeConversation([{role:'user', content:'inspect', attachments:[{kind:'image', dataUrl:'invalid'}]}], {supportsImages:true}), /无法完整读取/);
+
 const textOnly = sanitizeConversation(
   [
     {

@@ -32,7 +32,19 @@ try {
   for(const theme of ['light','dark']) {
     if(theme==='dark') await page.evaluate(()=>{localStorage.removeItem('aporiax.account-agent-avatars.v1');sessionStorage.removeItem('avatarCloud');});
     await boot(theme);await profile.click();
+    assert.equal(await profile.locator('.local-account-profile-copy > strong').evaluate(el=>getComputedStyle(el).fontSize),'16px');
+    assert.equal(await profile.locator('.local-account-quota-reset').evaluate(el=>getComputedStyle(el).fontSize),'13px');
+    assert.equal(await profile.locator('.local-account-quota-percent').evaluate(el=>getComputedStyle(el).fontSize),'13px');
+    const footerFit = await profile.evaluate(el=>{
+      const label=el.querySelector('.local-account-quota-label'), reset=el.querySelector('.local-account-quota-reset'), percent=el.querySelector('.local-account-quota-percent');
+      const originalReset=reset.textContent, originalPercent=percent.textContent;
+      reset.textContent='reset 6天23小时'; percent.textContent='300%';
+      const fits=label.scrollWidth<=label.clientWidth && percent.getBoundingClientRect().right<=el.getBoundingClientRect().right;
+      reset.textContent=originalReset; percent.textContent=originalPercent; return fits;
+    });
+    assert(footerFit,'A typical reset countdown and bonus quota fit together at the larger size');
     assert.equal(await page.locator('.local-account-popover .local-account-avatar').getAttribute('data-avatar'),'main');await decode(page.locator('.local-account-popover img'));
+    assert.equal(await page.locator('.local-account-popover .local-account-avatar').evaluate(item=>getComputedStyle(item).backgroundColor),'rgb(32, 173, 235)');
     assert.equal(await page.locator('.local-account-popover .local-account-connected, .local-account-popover .local-account-meta').count(),0);
     await page.locator('.local-account-popover').screenshot({path:`.tmp/qa/account-refresh/popover-${theme}.png`});
     await page.getByRole('button',{name:'账户中心',exact:true}).click();
@@ -43,19 +55,31 @@ try {
     await page.getByRole('button',{name:'网页账户',exact:true}).click();
     assert.equal(await page.evaluate(()=>window.avatarQA.opened),1,'The separate website action remains in account settings');
     await page.getByRole('button',{name:'更换账户头像',exact:true}).click();assert.equal(await picker.locator('.account-avatar-grid button').count(),6);
-    await decode(picker.locator('img'));await page.screenshot({path:`.tmp/qa/account-refresh/avatar-picker-${theme}.png`});
+    await decode(picker.locator('img'));
+    assert.deepEqual(await picker.locator('.account-avatar-grid > button').allTextContents(),['','','','','',''],'No partner names are shown');
+    assert.deepEqual(await picker.locator('.account-avatar-grid > button').evaluateAll(items=>items.map(item=>item.getAttribute('aria-label'))),['天蓝色','蓝色','酒红色','黄色','珊瑚红色','青绿色'],'Screen readers identify colors');
+    const expectedPortraits={main:'rgb(32, 173, 235)',explore:'rgb(22, 114, 230)',review:'rgb(112, 51, 79)',verify:'rgb(232, 197, 35)',builder:'rgb(237, 101, 93)',curator:'rgb(22, 121, 128)'};
+    const actualPortraits=await picker.locator('.account-portrait').evaluateAll(items=>items.map(item=>({choice:item.dataset.avatar,background:getComputedStyle(item).backgroundColor,image:getComputedStyle(item).backgroundImage,children:item.children.length})));
+    for(const item of actualPortraits){
+      assert.equal(item.background,expectedPortraits[item.choice],'Each account avatar retains its partner color');
+      assert.equal(item.image,'none');
+      assert.equal(item.children,0,'Solid avatar has no artwork or glyph');
+    }
+    await page.screenshot({path:`.tmp/qa/account-refresh/avatar-picker-${theme}.png`});
+    await picker.screenshot({path:`.tmp/qa/account-refresh/solid-picker-${theme}.png`});
     await page.keyboard.press('Escape');assert.equal(await picker.count(),0);assert.equal(await page.locator('.application-settings-modal').count(),1,'Escape closes only the avatar picker');
-    await choose('探奇');assert.equal(await portrait.getAttribute('data-avatar'),'explore');
+    await choose('蓝色');assert.equal(await portrait.getAttribute('data-avatar'),'explore');
+    assert.equal(await portrait.evaluate(item=>getComputedStyle(item).backgroundColor),'rgb(22, 114, 230)');
     await page.getByRole('button',{name:'刷新账户与用量',exact:true}).click();assert.equal(await portrait.getAttribute('data-avatar'),'explore');
     await page.getByRole('button',{name:'关闭设置',exact:true}).click();await profile.click();assert.equal(await page.locator('.local-account-popover .local-account-avatar').getAttribute('data-avatar'),'explore');await page.keyboard.press('Escape');
     await page.reload();if(await page.locator('.ax-welcome__enter').isVisible())await page.locator('.ax-welcome__enter').click();await openSettings();assert.equal(await portrait.getAttribute('data-avatar'),'explore','Selection persists on reload');
     await page.evaluate(()=>window.avatarQA.owner='account-b');await page.getByRole('button',{name:'刷新账户与用量',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.account-settings-avatar')?.dataset.avatar==='main');
-    await choose('知序');assert.equal(await portrait.getAttribute('data-avatar'),'curator');
+    await choose('青绿色');assert.equal(await portrait.getAttribute('data-avatar'),'curator');
     await page.evaluate(()=>window.avatarQA.owner='account-a');await page.getByRole('button',{name:'刷新账户与用量',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.account-settings-avatar')?.dataset.avatar==='explore','Account A retains its separate choice');
     await page.evaluate(()=>window.avatarQA.failSave=true);
-    await choose('搭匠');await picker.getByRole('alert').waitFor();assert.equal(await portrait.getAttribute('data-avatar'),'explore','Failed cloud persistence does not pretend to save');await page.evaluate(()=>window.avatarQA.failSave=false);await picker.getByRole('button',{name:'阿珀',exact:true}).click();await picker.waitFor({state:'hidden'});
+    await choose('珊瑚红色');await picker.getByRole('alert').waitFor();assert.equal(await portrait.getAttribute('data-avatar'),'explore','Failed cloud persistence does not pretend to save');await page.evaluate(()=>window.avatarQA.failSave=false);await picker.getByRole('button',{name:'天蓝色',exact:true}).click();await picker.waitFor({state:'hidden'});
     await page.evaluate(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='aporiax.account-agent-avatars.v1')throw Error('Unavailable');return original.call(this,key,value);};window.avatarQA.restoreStorage=()=>Storage.prototype.setItem=original;});
-    await choose('搭匠');await picker.waitFor({state:'hidden'});assert.equal(await portrait.getAttribute('data-avatar'),'builder','Confirmed cloud choice works even if device cache cannot write');await page.evaluate(()=>window.avatarQA.restoreStorage());
+    await choose('珊瑚红色');await picker.waitFor({state:'hidden'});assert.equal(await portrait.getAttribute('data-avatar'),'builder','Confirmed cloud choice works even if device cache cannot write');await page.evaluate(()=>window.avatarQA.restoreStorage());
     await nav.getByRole('button',{name:'通用',exact:true}).click();await page.screenshot({path:`.tmp/qa/account-refresh/general-${theme}.png`});
     await page.getByRole('button',{name:'关闭设置',exact:true}).click();await page.locator('.thread-view-tabs').getByRole('button',{name:'工作区',exact:true}).click();await page.getByRole('button',{name:/README.md/}).first().click();await page.getByRole('heading',{name:'演示文档',exact:true}).waitFor();
     const toolbar=page.locator('.workbench-file .document-toolbar');await toolbar.getByRole('button',{name:'源码',exact:true}).click();await toolbar.getByRole('button',{name:'阅读',exact:true}).click();

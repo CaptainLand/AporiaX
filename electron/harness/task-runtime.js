@@ -36,7 +36,7 @@ function createAbortError(message = "The task was interrupted.") {
 function normalizeSteeringMessage(message = {}) {
   const content = String(message?.content || "").trim();
   const attachments = Array.isArray(message?.attachments)
-    ? message.attachments.slice(0, 6)
+    ? message.attachments.slice()
     : [];
   if (!content && attachments.length === 0) return null;
   return {

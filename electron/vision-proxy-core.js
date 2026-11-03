@@ -10,7 +10,6 @@ const PREFERRED_VISION_MODELS = [
   /^qwen3-vl-flash[-_.:]/i,
 ];
 
-const MAX_VISION_IMAGES_PER_MESSAGE = 8;
 const MAX_VISION_DATA_URL_CHARS = 28_000_000;
 const APORIA_CLOUD_PROVIDER_ID = "aporia-cloud";
 
@@ -76,13 +75,9 @@ export function imageAttachments(message = {}) {
         dataUrl.startsWith("data:image/")
       );
     })
-    .slice(0, MAX_VISION_IMAGES_PER_MESSAGE)
     .map((attachment) => ({
       ...attachment,
-      dataUrl: String(attachment.dataUrl || "").slice(
-        0,
-        MAX_VISION_DATA_URL_CHARS,
-      ),
+      dataUrl: String(attachment.dataUrl || ""),
     }));
 }
 
@@ -132,6 +127,7 @@ export function selectVisionCandidate(
 }
 
 export function buildVisionMessages(message, images = imageAttachments(message)) {
+  if (images.some(image => image.dataUrl.length > MAX_VISION_DATA_URL_CHARS)) throw new Error('图片过大，视觉代理无法读取；请缩小图片后重试。');
   const userText = String(message?.content || "").trim();
   const content = [
     {

@@ -40,6 +40,9 @@ try {
   assert.equal(requests[0].messages.filter(message => /^ORIGIN_/.test(message.content)).length, 24);
   assert(!requests[0].messages.some(message => /AFTER_FORK/.test(message.content))); assert(requests[0].temporaryChat);
   assert(!JSON.stringify(sent).includes('ORIGIN_')); assert.equal((await service.request({ ...base, action: 'load' })).id, opened.id);
+  const images = Array.from({length: 12}, (_, i) => ({kind:'image', name:`image-${i}.png`, dataUrl:'data:image/png;base64,AAAA'}));
+  await service.request({ ...base, sessionId: opened.id, action:'send', message:'inspect', attachments:images });
+  assert.equal(requests.at(-1).messages.at(-1).attachments.length, 12, 'temporary chat keeps every selected image');
   pass('opening costs no inference; full frozen fork; own Witness; hide/reopen retains branch');
   await service.request({ ...base, action: 'close', sessionId: opened.id });
   await assert.rejects(service.request({ ...base, action: 'send', sessionId: opened.id, message: 'late' }), /关闭/);

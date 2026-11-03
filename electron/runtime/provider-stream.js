@@ -168,6 +168,19 @@ function assertKnownRequestSize(provider, body) {
   // This is the existing Cloud Fastify limit, not a new quota or guessed
   // DeepSeek context limit. Other providers learn from explicit 413 rejections.
   if (provider.kind !== "aporia-cloud") return;
+  if (body.model === 'aporia-cloud-default') {
+    const images = (body.messages || []).flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part?.type === 'image_url') : []);
+    const bytes = images.reduce((sum, part) => {
+      const url = part.image_url?.url;
+      if (typeof url !== 'string') return sum;
+      const encoded = url.split(',', 2)[1] || '';
+      return sum + Math.floor(encoded.length * 3 / 4) - (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0);
+    }, 0);
+    if (images.length > 8 || bytes > 5_500_000) {
+      throw Object.assign(new Error('当前 Cloud 模型单次请求最多 8 张图片、合计 5.5 MB（包括对话历史中的图片）。请分次发送、减少上下文图片或切换模型。'),
+        { code: 'CLOUD_IMAGE_LIMIT_EXCEEDED', status: 400, retryable: false, safeToRepair: false });
+    }
+  }
   const info = requestSizeInfo(provider, body);
   const limit = 8 * 1024 * 1024;
   if (info.requestBytes <= limit) return;

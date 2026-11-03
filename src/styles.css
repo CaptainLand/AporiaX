@@ -2986,12 +2986,26 @@ body.panel-is-resizing * {
 
 .composer-attachments {
   display: flex;
-  padding: 10px 11px 0;
-  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  padding: 10px 11px 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-7) transparent;
   gap: 7px;
 }
 
+:root[data-theme] .composer-attachments::-webkit-scrollbar { height: 8px; }
+:root[data-theme] .composer-attachments::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--gray-7) padding-box;
+}
+
 .composer-attachments figure {
+  flex: 0 0 72px;
   width: 72px;
   height: 54px;
   cursor: grab;
@@ -3000,6 +3014,7 @@ body.panel-is-resizing * {
 .composer-document-attachment {
   position: relative;
   display: flex;
+  flex: 0 0 auto;
   width: min(255px, 100%);
   height: 54px;
   align-items: center;
@@ -12771,6 +12786,9 @@ button.anchor-history-heading:hover {
   box-shadow: none;
 }
 
+/* Keep the slightly heavier user message weight without changing its original size or spacing. */
+:root[data-theme] .user-message .message-bubble { font-weight: var(--weight-medium); }
+
 :root[data-theme] .assistant-message-content {
   font-size: var(--text-base);
   line-height: 1.7;
@@ -12838,6 +12856,7 @@ button.anchor-history-heading:hover {
 /* Share lightweight document typography between reply text and progress. */
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message {
   font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   line-height: 1.75;
   letter-spacing: -0.01em;
 }
@@ -12847,8 +12866,8 @@ button.anchor-history-heading:hover {
 }
 
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message :is(h1, h2) {
-  margin: 22px 0 10px;
-  font-size: 17px;
+  margin: 14px 0 6px;
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   letter-spacing: -0.01em;
 }
@@ -12856,6 +12875,7 @@ button.anchor-history-heading:hover {
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message :is(h3, h4, h5, h6) {
   display: block;
   min-height: 0;
+  margin: 14px 0 6px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -12905,14 +12925,32 @@ button.anchor-history-heading:hover {
 }
 
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message .code-block {
-  font-size: var(--text-base);
-  line-height: 1.7;
+  font-size: calc(var(--text-base) * 1.045);
+  line-height: calc(var(--text-base) * 1.7);
   letter-spacing: normal;
 }
 
 :root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message table {
+  font-size: calc(var(--text-sm) * 1.045);
+  line-height: calc(var(--text-sm) * 1.4);
   letter-spacing: normal;
 }
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message table th { font-size: calc(var(--text-xs) * 1.045); }
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message table :is(th, td) { padding-top: 6px; padding-bottom: 6px; }
+:root[data-theme] :is(.assistant-message-content, .assistant-progress-entry) > .markdown-message .code-block code { font-size: calc(var(--text-sm) * 1.045); line-height: calc(var(--text-sm) * 1.5); }
+
+/* Preserve short column labels; wide tables scroll within the message. */
+.conversation-table-scroll { max-width: 100%; overflow-x: auto; }
+.conversation-table-scroll:focus-visible { outline: 2px solid var(--accent-9); outline-offset: 2px; }
+.conversation-table-scroll th { white-space: nowrap; }
+.conversation-table-scroll td { overflow-wrap: anywhere; }
+
+/* The opt-in screen is intentionally available before the office chunk loads. */
+.office-opt-in { display: grid; flex: 1; min-width: 0; place-items: center; height: 100%; min-height: 0; padding: 24px; overflow: auto; }
+.office-opt-in-content { display: flex; max-width: 100%; flex-direction: column; align-items: center; gap: 18px; text-align: center; }
+.office-opt-in-content p { margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.6; }
+.office-opt-in-content button { padding: 8px 14px; border: 0; border-radius: 10px; background: var(--accent-9); color: white; cursor: pointer; }
+.office-opt-in-content button:focus-visible { outline: 2px solid var(--accent-8); outline-offset: 3px; }
 
 .assistant-delivery-details {
   margin-top: 10px;

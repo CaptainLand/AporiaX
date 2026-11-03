@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Pencil, X } from 'lucide-react';
-import { AgentAvatar } from '../components/AgentAvatar.jsx';
-import { agentName } from '../../shared/agent-identity.js';
+import { AccountPortrait, accountPortraitLabel } from './AccountPortrait.jsx';
 import { useI18n } from '../i18n.jsx';
 import { useAccount } from './AccountContext.jsx';
 import { AccountAvatar } from './AccountAvatar.jsx';
@@ -29,14 +28,14 @@ export function AccountAvatarPicker() {
     </button>
     {open && <div className="account-avatar-choices" role="dialog" aria-label={tr('选择账户头像', 'Choose account avatar')}>
       <header><strong>{tr('选择头像', 'Choose an avatar')}</strong><button type="button" aria-label={tr('关闭头像选择', 'Close avatar picker')} onClick={close}><X size={15} /></button></header>
-      <div className="account-avatar-grid" ref={grid} role="group" aria-label={tr('Agent 头像', 'Agent portraits')} onKeyDown={event => {
+      <div className="account-avatar-grid" ref={grid} role="group" aria-label={tr('账号头像', 'Account portraits')} onKeyDown={event => {
         const step = { ArrowRight:1, ArrowLeft:-1, ArrowDown:3, ArrowUp:-3 }[event.key];
         if (!step) return;
         const buttons=[...grid.current.querySelectorAll('button')], index=buttons.indexOf(document.activeElement);
         if (index >= 0) { event.preventDefault(); buttons[(index+step+buttons.length)%buttons.length].focus(); }
       }}>
-        {ACCOUNT_AGENT_AVATARS.map(template => <button type="button" key={template} disabled={avatarSaving} aria-pressed={avatarTemplate === template} onClick={async () => { if (await selectAvatar?.(template)) close(); }}>
-          <AgentAvatar template={template} /><span>{agentName(template,language)}</span>{avatarTemplate === template && <Check size={12} />}
+        {ACCOUNT_AGENT_AVATARS.map(template => <button type="button" key={template} disabled={avatarSaving} aria-label={accountPortraitLabel(template,language)} aria-pressed={avatarTemplate === template} onClick={async () => { if (await selectAvatar?.(template)) close(); }}>
+          <AccountPortrait template={template} />{avatarTemplate === template && <Check size={12} />}
         </button>)}
       </div>
       {avatarSaveError && <p role="alert">{tr('头像未能保存，请重试。', 'Could not save the avatar. Please retry.')}</p>}

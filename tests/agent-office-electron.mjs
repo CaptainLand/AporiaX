@@ -28,6 +28,9 @@ try {
   await page.locator('.ax-welcome__enter, .thread-view-tabs').first().waitFor();
   if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
   const office = page.locator('.agent-office');
+  await page.getByRole('region', { name: 'Agent 工位实验功能' }).waitFor();
+  assert.equal(await office.count(), 0, 'Restored view does not initialize the office before consent');
+  await page.getByRole('button', { name: '开启 Agent 工位', exact: true }).click();
   await office.locator('.ao-scene.ready canvas').waitFor();
   assert.equal(await office.locator('.ao-roster > button').count(), 6, 'Trusted IPC loads actual default roles');
   assert.equal(await office.locator('.ao-warning').count(), 0);
