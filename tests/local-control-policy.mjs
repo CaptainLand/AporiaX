@@ -68,6 +68,7 @@ try {
       ["lsp", { operation: "status" }], ["read_skill_resource", {}],
       ["project_knowledge", { action: "save", content: "untrusted" }],
       ["present_to_user", { url: "https://example.com" }],
+      ["present_to_user", { files: ["<page.HTML>"] }],
       ["delegate_subagent", { role: "builder", task: "write", write_scopes: ["readme.txt"] }],
       ["request_self_check", { action: "run", verification: [{ command: "node evil.js", cwd: "." }] }],
     ]) await denied(() => invoke(toolName, input, { executeAuthorized: async () => assert.fail(`${toolName} executed`), requestApproval: async () => assert.fail(`${toolName} reached approval`) }));

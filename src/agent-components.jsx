@@ -23,6 +23,7 @@ import { attachmentImageSrc } from "./attachments.js";
 import { PreviewImage } from './images/ImageViewer.jsx';
 import { RoleChangeApproval } from './settings/RoleChangeApproval.jsx';
 import { useFileContextMenu } from './workbench/use-file-context-menu.js';
+import { approvalSimilarityText } from '../shared/approval-similarity.js';
 
 const CODE_EXTENSIONS = new Set([
   "c",
@@ -229,8 +230,9 @@ export function UserAttachments({ attachments }) {
 }
 
 export function ApprovalCard({ approval, onRespond, responding }) {
-  const { tr } = useI18n();
+  const { tr, language } = useI18n();
   if (!approval) return null;
+  const similarity = approval.canRememberForRun && approvalSimilarityText(approval.similarApproval, language);
   const hostFallback = approval.kind === "execute" && !approval.sandbox?.available;
   const sandboxed = approval.kind === "execute" && approval.sandbox?.available;
   return (
@@ -303,6 +305,7 @@ export function ApprovalCard({ approval, onRespond, responding }) {
           )}
         </div>
       )}
+      {similarity && <p className="approval-similarity">{similarity}</p>}
       <div className="approval-actions">
         <button
           type="button"
@@ -327,7 +330,7 @@ export function ApprovalCard({ approval, onRespond, responding }) {
             disabled={responding}
             onClick={() => onRespond(true, "run")}
           >
-            {tr("本轮允许浏览器操作", "Allow browser controls for this task")}
+            {tr("本轮允许类似操作", "Allow similar actions this run")}
           </button>
         )}
       </div>

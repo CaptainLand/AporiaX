@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nProvider } from "../../src/i18n.jsx";
-import { Conversation } from "../../src/conversation/ConversationViews.jsx";
+import { Conversation, RouteView } from "../../src/conversation/ConversationViews.jsx";
 import { replaceAssistantForRetry } from "../../src/state/task-store-core.js";
 import { taskContinuationRequest } from '../../src/state/run-retry-core.js';
 import "../../src/styles.css";
@@ -37,11 +37,35 @@ function RetryFixture() {
       <button onClick={() => setCurrent({ id: "retry", workspacePath: "D:/fixture", messages: [failure] })}>模拟失败</button>
       <button onClick={() => setCurrent((value) => ({ ...value, staleRunning: true }))}>残留运行标记</button>
       <button onClick={() => setCurrent((value) => ({ ...value, messages: [...value.messages, followup] }))}>继续任务</button>
-      <button onClick={() => setCurrent((value) => ({ ...value, messages: value.messages.map((message) => message.id === "followup" ? { ...message, status: "completed", content: "后续轮次成功", witness: { status: "completed", records: [] } } : message) }))}>完成后续</button>
+      <button onClick={() => setCurrent((value) => ({ ...value, messages: value.messages.map((message) => message.id === "followup" ? {
+        ...message, status: "completed", content: "后续轮次成功",
+        usage: {prompt_tokens: 2763, completion_tokens: 186},
+        cumulativeUsage: {prompt_tokens: 457103, completion_tokens: 26326, total_tokens: 483429, prompt_cache_hit_tokens: 445696},
+        usageHistoryComplete: true,
+        witness: { status: "completed", records: [{id:'finished',eventType:'turn.completed',kind:'status',status:'completed',elapsedMs:0}] },
+      } : message) }))}>完成后续</button>
       <button onClick={() => setCurrent((value) => ({ ...value, messages: value.messages.map((message) => message.id === "retry-new" ? { ...message, status: "failed", error: true, content: "Provider unavailable" } : message) }))}>模拟启动失败</button>
       <button onClick={() => setCurrent({ id: "new-task", messages: [] })}>切换新任务</button>
     </nav>
     <Conversation task={current} isRunning={running || current.staleRunning} onRetry={() => setCurrent((value) => replaceAssistantForRetry(value, failure.id, { ...followup, id: "retry-new", prompt: failure.prompt }))} />
+  </section>;
+}
+
+function SameRoundFixture() {
+  const original = { id: 'same-original', runId: 'same-original-run', sourceUserId: 'same-user', role: 'assistant', status: 'partial',
+    replySource: 'local-receipt', replyDelivered: true, content: 'Cloud interrupted after writing.',
+    witness: { status: 'partial', records: [{ id: 'witness-1', kind: 'tool', tool: 'write_file', path: 'old-calculator.html', status: 'completed' }] } };
+  const pending = { id: 'same-continued', runId: 'same-continued-run', recoveryOfRunId: original.runId, sourceUserId: 'same-user', role: 'assistant', status: 'running' };
+  const [current, setCurrent] = useState({ id: 'same-task', messages: [{ id: 'same-user', role: 'user', content: 'Make a calculator' }, original] });
+  const isRunning = current.messages.at(-1)?.status === 'running';
+  return <section id="same-round" style={{ maxWidth: 740, margin: '24px auto', padding: 20 }}>
+    <button onClick={() => setCurrent(task => replaceAssistantForRetry(task, original.id, pending))}>开始接续</button>
+    <button onClick={() => setCurrent(task => ({ ...task, messages: task.messages.map(message => message.id === pending.id ? {
+      ...message, status: 'completed', content: 'Calculations checked.',
+      witness: { status: 'completed', records: [{ id: 'witness-1', kind: 'tool', tool: 'browser_open', path: 'continued-preview.html', status: 'completed' }] },
+    } : message) }))}>写入新纪录</button>
+    <div id="same-conversation"><Conversation task={current} isRunning={isRunning} /></div>
+    <div id="same-execution"><RouteView task={current} isRunning={isRunning} /></div>
   </section>;
 }
 createRoot(document.getElementById("root")).render(<I18nProvider>
@@ -57,4 +81,5 @@ createRoot(document.getElementById("root")).render(<I18nProvider>
     }] }} />
   </section>
   <RetryFixture />
+  <SameRoundFixture />
 </I18nProvider>);

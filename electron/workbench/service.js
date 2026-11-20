@@ -180,6 +180,36 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
         resolve(r.workspacePath || ".") === root,
     );
   }
+  async function openHtmlPreview(context, path, { present = false } = {}) {
+    const preview = await createHtmlPreview(context.workspacePath, path);
+    let created;
+    try {
+      const existing = [...resources.values()].find(item =>
+        scope(item, context) && !item.closed && item.owner === "user" && item.htmlPreviewPath === preview.path);
+      const resource = existing || (created = browser(context, "user", true));
+      if (existing) await preview.close();
+      else {
+        resource.htmlPreviewPath = preview.path;
+        resource.htmlPreviewUrl = preview.url;
+        resource.wc.once("destroyed", () => { void preview.close(); });
+      }
+      await resource.userNavigate(resource.htmlPreviewUrl);
+      if (present) {
+        resource.present = true;
+        resource.presentationId = randomUUID();
+        resource.changed();
+      }
+      return resource.state();
+    } catch (error) {
+      await preview.close();
+      if (created) {
+        await created.close();
+        getWindow()?.contentView.removeChildView(created.view);
+        resources.delete(created.id);
+      }
+      throw error;
+    }
+  }
   function adoptBrowser(context) {
     // A worker's private page is not a user-owned tab that Main may borrow.
     const list = browsersInScope(context).filter(r => r.owner === "user");
@@ -247,12 +277,13 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     };
     const presentBrowsers = () => {
       const r = ownedBrowsers.get("main");
-      if (!r || r.closed) return;
+      if (!r || r.closed) return false;
       r.present = true;
       // Deliver only Main's current page, not every private worker browser.
       // Screenshots use `present` too, but do not imply a lasting handoff.
       r.delivered = true;
       r.changed();
+      return true;
     };
     const presentRunningProcesses = () => {
       for (const r of resources.values()) {
@@ -266,6 +297,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       processManager: manager,
       present: {
         file: presentFile,
+        html: path => openHtmlPreview(context, path, { present: true }),
         process: presentProcess,
         browser: presentBrowsers,
         live() {
@@ -350,30 +382,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
     }
     if (input.action === "new-browser") { await browserProfiles.ready; return browser(context).state(); }
     if (input.action === "preview-html") {
-      const preview = await createHtmlPreview(context.workspacePath, input.path);
-      let r;
-      try {
-        const existing = [...resources.values()].find(item => scope(item, context) && !item.closed && item.owner === "user" && item.htmlPreviewPath === preview.path);
-        if (existing) {
-          await preview.close();
-          await existing.userNavigate(existing.htmlPreviewUrl);
-          return existing.state();
-        }
-        r = browser(context, 'user', true);
-        r.htmlPreviewPath = preview.path;
-        r.htmlPreviewUrl = preview.url;
-        r.wc.once("destroyed", () => { void preview.close(); });
-        await r.userNavigate(preview.url);
-        return r.state();
-      } catch (error) {
-        await preview.close();
-        if (r) {
-          await r.close();
-          getWindow()?.contentView.removeChildView(r.view);
-          resources.delete(r.id);
-        }
-        throw error;
-      }
+      return openHtmlPreview(context, input.path);
     }
     if (input.action === "new-terminal") return terminal(context);
     if (input.action === "hide") { hide(input.generation); return true; }

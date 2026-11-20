@@ -3,10 +3,12 @@ import { executeDurableTool, waitForRuntimeResume } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
 import { requireToolResult } from "./task-conversation.js";
 import { projectScriptFingerprint } from "./project-script-trust.js";
-import { assertLocalControlTool, localControlToolRequiresApproval } from "../control/policy.js";
-import { assertNativeFileTool, verifyExternalFileTarget, withNativeFileScope } from "./file-access-policy.js";
+import { assertLocalControlTool, currentLocalControlPolicy, localControlToolRequiresApproval } from "../control/policy.js";
+import { assertNativeFileTool, nativeFilePath, verifyExternalFileTarget, withNativeFileScope } from "./file-access-policy.js";
 import { prepareFileDeletion } from './workspace-mutations.js';
 import { verificationCommand } from './isolated-verification.js';
+import { requestsBrowserPresentation } from '../workbench/preview-path.js';
+import { fileDeletionGrant } from './approval-grants.js';
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -62,7 +64,11 @@ export async function dispatchNativeTool({
   await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
   await assertNativeFileTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
   const configuredPermission = getToolPermission(permissionPolicy, toolName);
-  const permissionAction = configuredPermission !== "deny" && localControlToolRequiresApproval(toolName) ? "ask" : configuredPermission;
+  const browserPresentation = toolName === 'present_to_user' && requestsBrowserPresentation(input);
+  const browserPermission = browserPresentation ? getToolPermission(permissionPolicy, 'browser_open') : null;
+  const browserPresentationAllowed = executeContext.browserPresentationAllowed !== false && browserPermission !== 'deny';
+  const permissionAction = configuredPermission !== "deny" && (localControlToolRequiresApproval(toolName) ||
+    (browserPresentationAllowed && browserPermission === 'ask')) ? "ask" : configuredPermission;
   const decision = resolveToolExecutionPermission({
     toolName,
     permissionAction,
@@ -74,9 +80,14 @@ export async function dispatchNativeTool({
   if (decision.denied) {
     throw new Error(`Permission denied for tool: ${toolName}`);
   }
+  let deletionGrant = null;
+  let rememberedDeletion = false;
+  const deletionScope = version => fileDeletionGrant(executeContext.workspaceRoot, version,
+    nativeFilePath(executeContext.workspaceRoot, input.path), executeContext.durableScope || 'main');
   if (toolName === 'delete_file') {
     const version = await prepareFileDeletion(executeContext.workspaceRoot, input, { signal });
     input.expected_sha256 = version.sha256;
+    if (decision.requiresApproval && !currentLocalControlPolicy()) deletionGrant = await deletionScope(version).catch(() => null);
   }
 
   // Role changes have their own mandatory, revision-bound approval containing
@@ -96,6 +107,7 @@ export async function dispatchNativeTool({
         sandboxStatus,
         permissionDecision: decision,
       }),
+      ...(deletionGrant ? { deletionGrant } : {}),
       ...(decision.commandPolicy?.category === "project-script" ? {
         kind: "project-script-trust", canRememberForRun: Boolean(projectTrust),
         projectFingerprint: projectTrust?.fingerprint || null,
@@ -107,6 +119,7 @@ export async function dispatchNativeTool({
     if (!approval?.approved) {
       throw new Error(`The user rejected tool: ${toolName}`);
     }
+    rememberedDeletion = Boolean(approval.remembered && deletionGrant);
     if (projectTrust && (await projectScriptFingerprint(executeContext.workspaceRoot, input))?.fingerprint !== projectTrust.fingerprint) {
       throw new Error("PROJECT_SCRIPT_CHANGED: 项目脚本在审批期间发生变化，请重新确认后执行。");
     }
@@ -139,6 +152,11 @@ export async function dispatchNativeTool({
     // broaden the client grant or authorize a newly redirected symlink.
     await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot, count: false });
     await assertNativeFileTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
+    if (rememberedDeletion) {
+      const latest = await prepareFileDeletion(executeContext.workspaceRoot, input, { signal });
+      if ((await deletionScope(latest).catch(() => null))?.id !== deletionGrant.id)
+        throw new Error('DELETE_APPROVAL_SCOPE_CHANGED: 文件目录已变化，请重新核对后确认。');
+    }
     return withNativeFileScope(toolName, executeContext.workspaceRoot, () => executeAuthorized({
     ...executeContext,
     toolCall,
@@ -147,6 +165,7 @@ export async function dispatchNativeTool({
     input,
     signal,
     permissionDecision: decision,
+    browserPresentationAllowed,
     }));
   }, requestApproval, { scope: executeContext.durableScope });
   assertNotAborted(signal);

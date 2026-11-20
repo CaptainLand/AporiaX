@@ -1,11 +1,12 @@
 // Presentation metadata only. Never publish arguments, reasoning or partial
 // actions, and never execute a tool before its terminal protocol boundary.
 import { normalizeTokenUsage } from './token-usage.js';
+import { reportedUncachedInputTokens } from '../../shared/model-progress-view.js';
 
 export function createModelStreamProgress({ now = Date.now, intervalMs = 500, inputTokens = null } = {}) {
   const started = now(), names = new Map();
   let stage = 'waiting', generatedChars = 0, toolName = '', toolCount = 0, last = null, lastAt = -Infinity;
-  let outputWeight = 0, actualInput = false, actualOutput = false;
+  let outputWeight = 0, actualInput = false, actualOutput = false, uncachedInputTokens = null;
   const addText = value => {
     if (typeof value !== 'string' || !value) return 0;
     // Chunk-independent heuristic. No argument or private reasoning text is kept.
@@ -20,7 +21,7 @@ export function createModelStreamProgress({ now = Date.now, intervalMs = 500, in
     const key = `${stage}:${toolName}:${generatedChars > 0}`;
     if (!force && key === last && now() - lastAt < intervalMs) return null;
     last = key; lastAt = now();
-    return { stage, generatedChars, toolName, toolCount, elapsedMs: Math.max(0, now() - started), inputTokens, outputTokens: Math.ceil(outputWeight), inputTokensEstimated: !actualInput, outputTokensEstimated: !actualOutput };
+    return { stage, generatedChars, toolName, toolCount, elapsedMs: Math.max(0, now() - started), inputTokens, uncachedInputTokens, outputTokens: Math.ceil(outputWeight), inputTokensEstimated: !actualInput, outputTokensEstimated: !actualOutput };
   }
   function native(event) {
     if (event.type === 'response.output_item.added' && event.item?.type === 'function_call') {
@@ -58,7 +59,11 @@ export function createModelStreamProgress({ now = Date.now, intervalMs = 500, in
     const normalized = normalizeTokenUsage(usage);
     if (!normalized) return null;
     const has = keys => keys.some(key => usage[key] != null && Number.isFinite(Number(usage[key])));
-    if (has(['input_tokens', 'inputTokens', 'prompt_tokens', 'promptTokens'])) { inputTokens = normalized.prompt_tokens; actualInput = true; }
+    if (has(['input_tokens', 'inputTokens', 'prompt_tokens', 'promptTokens'])) {
+      inputTokens = normalized.prompt_tokens;
+      actualInput = true;
+      uncachedInputTokens = reportedUncachedInputTokens(normalized);
+    }
     if (has(['output_tokens', 'outputTokens', 'completion_tokens', 'completionTokens'])) {
       outputWeight = normalized.completion_tokens; actualOutput = final;
     }

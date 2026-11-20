@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.12",
+  "version": "1.0.13",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -115,6 +115,7 @@
     "test:welcome-performance": "node --experimental-sqlite tests/welcome-particle-performance-smoke.mjs && node --experimental-sqlite tests/gpu-guard-smoke.mjs",
     "test:welcome-gem": "node --experimental-sqlite tests/welcome-gem-browser.mjs",
     "test:run-retry": "node --experimental-sqlite tests/run-retry-core-smoke.mjs",
+    "test:witness-continuation": "node --experimental-sqlite tests/witness-continuation.mjs && node tests/task-outcomes-browser.mjs",
     "test:run-reliability": "node --experimental-sqlite tests/tool-message-contract.mjs && node --experimental-sqlite tests/runtime-tool-receipts.mjs && node --experimental-sqlite tests/run-retry-core-smoke.mjs && node --experimental-sqlite tests/task-outcome-view.mjs && node --experimental-sqlite tests/task-outcomes-browser.mjs",
     "test:github-workflow": "node --experimental-sqlite tests/github-workflow-smoke.mjs",
     "test:lsp-installer": "node --experimental-sqlite tests/lsp-installer-smoke.mjs",
@@ -124,7 +125,7 @@
     "test:harness-loop": "node --experimental-sqlite tests/harness-loop-unit.mjs && node --experimental-sqlite tests/harness-loop-provider.mjs && node --experimental-sqlite tests/harness-loop-integration.mjs",
     "test:goal-loop": "node --experimental-sqlite tests/goal-brief-acceptance.mjs && node --experimental-sqlite tests/goal-process-strategy.mjs && node --experimental-sqlite tests/goal-native-provider.mjs && node --experimental-sqlite tests/goal-loop-integration.mjs",
     "test:goal-ui": "node tests/goal-ui-browser.mjs",
-    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs && node --experimental-sqlite tests/cloud-outer-recovery.mjs",
+    "test:cloud-compat": "node --experimental-sqlite tests/cloud-compatibility.mjs && node --experimental-sqlite tests/cloud-outer-recovery.mjs && node tests/cloud-auth-refresh-race.mjs",
     "build:control-bridge": "node scripts/build-control-bridge.mjs",
     "control": "node electron/control/bridge/entry.js",
     "test:local-control": "node --experimental-sqlite tests/control-runtime-storage.mjs && node --experimental-sqlite tests/local-control-workspaces.mjs && node --experimental-sqlite tests/local-control-desktop-workspaces.mjs && node --experimental-sqlite tests/local-control-policy.mjs && node --experimental-sqlite tests/local-control-service.mjs && node --experimental-sqlite tests/local-control-http.mjs && node --experimental-sqlite tests/local-control-desktop.mjs && node --experimental-sqlite tests/local-control-mcp.mjs",
@@ -222,6 +223,7 @@
       "docs/RELEASE_NOTES_v1.0.8.md",
       "docs/RELEASE_NOTES_v1.0.9.md",
       "docs/RELEASE_NOTES_v1.0.12.md",
+      "docs/RELEASE_NOTES_v1.0.13.md",
       "config/cloud-endpoints.json",
       "shared/**/*",
       "docs/LOCAL_CONTROL.md"

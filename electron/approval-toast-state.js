@@ -1,3 +1,5 @@
+import { approvalSimilarityText } from '../shared/approval-similarity.js';
+
 export const APPROVAL_TOAST_TIMEOUT_MS = 10_000;
 export const APPROVAL_TOAST_BODY_LIMIT = 160;
 
@@ -22,12 +24,14 @@ export function approvalToastCopy(approval = {}, language = "zh-CN") {
     .replace(/\s+/g, " ")
     .trim();
   const body = raw.slice(0, APPROVAL_TOAST_BODY_LIMIT);
+  const similarHint = approval.canRememberForRun === true ? approvalSimilarityText(approval.similarApproval, language) : '';
   return {
     eyebrow: english ? "Needs confirmation" : "等待确认",
     title: title || (english ? "Approval required" : "需要确认"),
     body: body || (english ? "The agent needs approval for this action." : "Agent 需要你确认这次操作。"),
     approve: approval.kind === 'agent-role-change' ? (english ? 'Review changes' : '查看改动') : english ? "Approve" : "确认",
     deny: english ? "Deny" : "拒绝",
+    ...(similarHint && similarHint.length <= 120 ? { similar: english ? 'Allow similar this run' : '本轮允许类似操作', similarHint } : {}),
   };
 }
 

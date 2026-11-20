@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
-import { clampWorkbenchWidth, MIN_DIALOGUE_WIDTH, MIN_WIDTH } from "./state.js";
+import { clampWorkbenchWidth, MIN_DIALOGUE_WIDTH, MIN_WIDTH, workbenchDisplayWidth } from "./state.js";
 import { WorkbenchContent } from "./WorkbenchPanes.jsx";
 import { WorkbenchTabs } from "./WorkbenchTabs.jsx";
 import { useImagePreviewOpen } from '../images/ImageViewer.jsx';
@@ -43,7 +43,7 @@ export function WorkbenchLayout({
   const active = layout.tabs.find((tab) => tab.id === layout.active) || null;
   const imagePreviewOpen = useImagePreviewOpen();
   const covered = overlaying || resizing || menuOpen || imagePreviewOpen;
-  const displayWidth = clampWorkbenchWidth(layout.width, room);
+  const displayWidth = workbenchDisplayWidth(layout, room);
 
   useLayoutEffect(() => {
     if (overlaying || imagePreviewOpen) void workbench.hideBrowser();
@@ -69,6 +69,7 @@ export function WorkbenchLayout({
     workbench.setLayout((current) => ({
       ...current,
       width: clampWorkbenchWidth(width, roomRef.current),
+      widthMode: "manual",
     }));
   };
 

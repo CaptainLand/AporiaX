@@ -10,6 +10,7 @@ import './route-activity.css';
 import { ProfessionalAgentPanel } from './ProfessionalAgentPanel.jsx';
 import { ACTIVITY_AGENT_ROLES, activityRecordStatus, routeAgentActivity } from './route-activity-model.js';
 import { agentName } from '../../shared/agent-identity.js';
+import { RouteTokenUsage } from './RouteTokenUsage.jsx';
 
 const LIVE_STATES = ['running', 'starting', 'waiting'];
 const HISTORY_PREVIEW = 3;
@@ -142,7 +143,8 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
       deletions: changes.reduce((sum, change) => sum + (Number(change.deletions) || 0), 0),
     };
   }, [records, selectedRun, changes]);
-  const duration = overview.start == null ? null : Math.max(0, (live ? now : overview.end ?? now) - overview.start);
+  const duration = selectedRun?.witness?.continued && Number.isFinite(selectedRun.witness.elapsedMs)
+    ? selectedRun.witness.elapsedMs : overview.start == null ? null : Math.max(0, (live ? now : overview.end ?? now) - overview.start);
 
   useEffect(() => { setPinnedRunId(null); setExpandedId(null); setReview(null); setRunMenuOpen(false); setHistoryExpanded(false); historyJump.current = null; }, [task.id]);
   useEffect(() => { setLimit(40); setFollow(true); setExpandedId(null); setReview(null); setHistoryExpanded(false); setFilter('all'); historyJump.current = null; }, [selectedRun?.id]);
@@ -281,6 +283,7 @@ export function RouteActivityView({ task, isRunning, approval, approvalRespondin
         <div className="ra-stat"><span><FileText size={13} aria-hidden="true" />{tr('文件修改', 'Files changed')}</span><strong>{changes.length}{changes.length > 0 && <small><em className="add">+{overview.additions}</em><em className="del">−{overview.deletions}</em></small>}</strong></div>
       </section>
 
+      {selectedRun && <RouteTokenUsage key={selectedRun.runId || selectedRun.id} run={selectedRun} taskId={task.id} live={live} />}
       {!selectedRun?.subagents?.length && <AgentActivitySummary run={selectedRun} />}
       <ProfessionalAgentPanel key={selectedRun?.id} run={selectedRun} taskId={task.id} active={isLatest && isRunning} onContinueAgent={onContinueAgent} />
       {!isLatest && <div className="ra-history-notice"><span>{tr('正在查看历史轮次，当前任务不受影响。', 'Viewing history. The current task is unaffected.')}</span><button type="button" onClick={() => chooseRun(runs.at(-1).id)}>{tr('回到最新一轮', 'Back to latest')}<ArrowRight size={13} /></button></div>}

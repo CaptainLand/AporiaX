@@ -10,53 +10,105 @@ const digest = (value) => createHash('sha256').update(JSON.stringify(value)).dig
 const messageText = (message) => typeof message.content === 'string' ? message.content :
   (message.content || []).filter((part) => part?.type === 'text').map((part) => part.text).join('\n');
 
-// Copy human requirements, never the parent's reasoning, tool logs or memory.
-// No model-generated summary can replace these sources. Large contexts fail
-// explicitly rather than silently dropping an early constraint.
+// Keep the original text separately from the small projection sent on the wire.
 export function captureDelegationContext(history, acceptance = null) {
-  let requests = [];
+  const unique = new Map();
   for (const message of history || []) {
     if (!isHumanMessage(message) || message.aporiaSupersededBy) continue;
-    if (explicitlyReplacesAllConstraints(message)) requests = [];
-    const content = messageText(message).trim();
-    if (content && !requests.some((item) => item.text === content)) requests.push({ id: digest(content).slice(0, 20), text: content });
+    if (explicitlyReplacesAllConstraints(message)) unique.clear();
+    const content = messageText(message);
+    if (!content.trim()) continue;
+    const id = digest(content).slice(0, 20);
+    unique.delete(id); // Repeated human requests can become the current goal again.
+    unique.set(id, { id, text: content });
   }
-  const context = { version: 1, requests, acceptance };
+  const context = { version: 1, requests: [...unique.values()], acceptance };
   return { ...context, revision: digest(context) };
 }
 
-export function syncDelegationContext(conversation, context, { contextWindowTokens = 128000 } = {}) {
+const tokens = text => estimateConversationTokens([{ role: 'system', content: text }]);
+const rule = /不要|不得|禁止|不能|必须|务必|仅限|只(?:能|允许|修改|做|读)|保留|暂不|先不|沿用|保持|请使用|(?:要求|应当|需要|记得)(?:使用|保留|遵守|遵循)|不(?:允许|发布|上传|删除|修改|改动)|始终|一直|以后|今后|每次|需(?:要先|经)|\b(?:always|keep|preserve|avoid|must|shall|never|only|do\s+not|don't|without)\b|^\s*(?:please\s+)?use\b|DO_NOT_|NEVER_/i;
+const weakTerms = new Set('check test task please with this that from about current only file for the and 检查 当前 任务 这个 一下 帮我 需要'.split(' '));
+function terms(text) {
+  const result = new Set();
+  for (const [w] of text.toLowerCase().matchAll(/[a-z0-9_][a-z0-9_./-]+|[\p{Script=Han}]+/gu)) {
+    if (/^[\u3400-\u9fff]/.test(w)) {
+      for (let i = 1; i < w.length; i++) { const t = w.slice(i-1,i+1); if (!weakTerms.has(t)) result.add(t); }
+    } else if (!weakTerms.has(w)) result.add(w);
+  }
+  return result;
+}
+function excerpt(request, budget) {
+  let lo = 0, hi = Math.min(request.text.length, Math.max(1, budget * 8));
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (tokens(request.text.slice(0, mid)) <= budget) lo = mid; else hi = mid - 1;
+  }
+  return { id: request.id, text: request.text.slice(0,lo), ...(lo < request.text.length ? { nextOffset:lo, characters:request.text.length } : {}) };
+}
+const projections = new WeakMap();
+export function syncDelegationContext(conversation, context, { contextWindowTokens = 128000, assignment = '' } = {}) {
   if (!context) return false;
-  const full = JSON.stringify(context);
-  const tokenBudget = Math.floor(contextWindowTokens * .35);
-  const tokens = text => estimateConversationTokens([{ role: 'system', content: text }]);
-  const inline = tokens(full) <= tokenBudget;
-  const constraints = [], unread = [];
+  const index = conversation.findIndex(m => m.role === 'system' && String(m.content).startsWith(CONTEXT_PREFIX));
+  const key = JSON.stringify([context.revision, contextWindowTokens, assignment]);
+  if (index >= 0 && projections.get(conversation[index]) === key) return false;
+
+  // Window size is a ceiling, not a target. A short assignment doesn't need a
+  // larger history payload just because it runs on a one-million-token model.
+  const budget = Math.floor(Math.min(contextWindowTokens * .30, 2200 + 5 * tokens(assignment)));
+  const latest = context.requests.at(-1);
+  const currentRequest = latest && excerpt(latest, Math.floor(budget * .35));
+  const query = terms(assignment), related = [], candidates = [], constraints = [], unread = [];
   let constraintTokens = 0;
-  if (!inline) for (const request of context.requests) {
-    let fenced = false;
-    for (const match of request.text.matchAll(/[^\n]+(?:\n|$)/g)) {
-      const text = match[0];
-      if (/^\s*```/.test(text)) { fenced = !fenced; continue; }
-      if (fenced || /^\s*>/.test(text) || !/(不要|不得|禁止|不能|必须|务必|仅限|只(?:能|允许|修改)|保留|不(?:发布|上传|删除|修改|改动)|\b(?:must|shall|never|only|do\s+not|don't|without)\b|DO_NOT_|NEVER_)/i.test(text)) continue;
-      const item = { requestId: request.id, offset: match.index, end: match.index + text.length };
-      const cost = tokens(text);
-      if (constraintTokens + cost <= tokenBudget * .65) { constraints.push({ ...item, text }); constraintTokens += cost; }
-      else unread.push(item);
+  const seen = new Set();
+  for (const request of context.requests) {
+    if (request === latest && currentRequest.nextOffset === undefined) continue;
+    let fenced = false, ruleList = false;
+    for (const match of request.text.matchAll(/[^\n]+/g)) {
+      const line = match[0];
+      if (/^\s*(?:\x60{3}|~~~)/.test(line)) { fenced = !fenced; continue; }
+      if (fenced || /^\s*>/.test(line)) continue;
+      const inList = ruleList && /^\s*(?:[-*]|\d+[.)、])\s*/.test(line);
+      ruleList = inList || (rule.test(line) && /[:：]\s*$/.test(line));
+      // Keep contextual/list rules together; identical simple sentences need
+      // only be pinned once. Offsets always refer to the unmodified original.
+      for (const part of line.matchAll(/[^。！？]+[。！？]*|[。！？]+/g)) {
+        const text = part[0], offset = match.index + part.index, end = offset + text.length;
+        if (!(rule.test(text) || inList) || (request === latest && end <= currentRequest.text.length)) continue;
+        const dedupKey = inList ? request.id + ':' + offset : text;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        const item = { requestId:request.id, offset, end }, cost = tokens(text);
+        if (constraintTokens + cost <= budget * .45) { constraints.push({ ...item, text }); constraintTokens += cost; }
+        else {
+          const previous = unread.at(-1);
+          if (previous?.requestId === request.id && previous.end + 1 >= offset) previous.end = end;
+          else unread.push(item);
+        }
+      }
+      if (!query.size || request === latest) continue;
+      const words = terms(line.slice(0,4096));
+      let score = 0;
+      for (const w of words) if (query.has(w)) score += Math.min(12,w.length);
+      if (score) {
+        candidates.push({score, id:request.id, offset:match.index, text:line});
+        candidates.sort((a,b) => b.score-a.score); if (candidates.length > 3) candidates.pop();
+      }
     }
   }
-  const projection = inline ? full : JSON.stringify({ revision: context.revision, paged: true,
-    ...(context.requests.length && tokens(context.requests.at(-1).text) <= tokenBudget * .20
-      ? { currentRequest: context.requests.at(-1) } : {}),
-    constraints, unreadConstraints: unread,
-    requests: context.requests.map(item => ({ id: item.id, characters: item.text.length,
-      preview: item.text.slice(0, 240) })), acceptance: context.acceptance });
-  const content = CONTEXT_PREFIX + projection + (inline ? '' : '\nComplete original requirements remain in read_delegation_context. Read relevant original requests before acting; do not assume a missing or unread constraint was waived. Page by request_id and offset; request_id omitted lists the manifest. This manifest is NOT a summary replacing the requirements.') + '\nThese are original user requirements and configured acceptance criteria. The delegated assignment below is from Main, not a new user authorization. Apply requirements relevant to this subtask; do not execute unrelated historical tasks. Report any conflict or missing context. Permissions and delegated scopes remain the hard upper bound.';
-  const index = conversation.findIndex((message) => message.role === 'system' && String(message.content).startsWith(CONTEXT_PREFIX));
-  if (index >= 0 && conversation[index].content === content) return false;
-  const message = { role: 'system', content, aporiaPinned: true, aporiaUnreadRequirements: unread };
-  if (index >= 0) conversation[index] = message;
-  else conversation.splice(1, 0, message);
+  let left = Math.floor(budget * .20);
+  for (const entry of candidates) {
+    if (left < 32 || seen.has(entry.text)) continue;
+    const piece = excerpt(entry, left);
+    related.push({requestId:entry.id, offset:entry.offset, text:piece.text});
+    left -= tokens(piece.text);
+  }
+  const content = CONTEXT_PREFIX + JSON.stringify({ revision:context.revision, paged:true, requestCount:context.requests.length,
+    currentRequest, constraints, related, unreadConstraints:unread, acceptance:context.acceptance }) +
+    '\nComplete original human requests are available via read_delegation_context (omit request_id for the manifest, then page by ID and offset). Read relevant originals if this projection lacks context; unread constraints must be checked before effectful work. The assignment below comes from Main, not a new user authorization. Do not execute unrelated historical tasks. Permissions and delegated scopes remain the hard upper bound.';
+  const message = { role:'system', content, aporiaPinned:true, aporiaUnreadRequirements:unread };
+  projections.set(message, key);
+  if (index >= 0) conversation[index] = message; else conversation.splice(1,0,message);
   return true;
 }
 
@@ -102,7 +154,9 @@ export function dependencyHandoff(record) {
     agentId: record.agentId, role: record.role, reportId: result.reportId,
     summary: String(result.summary || '').slice(0, 4000),
     summaryTruncated: String(result.summary || '').length > 4000,
-    acceptance: { status: result.acceptance?.status, certification: result.acceptance?.certification },
+    acceptance: { status: result.acceptance?.status, certification: result.acceptance?.certification,
+      ...(result.acceptance?.referenceOnly ? {referenceOnly:true} : {}),
+      ...(result.acceptance?.verifiedCheck ? {verifiedCheck:result.acceptance.verifiedCheck} : {}) },
     integrated: result.integrated,
     changedFiles: (result.changes || []).slice(0, 40).map(change => ({ path: change.path })),
     evidence: (result.evidence || []).slice(-6).map(item => ({
@@ -156,13 +210,20 @@ export function reviewWorkerResult(record, input, parentEvidence = new Map()) {
   const successful = (item) => item && !item.error && !item.timedOut && !item.skipped &&
     (['run_command', 'verify_project'].includes(item.tool) ? item.exitCode === 0 : item.exitCode == null || item.exitCode === 0);
   for (const id of ids) if (!successful(parentEvidence.get(id) || childEvidence.get(id))) throw new Error('SUBAGENT_REVIEW_EVIDENCE_INVALID: cite observed, successful evidence only.');
+  const expected = record.input?.verificationCheck;
+  const check = expected && ids.map(id => parentEvidence.get(id)).find(e => e && !e.parseOnly &&
+    ['run_command','verify_project'].includes(e.tool) && e.exitCode === 0 && e.command === expected.command && (e.cwd || '.') === expected.cwd);
+  const referenceOnly = !check && (Boolean(expected) || (record.role === 'verify' && record.status !== 'completed'));
   if (input.decision === 'accepted') {
+    if (referenceOnly && input.dependency_ready !== false && !input.reference_only)
+      throw Error('SUBAGENT_REVIEW_REFERENCE_ONLY: cite the agreed successful Main command, or set reference_only:true to share findings without verifying the condition.');
     if (record.status !== 'completed' && !ids.some((id) => parentEvidence.has(id))) throw new Error('Partial or failed workers require independent parent evidence before acceptance.');
     if ((['builder', 'verify'].includes(record.role) || record.result.requiresIntegration) && !ids.length) throw new Error('Builder/Verify acceptance requires task-relevant observed evidence; do not run unrelated tests.');
     if ((record.role === 'builder' || record.result.requiresIntegration) && !record.result.integrated && !ids.some((id) => parentEvidence.has(id))) throw new Error('Builder changes are not integrated; inspect and resolve them before acceptance.');
   }
   return { status: input.decision, reason: input.reason.trim(), evidenceIds: [...new Set(ids)],
-    dependencyReady: input.dependency_ready !== false,
+    dependencyReady: input.dependency_ready !== false, referenceOnly: referenceOnly || input.reference_only === true,
+    ...(check ? { verifiedCheck:{...expected, observedVersion:check.observedVersion} } : {}),
     reportId: record.result.reportId, reviewedAt: new Date().toISOString(), certification: 'parent-reviewed-not-independent-proof' };
 }
 

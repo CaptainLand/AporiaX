@@ -319,8 +319,8 @@ export function createWitnessMonitor({
         const key = daily ? 'quota-low:daily' : 'quota-low:weekly';
         if (!recordIndex.has(key)) addRecord({ key, timestamp, kind: 'warning', status: 'completed',
           eventType: daily ? 'response.quota.low.daily' : 'response.quota.low.weekly',
-          detail: daily ? '全站今日已结算剩余额度不超过 5%，本轮开始收尾：保存已有进度，不再启动新子任务。'
-            : '个人周额度不超过 5%，本轮开始收尾：保存已有进度，不再启动新子任务。' });
+          detail: daily ? '全站今日剩余额度不超过 5%，任务继续。'
+            : '个人周额度不超过 5%，任务继续。' });
         break;
       }
       case "response.cloud.queued":
@@ -350,11 +350,11 @@ export function createWitnessMonitor({
         if (record && ['running', 'waiting'].includes(record.status) && ['waiting', 'receiving', 'tool-arguments', 'text'].includes(event.stage)) {
           const previous = record.modelProgress;
           record.modelProgress = { stage: event.stage, generatedChars: Math.max(0, Number(event.generatedChars) || 0), toolName: /^[a-zA-Z_][a-zA-Z0-9_.:-]{0,119}$/.test(event.toolName || '') ? event.toolName : '', elapsedMs: Math.max(0, Number(event.elapsedMs) || 0) };
-          for (const key of ['inputTokens', 'outputTokens']) record.modelProgress[key] = Number.isSafeInteger(event[key]) && event[key] >= 0 ? event[key] : null;
+          for (const key of ['inputTokens', 'uncachedInputTokens', 'outputTokens']) record.modelProgress[key] = Number.isSafeInteger(event[key]) && event[key] >= 0 ? event[key] : null;
           record.modelProgress.inputTokensEstimated = event.inputTokensEstimated !== false;
           record.modelProgress.outputTokensEstimated = event.outputTokensEstimated !== false;
           record.lastActivityAt = isoTime(timestamp);
-          if (!previous || previous.stage !== event.stage || previous.inputTokensEstimated !== record.modelProgress.inputTokensEstimated || previous.outputTokensEstimated !== record.modelProgress.outputTokensEstimated || timestamp - (record.progressPublishedAt || 0) >= 500) {
+          if (!previous || previous.stage !== event.stage || previous.uncachedInputTokens !== record.modelProgress.uncachedInputTokens || previous.inputTokensEstimated !== record.modelProgress.inputTokensEstimated || previous.outputTokensEstimated !== record.modelProgress.outputTokensEstimated || timestamp - (record.progressPublishedAt || 0) >= 500) {
             record.progressPublishedAt = timestamp; publish('response.progress');
           }
         }
@@ -383,7 +383,7 @@ export function createWitnessMonitor({
           key: "turn:started",
           timestamp,
           kind: "status",
-          eventType: "turn.started",
+          eventType: event.continuing ? 'turn.continued' : 'turn.started',
           status: "completed",
         });
         break;

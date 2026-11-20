@@ -42,6 +42,10 @@ function finalAnswer(body) {
   assert.match(body.messages.at(-2).content, /Do not call tools/);
   return sse({ content: 'The draft is saved; the remaining check could not finish.' });
 }
+const enable = (...groups) => body => {
+  assert.ok(body.tools.some(tool => tool.function.name === 'enable_task_tools'));
+  return tools(call('load-scoped-tools', 'enable_task_tools', { groups }));
+};
 function assertDelivered(run, requests) {
   assert.equal(run.bodies.length, requests);
   assert.equal(run.result.status, 'partial'); assert.equal(run.result.error, false);
@@ -63,17 +67,18 @@ try {
   assertDelivered(runResult, 2);
   assert.equal(runResult.result.deliveryDetails, 'More useful context.');
   const broken = () => sse({ tool_calls: [{ index: 0, id: 'bad', type: 'function', function: { name: 'write_file', arguments: '{"path":"never.txt",' } }] }, 'tool_calls');
-  runResult = await run([broken(), broken(), finalAnswer]);
-  assertDelivered(runResult, 3);
+  runResult = await run([broken(), broken(), broken(), finalAnswer]);
+  assertDelivered(runResult, 4);
   assert.equal(runResult.result.changes.length, 0, 'Malformed calls never execute');
 
   runResult = await run([
+    enable('planning', 'workspace_write'),
     tools(call('plan', 'update_plan', { steps: [{ title: 'Save draft', status: 'in_progress' }, { title: 'Check draft', status: 'pending' }] })),
     tools(call('write', 'write_file', { path: 'draft.txt', content: 'CONFIRMED_DRAFT' })),
     () => { throw Object.assign(new Error('Fixture interrupted runtime path'), { code: 'FIXTURE_RUNTIME_ERROR' }); },
     finalAnswer,
   ]);
-  assertDelivered(runResult, 4);
+  assertDelivered(runResult, 5);
   assert.equal(await readFile(join(runResult.workspace, 'draft.txt'), 'utf8'), 'CONFIRMED_DRAFT');
   assert.equal(runResult.result.steps.filter(step => step.name === 'write_file').length, 1);
   assert.equal(runResult.result.plan.steps.filter(step => step.status === 'completed').length, 0, 'A reply does not complete remaining work');
@@ -84,10 +89,11 @@ try {
     assert.equal(providerErrorCategory({ status, message: balanceError.error.message }), 'quota');
     assert.equal(canRequestErrorReply({ status, message: balanceError.error.message }), false);
     runResult = await run([
+      enable('workspace_write'),
       tools(call('write-before-quota', 'write_file', { path: 'super-mario.html', content: '<h1>Saved game draft</h1>' })),
       new Response(JSON.stringify(balanceError), { status }),
     ], { language: 'zh-CN' });
-    assert.equal(runResult.bodies.length, 2, 'Do not retry exhausted provider balance, including a mislabelled HTTP 500');
+    assert.equal(runResult.bodies.length, 3, 'Do not retry exhausted provider balance, including a mislabelled HTTP 500');
     assert.equal(runResult.result.status, 'partial');
     assert.equal(runResult.result.error, false);
     assert.equal(runResult.result.replyDelivered, true);

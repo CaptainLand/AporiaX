@@ -83,7 +83,8 @@ export const TOOL_DEFINITIONS = [
           },
           skills: { type: "array", maxItems: 64, items: { type: "string" }, description: "Optional workflow names to hand off from Skills already activated or successfully read in this task. Does not grant any new tools or permissions." },
           context: { type: "string", description: "Handoff facts, interfaces and criteria. Actual selected-model context budget applies, not a fixed character limit. Original user requirements remain available separately. No hidden reasoning." },
-          dependency_requirements: { type: 'array', items: { type: 'object', properties: { agent_id: { type: 'string' }, use: { type: 'string', enum: ['report', 'changes'] } }, required: ['agent_id', 'use'], additionalProperties: false }, description: 'Optional edge semantics. report uses accepted findings without requiring all upstream edits integrated; changes (default) requires real integration for writable workers.' },
+          verification_check: { type:'object', properties:{command:{type:'string'},cwd:{type:'string'}}, required:['command'], additionalProperties:false, description:'Optional agreed check. A verified dependency needs Main evidence of this exact successful command in its cwd. Does not grant permissions.' },
+          dependency_requirements: { type: 'array', items: { type: 'object', properties: { agent_id: { type: 'string' }, use: { type: 'string', enum: ['report', 'changes','verified'] } }, required: ['agent_id', 'use'], additionalProperties: false }, description: 'report = accepted findings; changes = integrated work; verified = agreed verification_check passed in the current workspace.' },
             depends_on: { type: "array", maxItems: 12, items: { type: "string" }, description: "Existing worker IDs in this run. Waits without model calls until their reports are accepted. Dependencies always run in background. Failed dependencies block this worker." },
           scope: {
             type: "array",
@@ -147,6 +148,7 @@ export const TOOL_DEFINITIONS = [
       decision: { type: "string", enum: ["accepted", "needs_changes"] },
       reason: { type: "string", minLength: 1, maxLength: 2000 },
       evidence_ids: { type: "array", maxItems: 16, items: { type: "string" } },
+      reference_only: { type:'boolean', description:'Share findings with report-only dependencies without claiming verification.' },
       dependency_ready: { type: 'boolean', description: 'Accepted evidence satisfies downstream use (default true); false accepts the report for review without releasing dependent work.' },
     }, required: ["agent_id", "report_id", "decision", "reason"], additionalProperties: false },
   } },
@@ -647,7 +649,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: "present_to_user",
       description:
-        "Open selected files, a running process log, or the current browser page in the user's side workbench. Call this only when you decide the user should look at that result now. A Markdown link in the final answer does not open the sidebar.",
+        "Present a user-facing result in the side workbench. An HTML file opens as a browser preview; Markdown opens in its reading view. Source files stay closed; link them in the reply. Browser display is not interaction verification. A Markdown link does not automatically open the sidebar.",
       parameters: {
         type: "object",
         properties: {
@@ -655,11 +657,11 @@ export const TOOL_DEFINITIONS = [
             type: "array",
             maxItems: 8,
             items: { type: "string" },
-            description: "Workspace-relative files to show, such as a finished document, image, or source file.",
+            description: "Workspace-relative deliverables to preview, such as HTML, Markdown, a finished document or an image.",
           },
           path: {
             type: "string",
-            description: "Optional single workspace-relative file to show.",
+            description: "Optional single workspace-relative deliverable to preview.",
           },
           line: {
             type: "integer",

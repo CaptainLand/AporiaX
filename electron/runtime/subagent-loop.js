@@ -7,7 +7,6 @@ import { createPersistentProcessManager } from './process-runtime.js';
 import { createLspManager } from './lsp-runtime.js';
 import { appendBrowserVisualEvidence } from './browser-evidence.js';
 import { WEB_TOOL_GUIDANCE } from './web-tools.js';
-import { cloudWorkerDeferral } from "./cloud-wind-down.js";
 import { applyRoleThinking } from './role-capabilities.js';
 import { StrategyHistory } from "./strategy-history.js";
 import { normalizeLoopPolicy } from "./completion-policy.js";
@@ -72,8 +71,6 @@ export async function runSubagentTask(options = {}) {
     finally { release(); }
   }
   await waitForRuntimeResume(options.signal);
-  const deferred = cloudWorkerDeferral(options.provider);
-  if (deferred) return { ...deferred, agentId: options.agentId, role: options.input?.role, evidence: [], steps: [], usage: null };
   if (!options.__budgetAdmitted) return withAgentBudgetAdmission({ role: options.input?.writeScopes?.length ? 'builder' : options.input?.role, signal: options.signal, systemOwned: options.systemOwned },
     () => runSubagentTask({ ...options, __budgetAdmitted: true }));
   const broker = getDefaultAgentRuntimeBroker();
@@ -275,7 +272,7 @@ export async function runSubagentTask(options = {}) {
   const refreshInheritedContext = async () => {
     syncDependencyHandoff(conversation, session.dependencyHandoff);
     const context = options.getDelegationContext ? await options.getDelegationContext() : session.delegationContext;
-    if (context) { session.delegationContext = context; return syncDelegationContext(conversation, context, { contextWindowTokens }); }
+    if (context) { session.delegationContext = context; return syncDelegationContext(conversation, context, { contextWindowTokens, assignment: [input.task, input.context].filter(Boolean).join('\n') }); }
     return false;
   };
   await refreshInheritedContext();

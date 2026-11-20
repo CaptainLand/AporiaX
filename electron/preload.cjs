@@ -256,6 +256,7 @@ contextBridge.exposeInMainWorld("desktop", {
     resume: (runId) => ipcRenderer.invoke("harness:resume", runId),
     steer: (request) => ipcRenderer.invoke("harness:steer", request),
     activeRuns: () => ipcRenderer.invoke("harness:active-runs"),
+    modelUsage: (request) => ipcRenderer.invoke('harness:model-usage', request),
     recoverableRuns: () =>
       ipcRenderer.invoke("harness:recoverable-runs"),
     acknowledgeRecovery: (runId) =>

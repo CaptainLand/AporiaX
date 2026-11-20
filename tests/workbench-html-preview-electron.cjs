@@ -26,6 +26,8 @@ let service, window, base, direct;
 app.whenReady().then(async () => {
   const { createWorkbenchService } = await import(pathToFileURL(resolve("electron/workbench/service.js")));
   const { createHtmlPreview } = await import(pathToFileURL(resolve("electron/workbench/html-preview.js")));
+  const { createNativeToolExecutor } = await import(pathToFileURL(resolve("electron/runtime/native-tool-executor.js")));
+  const { verifyExistingTarget } = await import(pathToFileURL(resolve("electron/runtime/workspace-runtime.js")));
   base = await mkdtemp(join(tmpdir(), "aporiax-html-preview-test-"));
   const workspace = join(base, "workspace");
   const root = join(workspace, "page");
@@ -79,6 +81,23 @@ app.whenReady().then(async () => {
   assert.deepEqual(rendered, { text: "Script rendered", color: "rgb(17, 120, 83)", image: 20, desktop: "undefined", require: "undefined", process: "undefined" });
   const shortExtension = await service.request({ ...context, action: "preview-html", path: "page/index.htm" });
   assert.equal(shortExtension.kind, "browser");
+  const agentContext = { ...context, taskId: 'agent-html-presentation', emit() {} };
+  const run = service.acquire(agentContext);
+  const unused = async () => assert.fail('HTML presentation should not use shell, search or write services');
+  const present = createNativeToolExecutor({verifyExistingTarget,verifyWritableTarget:unused,searchWorkspaceText:unused,
+    calculateLineChanges:unused,runGitCommand:unused});
+  const { modelResult } = await present({toolName:'present_to_user',input:{path:'page/index.htm'},
+    workspaceRoot:workspace,workbenchPresent:run.present,browserRuntime:run.browserRuntime});
+  assert.equal(modelResult.browser,true);
+  assert.deepEqual(modelResult.files,[]);
+  assert.equal(modelResult.htmlPreviews[0].verifiedInteractions,false);
+  const agentPreview = [...service.resources.values()].find(r=>r.taskId===agentContext.taskId);
+  assert.equal(agentPreview.state().present,true);
+  assert.equal(await agentPreview.wc.executeJavaScript("document.querySelector('#result').textContent"),'Script rendered');
+  await run.release();
+  assert.equal((await read(modelResult.htmlPreviews[0].previewUrl)).status,200,'delivered preview remains open');
+  await service.request({ ...agentContext, action:'stop',id:agentPreview.id,dispose:true });
+  await assert.rejects(read(modelResult.htmlPreviews[0].previewUrl));
   assert.deepEqual(await service.request({ ...context, taskId: "different-task", action: "navigate", id: resource.id, url: "https://example.invalid" }), { missing: true });
   await service.request({ ...context, action: "stop", id: resource.id, dispose: true });
   await assert.rejects(read(resource.url));

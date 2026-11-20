@@ -10,6 +10,7 @@ export async function fullAutoRequiresConfirmation(details, workspaceRoot) {
   if (details?.kind === "agent-role-change") return "专业角色的创建、修改、删除必须逐次获得用户确认。";
   if (details?.kind === "recovery-reconciliation") return "异常恢复可能重复执行副作用，必须重新核对。";
   const tool = String(details?.toolName || details?.tool || "");
+  if (tool === 'delete_file') return '删除文件前需要确认；AporiaX 会保留恢复快照。';
   if (["read_file", "read_external_file", "list_directory", "search_text", "find_files"].includes(tool)) return "";
   const command = String(details?.command || "");
   if (!DELETION.test([tool, command, JSON.stringify(details?.input || {})].join(" "))) return "";

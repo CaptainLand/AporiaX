@@ -18,7 +18,7 @@ export function providerMessages(messages) {
   return (messages || []).map((message, index) => {
     if (!message || typeof message !== "object") throw invalidMessage(index, "missing message");
     const { aporiaSource, aporiaPinned, aporiaSupersededBy, aporiaTaskBrief, aporiaContinuation,
-      aporiaRollingContext, aporiaHistoryIndex, aporiaCurrentRequest, aporiaBrowserEvidence,
+      aporiaRollingContext, aporiaHistoryIndex, aporiaCurrentRequest, aporiaBrowserEvidence, aporiaHistoryVisual,
       aporiaOutputContinuation, aporiaUnreadRequirements, ...wire } = message;
     // Tool-only assistant messages may omit text. Tool receipts may not: an
     // undefined property disappears entirely when the request is serialized.

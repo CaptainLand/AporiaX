@@ -214,7 +214,8 @@ try {
     assert.match(conversation[1].content, /paged/); assert(conversation[1].content.includes('不要发布，也不要删除现有文件。'));
     const ascii = captureDelegationContext([{ role: 'user', content: 'Never delete existing files.\n' + 'a'.repeat(400000) }]);
     const large = [{ role: 'system', content: 'worker' }]; syncDelegationContext(large, ascii, { contextWindowTokens: 1000000 });
-    assert(!large[1].content.includes('"paged":true'), '400K ASCII characters fit the 1M token budget');
+    assert(large[1].content.includes('"paged":true') && large[1].content.includes('Never delete existing files.'),
+      'unused capacity is not a reason to send 400K background characters');
     const latest = '先在本地看看，等我确认以后再动手。';
     const twoTurns = captureDelegationContext([{ role: 'user', content: original }, { role: 'user', content: latest }]);
     syncDelegationContext(conversation, twoTurns, { contextWindowTokens: 1000000 }); assert(conversation[1].content.includes(latest));

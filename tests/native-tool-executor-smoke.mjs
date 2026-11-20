@@ -3,6 +3,7 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createNativeToolExecutor } from "../electron/runtime/native-tool-executor.js";
+import { verifyExistingTarget } from "../electron/runtime/workspace-runtime.js";
 
 const root = await mkdtemp(join(tmpdir(), "aporiax-native-executor-"));
 try {
@@ -21,7 +22,7 @@ try {
     deletions: before === after ? 0 : 1,
   });
   const executor = createNativeToolExecutor({
-    verifyExistingTarget: async (_workspaceRoot, requested) => inside(requested),
+    verifyExistingTarget,
     verifyWritableTarget: async (_workspaceRoot, requested) => inside(requested),
     searchWorkspaceText: async ({ query, requestedPath }) => ({
       query,
@@ -154,9 +155,10 @@ try {
     },
     input: { path: "src/a.js", line: 2 },
   });
-  assert.equal(shown.modelResult.presented, true);
-  assert.deepEqual(shown.modelResult.files, ["src/a.js"]);
-  assert.deepEqual(presented, ["src/a.js:2"]);
+  assert.equal(shown.modelResult.presented, false);
+  assert.deepEqual(shown.modelResult.files, []);
+  assert.equal(shown.modelResult.linkOnly[0].path, "src/a.js");
+  assert.deepEqual(presented, []);
 
   const absPresented = [];
   const absPath = join(root, "src", "a.js");
@@ -168,9 +170,29 @@ try {
     },
     input: { path: `<${absPath.replaceAll("\\", "/")}>`, line: 3 },
   });
-  assert.equal(absShown.modelResult.presented, true);
-  assert.deepEqual(absShown.modelResult.files, ["src/a.js"]);
-  assert.deepEqual(absPresented, ["src/a.js:3"]);
+  assert.equal(absShown.modelResult.presented, false);
+  assert.equal(absShown.modelResult.linkOnly[0].path, "src/a.js");
+  assert.deepEqual(absPresented, []);
+
+  await writeFile(join(root, "present.md"), "# Report");
+  await writeFile(join(root, "present.html"), "<h1>Page</h1>");
+  await writeFile(join(root, "art.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+  const previews = [];
+  const workbenchPresent = {
+    file(path) { presented.push(path); },
+    async html(path) { previews.push(path); return { url: "http://127.0.0.1:12345/local-preview/" }; },
+  };
+  const publicResult = await executor({ ...base,toolName:"present_to_user",workbenchPresent,
+    input:{files:["src/a.js","present.md","present.html","art.svg"]} });
+  assert.deepEqual(presented,["present.md"]);
+  assert.deepEqual(previews,["present.html"]);
+  assert(publicResult.modelResult.browser);
+  assert.equal(publicResult.modelResult.htmlPreviews[0].verifiedInteractions,false);
+  assert.deepEqual(publicResult.modelResult.linkOnly.map(({path}) => path), ["src/a.js", "art.svg"]);
+  const disabled = await executor({ ...base,toolName:"present_to_user",workbenchPresent,browserPresentationAllowed:false,
+    input:{path:"present.html"} });
+  assert.equal(disabled.modelResult.presented,false);
+  assert.deepEqual(previews,["present.html"]);
 
   const unavailable = await executor({
     ...base,

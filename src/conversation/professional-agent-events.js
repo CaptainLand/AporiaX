@@ -12,8 +12,9 @@ export function applyProfessionalAgentEvent(items = [], event) {
   }
   else if (event.type === 'subagent.response.progress') {
     if (previous.status !== 'running') return items;
-    patch = { modelProgress: { stage: event.stage, outputTokens: Number.isSafeInteger(event.outputTokens) && event.outputTokens >= 0 ? event.outputTokens : null,
-      outputTokensEstimated: event.outputTokensEstimated !== false, responseId: event.responseId } };
+    const tokens = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+    patch = { modelProgress: { stage: event.stage, inputTokens: tokens(event.inputTokens), uncachedInputTokens: tokens(event.uncachedInputTokens), outputTokens: tokens(event.outputTokens),
+      inputTokensEstimated: event.inputTokensEstimated !== false, outputTokensEstimated: event.outputTokensEstimated !== false, responseId: event.responseId } };
   }
   else if (event.type === 'subagent.response.recovery.status') {
     if (previous.status !== 'running') return items;

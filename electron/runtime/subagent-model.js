@@ -128,6 +128,9 @@ export function normalizeSubagentInput(input, profiles = null) {
   if (input?.context != null && typeof input.context !== 'string') throw new Error('Subagent handoff context must be text.');
   if (input?.skills != null && (!Array.isArray(input.skills) || input.skills.length > 64 || input.skills.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,199}$/i.test(name)))) throw new Error('Invalid delegated Skills.');
   const scope = normalizeWorkspaceScope(input?.scope);
+  const check = input?.verification_check ?? input?.verificationCheck;
+  if (check != null && (typeof check?.command !== 'string' || !check.command.trim() ||
+    (check.cwd != null && typeof check.cwd !== 'string'))) throw Error('Invalid verification_check: specify the expected command and cwd.');
   const commandScope = input?.command_scope ?? input?.commandScope ?? (scope.includes('.') || role === 'builder' || input?.write_scopes?.length || input?.writeScopes?.length ? 'workspace' : 'none');
   if (!['workspace', 'none'].includes(commandScope)) throw Error('Invalid command_scope: use workspace or none.');
   return {
@@ -136,10 +139,11 @@ export function normalizeSubagentInput(input, profiles = null) {
     ...(profile ? { profileId: profile.id, profile } : {}),
     ...((input?.depends_on || input?.dependsOn) ? { dependsOn: input.depends_on || input.dependsOn } : {}),
     ...(input?.dependency_requirements ? { dependencyRequirements: Object.fromEntries(input.dependency_requirements.map(edge => {
-      if (!edge || typeof edge.agent_id !== 'string' || !['report', 'changes'].includes(edge.use) || !(input.depends_on || input.dependsOn || []).includes(edge.agent_id)) throw Error('Invalid dependency requirement.');
+      if (!edge || typeof edge.agent_id !== 'string' || !['report', 'changes', 'verified'].includes(edge.use) || !(input.depends_on || input.dependsOn || []).includes(edge.agent_id)) throw Error('Invalid dependency requirement.');
       return [edge.agent_id, edge.use];
     })) } : {}),
     task,
+    ...(check ? {verificationCheck:{command:check.command.trim(), cwd:check.cwd || '.'}} : {}),
     ...(input?.context ? { context: input.context } : {}),
     ...(input?.skills?.length ? { skills: [...new Set(input.skills)] } : {}),
     scope, commandScope,

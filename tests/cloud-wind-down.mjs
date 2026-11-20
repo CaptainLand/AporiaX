@@ -12,11 +12,10 @@ import { createPermissionPolicy } from '../electron/agent-core.js';
 import { withDurableRun } from '../electron/runtime/durable-run.js';
 import { callModelProvider } from '../electron/runtime/provider-stream.js';
 import { completeLoopRequest } from '../electron/runtime/loop-recovery.js';
-import { createLoopRequestIdentity, withLoopRequestIdentity } from '../electron/runtime/cloud-request-identity.js';
+import { cloudRequestFingerprint, createLoopRequestIdentity, withLoopRequestIdentity } from '../electron/runtime/cloud-request-identity.js';
 import { createAporiaCloudProvider } from '../electron/provider-config.js';
-import { lowCloudQuota, lowCloudDailyBudget, observeCloudQuota, prepareCloudWindDown, cloudWindDownActive, cloudWorkerDeferral, CLOUD_WIND_DOWN_PROMPT, CLOUD_DAILY_WIND_DOWN_PROMPT } from '../electron/runtime/cloud-wind-down.js';
+import { lowCloudQuota, lowCloudDailyBudget, observeCloudQuota, prepareCloudWindDown, CLOUD_WIND_DOWN_PROMPT, CLOUD_DAILY_WIND_DOWN_PROMPT } from '../electron/runtime/cloud-wind-down.js';
 import { runSubagentTask } from '../electron/runtime/subagent-loop.js';
-import { planAgentBudget, runWithAgentBudget, withAgentBudgetAdmission } from '../electron/harness/agent-budget.js';
 
 const cloud = createAporiaCloudProvider('https://fixture.invalid');
 const quota = (remaining = 50, extra = {}) => ({ policy: 'actual-usage-v1', source: 'weekly', remainingMicros: remaining, limitMicros: 1000, exhausted: remaining <= 0, ...extra });
@@ -51,18 +50,18 @@ test('5% is inclusive and uses settled integer amounts, not rounding or reservat
   assert.equal(lowCloudQuota(quota(100, { availableRatio: 0.01, reservedMicros: 99 })), false);
 });
 
-test('parallel settlements latch once and stay active even after quota improves', async () => {
-  const f = fixture();
+test('4% → 90%: concurrent low receipts notify once and never change the request at either balance', async () => {
+  const f = fixture(), original = body();
   await withDurableRun(f.context, async () => {
-    await Promise.all(Array.from({ length: 6 }, () => observeCloudQuota(quota(), e => f.events.push(e))));
-    await observeCloudQuota(quota(1000), e => f.events.push(e));
-    assert.equal(f.events.length, 1); assert(cloudWindDownActive(cloud));
+    await Promise.all(Array.from({length:6}, () => observeCloudQuota(quota(40), e => f.events.push(e))));
+    assert.equal(await prepareCloudWindDown(cloud, original), original);
+    await observeCloudQuota(quota(900), e => f.events.push(e));
+    assert.equal(await prepareCloudWindDown(cloud, original), original);
+    assert.deepEqual(f.events.map(e=>[e.source,e.mode]), [['weekly','advisory']]);
   });
-  assert.equal(f.contexts['cloud-quota-wind-down'].active, true);
-  await withDurableRun({}, () => assert.equal(cloudWindDownActive(cloud), false));
 });
 
-test('shared daily wind-down uses fresh settled money, never temporary holds or stale days', () => {
+test('shared daily warning uses fresh settled money, never temporary holds or stale days', () => {
   assert(lowCloudDailyBudget(daily()));
   for (const extra of [{remainingMicros:250001}, {remainingMicros:0}, {remainingMicros:1000000,availableMicros:1},
     {sampledAt:new Date(Date.now()-91_000).toISOString()}, {resetsAt:new Date(Date.now()-1).toISOString()},
@@ -70,27 +69,17 @@ test('shared daily wind-down uses fresh settled money, never temporary holds or 
     assert.equal(Boolean(lowCloudDailyBudget(daily(extra))), false);
 });
 
-test('shared daily allowance warns even with a full personal balance and survives restart', async () => {
-  const f = fixture();
-  await withDurableRun(f.context, async () => {
-    await observeCloudQuota(quota(1000, {dailyBudget:daily()}), e => f.events.push(e));
-    const identity = {identity:{}};
-    const sent = await prepareCloudWindDown(cloud, body(), identity);
-    assert(sent.messages[0].content.includes(CLOUD_DAILY_WIND_DOWN_PROMPT));
-    assert.equal(identity.identity.quotaWindDownReason,'daily');
-    assert.equal(cloudWorkerDeferral(cloud).executed,false);
-    assert.equal(f.events[0].source,'daily');
-    // A paid weekly request retains its exact original warning after a global alert.
-    const legacy = await prepareCloudWindDown(cloud, body(), {identity:{fingerprint:'sent',quotaWindDown:true}});
-    assert(legacy.messages[0].content.includes(CLOUD_WIND_DOWN_PROMPT));
-  });
-  await withDurableRun({recoveryContexts:f.contexts}, async () => {
-    const restored = await prepareCloudWindDown(cloud, body(), {identity:{}});
-    assert(restored.messages[0].content.includes(CLOUD_DAILY_WIND_DOWN_PROMPT));
+test('daily and weekly warnings deduplicate independently across restart without changing messages', async () => {
+  const f = fixture(), both = quota(40,{dailyBudget:daily()});
+  await withDurableRun(f.context, () => observeCloudQuota(both, e=>f.events.push(e)));
+  assert.deepEqual(f.events.map(e=>e.source), ['weekly','daily']);
+  await withDurableRun({recoveryContexts:f.contexts},async()=>{
+    await observeCloudQuota(both,()=>assert.fail('duplicate'));
+    assert(!hasPrompt(await prepareCloudWindDown(cloud,body(),{identity:{}})));
   });
 });
 
-test('Witness exposes a single visible global wind-down record without claiming task completion', () => {
+test('Witness exposes a single visible global low-balance record without claiming task completion', () => {
   const witness = createWitnessMonitor({heartbeatMs:0});
   try {
     witness.observe({type:'turn.started'});
@@ -98,19 +87,19 @@ test('Witness exposes a single visible global wind-down record without claiming 
     witness.observe({type:'subagent.response.quota.low',source:'daily'});
     const snapshot=witness.snapshot(),records=snapshot.records.filter(r=>r.eventType==='response.quota.low.daily');
     assert.equal(records.length,1); assert.equal(snapshot.status,'running');
-    assert.match(describeRouteRecord(records[0],'zh-CN').title,/全站额度/);
+    assert.match(describeRouteRecord(records[0],'zh-CN').title,/全站今日额度/);
     assert.match(describeRouteRecord(records[0],'en').title,/Shared daily/);
   } finally {witness.dispose();}
 });
 
-test('settled receipt warns the next existing call without adding a paid request or modifying history', async () => {
+test('settled receipt warns the next existing call without adding instructions or a paid request or modifying history', async () => {
   const f = fixture(), p = provider(f), messages = body().messages;
   await withDurableRun(f.context, async () => {
     await infer(p, messages); await infer(p, messages); await infer(p, messages);
   });
   assert.equal(f.sent.length, 3); assert.equal(hasPrompt(f.sent[0]), false);
   for (const sent of f.sent.slice(1)) {
-    assert(hasPrompt(sent)); assert.equal(JSON.stringify(sent).split('[Aporia Cloud low-quota wind-down]').length, 2);
+    assert(!hasPrompt(sent));
   }
   assert.deepEqual(messages, body().messages); assert.equal(f.sent[1].max_tokens, f.sent[0].max_tokens);
 });
@@ -119,26 +108,26 @@ test('initial authenticated quota is read once and applies before the first call
   const f = fixture(); let reads = 0;
   const p = { ...provider(f), getCloudQuota: async () => { reads++; return quota(); } };
   await withDurableRun(f.context, async () => { await infer(p); await infer(p); });
-  assert.equal(reads, 1); assert.equal(f.sent.length, 2); assert(f.sent.every(hasPrompt));
+  assert.equal(reads, 1); assert.equal(f.sent.length, 2); assert(!f.sent.some(hasPrompt));
 });
 
-test('daily receipt reaches the next model request even with full personal quota', async () => {
+test('daily receipt does not change the next model request even with full personal quota', async () => {
   const f=fixture(),p=provider(f,quota(1000,{dailyBudget:daily()}));
   await withDurableRun(f.context,async()=>{await infer(p);await infer(p);});
   assert.equal(hasPrompt(f.sent[0]),false);
-  assert(f.sent[1].messages[0].content.includes(CLOUD_DAILY_WIND_DOWN_PROMPT));
+  assert(!hasPrompt(f.sent[1]));
 });
 
-test('new inference after a saved complete response keeps the daily reason and reuses its result', async () => {
+test('new inference after a saved complete response has no forced handoff and reuses its result', async () => {
   const f=fixture(),p={...provider(f,quota(1000,{dailyBudget:daily()})),getCloudQuota:async()=>quota(1000,{dailyBudget:daily()})};
   await withDurableRun(f.context,async()=>{
     const identity=createLoopRequestIdentity('main');
     const call=request=>withLoopRequestIdentity(identity,()=>callModelProvider({provider:p,body:request}));
     await call(body());
     const changed={...body(),messages:[{role:'user',content:'Confirmed history has advanced'}]};
-    await call(changed);assert.equal(identity.identity.quotaWindDownReason,'daily');
+    await call(changed);assert.equal(identity.identity.quotaWindDownReason,undefined);
     await call(changed);assert.equal(f.sent.length,2,'same durable response must not cause a third paid generation');
-    assert(f.sent.every(request=>JSON.stringify(request.messages).includes('shared daily provider budget')));
+    assert(!f.sent.some(hasPrompt));
   });
 });
 
@@ -152,17 +141,17 @@ test('failed or legacy initial metadata does not block work or invent a low-quot
 test('mismatched and unresolved billing receipts never activate wind-down', async () => {
   for (const extra of [{ requestId: randomUUID() }, { billing: 'unresolved', usageState: 'pending' }]) {
     const f = fixture(), p = { ...cloud, authenticatedFetch: async () => response(randomUUID(), quota(), extra) };
-    await withDurableRun(f.context, async () => { await infer(p); assert.equal(cloudWindDownActive(cloud), false); });
+    await withDurableRun(f.context, async () => { await infer(p); assert.equal(f.contexts['cloud-quota-wind-down'],undefined); });
   }
 });
 
-test('confirmed length truncation still advises the bounded repair to wind down', async () => {
+test('confirmed length truncation repairs without a quota prompt', async () => {
   const f = fixture(); let calls = 0;
   const p = { ...cloud, authenticatedFetch: async (_path, init) => {
     f.sent.push(JSON.parse(init.body)); return response(randomUUID(), quota(), {}, ++calls === 1 ? 'length' : 'stop');
   } };
   await withDurableRun(f.context, () => infer(p));
-  assert.equal(calls, 2); assert.equal(hasPrompt(f.sent[0]), false); assert(hasPrompt(f.sent[1]));
+  assert.equal(calls, 2); assert.equal(hasPrompt(f.sent[0]), false); assert(!hasPrompt(f.sent[1]));
 });
 
 test('BYOK receives no warning or worker restriction even when a Cloud run has latched', async () => {
@@ -170,18 +159,18 @@ test('BYOK receives no warning or worker restriction even when a Cloud run has l
   await withDurableRun(f.context, async () => {
     await observeCloudQuota(quota());
     assert.equal(await prepareCloudWindDown(byok, original), original);
-    assert.equal(cloudWindDownActive(byok), false); assert.equal(cloudWorkerDeferral(byok), null);
   });
 });
 
-test('prompt is frozen for an in-flight request but new requests see the warning', async () => {
-  const f = fixture();
-  await withDurableRun(f.context, async () => {
-    const pending = { identity: { fingerprint: 'already-sent', status: 'sent' } };
-    await observeCloudQuota(quota());
-    assert.equal(hasPrompt(await prepareCloudWindDown(cloud, body(), pending)), false);
-    assert.equal(pending.identity.quotaWindDown, false);
-    assert(hasPrompt(await prepareCloudWindDown(cloud, body(), { identity: { status: 'new' } })));
+test('replay pre-upgrade weekly/daily requests byte-for-byte, never apply old instructions to changed history',async()=>{
+  const f=fixture(); await withDurableRun(f.context,async()=>{
+    for(const [reason,prompt] of [['daily',CLOUD_DAILY_WIND_DOWN_PROMPT],['weekly',CLOUD_WIND_DOWN_PROMPT]]){
+      const original=body(),legacy=body(); legacy.messages[0].content+='\n\n'+prompt;
+      const identity={identity:{quotaWindDown:true,quotaWindDownReason:reason,fingerprint:cloudRequestFingerprint(cloud,legacy)}};
+      assert.deepEqual(await prepareCloudWindDown(cloud,original,identity),legacy);
+      original.messages.push({role:'user',content:'Next request'});
+      assert.equal(await prepareCloudWindDown(cloud,original,identity),original);
+    }
   });
 });
 
@@ -190,42 +179,17 @@ test('restart reuses a paid response with its original body, without duplicate c
   const restored = { ...fixture().context, requestCheckpoints: clone(f.checkpoints), recoveryContexts: clone(f.contexts) };
   p.authenticatedFetch = async () => assert.fail('must not regenerate the paid response');
   await withDurableRun(restored, async () => {
-    const result = await infer(p); assert.equal(result.message.content, 'saved work'); assert(cloudWindDownActive(cloud));
+    const result = await infer(p); assert.equal(result.message.content, 'saved work'); assert.equal(result.streamComplete,true);
     await observeCloudQuota(quota(), () => assert.fail('must not notify twice'));
   });
 });
 
-test('restart retains the fixed warning after conversation compaction', async () => {
-  const f = fixture(); await withDurableRun(f.context, () => observeCloudQuota(quota()));
-  await withDurableRun({ recoveryContexts: f.contexts }, async () => {
-    const sent = await prepareCloudWindDown(cloud, { ...body(), messages: [{ role: 'user', content: 'Compacted handoff' }] }, { identity: {} });
-    assert.equal(sent.messages[0].content, CLOUD_WIND_DOWN_PROMPT);
+test('compaction and an old run latch do not reintroduce the restriction',async()=>{
+  const f=fixture(); await withDurableRun({recoveryContexts:{'cloud-quota-wind-down':{active:true,reason:'weekly'}}},async()=>{
+    const original={...body(),messages:[{role:'user',content:'Compacted handoff'}]};
+    assert.equal(await prepareCloudWindDown(cloud,original,{identity:{}}),original);
+    await observeCloudQuota(quota(),()=>assert.fail('duplicate legacy notification'));
   });
-});
-
-test('new and system-owned workers return partial deferrals without executing anything', async () => {
-  const f = fixture();
-  await withDurableRun(f.context, async () => {
-    await observeCloudQuota(quota());
-    for (const systemOwned of [false, true]) {
-      const result = await runSubagentTask({ provider: cloud, agentId: 'blocked', input: { role: 'builder' }, systemOwned });
-      assert.equal(result.status, 'partial'); assert.equal(result.executed, false); assert.equal(result.reason, 'CLOUD_QUOTA_WIND_DOWN');
-    }
-  });
-});
-
-test('worker already queued before the warning is stopped when a slot opens', async () => {
-  const f = fixture();
-  await withDurableRun(f.context, () => runWithAgentBudget({ ...planAgentBudget({}), limits: { maxActiveSubagents: 1 } }, {}, async () => {
-    let release, started;
-    const ready = new Promise(resolve => { started = resolve; });
-    const hold = withAgentBudgetAdmission({ role: 'explore' }, () => { started(); return new Promise(resolve => { release = resolve; }); });
-    await ready;
-    const queued = runSubagentTask({ provider: cloud, agentId: 'queued', input: { role: 'explore' } });
-    await new Promise(resolve => setTimeout(resolve, 10));
-    await observeCloudQuota(quota()); release(); await hold;
-    assert.equal((await queued).reason, 'CLOUD_QUOTA_WIND_DOWN');
-  }));
 });
 
 test('an already-running worker can finish its existing rounds with the warning', async () => {
@@ -248,29 +212,34 @@ test('an already-running worker can finish its existing rounds with the warning'
       toolRegistry: TOOL_REGISTRY, parseToolArguments: call => JSON.parse(call.function.arguments), emit: () => {},
       executeAuthorizedTool: async () => ({ modelResult: { path: 'existing.txt', content: 'confirmed existing file' } }),
     }));
-    assert.equal(calls, 2); assert.equal(result.status, 'partial'); assert(hasPrompt(f.sent[1]));
+    assert.equal(calls, 2); assert.equal(result.status, 'partial'); assert(!hasPrompt(f.sent[1]));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('actual Main rejects delegation after a low receipt and continues with an honest handoff', async () => {
+test('actual Main dispatches and reviews a worker at 4% and continues on a 90% receipt', async () => {
   const f = fixture(), root = await realpath(await mkdtemp(join(tmpdir(), 'aporia-wind-down-main-')));
   let calls = 0;
   const p = { ...cloud, authenticatedFetch: async (_path, init) => {
     const requestBody = JSON.parse(init.body); f.sent.push(requestBody); const id = randomUUID();
-    assert(++calls < 5, 'low quota must not create an unbounded delivery loop');
-    const delta = calls === 1 ? { tool_calls: [{ index: 0, id: 'delegate', type: 'function', function: { name: 'delegate_subagent',
+    assert(++calls <= 5, 'expected discovery, Main, worker, review, answer');
+    const names = requestBody.tools.map(t => t.function.name);
+    if (calls === 1) assert.deepEqual(names, ['enable_task_tools', 'read_conversation_history']);
+    if (calls === 2) assert(names.includes('delegate_subagent') && !names.includes('run_command'));
+    const delta = calls === 1 ? { tool_calls: [{ index:0,id:'discover',type:'function',function:{ name:'enable_task_tools',arguments:'{"groups":["agents"]}' } }] }
+      : calls === 2 ? { tool_calls: [{ index: 0, id: 'delegate', type: 'function', function: { name: 'delegate_subagent',
       arguments: JSON.stringify({ role: 'explore', task: 'Inspect the workspace', scope: ['.'], background: false }) } }] }
-      : { content: 'Quota is low. No exploration was started; the requested work remains unfinished.' };
-    return new Response(frame({ choices: [{ delta, finish_reason: calls === 1 ? 'tool_calls' : 'stop' }] }) +
-      frame({ requestId: id, billing: 'settled', usageState: 'provider', quota: quota() }) + 'data: [DONE]\n\n', { headers: { 'x-aporia-request-id': id } });
+      : calls === 4 ? { tool_calls: [{index:0,id:'review',type:'function',function:{name:'review_subagent_result',arguments:JSON.stringify({
+        agent_id:'wind-down-main-sub-1',report_id:'wind-down-main-sub-1:1',decision:'accepted',reason:'Reviewed the read-only inspection.',evidence_ids:[]})}}] }
+      : { content: calls === 3 ? 'Read-only inspection returned.' : 'Inspection complete.' };
+    return new Response(frame({ choices: [{ delta, finish_reason: delta.tool_calls ? 'tool_calls' : 'stop' }] }) +
+      frame({ requestId: id, billing: 'settled', usageState: 'provider', quota: quota(calls < 4 ? 40 : 900) }) + 'data: [DONE]\n\n', { headers: { 'x-aporia-request-id': id } });
   } };
   try {
     await withDurableRun(f.context, () => runHarness({ runId: 'wind-down-main', provider: p, modelId: body().model,
       workspacePath: root, permission: 'read-only', language: 'en', requestApproval: async () => ({ approved: true }),
       messages: [{ role: 'user', content: 'Inspect this workspace.' }], onEvent: e => f.events.push(e) }));
-    assert.equal(f.events.filter(e => e.type === 'subagent.started').length, 0);
+    assert.equal(f.events.filter(e => e.type === 'subagent.started').length, 1);
     assert.equal(f.events.filter(e => e.type === 'response.quota.low').length, 1);
-    assert(hasPrompt(f.sent[1]));
-    assert(f.sent[1].messages.some(m => m.role === 'tool' && String(m.content).includes('CLOUD_QUOTA_WIND_DOWN')), JSON.stringify(f.sent[1].messages.filter(m => m.role === 'tool')));
+    assert.equal(calls,5); assert(!f.sent.some(hasPrompt));
   } finally { await rm(root, { recursive: true, force: true }); }
 });

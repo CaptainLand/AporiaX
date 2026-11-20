@@ -28,6 +28,13 @@ const registry = new ToolRegistry([
       },
     },
   },
+  {
+    risk: "read",
+    definition: {
+      type: "function",
+      function: { name: "present_to_user", description: "Show an artifact", parameters: { type: "object" } },
+    },
+  },
 ]);
 
 const parseArguments = (toolCall) => JSON.parse(toolCall.function.arguments || "{}");
@@ -108,5 +115,23 @@ assert.match(
   /Docker isolation profile/,
 );
 assert.equal(catalog.find((tool) => tool.name === "write_file").permission, "allow");
+
+let previewApprovals = 0;
+const present = (path, browserPermission, enabled = true) => dispatchNativeTool({
+  toolCall: { id: "call-present", function: { name: "present_to_user", arguments: JSON.stringify({ path }) } },
+  registry,
+  permissionPolicy: createPermissionPolicy("read-only", { browser_open: browserPermission }),
+  approvalMode: "smart-auto",
+  parseArguments,
+  executeContext: { browserPresentationAllowed: enabled },
+  requestApproval: async () => { previewApprovals++; return { approved: true }; },
+  executeAuthorized: async ({ browserPresentationAllowed }) => ({ modelResult: { browserPresentationAllowed } }),
+});
+assert.equal((await present("demo.html", "deny")).modelResult.browserPresentationAllowed, false);
+assert.equal((await present("demo.html", "ask", false)).modelResult.browserPresentationAllowed, false);
+await present("readme.md", "ask");
+assert.equal(previewApprovals, 0, "document delivery does not ask for browser permission");
+assert.equal((await present("<demo.html>", "ask")).modelResult.browserPresentationAllowed, true);
+assert.equal(previewApprovals, 1, "an HTML path honors browser approval");
 
 console.log("tool dispatcher smoke: PASS");

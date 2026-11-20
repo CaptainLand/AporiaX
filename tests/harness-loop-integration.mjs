@@ -107,13 +107,15 @@ try {
     assert.equal(result.loopMetrics.recoveries, 1); assert.equal(result.usage.prompt_tokens, 400);
   });
   await test("truncated side-effecting calls never reach the native executor", async () => {
-    const { result, workspace, requests } = await fixture((body, n) => {
-      if (n === 4) assert.equal(body.tools, undefined, 'After repeated no-progress generation, the final error reply has no tools');
+    const toolAvailability = [];
+    const { result, workspace, requests } = await fixture((body) => {
+      toolAvailability.push(Boolean(body.tools?.length));
       return sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a.txt","content":' } }] }, "length");
     });
     // A complete stream with truncated tool JSON gets one inference repair;
     // neither incomplete call may reach the executor, even if repair truncates.
-    assert.equal(result.status, 'failed'); assert.equal(requests, 4, 'Two independent no-progress repairs plus one final reply; no partial tool executed');
+    assert.equal(result.status, 'failed'); assert.equal(requests, 3);
+    assert.deepEqual(toolAvailability, [true, true, false], 'At the effective output ceiling: original, repair, then tool-free final reply; no extra paid repair');
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD"); assert.equal(result.steps.length, 0);
   });
   await test("invalid terminated call is corrected once before normal tool execution", async () => {
@@ -139,7 +141,7 @@ try {
       assert(body.messages.some((message) => message.content === "MUST_NOT_UPLOAD"));
       if (sizes.length === 1) return new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 });
       return sse({ content: "Finished with original constraints." });
-    }, { messages, provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 128000 }] } });
+    }, { messages, recoveryContext: {runId:'legacy-context-fixture',contexts:{}}, provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 128000 }] } });
     assert.equal(result.status, "completed", result.content); assert.equal(sizes.length, 2); assert.equal(requests, 2 + summaries); assert(summaries > 0); assert(sizes[1] < sizes[0]);
     assert.equal(result.loopMetrics.recoveries, 1);
     return { mockProvider: true, requestCharactersBefore: sizes[0], requestCharactersAfter: sizes[1], requests };
@@ -174,8 +176,9 @@ try {
     const runtime = createHarnessTaskRuntime({ dataDirectory }); let requests = 0, reference;
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(init.body); requests++;
-      if (requests === 1) return toolResponse([call("large", "read_file", { path: "large.txt" })]);
-      if (requests === 2) {
+      if (requests === 1) return toolResponse([call("discover", "enable_task_tools", { groups:['workspace_read'] })]);
+      if (requests === 2) return toolResponse([call("large", "read_file", { path: "large.txt" })]);
+      if (requests === 3) {
         const value = JSON.parse(body.messages.find((message) => message.tool_call_id === "large").content);
         reference = value.resultRef; assert(reference?.id); assert.equal(reference.readTool, "mcp_read_result");
         assert(body.tools.some((tool) => tool.function.name === reference.readTool));
@@ -188,7 +191,7 @@ try {
       execute: ({ signal, control, emit, requestApproval }) => runHarness({ runId: "archive-run", taskId: "archive-task", provider, modelId: "fixture",
         workspacePath: workspace, permission: "read-only", approvalMode: "manual", signal, control, onEvent: emit, requestApproval,
         sandboxStatusResolver: async () => ({ available: false, localAvailable: true }), messages: [{ role: "user", content: "Read and preserve evidence." }] }) });
-    assert.equal(result.status, "completed", result.content); assert.equal(requests, 3);
+    assert.equal(result.status, "completed", result.content); assert.equal(requests, 4);
     const page = await readRunEvidence(dataDirectory, "archive-run", { result_id: reference.id, limit: 256 });
     assert.match(page.text, /ARCHIVED_ORIGINAL/);
     await assert.rejects(readRunEvidence(dataDirectory, "unrelated-run", { result_id: reference.id }), /unknown|scope|not found|unavailable|evidence/i);

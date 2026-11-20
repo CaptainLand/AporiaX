@@ -29,4 +29,11 @@ assert.match(en.body, /Write file/);
 const long = approvalToastCopy({ command: "x".repeat(400) });
 assert.equal(long.body.length, 160);
 
+const deleteScope = { kind: 'delete-file', directory: '.', extension: '.html' };
+const grant = approvalToastCopy({ canRememberForRun: true, similarApproval: deleteScope });
+assert.equal(grant.similar, '本轮允许类似操作');
+assert.match(grant.similarHint, /工作区根目录.+\.html.+不含子目录/);
+assert.equal(approvalToastCopy({ canRememberForRun: false, similarApproval: deleteScope }).similar, undefined);
+assert.equal(approvalToastCopy({ canRememberForRun: true, similarApproval: { ...deleteScope, directory: 'x'.repeat(125) } }).similar, undefined);
+
 console.log("approval toast smoke: PASS");

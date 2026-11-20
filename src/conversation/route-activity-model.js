@@ -64,7 +64,7 @@ function callKey(record) {
   if (!record.callId) return null;
   const agent = record.agentId || '';
   const call = agent && record.callId.startsWith(`${agent}:`) ? record.callId.slice(agent.length + 1) : record.callId;
-  return `${agent}\0${call}`;
+  return `${record.witnessRunId || ''}\0${agent}\0${call}`;
 }
 
 export function routeActivityRecords(run) {
@@ -123,19 +123,20 @@ export function describeRouteRecord(record, language = 'zh-CN') {
     const progress = record.modelProgress;
     const details = { waiting: t('正在等待模型响应', 'Waiting for model response'), receiving: t('已收到响应，正在处理', 'Receiving response data'), 'tool-arguments': t('正在生成操作参数，尚未执行', 'Generating action arguments; not executed yet'), text: t('正在输出回复', 'Writing the response') };
     return { title: ACTIVE.has(record.status) ? t('AporiaX 正在思考或工作中…', 'AporiaX is thinking or working…') : t('AporiaX 响应已结束', 'AporiaX response finished'), detail: modelTokenLine(progress),
-      progressHint: (details[progress?.stage] || details.waiting) + t('。↓ 模型输出；≈ 为实时估算，收到服务商用量后校准，不是网络流量或计费凭证。', '. ↓ Model output; ≈ is a live estimate, reconciled with provider usage. Not network traffic or a billing receipt.') };
+      progressHint: (details[progress?.stage] || details.waiting) + t('。↑ 未命中缓存的输入，收到缓存明细后才显示；↓ 模型输出，≈ 为实时估算。不是网络流量。', '. ↑ Uncached input, shown once cache usage is reported; ↓ model output, with ≈ marking a live estimate. This is not network traffic.') };
   }
   if (record.kind === 'agent' && record.modelProgress && ACTIVE.has(record.status)) {
     return { title: t('正在接收模型输出', 'Receiving model output'), detail: modelTokenLine(record.modelProgress) };
   }
   const titles = {
     'clarification.required': ['等待你的回答', 'Waiting for your answer'], 'clarification.updated': ['提问状态已更新', 'Question updated'],
-    'turn.started': ['任务开始', 'Run started'], 'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],
+    'turn.started': ['任务开始', 'Run started'], 'turn.continued': ['从上次进度继续', 'Continuing from the previous progress'],
+    'turn.completed': [activityStatus(record.status, 'zh-CN'), activityStatus(record.status, 'en')],
     'turn.failed': ['任务运行失败', 'Run failed'], 'turn.cancelled': ['任务已停止', 'Run stopped'],
     'response.retry': ['模型请求重试', 'Model request retry'],
     'subagent.resource.warning': ['成员资源清理提示', 'Member resource cleanup notice'],
-    'response.quota.low.daily': ['全站额度 ≤5% · 正在收尾', 'Shared daily allowance ≤5% · Winding down'],
-    'response.quota.low.weekly': ['周额度 ≤5% · 正在收尾', 'Weekly allowance ≤5% · Winding down'],
+    'response.quota.low.daily': ['全站今日额度 ≤5%', 'Shared daily allowance ≤5%'],
+    'response.quota.low.weekly': ['周额度 ≤5%', 'Weekly allowance ≤5%'],
     'plan.updated': ['计划已更新', 'Plan updated'], 'parallel_batch.started': ['并行动作已开始', 'Parallel actions started'],
     'subagent.started': ['执行子任务', 'Working on subtask'], 'subagent.completed': ['子任务已返回', 'Subtask returned'], 'subagent.failed': ['子任务失败', 'Subtask failed'],
     'subagent.cancelled': ['子任务已停止', 'Subtask stopped'], 'subagent.reviewed': ['子任务验收记录', 'Subtask acceptance review'],

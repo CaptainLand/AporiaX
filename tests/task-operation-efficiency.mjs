@@ -167,14 +167,16 @@ try {
   await test('live token counters are chunk-independent estimates and reconcile provider input/output separately', () => {
     let clock = 0;
     const tracker = createModelStreamProgress({ now: () => clock, inputTokens: 500 });
-    assert.equal(tracker.waiting().inputTokensEstimated, true);
+    const waiting = tracker.waiting();
+    assert.equal(waiting.inputTokensEstimated, true);
+    assert.equal(waiting.uncachedInputTokens, null);
     for (const piece of ['中文', 'ab', 'cd']) { clock += 600; tracker.chat({ content: piece }); }
     const first = tracker.flush(); assert(first.outputTokens > 0); assert.equal(first.outputTokensEstimated, true);
     const whole = createModelStreamProgress(); whole.chat({ content: '中文abcd' }); assert.equal(whole.flush().outputTokens, first.outputTokens);
-    const partial = tracker.reportUsage({ input_tokens: 600, cache_read_input_tokens: 100 });
-    assert.equal(partial.inputTokens, 700); assert.equal(partial.inputTokensEstimated, false); assert.equal(partial.outputTokensEstimated, true);
+    const partial = tracker.reportUsage({ input_tokens: 600, cache_read_input_tokens: 100, cache_creation_input_tokens: 50 });
+    assert.equal(partial.inputTokens, 750); assert.equal(partial.uncachedInputTokens, 650); assert.equal(partial.inputTokensEstimated, false); assert.equal(partial.outputTokensEstimated, true);
     const final = tracker.reportUsage({ prompt_tokens: 701, completion_tokens: 19 }, { final: true });
-    assert.equal(final.outputTokens, 19); assert.equal(final.inputTokens, 701); assert.equal(final.outputTokensEstimated, false);
+    assert.equal(final.outputTokens, 19); assert.equal(final.inputTokens, 701); assert.equal(final.uncachedInputTokens, null); assert.equal(final.outputTokensEstimated, false);
     assert(!JSON.stringify(final).includes('中文abcd'));
   });
   await test('Responses native argument progress arrives before completion without emitting executable partial calls', async () => {
@@ -219,25 +221,26 @@ try {
   });
   await test('Witness shows natural AporiaX status and parameter counts without private arguments or renamed avatars', () => {
     const monitor = createWitnessMonitor({ heartbeatMs: 0 }); monitor.observe({ type: 'response.reset', round: 1 });
-    monitor.observe({ type: 'response.progress', stage: 'tool-arguments', generatedChars: 5000, outputTokens: 1234, inputTokens: 9876, outputTokensEstimated: true, inputTokensEstimated: false, toolName: 'apply_patch', arguments: 'PRIVATE' });
+    monitor.observe({ type: 'response.progress', stage: 'tool-arguments', generatedChars: 5000, outputTokens: 1234, inputTokens: 9876, uncachedInputTokens: 876, outputTokensEstimated: true, inputTokensEstimated: false, toolName: 'apply_patch', arguments: 'PRIVATE' });
     const record = monitor.snapshot().records.at(-1), label = describeRouteRecord(record);
-    assert.match(label.title, /AporiaX 正在思考或工作中/); assert.equal(label.detail, '↓ ≈1,234 Token'); assert.match(label.progressHint, /尚未执行/); assert(!label.detail.includes('9,876'));
+    assert.match(label.title, /AporiaX 正在思考或工作中/); assert.equal(label.detail, '↑ 876 Token · ↓ ≈1,234 Token'); assert.match(label.progressHint, /尚未执行/);
     assert.equal(activityActor(record), 'AporiaX'); assert.equal(activityActor({ actor: 'subagent', role: 'builder' }), '搭匠');
     assert(!JSON.stringify(monitor.snapshot()).includes('PRIVATE')); monitor.dispose();
   });
-  await test('real main loop uses short delete_file arguments, preserves constraints and finishes in three mock requests', async () => {
+  await test('real main loop discovers scoped tools once, then deletes with short arguments and preserves constraints', async () => {
     await writeFile(join(workspace, 'target.html'), 'target page\n'); let requests = 0, approvals = 0;
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(init.body); requests++;
       assert(JSON.stringify(body.messages).includes('Never delete SVG')); assert(!JSON.stringify(body.messages).includes('old-report '.repeat(500)));
-      if (requests === 1) { assert(body.tools.some(tool => tool.function.name === 'delete_file')); return tools(call('read', 'read_file', { path: 'target.html' })); }
-      if (requests === 2) return tools(call('delete', 'delete_file', { path: 'target.html', expected_sha256: sha('target page\n') }));
-      assert.equal(requests, 3); return sse({ content: 'Deleted target.html. No other files were changed.' });
+      if (requests === 1) return tools(call('discover', 'enable_task_tools', { groups: ['workspace_read', 'workspace_write'] }));
+      if (requests === 2) { assert(body.tools.some(tool => tool.function.name === 'delete_file')); return tools(call('read', 'read_file', { path: 'target.html' })); }
+      if (requests === 3) return tools(call('delete', 'delete_file', { path: 'target.html', expected_sha256: sha('target page\n') }));
+      assert.equal(requests, 4); return sse({ content: 'Deleted target.html. No other files were changed.' });
     };
     const result = await withDurableRun({ recoveryDirectory, operation: async () => {} }, () => runHarness({ runId: 'short-delete', workspacePath: workspace, provider, modelId: 'fixture', permission: 'workspace-write', approvalMode: 'manual', language: 'en', signal: AbortSignal.timeout(20000),
       requestApproval: async () => { approvals++; return { approved: true }; }, sandboxStatusResolver: async () => ({ available: false, localAvailable: true }),
       messages: [{ role: 'user', content: 'Never delete SVG files.' }, { role: 'assistant', content: 'old-report '.repeat(4000) }, { role: 'user', content: 'hi' }, { role: 'assistant', content: 'Hello' }, { role: 'user', content: 'Delete target.html from the workspace' }], loopPolicy: { maxBriefSummaries: 0 } }));
-    assert.equal(requests, 3); assert.equal(approvals, 1); assert.equal(result.status, 'completed');
+    assert.equal(requests, 4); assert.equal(approvals, 1); assert.equal(result.status, 'completed');
     assert(result.changes.some(change => change.path === 'target.html' && change.deleted));
     assert.equal(result.content, 'Deleted target.html. No other files were changed.', 'Deletion replies must not gain a saved-but-not-tested disclaimer');
     assert.equal(result.deliveryDetails, undefined, 'Deletion alone must not create an Expand reply disclosure');

@@ -3087,7 +3087,7 @@ function App() {
     : null;
   const runPaused = activeTaskId ? pausedTaskIds.has(activeTaskId) : false;
   const approval = activeTaskId
-    ? approvalsByTask[activeTaskId] || null
+    ? approvalsByTask[activeTaskId]?.[0] || null
     : null;
   const setTaskPaused = (taskId, paused) => {
     if (!taskId) return;
@@ -3098,11 +3098,14 @@ function App() {
       return next;
     });
   };
-  const setTaskApproval = (taskId, nextApproval) => {
+  const setTaskApproval = (taskId, nextApproval, resolvedId = '') => {
     if (!taskId) return;
     setApprovalsByTask((current) => {
       const next = { ...current };
-      if (nextApproval) next[taskId] = nextApproval;
+      const pending = current[taskId] || [];
+      const queue = nextApproval ? [...pending.filter(item => item.id !== nextApproval.id), nextApproval]
+        : resolvedId ? pending.filter(item => item.id !== resolvedId) : [];
+      if (queue.length) next[taskId] = queue;
       else delete next[taskId];
       return next;
     });
@@ -3820,6 +3823,8 @@ function App() {
                              result,
                            ),
                           usage: result.usage || null,
+                          cumulativeUsage: result.cumulativeUsage || null,
+                          usageHistoryComplete: result.usageHistoryComplete,
                           subagents: result.subagents || message.subagents || [],
                           instructionFiles:
                             result.instructionFiles || [],
@@ -3948,9 +3953,12 @@ function App() {
         });
         if (!replacementRunActive) setTaskPaused(targetTask.id, false);
         setApprovalsByTask((current) => {
-          if (current[targetTask.id]?.runId !== runId) return current;
+          const pending = current[targetTask.id];
+          if (!pending?.some(item => item.runId === runId)) return current;
           const next = { ...current };
-          delete next[targetTask.id];
+          const queue = pending.filter(item => item.runId !== runId);
+          if (queue.length) next[targetTask.id] = queue;
+          else delete next[targetTask.id];
           return next;
         });
         if (replacementRunActive) return;
@@ -4058,14 +4066,7 @@ function App() {
         setNotice(tr("审批请求已经失效", "The approval request has expired"));
         return;
       }
-      setApprovalsByTask((current) => {
-        if (current[currentApproval.taskId]?.id !== currentApproval.id) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[currentApproval.taskId];
-        return next;
-      });
+      setTaskApproval(currentApproval.taskId, null, currentApproval.id);
       setRunStatus({
         title: approved ? tr("操作已批准", "Action approved") : tr("操作已拒绝", "Action denied"),
         detail: approved

@@ -29,12 +29,13 @@ function place(window) {
 function bindIpc() {
   if (ipcBound) return;
   ipcBound = true;
-  ipcMain.on("approval-toast:decide", (event, approved) => {
+  ipcMain.on("approval-toast:decide", (event, approved, scope = 'once') => {
     if (!active || event.sender !== active.window?.webContents) return;
     if (typeof approved !== "boolean") return;
+    if (!['once', 'run'].includes(scope) || (scope === 'run' && (!approved || !active.canRemember))) return;
     const decide = active.onDecide;
     closeApprovalToast();
-    decide?.(approved);
+    decide?.(approved, scope);
   });
 }
 
@@ -63,7 +64,7 @@ export function showApprovalToast({
   const copy = customCopy || approvalToastCopy(approval, language);
   const window = new BrowserWindow({
     width: 396,
-    height: 204,
+    height: copy.similar ? 236 : 204,
     frame: false,
     transparent: true,
     resizable: false,
@@ -96,6 +97,7 @@ export function showApprovalToast({
     kind,
     runId,
     onDecide,
+    canRemember: kind === 'approval' && Boolean(copy.similar),
   };
   window.on("closed", () => {
     if (active?.window !== window) return;
@@ -103,7 +105,7 @@ export function showApprovalToast({
     active = null;
   });
   window.webContents.once("did-finish-load", () => {
-    if (window.isDestroyed()) return;
+    if (active?.window !== window || window.isDestroyed()) return;
     window.webContents.send("approval-toast:payload", { ...copy, theme });
     place(window);
     window.showInactive();

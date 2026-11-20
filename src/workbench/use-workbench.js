@@ -8,10 +8,8 @@ import {
   drafts,
   dropMissingSessionTabs,
   loadLayout,
-  normalizeLayout,
   openTab,
   moveTab,
-  persistableLayout,
   sameScope,
   saveLayout,
   scopeKey,
@@ -73,7 +71,8 @@ export function useWorkbench(task) {
         resource.kind === "browser" &&
         resource.owner === "agent" &&
         previous?.owner !== "agent";
-      const presented = resource.present === true && previous?.present !== true;
+      const presented = resource.present === true &&
+        (previous?.present !== true || resource.presentationId !== previous.presentationId);
       if (resource.kind === "file") {
         if (presented) {
           const path = toWorkspaceRelativePath(task.workspacePath, resource.path);
@@ -275,12 +274,7 @@ export function useWorkbench(task) {
     expand: () => setLayout((current) => ({ ...current, open: true })),
     follow: (value) => setLayout((current) => setFollow(current, value)),
     restoreSize: () =>
-      setLayout((current) =>
-        normalizeLayout({
-          ...persistableLayout(current),
-          width: DEFAULT_WIDTH,
-        }),
-      ),
+      setLayout((current) => ({ ...current, width: DEFAULT_WIDTH, widthMode: "default" })),
     async openHref(href, source = {}) {
       // A delayed click from another task must not resolve against this task.
       if (source.workspacePath && source.workspacePath !== task.workspacePath) return false;

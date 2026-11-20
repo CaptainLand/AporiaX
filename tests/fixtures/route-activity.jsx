@@ -20,13 +20,26 @@ emit({ type: 'subagent.started', agentId: 'verify-1', role: 'verify', task: '验
 emit({ type: 'subagent.tool.started', agentId: 'verify-1', role: 'verify', callId: 'test', tool: 'run_command', command: 'npm run test:login' });
 emit({ type: 'response.reset', round: 2 });
 
+const modelUsageCalls = [];
+const fixtures = [
+  { sequence: 100, actor: 'main', inherited: true, status: 'completed', usage: { prompt_tokens: 2941, completion_tokens: 101, prompt_cache_hit_tokens: 2432 } },
+  { sequence: 101, actor: 'subagent', status: 'failed', attempt: 2, usage: null },
+];
+window.desktop = { harness: { modelUsage: async (request) => {
+  modelUsageCalls.push(request);
+  if (request.taskId !== 'route-fixture' || request.runId !== 'live-run') throw new Error('Wrong journal scope');
+  const entries = fixtures.filter(row => row.sequence > request.afterSequence).slice(0, 1);
+  return { entries, nextSequence: entries.at(-1)?.sequence ?? request.afterSequence, hasMore: entries[0]?.sequence === 100 };
+} } };
+
 function Fixture() {
   const [task, setTask] = useState({ id: 'route-fixture', title: '实现账户页面', workspacePath: 'D:/Fixture', messages: [
     { id: 'old', role: 'assistant', status: 'completed', prompt: '上一轮：检查项目结构', route: [{ id: 'legacy', tool: 'read_file', title: '读取文件', status: 'completed', path: 'package.json' }] },
-    { id: 'live', role: 'assistant', status: 'running', prompt: '实现账户页面，并验证登录流程', witness: monitor.snapshot(), plan: { steps: [{ id: 'p1', title: '实现账户页面', status: 'in_progress' }, { id: 'p2', title: '验证登录流程', status: 'pending' }] }, changes: [{ path: 'src/account.jsx', additions: 4, deletions: 1, beforeContent: 'old\n', afterContent: 'new\n' }] },
+    { id: 'live', runId: 'live-run', role: 'assistant', status: 'running', prompt: '实现账户页面，并验证登录流程', cumulativeUsage: { prompt_tokens: 92884, completion_tokens: 2481, prompt_cache_hit_tokens: 82048 }, witness: monitor.snapshot(), plan: { steps: [{ id: 'p1', title: '实现账户页面', status: 'in_progress' }, { id: 'p2', title: '验证登录流程', status: 'pending' }] }, changes: [{ path: 'src/account.jsx', additions: 4, deletions: 1, beforeContent: 'old\n', afterContent: 'new\n' }] },
   ] });
   window.routeFixture = {
     calls: window.routeFixture?.calls || [],
+    modelUsageCalls,
     setRetention: (count) => setTask((value) => ({ ...value, messages: value.messages.map((message) => message.id === 'live' ? { ...message, witness: { ...message.witness, omittedRecords: count } } : message) })),
     emit: (event) => { emit(event); setTask((value) => ({ ...value, messages: value.messages.map((message) => message.id === 'live' ? { ...message, witness: monitor.snapshot(), status: event.type === 'turn.completed' ? event.status || 'completed' : message.status, content: event.type === 'turn.completed' ? event.summary || message.content : message.content } : message) })); },
     append: () => setTask((value) => ({ ...value, messages: [...value.messages, { id: 'next', role: 'assistant', status: 'running', prompt: '下一轮任务', witness: { status: 'running', records: [] } }] })),

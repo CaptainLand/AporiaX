@@ -14,6 +14,7 @@ export const TAB_KINDS = [
 ];
 export const SESSION_TAB_KINDS = new Set(["browser", "terminal", "process"]);
 export const DEFAULT_WIDTH = 520;
+const DEFAULT_WIDTH_RATIO = 0.3;
 export const MIN_WIDTH = 360;
 export const MIN_DIALOGUE_WIDTH = 420;
 export const MAX_WIDTH = 1600;
@@ -28,6 +29,13 @@ export function clampWorkbenchWidth(width, available) {
   const maxWidth = Math.min(MAX_WIDTH, maxByChat);
   if (maxWidth <= MIN_WIDTH) return maxWidth;
   return Math.min(maxWidth, Math.max(MIN_WIDTH, size));
+}
+
+export function workbenchDisplayWidth(layout, available) {
+  const preferred = layout.widthMode !== "manual" && Number.isFinite(available)
+    ? available * DEFAULT_WIDTH_RATIO
+    : layout.width;
+  return clampWorkbenchWidth(preferred, available);
 }
 
 export const drafts = new Map();
@@ -99,12 +107,17 @@ export function normalizeLayout(raw = {}) {
         .map((id) => id.slice(0, 500)),
     ),
   ].slice(-80);
+  const width = clampWorkbenchWidth(raw.width);
+  // Existing layouts saved only a pixel width; preserve prior adjustments.
+  const widthMode = raw.widthMode === "manual" ||
+    (raw.widthMode !== "preview" && raw.widthMode !== "default" && width !== DEFAULT_WIDTH) ? "manual" : "default";
   return {
     tabs,
     active: tabs.some((tab) => tab.id === raw.active) ? raw.active : tabs[0]?.id || null,
     open: Boolean(raw.open),
     dock: "right",
-    width: clampWorkbenchWidth(raw.width),
+    width,
+    widthMode,
     follow: raw.follow !== false,
     closed,
   };
@@ -127,6 +140,7 @@ export function persistableLayout(layout) {
     open: next.open,
     dock: "right",
     width: next.width,
+    widthMode: next.widthMode,
     follow: next.follow,
     closed: next.closed,
   };

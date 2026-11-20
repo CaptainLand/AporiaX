@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { captureContext } from '../context-chunks.js';
 
 const storage = new AsyncLocalStorage();
 export const withDurableRun = (context, fn) => storage.run(context, fn);
@@ -32,7 +33,7 @@ export async function saveRuntimeCheckpoint(checkpoint) {
 export async function saveRuntimeContext(scopeId, state) {
   const context = storage.getStore();
   if (!context?.context) return;
-  const snapshot = JSON.stringify(state);
+  const snapshot = context.compactSnapshots ? captureContext(state) : JSON.stringify(state);
   const previous = context.contextGate || Promise.resolve();
   context.contextGate = previous.then(() => context.context(scopeId, snapshot));
   await context.contextGate;

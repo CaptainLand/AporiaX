@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { acceptLayoutGeneration } from "../electron/workbench/layout-token.js";
 import {
   clampWorkbenchWidth,
+  DEFAULT_WIDTH,
   closeTab,
   dropMissingSessionTabs,
   loadLayout,
@@ -13,6 +14,7 @@ import {
   sameScope,
   sameWorkspace,
   scopeKey,
+  workbenchDisplayWidth,
 } from "../src/workbench/state.js";
 
 assert.deepEqual(acceptLayoutGeneration(2, 1), { apply: true, accepted: 2 });
@@ -75,6 +77,22 @@ const presented = openTab(
 assert.equal(presented.active, "file:docs/report.docx");
 assert.equal(presented.open, true);
 assert.equal(presented.tabs.at(-1).revision, 2);
+
+const autoOptions = { automatic: true, force: true };
+const browserTab = { id: 'preview', kind: 'browser', title: 'Preview' };
+const autoOpened = openTab(normalizeLayout({ width: DEFAULT_WIDTH }), browserTab, autoOptions);
+assert.equal(autoOpened.widthMode, 'default');
+assert.equal(workbenchDisplayWidth(autoOpened, 1500), 450);
+assert.equal(workbenchDisplayWidth(autoOpened, 1800), 540);
+assert.equal(workbenchDisplayWidth(autoOpened, 760), 760 - MIN_DIALOGUE_WIDTH);
+assert.equal(normalizeLayout(persistableLayout(autoOpened)).widthMode, 'default');
+assert.equal(workbenchDisplayWidth(normalizeLayout({ width: DEFAULT_WIDTH, widthMode: 'preview' }), 1500), 450);
+assert.equal(workbenchDisplayWidth(openTab(normalizeLayout({ width: 590 }), browserTab, autoOptions), 1800), 590);
+assert.equal(workbenchDisplayWidth(openTab(normalizeLayout({ width: DEFAULT_WIDTH, widthMode: 'manual' }), browserTab, autoOptions), 1800), DEFAULT_WIDTH);
+assert.equal(workbenchDisplayWidth(openTab(empty, browserTab), 1800), 540);
+assert.equal(workbenchDisplayWidth(openTab(empty, { id: 'process', kind: 'process' }, autoOptions), 1800), 540);
+const autoDocument = openTab(empty, { id: 'report', kind: 'file', path: 'report.md' }, autoOptions);
+assert.equal(workbenchDisplayWidth(autoDocument, 1800), 540);
 
 assert.equal(sameWorkspace("D:\\Work\\A", "D:/Work/A/"), true);
 assert.equal(

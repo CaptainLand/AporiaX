@@ -70,7 +70,11 @@ export function RunDurationChip({ message }) {
   if (!running && !Number.isFinite(completedAt)) return null;
 
   const end = running ? now : completedAt;
-  const label = formatTaskDuration(Math.max(0, end - startedAt));
+  const elapsed = Math.max(0, end - startedAt);
+  const witness = message?.witness;
+  const label = formatTaskDuration(witness?.continued
+    ? running ? (witness.previousElapsedMs || 0) + elapsed : witness.elapsedMs ?? elapsed
+    : elapsed);
   return (
     <span
       className={`aporiax-run-duration ${running ? "running" : ""}`}

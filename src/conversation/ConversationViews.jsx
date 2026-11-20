@@ -14,7 +14,9 @@ import { describeLinkOpenError } from './link-open-error.js';
 import { diffLines } from "diff";
 import { turnRestorePreview } from './turn-restore-preview.js';
 import { getLiveRunProgress } from './witness-progress.js';
+import { taskAttemptWitness } from '../state/task-witness.js';
 import { modelRecoveryView } from '../../shared/model-recovery-view.js';
+import { reportedRunUsage } from '../../shared/model-progress-view.js';
 import { supportingReply } from '../../shared/reply-presentation.js';
 import { createPortal } from "react-dom";
 import {
@@ -1032,6 +1034,7 @@ function describeWitnessRecord(record, tr, language) {
   if (record.kind === 'thinking') return describeRouteRecord(record, language);
   const descriptions = {
     "turn.started": [tr("Witness 开始记录", "Witness started recording"), tr("正在建立任务进度账本", "Creating the task progress ledger")],
+    'turn.continued': [tr('从上次进度继续', 'Continuing from the previous progress'), ''],
     "response.reset": [tr("AporiaX 正在思考或工作中…", "AporiaX is thinking or working…"), tr("正在等待模型响应", "Waiting for model response")],
     "response.recovery.resumed": [tr("已恢复接收模型数据", "Model data resumed"), tr("沿用原请求继续执行，未重复生成", "Continuing the original request without duplicate generation")],
     "plan.updated": [tr("行动路径已更新", "Action route updated"), record.detail],
@@ -1062,11 +1065,32 @@ function describeWitnessRecord(record, tr, language) {
   return { title, detail: detail || "" };
 }
 
-function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
+function formatWitnessUsage(usage, partial, tr, language) {
+  const value = reportedRunUsage(usage, { partial });
+  if (!value) return tr("模型用量未回传", "Model usage not reported");
+  const tokens = new Intl.NumberFormat(language);
+  const percent = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 });
+  const hitCount = value.hits === null ? "—" : `${value.incompleteCache ? '≥' : ''}${tokens.format(value.hits)}`;
+  return [
+    tr(value.partial ? "已记录 {count} Token" : "共 {count} Token", value.partial ? "{count} recorded Token" : "{count} Token total", { count: tokens.format(value.total) }),
+    value.tokenLine,
+    tr("缓存命中 {count}（{rate}）", "Cache hits {count} ({rate})", {
+      count: hitCount,
+      rate: value.hitRate === null ? tr("命中率未知", "rate unknown") : percent.format(value.hitRate),
+    }),
+  ].join(" · ");
+}
+
+function WitnessPanel({ witness, liveProgress, usage, usagePartial, resultDelivered = false }) {
   const { tr, language } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const records = witness?.records || [];
-  const visibleRecords = expanded ? records : records.slice(-3);
+  const completionRecord = liveProgress.completed ? records.findLast(record => record.eventType === "turn.completed" && record.status === "completed") : null;
+  const recent = records.slice(-3);
+  // A deferred follow-up can append records after completion; keep the usage
+  // row visible when folded without duplicating it in the header.
+  const visibleRecords = expanded ? records : completionRecord && !recent.includes(completionRecord)
+    ? [completionRecord, ...recent.slice(-2)] : recent;
   const currentDescription = describeWitnessRecord(
     witness?.current,
     tr,
@@ -1074,6 +1098,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
   );
   const activeAgents = witness?.counters?.activeAgents || 0;
   const witnessFinished = liveProgress.finished;
+  const usageDetail = liveProgress.completed ? formatWitnessUsage(usage, usagePartial, tr, language) : '';
+  const usageHint = tr("↑ 未命中缓存的输入；缓存明细不全时显示 —。↓ 模型输出。总量仍包含缓存命中的输入；命中率＝命中输入 ÷ 总输入。", "↑ Uncached input; — means the cache breakdown is unavailable or incomplete. ↓ Model output. The total still includes cached input; hit rate is cached input divided by all input.");
   const stateLabels = {
     completed: ['已完成', 'Done'], partial: ['部分完成', 'Partially done'],
     blocked: ['任务受阻', 'Blocked'], needs_input: ['等待补充', 'Input needed'],
@@ -1142,6 +1168,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
               liveProgress.currentEntry?.path ||
               liveProgress.currentEntry?.detail}
           </p>
+          {!completionRecord && usageDetail && <p title={usageHint}>{usageDetail}</p>}
         </div>
       </div>
 
@@ -1149,6 +1176,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
         <div className="witness-ledger">
           {visibleRecords.map((record) => {
             const description = describeWitnessRecord(record, tr, language);
+            const completionUsage = record === completionRecord;
+            const detail = completionUsage ? usageDetail : description.detail;
             return (
               <div className={`witness-record ${record.status}`} key={record.id}>
                 <span className="witness-record-state">
@@ -1162,7 +1191,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
                 </span>
                 <div>
                   <strong>{description.title}</strong>
-                  {description.detail && <span title={description.progressHint}>{description.detail}</span>}
+                  {detail && <span className={completionUsage ? "witness-completion-usage" : undefined}
+                    title={completionUsage ? usageHint : description.progressHint}>{detail}</span>}
                 </div>
                 <time>{formatWitnessElapsed(record.elapsedMs)}</time>
               </div>
@@ -1214,8 +1244,9 @@ export function Conversation({
     (message) => message.id === anchorRequest?.messageId,
   );
   const latestAssistant = latestVisibleAssistant(task.messages);
-  const witnessMessage = latestAssistant?.status === "running" || latestAssistant?.witness
-    ? latestAssistant : null;
+  const witness = taskAttemptWitness(task.messages, latestAssistant);
+  const witnessMessage = latestAssistant?.status === 'running' || witness
+    ? { ...latestAssistant, witness } : null;
   const liveProgress = getLiveRunProgress(witnessMessage);
 
   const revertChanges = async (paths) => {
@@ -1327,7 +1358,7 @@ export function Conversation({
             <LinkWorkspace.Provider value={task.workspacePath || ""}>
             <LinkNotice.Provider value={onNotice}>
             <AssistantMessage
-              message={message}
+              message={message.id === witnessMessage?.id && witness?.continued ? { ...message, witness } : message}
               editedFiles={editedFiles}
               onRetry={onRetry}
               taskRunning={isRunning && latestAssistant?.status === "running"}
@@ -1359,6 +1390,8 @@ export function Conversation({
         <WitnessPanel
           witness={witnessMessage?.witness}
           liveProgress={liveProgress}
+          usage={witnessMessage?.cumulativeUsage ?? witnessMessage?.usage}
+          usagePartial={witnessMessage?.usageHistoryComplete === false || (witnessMessage?.loopMetrics?.attemptsWithoutUsage ?? 0) > 0}
           resultDelivered={hasTaskReply(witnessMessage)}
         />
       )}

@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { isHumanMessage } from './task-conversation.js';
 
+const scopeOrConstraint = /不要|不许|不得|禁止|不能|不可以|别|避免|必须|务必|一定|仅|只|保留|保持|沿用|除非|不改|不动|先不|不(?:发布|推送|上传|删除|提交|安装|覆盖)|先(?:问|确认|暂停|等)|审批|授权|范围|预算|上限|以后|今后|始终|每次|规则|约束|标准|验收|要求|!\s*$|\b(?:must|shall|never|only|always|do not|don't|without|except|before|permission|approve|preserve|keep|avoid|scope|limit|budget|leave|unchanged|no)\b/i;
+export const containsHistoricalScopeConstraint = text => scopeOrConstraint.test(text);
+
 const textOf = (message) => typeof message.content === 'string' ? message.content
   : (message.content || []).filter((part) => part.type === 'text').map((part) => part.text).join('\n');
 const idOf = (message) => createHash('sha256').update(textOf(message)).digest('hex').slice(0, 24);

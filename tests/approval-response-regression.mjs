@@ -86,9 +86,11 @@ try {
       ipcRenderer: { send: (...args) => sent.push(args), on() {} } }),
   });
   for (const value of invalidValues) { assert.throws(() => exposed.decide(value)); cases++; }
+  assert.throws(() => exposed.decide(false, 'run'));
+  assert.throws(() => exposed.decide(true, 'forever'));
   assert.equal(sent.length, 0);
-  exposed.decide(false); exposed.decide(true);
-  assert.deepEqual(sent.map(row => row[1]), [false, true]); cases++;
+  exposed.decide(false); exposed.decide(true); exposed.decide(true, 'run');
+  assert.deepEqual(sent.map(row => row.slice(1)), [[false, 'once'], [true, 'once'], [true, 'run']]); cases += 3;
   console.log(`Approval response regression: ${cases} cases PASS (HTTP, runtime, ownership, replay, preload).`);
 } finally {
   for (const run of runtime.listActiveRuns()) runtime.interrupt(run.runId);

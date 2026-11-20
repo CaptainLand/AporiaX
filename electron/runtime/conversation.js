@@ -107,6 +107,7 @@ export function sanitizeConversation(
   messages,
   {
     supportsImages = false,
+    keepSocialHistory = false,
     maxFileReadChars = MAX_FILE_READ_CHARS,
   } = {},
 ) {
@@ -118,7 +119,7 @@ export function sanitizeConversation(
   );
   // A greeting is a new, context-independent turn. Keeping a large project
   // history here encourages some models to resume the most salient old task.
-  if (isStandaloneSocialTurn(latestUser)) coherent = [latestUser];
+  if (!keepSocialHistory && isStandaloneSocialTurn(latestUser)) coherent = [latestUser];
 
   return coherent
     .filter(

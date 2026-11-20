@@ -19,13 +19,15 @@ try {
   emit({ type: 'turn.started' }); emit({ type: 'response.reset' });
   emit({ type: 'response.progress', stage: 'text', outputTokens: 11, outputTokensEstimated: false });
   for (const agentId of ['a', 'b']) emit({ type: 'subagent.started', agentId, role: 'explore', task: 'Read code' });
-  emit({ type: 'subagent.response.progress', agentId: 'a', stage: 'receiving', outputTokens: 123, outputTokensEstimated: true });
+  emit({ type: 'subagent.response.progress', agentId: 'a', stage: 'receiving', inputTokens: 3210, uncachedInputTokens: 210, inputTokensEstimated: false, outputTokens: 123, outputTokensEstimated: true });
   emit({ type: 'subagent.response.progress', agentId: 'b', stage: 'text', outputTokens: 321, outputTokensEstimated: false });
   const a = records().find(r => r.agentId === 'a' && r.kind === 'agent');
   assert.equal(a.modelProgress.outputTokens, 123);
   assert.equal(records().find(r => r.agentId === 'b' && r.kind === 'agent').modelProgress.outputTokens, 321);
   assert.equal(records().find(r => r.kind === 'thinking' && !r.agentId).modelProgress.outputTokens, 11);
-  assert.match(describeRouteRecord(a).detail, /↓ ≈123 Token/);
+  assert.equal(describeRouteRecord(a).detail, '↑ 210 Token · ↓ ≈123 Token');
+  assert.equal(rows.find(r=>r.agentId==='a').modelProgress.inputTokens, 3210);
+  assert.equal(rows.find(r=>r.agentId==='a').modelProgress.uncachedInputTokens, 210);
   emit({ type: 'subagent.response.recovery.status', agentId: 'a', responseId: 'request-a', state: 'waiting', attempt: 3, connection: 'closed' });
   assert.equal(agentDelivery(rows.find(r => r.agentId === 'a')).status, '等待恢复');
   assert.equal(agentDelivery(rows.find(r => r.agentId === 'b')).status, '工作中');
@@ -39,7 +41,7 @@ try {
   assert.equal(rows.find(r => r.agentId === 'a').modelRecovery, null);
   const stopped = records().find(r => r.agentId === 'a' && r.kind === 'agent');
   assert.equal(stopped.status, 'interrupted'); assert(!stopped.modelRecovery);
-  console.log('PASS separate Main/member progress, output-only tokens, member recovery/resume/cancellation without phantom completion');
+  console.log('PASS separate Main/member progress, input/output tokens, member recovery/resume/cancellation without phantom completion');
 } finally { monitor.dispose(); }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

@@ -64,7 +64,10 @@ try {
     const small = [{ role: 'system', content: 'worker' }], large = [{ role: 'system', content: 'worker' }];
     syncDelegationContext(small, context, { contextWindowTokens: 32000 });
     syncDelegationContext(large, context, { contextWindowTokens: 1000000 });
-    assert.match(small[1].content, /read_delegation_context/); assert(large[1].content.includes(original.replaceAll('\n', '\\n')));
+    for (const projected of [small,large]) {
+      assert.match(projected[1].content, /read_delegation_context/); assert.match(projected[1].content,/DO_NOT_UPLOAD_OR_DELETE/);
+      assert(projected[1].content.length < original.length / 10);
+    }
     let offset = 0, restored = '';
     do { const page = readDelegationContext(context, { request_id: context.requests[0].id, revision: context.revision, offset, max_chars: 23000 }); restored += page.content; offset = page.nextOffset; } while (offset !== null);
     assert.equal(restored, original);

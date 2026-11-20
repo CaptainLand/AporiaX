@@ -3,6 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parseWorkspacePatch } from '../runtime/workspace-patch.js';
+import { requestsBrowserPresentation } from '../workbench/preview-path.js';
 import { NATIVE_FILE_TOOLS, outsideFileAccessEnabled, verifyNativeFileTarget } from "../runtime/file-access-policy.js";
 
 // This context is created only from a desktop-approved client grant. It is
@@ -19,6 +20,7 @@ const BROWSER_TOOLS = new Set(["web_search", "web_fetch", "browser_open", "brows
 export const LOCAL_CONTROL_SPECIAL_TOOLS = new Set(["request_user_input", "read_conversation_history", "finish_task", "finish_subagent", "task_brief", "replan_strategy", "delegate_subagent", "followup_subagent", "cancel_subagent", "collect_subagents", "review_subagent_result", "update_plan", "request_self_check", "complete_self_check", "remember_project_fact", "project_knowledge"]);
 const DENIED_TOOLS = new Set(["install_workspace_skill", "read_external_file", "lsp_install", "read_skill_resource", "search_skills", "remember_project_fact", "project_knowledge"]);
 LOCAL_CONTROL_SPECIAL_TOOLS.add('read_delegation_context');
+LOCAL_CONTROL_SPECIAL_TOOLS.add('enable_task_tools');
 const DEFAULT_LIMITS = Object.freeze({ maxModelCalls: 80, maxToolCalls: 400, maxParallelAgents: 2, maxSubagents: 12, maxDurationSeconds: 1800 });
 
 function policyError(message, code = "LOCAL_CONTROL_FORBIDDEN") {
@@ -199,7 +201,7 @@ function checkTool(data, toolName, input = {}) {
   } else if (COMMAND_TOOLS.has(toolName)) requireCapability(data, "commands");
   else if (BROWSER_TOOLS.has(toolName)) requireCapability(data, "browser");
   else if (toolName === "present_to_user") {
-    if (input.url || input.show_browser) requireCapability(data, "browser");
+    if (requestsBrowserPresentation(input)) requireCapability(data, "browser");
     if (input.process_id) requireCapability(data, "commands");
   } else if (!READ_TOOLS.has(toolName) && !LOCAL_CONTROL_SPECIAL_TOOLS.has(toolName)) throw policyError(`Tool is outside the external API allowlist: ${toolName}`);
   if (toolName === "delegate_subagent" && input.role === "builder" && data.context.permissionProfile !== "workspace_edit") throw policyError("Read-only external tasks cannot delegate a Builder.");

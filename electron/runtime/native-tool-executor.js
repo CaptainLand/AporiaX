@@ -29,6 +29,7 @@ import { installLanguageServer as defaultInstallLanguageServer } from "./lsp-ins
 import { toWorkspaceRelativePath } from "./workspace-runtime.js";
 import { fileLinkError } from '../file-link-check.js';
 import { getGitHubAuthStatus } from "../workbench/git-setup.js";
+import { agentPresentationKind } from "../workbench/preview-path.js";
 import { NATIVE_FILE_TOOLS, verifyNativeFileTarget, verifyExternalFileTarget, filePathInside, outsideFileAccessEnabled, requiresGuardedFileSearch } from "./file-access-policy.js";
 
 function countExactOccurrences(content, searchText) {
@@ -180,6 +181,7 @@ export function createNativeToolExecutor({
     processManager = null,
     lspManager = null,
     workbenchPresent = null,
+    browserPresentationAllowed = true,
     roleTools = null,
     appearanceTools = null,
     skillInstaller = null,
@@ -733,31 +735,52 @@ export function createNativeToolExecutor({
       if (!uniqueFiles.length && !processId && !url && input.show_browser !== true) {
         throw new Error("Specify files, a process, or a browser page to show the user.");
       }
-      const presented = { files: [], processId: null, browser: false, url: "" };
+      const presented = { files: [], processId: null, browser: false, url: "", htmlPreviews: [], linkOnly: [] };
       for (const path of uniqueFiles) {
-        try { await verifyExistingTarget(workspaceRoot, path); }
+        try {
+          const verified = await verifyExistingTarget(workspaceRoot, path);
+          if (!(await lstat(verified)).isFile()) throw new Error("The target is not a file.");
+        }
         catch (error) { throw fileLinkError(error, path); }
         const relativePath = toWorkspaceRelativePath(workspaceRoot, path);
-        workbenchPresent.file?.(relativePath, input.line);
-        presented.files.push(relativePath);
+        const kind = agentPresentationKind(relativePath);
+        if (kind === "browser" && browserPresentationAllowed && workbenchPresent.html) {
+          try {
+            const preview = await workbenchPresent.html(relativePath);
+            if (!preview?.url) throw new Error("HTML preview did not open.");
+            presented.browser = true;
+            presented.htmlPreviews.push({ path: relativePath, previewUrl: preview.url, verifiedInteractions: false });
+          } catch (error) {
+            throwIfAborted(signal);
+            presented.linkOnly.push({ path: relativePath, reason: error.message || "HTML preview unavailable." });
+          }
+        } else if (kind === "document" && workbenchPresent.file) {
+          workbenchPresent.file(relativePath, input.line);
+          presented.files.push(relativePath);
+        } else {
+          presented.linkOnly.push({ path: relativePath, reason: kind === "link" ?
+            "Source files are not opened automatically. Return a clickable workspace-relative Markdown link." :
+            "Preview unavailable. Return a clickable workspace-relative Markdown link." });
+        }
       }
       if (processId) {
         const lifecycle = workbenchPresent.process?.(processId);
         if (lifecycle) presented.processLifecycle = lifecycle;
-        presented.processId = processId;
+        if (lifecycle) presented.processId = processId;
       }
-      if (url) {
+      if (!browserPresentationAllowed && (url || input.show_browser === true)) {
+        presented.browserUnavailable = "Browser presentation is disabled by the task policy.";
+      } else if (url) {
         if (!browserRuntime) throw new Error("AporiaX Browser runtime is unavailable.");
         await browserRuntime.open({ url });
-        presented.browser = true;
+        presented.browser = Boolean(workbenchPresent.browser?.()) || presented.browser;
         presented.url = url;
         presented.previewLifecycle = workbenchPresent.lifecycle?.(url) || { owner: 'external-or-unknown', survivesTask: 'unknown', stoppedByTask: false };
       }
-      if (url || input.show_browser === true) {
-        workbenchPresent.browser?.();
-        presented.browser = true;
+      if (browserPresentationAllowed && !url && input.show_browser === true) {
+        presented.browser = Boolean(workbenchPresent.browser?.()) || presented.browser;
       }
-      return { modelResult: { presented: true, ...presented } };
+      return { modelResult: { presented: Boolean(presented.browser || presented.processId || presented.files.length), ...presented } };
     }
 
     if (toolName === "git_status") {

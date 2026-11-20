@@ -12,7 +12,7 @@ registerBlobScheme();
 import "./account/register-desktop-account-ipc.js";
 import { installDesktopBackground } from "./desktop-background.js";
 import { installAppUpdate } from "./app-update.js";
-import { showApprovalToast, showClarificationToast, closeClarificationToast } from "./approval-toast.js";
+import { approvalToastApprovalId, closeApprovalToast, showApprovalToast, showClarificationToast, closeClarificationToast } from "./approval-toast.js";
 import { createHarnessKernel } from "./harness/kernel.js";
 import { isNetworkToolName } from './runtime/web-tools.js';
 import { createHarnessCoreServer } from "./harness/core-server.js";
@@ -342,7 +342,7 @@ kernel.events.on("approval.required", (event) => {
   showApprovalToast({
     approval,
     theme: desktopMain.getDesktopWindowTheme?.() || "light",
-    onDecide: (approved) => {
+    onDecide: (approved, scope) => {
       if (approved && approval.kind === 'agent-role-change') {
         // The compact toast cannot show the full role diff. Open the review
         // surface instead of granting a hidden persistent settings change.
@@ -356,7 +356,7 @@ kernel.events.on("approval.required", (event) => {
       }
       const accepted = desktopMain.harnessTaskRuntime.respondApproval(event.runId, approval.id, {
         approved,
-        scope: "once",
+        scope,
       });
       if (!accepted) return;
       const window = desktopMain.getDesktopMainWindow?.();
@@ -371,6 +371,9 @@ kernel.events.on("approval.required", (event) => {
       }
     },
   });
+});
+kernel.events.on('approval.resolved', event => {
+  if (event.approval?.id && event.approval.id === approvalToastApprovalId()) closeApprovalToast();
 });
 desktopMain.harnessTaskRuntime.setTaskStarter(async (request, context = {}) => {
   const budget = planAgentBudget(request || {});

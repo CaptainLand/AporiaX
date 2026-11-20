@@ -62,6 +62,13 @@ try {
   await flow.locator(".historical-run > summary").click();
   await flow.getByRole("button", { name: "完成后续", exact: true }).click();
   assert.match(await flow.locator(".witness-panel").innerText(), /100%/);
+  const completionUsage=flow.locator(".witness-completion-usage");
+  assert.equal(await completionUsage.innerText(), '共 483,429 Token · ↑ 11,407 Token · ↓ 26,326 Token · 缓存命中 445,696（97.5%）');
+  assert.match(await completionUsage.getAttribute('title'), /未命中缓存的输入/);
+  assert(!((await flow.locator(".witness-panel").innerText()).includes('Witness 已保存本轮行动记录')));
+  await page.setViewportSize({width:390,height:840});
+  assert.equal(await completionUsage.evaluate(el=>getComputedStyle(el).whiteSpace),'normal');
+  await page.setViewportSize({width:1280,height:720});
   assert(!((await flow.locator(".witness-panel").innerText()).includes("OLD_FAILURE_WITNESS")));
   await flow.getByRole("button", { name: "模拟失败", exact: true }).click();
   await flow.getByRole("button", { name: "残留运行标记", exact: true }).click();
@@ -73,6 +80,15 @@ try {
   assert.equal(await flow.locator(".witness-panel").count(), 0, "never resurrect the hidden failure's Witness");
   await flow.getByRole("button", { name: "切换新任务", exact: true }).click();
   assert.equal(await flow.locator(".assistant-message.error, .witness-panel, .historical-run").count(), 0);
+  const joined = page.locator('#same-round');
+  const witness = joined.locator('#same-conversation .witness-panel');
+  await joined.getByRole('button', { name: '开始接续' }).click();
+  assert.match(await witness.innerText(), /old-calculator\.html/, 'old Witness never vanishes while resuming');
+  await joined.getByRole('button', { name: '写入新纪录' }).click();
+  assert.equal(await witness.count(), 1);
+  assert.match(await witness.innerText(), /old-calculator\.html[\s\S]*continued-preview\.html/);
+  await joined.getByRole('button', { name: '选择任务轮次' }).click();
+  assert.equal(await joined.getByRole('menuitemradio').count(), 1, 'continued attempts share a single execution timeline');
   assert.deepEqual(errors, []);
-  console.log("Task outcomes browser: six states, six completion labels = AporiaX + unchanged duration (light/dark), saved file links, failure/follow-up/retry/new task, no stale Witness: PASS");
+  console.log("Task outcomes browser: outcome states, retry and follow-up isolation, uninterrupted Witness and one execution round on continuation: PASS");
 } finally { await browser?.close(); await server.close(); }

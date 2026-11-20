@@ -3213,6 +3213,15 @@ body.panel-is-resizing * {
   line-height: 1.45;
 }
 
+.approval-similarity {
+  margin: 0;
+  padding: 0 14px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  color: var(--gray-11);
+}
+
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
@@ -6787,6 +6796,12 @@ body.panel-is-resizing * {
 .witness-record time {
   color: var(--gray-10);
   font-size: var(--text-2xs);
+}
+
+.witness-record > div > .witness-completion-usage {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .witness-record time {

@@ -1,10 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
-import { initializeChunkSchema, encodeContext, decodeContext, storeBytes, loadBytes, loadByteRange, digest } from "./context-chunks.js";
+import { initializeChunkSchema, encodeContext, decodeContext, storeBytes, loadBytes, loadByteRange, digest, CapturedRunContext, thawContext, contextMemo } from "./context-chunks.js";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isReplaySafeNativeTool } from "./runtime/durable-run.js";
+import { normalizeTokenUsage } from "./runtime/token-usage.js";
+import { continueWitness } from './runtime/witness-continuation.js';
 
 const RUN_STORE_VERSION = 2;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9._-]{1,100}$/;
@@ -487,15 +489,17 @@ export async function appendRunJournalEvents(dataDirectory, runId, events) {
 
 export async function saveRunContext(dataDirectory, runId, scopeId, state) {
   const database = await getDatabase(dataDirectory);
-  const parsed = typeof state === "string" ? JSON.parse(state) : state;
+  const parsed = state instanceof CapturedRunContext ? thawContext(state) : typeof state === "string" ? JSON.parse(state) : state;
   database.exec("BEGIN IMMEDIATE");
   try {
-    const manifest = encodeContext(database, parsed);
+    const memo = contextMemo(database);
+    const manifest = encodeContext(database, parsed, memo);
     const external = manifest.length > 16_000_000;
     const bytes = external ? Buffer.from(JSON.stringify(storeBytes(database, manifest))) : manifest;
     database.prepare("INSERT OR REPLACE INTO run_contexts (run_id, scope_id, updated_at, checksum, payload, format) VALUES (?, ?, ?, ?, ?, ?)")
       .run(assertRunId(runId), String(scopeId), new Date().toISOString(), digest(bytes), gzipSync(bytes, { level: 1 }), external ? 'chunks-manifest-v2' : 'chunks-v1');
     database.exec("COMMIT");
+    memo.commit();
   } catch (error) { database.exec("ROLLBACK"); throw error; }
 }
 
@@ -668,8 +672,34 @@ export async function listRunRecords(dataDirectory, { runIds, taskId, status, wo
 
 export async function readRunResult(dataDirectory, runId) {
   const database = await getDatabase(dataDirectory);
-  const row = database.prepare("SELECT payload_json FROM run_results WHERE run_id = ?").get(assertRunId(runId));
-  return row ? safeJsonParse(row.payload_json) : null;
+  const row = database.prepare(`SELECT rr.payload_json, r.task_id, r.recovery_of_run_id FROM run_results rr
+    JOIN runs r ON r.run_id = rr.run_id WHERE rr.run_id = ?`).get(assertRunId(runId));
+  const result = row ? safeJsonParse(row.payload_json) : null;
+  if (!result || !row.recovery_of_run_id) return result;
+  if (!result.witness) {
+    const witness = readWitnessHistory(database, runId, row.task_id);
+    return witness ? { ...result, witness } : result;
+  }
+  const previous = readWitnessHistory(database, row.recovery_of_run_id, row.task_id);
+  return previous ? { ...result, witness: continueWitness(previous, result.witness, runId) } : result;
+}
+
+function readWitnessHistory(database, runId, taskId) {
+  const rows = database.prepare(`WITH RECURSIVE lineage(run_id, parent_id, depth) AS (
+    SELECT run_id, recovery_of_run_id, 0 FROM runs WHERE run_id = ? AND task_id = ?
+    UNION ALL
+    SELECT r.run_id, r.recovery_of_run_id, l.depth + 1 FROM runs r JOIN lineage l ON r.run_id = l.parent_id
+      WHERE r.task_id = ? AND l.depth < 99
+  ) SELECT l.run_id, COALESCE(json_extract(rr.payload_json, '$.witness'), (
+      SELECT json_extract(e.payload_json, '$.witness') FROM run_events e
+      WHERE e.run_id = l.run_id AND e.type = 'witness.updated' ORDER BY e.sequence DESC LIMIT 1
+    )) AS witness FROM lineage l LEFT JOIN run_results rr ON rr.run_id = l.run_id ORDER BY l.depth DESC`)
+    .all(runId, taskId, taskId);
+  return rows.reduce((history, row) => continueWitness(history, safeJsonParse(row.witness), row.run_id, { recovered: true }), null);
+}
+
+export async function readRunWitnessHistory(dataDirectory, runId, taskId) {
+  return readWitnessHistory(await getDatabase(dataDirectory), assertRunId(runId), String(taskId || ''));
 }
 
 export async function readRunEvents(dataDirectory, runId, { afterSequence = 0, limit = 200, offset = 0 } = {}) {
@@ -691,6 +721,39 @@ export async function readRunEvents(dataDirectory, runId, { afterSequence = 0, l
     bytes += size;
   }
   return { runId: safeRunId, events, nextSequence: events.at(-1)?.sequence || after, hasMore: rows.length > events.length };
+}
+
+// Project counts only, directly from the durable attempt events. Reading the
+// bounded Witness snapshot would drop early calls and conflate retries.
+export async function readRunModelUsage(dataDirectory, runId, { taskId, afterSequence = 0, limit = 60 } = {}) {
+  const safeRunId = assertRunId(runId);
+  const after = pageInteger(afterSequence, 0, Number.MAX_SAFE_INTEGER, { allowZero: true });
+  const count = pageInteger(limit, 60, 200);
+  if (typeof taskId !== 'string' || !taskId || taskId.length > 500) throw new Error('A task id is required.');
+  const database = await getDatabase(dataDirectory);
+  const rows = database.prepare(`WITH RECURSIVE lineage(run_id, task_id, parent_id) AS (
+    SELECT run_id, task_id, recovery_of_run_id FROM runs WHERE run_id = ? AND task_id = ?
+    UNION
+    SELECT r.run_id, r.task_id, r.recovery_of_run_id FROM runs r JOIN lineage l ON r.run_id = l.parent_id AND r.task_id = l.task_id
+  ) SELECT e.sequence, e.run_id, e.at, e.type, e.payload_json FROM lineage l JOIN run_events e ON e.run_id = l.run_id
+    WHERE e.sequence > ? AND e.type IN ('response.attempt.completed', 'subagent.response.attempt.completed')
+    ORDER BY e.sequence ASC LIMIT ?`).all(safeRunId, taskId, after, count + 1);
+  const entries = rows.slice(0, count).map(row => {
+    const event = safeJsonParse(row.payload_json, {});
+    const reported = event?.usage;
+    const hasCount = (...keys) => keys.some(key => reported?.[key] != null && reported[key] !== '' &&
+      Number.isSafeInteger(Number(reported[key])) && Number(reported[key]) >= 0);
+    const input = hasCount('prompt_tokens', 'input_tokens', 'promptTokens', 'inputTokens');
+    const output = hasCount('completion_tokens', 'output_tokens', 'completionTokens', 'outputTokens');
+    const usage = input || output ? normalizeTokenUsage(reported) : null;
+    if (usage && !input) usage.prompt_tokens = null;
+    if (usage && !output) usage.completion_tokens = null;
+    return { sequence: row.sequence, at: row.at, inherited: row.run_id !== safeRunId,
+      actor: row.type.startsWith('subagent.') ? 'subagent' : 'main',
+      status: event.status === 'completed' ? 'completed' : event.status === 'failed' ? 'failed' : 'unknown',
+      attempt: Number.isSafeInteger(event.attempt) && event.attempt > 0 ? event.attempt : null, usage };
+  });
+  return { entries, nextSequence: entries.at(-1)?.sequence ?? after, hasMore: rows.length > count };
 }
 
 export async function listRecoverableRuns(dataDirectory) {

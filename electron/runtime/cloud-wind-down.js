@@ -1,4 +1,5 @@
 import { runtimeRunState, runtimeRecoveryContext, saveRuntimeContext } from './durable-run.js';
+import { cloudRequestFingerprint } from './cloud-request-identity.js';
 
 const SCOPE = 'cloud-quota-wind-down';
 export const CLOUD_WIND_DOWN_PROMPT = '[Aporia Cloud low-quota wind-down]\n'
@@ -14,8 +15,8 @@ export const CLOUD_DAILY_WIND_DOWN_PROMPT = CLOUD_WIND_DOWN_PROMPT.replace(
 
 function state() {
   return runtimeRunState(SCOPE, () => ({
-    active: runtimeRecoveryContext(SCOPE)?.active === true,
-    reason: runtimeRecoveryContext(SCOPE)?.reason || 'weekly',
+    warned: new Set(runtimeRecoveryContext(SCOPE)?.warned || (runtimeRecoveryContext(SCOPE)?.active
+      ? [runtimeRecoveryContext(SCOPE).reason || 'weekly'] : [])),
     initialization: null, committed: Promise.resolve(),
   }));
 }
@@ -27,7 +28,6 @@ export function lowCloudQuota(quota) {
     Number.isSafeInteger(quota.limitMicros) && quota.limitMicros > 0 &&
     quota.remainingMicros <= Math.floor(quota.limitMicros / 20);
 }
-export const cloudWindDownActive = provider => provider?.kind === 'aporia-cloud' && state()?.active === true;
 export function lowCloudDailyBudget(budget, now = Date.now()) {
   const sampledAt = Date.parse(budget?.sampledAt), resetsAt = Date.parse(budget?.resetsAt);
   return budget?.policy === 'provider-daily-v1' && budget.currency === 'CNY' &&
@@ -40,26 +40,22 @@ export function lowCloudDailyBudget(budget, now = Date.now()) {
 export async function observeCloudQuota(quota, onEvent) {
   const current = state();
   if (!current) return;
-  if (current.active) { await current.committed; return; }
-  const reason = lowCloudQuota(quota) ? 'weekly' : lowCloudDailyBudget(quota?.dailyBudget) ? 'daily' : null;
-  if (!reason) return;
-  const balance = reason === 'daily' ? quota.dailyBudget : quota;
-  // Latch before yielding: parallel completions can only trigger this once.
-  current.active = true;
-  current.reason = reason;
-  current.committed = saveRuntimeContext(SCOPE, { active: true, reason,
-    remainingMicros: balance.remainingMicros, limitMicros: balance.limitMicros });
+  for (const source of [lowCloudQuota(quota) && 'weekly', lowCloudDailyBudget(quota?.dailyBudget) && 'daily']) {
+    if (!source || current.warned.has(source)) continue;
+    current.warned.add(source);
+    const warned = [...current.warned];
+    current.committed = current.committed.then(() => saveRuntimeContext(SCOPE, { warned })).catch(() => {});
+    onEvent?.({ type: 'response.quota.low', thresholdPercent: 5, mode: 'advisory', source });
+  }
   await current.committed;
-  onEvent?.({ type: 'response.quota.low', thresholdPercent: 5, mode: 'wind-down', source: reason });
 }
 export async function prepareCloudWindDown(provider, body, identity, onEvent, signal) {
   if (provider.kind !== 'aporia-cloud') return body;
   const current = state();
   if (!current) return body;
   // Seed once from authenticated capabilities. No model request is created.
-  // A sent/restored request keeps its original prompt even if another worker
-  // has since triggered wind-down: changing it would break idempotency.
-  if (!current.active && !identity?.identity.fingerprint && !current.initialization && provider.getCloudQuota) {
+  // All subsequent warnings come from receipts, not another lookup per worker.
+  if (!identity?.identity.fingerprint && !current.initialization && provider.getCloudQuota) {
     current.initialization = (async () => {
       let quota;
       try { quota = await provider.getCloudQuota(body.model, signal); }
@@ -71,22 +67,15 @@ export async function prepareCloudWindDown(provider, body, identity, onEvent, si
   signal?.throwIfAborted();
   await current.committed;
   const saved = identity?.identity;
-  if (saved && saved.quotaWindDown === undefined) {
-    saved.quotaWindDown = saved.fingerprint ? false : current.active;
-    if (saved.quotaWindDown) saved.quotaWindDownReason = current.reason;
-  }
-  const active = saved ? saved.quotaWindDown : current.active;
-  if (!active) return body;
-  const reason = saved ? saved.quotaWindDownReason || 'weekly' : current.reason;
+  // Only reproduce the exact original wire body of an already billed/in-flight
+  // pre-upgrade request. New requests, even in restored runs, are advisory only.
+  if (!saved?.fingerprint || !saved.quotaWindDown) return body;
+  const reason = saved.quotaWindDownReason;
   const prompt = reason === 'daily' ? CLOUD_DAILY_WIND_DOWN_PROMPT : CLOUD_WIND_DOWN_PROMPT;
   const messages = [...body.messages];
   if (messages[0]?.role === 'system' && typeof messages[0].content === 'string')
     messages[0] = { ...messages[0], content: messages[0].content + '\n\n' + prompt };
   else messages.unshift({ role: 'system', content: prompt });
-  return { ...body, messages };
-}
-export function cloudWorkerDeferral(provider) {
-  if (!cloudWindDownActive(provider)) return null;
-  return { status: 'partial', executed: false, reason: 'CLOUD_QUOTA_WIND_DOWN',
-    summary: 'Cloud quota is low. No new worker activation was started. Save current work, collect existing results and report unfinished work honestly.' };
+  const legacy = { ...body, messages };
+  return cloudRequestFingerprint(provider, legacy) === saved.fingerprint ? legacy : body;
 }

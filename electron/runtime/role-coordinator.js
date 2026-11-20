@@ -1,14 +1,16 @@
 import { dependencyHandoff } from './subagent-contract.js';
 
-export function acceptedDependencyReady(dep, use = 'changes') {
+export function acceptedDependencyReady(dep, use = 'changes', version) {
   const acceptance = dep?.result?.acceptance;
   if (!dep || dep.status === 'running' || acceptance?.status !== 'accepted' || acceptance.dependencyReady === false) return false;
   if (acceptance.reportId && acceptance.reportId !== dep.result.reportId) return false;
+  if (use !== 'report' && acceptance.referenceOnly) return false;
+  if (use === 'verified' && (!acceptance.verifiedCheck || (version !== undefined && acceptance.verifiedCheck.observedVersion !== version))) return false;
   // A report can satisfy a research edge without pretending provisional edits are installed.
   return use === 'report' || !(dep.role === 'builder' || dep.result.requiresIntegration) || dep.result.integrated === true;
 }
 
-export function createRoleCoordinator(records, signal, limits = { maxActive: 12, builderLimit: 6 }) {
+export function createRoleCoordinator(records, signal, limits = { maxActive: 12, builderLimit: 6 }, currentVersion = () => undefined) {
   const listeners = new Set(), active = new Map();
   let totalActive = 0, builders = 0;
   const notify = () => { for (const listener of [...listeners]) listener(); };
@@ -48,7 +50,8 @@ export function createRoleCoordinator(records, signal, limits = { maxActive: 12,
         const ready = (record.input.dependsOn || []).every(id => {
           const dep = records.get(id);
           const use = record.input.dependencyRequirements?.[id] || 'changes';
-          if (acceptedDependencyReady(dep, use)) return true;
+          if (acceptedDependencyReady(dep, use, use === 'verified' ? currentVersion() : undefined)) return true;
+          if (dep?.result?.acceptance?.status === 'accepted' && use !== 'report' && (dep.result.acceptance.referenceOnly || use === 'verified')) throw Error(`DEPENDENCY_CHECK_REQUIRED: ${id}; recheck the condition or use a report-only dependency.`);
           if (!dep || ['failed', 'interrupted', 'cancelled', 'blocked', 'budget_exhausted', 'needs_input'].includes(dep.status) || dep.result?.acceptance?.status === 'needs_changes') throw new Error(`DEPENDENCY_BLOCKED: ${id}`);
           if (dep.result?.acceptance?.status === 'accepted' && (dep.role === 'builder' || dep.result?.requiresIntegration) && !dep.result.integrated && use !== 'report') throw Error(`DEPENDENCY_NOT_INTEGRATED: ${id}; use a report-only dependency explicitly or integrate the required edits.`);
           return false;
@@ -76,7 +79,8 @@ export function createRoleCoordinator(records, signal, limits = { maxActive: 12,
     assertDependencies(record) {
       for (const [id, reportId] of Object.entries(record.session.dependencyReports || {})) {
         const dep = records.get(id);
-        if (!acceptedDependencyReady(dep, record.input.dependencyRequirements?.[id] || 'changes') || dep.result?.reportId !== reportId)
+        const use = record.input.dependencyRequirements?.[id] || 'changes';
+        if (!acceptedDependencyReady(dep, use, use === 'verified' ? currentVersion() : undefined) || dep.result?.reportId !== reportId)
           throw new Error(`DEPENDENCY_CHANGED: ${id} 的已验收结果发生变化，请主 Agent 重新安排。`);
       }
     },

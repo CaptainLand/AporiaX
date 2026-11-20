@@ -8,7 +8,7 @@ import { compileModelRequest } from "./request-compiler.js";
 import { randomUUID } from "node:crypto";
 import { runtimeRequestTrace, runtimeRunControl } from "./durable-run.js";
 import { isTemporaryNetworkError } from "./run-control.js";
-import { currentLoopRequestIdentity, prepareCloudRequest, rememberCloudReceipt, rememberCloudResult, rotateCloudRequest, rememberModelResponseRecovery } from "./cloud-request-identity.js";
+import { currentLoopRequestIdentity, prepareCloudRequest, reconcileError, rememberCloudReceipt, rememberCloudResult, rememberCloudAuthRejection, rotateCloudRequest, rememberModelResponseRecovery, saveCloudCandidate, restoreCloudCandidate } from "./cloud-request-identity.js";
 import { createModelResponseRecovery, probeModelRequest } from './model-response-recovery.js';
 import { saveRuntimeCheckpoint } from './durable-run.js';
 import { modelOutputBudget } from "./output-budget.js";
@@ -17,6 +17,7 @@ import { assertLocalControlActive, consumeLocalControlModelCall } from "../contr
 import { beginModelResponseDiagnostic } from "./model-response-diagnostics.js";
 import { createModelStreamProgress } from './model-stream-progress.js';
 import { estimateConversationTokens } from '../agent-context-core.js';
+import { isPreDispatchCloudAuthRejection } from '../../shared/cloud-auth-response.js';
 
 const PROVIDER_MAX_ATTEMPTS = 3;
 const PROVIDER_TIMEOUT_MAX_ATTEMPTS = 2;
@@ -59,6 +60,7 @@ function appendToolCallDelta(toolCalls, incomingCall) {
 }
 
 function cloudErrorMessage(code) {
+  if (code === "APORIA_PROVIDER_DURATION_LIMIT") return "Cloud 已达到服务配置的单次请求总时限，并非模型停止输出。";
   if (code === "PROVIDER_BUDGET_TEMPORARILY_HELD") return "Cloud 全站费用保护正在等待在途请求结算，当前任务进度会保留；这不是个人额度预占。";
   if (code === "QUOTA_TEMPORARILY_HELD") return "Cloud 额度正在被其他请求使用，等待结算后继续；当前进度会保留。";
   if (code === "PROVIDER_FINISH_LENGTH") return "模型达到单次输出上限，本轮尚未完成。已保留确认过的工作；请缩小下一步或明确继续，不要反复重跑整轮。";
@@ -70,6 +72,7 @@ function cloudErrorMessage(code) {
   if (code === "DESKTOP_ACCOUNT_SIGNED_OUT" || code === "APORIA_DEVICE_SESSION_REQUIRED") {
     return "请先登录 Aporia Account，再使用 Aporia Cloud 模型。";
   }
+  if (code === 'UNAUTHORIZED') return 'Aporia Cloud 登录验证未通过，请重新登录后再继续本轮。';
   if (code === "APORIA_RATE_LIMITED") {
     return "Aporia Cloud 当前并发请求较多，请稍后重试。";
   }
@@ -106,7 +109,7 @@ function createProviderError(provider, code, status = 0) {
   if (
     provider.kind === "aporia-cloud" &&
     [
-      "REQUEST_ALREADY_EXISTS", "IDEMPOTENCY_KEY_CONFLICT", "RETRY_PARENT_NOT_FOUND",
+      "REQUEST_ALREADY_EXISTS", "IDEMPOTENCY_KEY_CONFLICT", "RETRY_PARENT_NOT_FOUND", "APORIA_PROVIDER_DURATION_LIMIT",
       "PRICING_REVIEW_REQUIRED", "APORIA_USAGE_RECONCILIATION_REQUIRED", "INSUFFICIENT_CREDITS",
       "WEEKLY_QUOTA_EXHAUSTED",
       "DESKTOP_ACCOUNT_SIGNED_OUT",
@@ -139,6 +142,7 @@ function responseError(provider, payload, status, headers, streaming = false) {
     const request = payload?.request;
     error.cloudRequestId = headers?.get("x-aporia-request-id") || payload?.requestId || request?.requestId || null;
     error.cloudUsageState = request?.usageState || (payload?.accountingPending ? "pending" : null);
+    error.cloudPreDispatchAuthRejected = !streaming && isPreDispatchCloudAuthRejection(status, payload, error.cloudRequestId);
     // HTTP errors can originate in a proxy after inference was accepted. A new
     // key is safe only with a matching, durably released no-dispatch receipt.
     error.retryWithNewCloudRequest = Boolean(!payload?.accountingPending && error.cloudRequestId &&
@@ -233,6 +237,25 @@ export async function callModelProvider({
     return prepared.result;
   }
   const cloudTrace = prepared?.trace || { ...runtimeRequestTrace(), ...requestTrace, logicalRequestId: randomUUID(), clientRequestId: randomUUID() };
+  if (prepared?.replay) {
+    const result = await readRecoveredStream(prepared.replay);
+    const recovered = {...result,attemptUsage:result.usage};
+    await rememberCloudResult(identity,recovered,prepared.recoveredForFingerprint);
+    onEvent?.({type:'response.text.reconciled',content:result.message.content});
+    await observeCloudQuota(recovered.cloudQuotaSnapshot,onEvent);
+    return recovered;
+  }
+  async function readRecoveredStream(replay) {
+    try {
+      return await callModelProviderOnce({provider,body,signal,cloudTrace,replay,
+        onEvent:e=>{ if(!['response.delta','response.text.reconciled'].includes(e.type)) onEvent?.(e); }});
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      // A failed replay is not a failed inference. Never run model retry or
+      // accounting again because reading the already settled output failed.
+      throw reconcileError(identity, '暂时没能取回旧请求的回复，请稍后继续');
+    }
+  }
   let attemptUsage = null;
   // Personal plan requests have no cross-app idempotency receipt. Never replay
   // an ambiguous/partially streamed request or silently switch billing routes.
@@ -242,13 +265,24 @@ export async function callModelProvider({
     const started = performance.now();
     onEvent?.({ type: "response.attempt.started", attempt });
     try {
-      const result = await callModelProviderOnce({
+      let result;
+      try { result = await callModelProviderOnce({
         provider,
         body,
         signal,
         onEvent,
         cloudTrace,
-      });
+      }); } catch(error) {
+        const id=identity?.identity.serverRequestId;
+        if (!id || signal?.aborted || process.env.APORIA_CLOUD_OUTPUT_WINDOW !== 'memory-120s' ||
+            !(error.code==='PROVIDER_STREAM_INCOMPLETE' || error.code==='REQUEST_ALREADY_EXISTS' || error instanceof TypeError)) throw error;
+        // GET only. Never re-enter dispatch or rotate an uncertain identity.
+        const replay = await provider.authenticatedFetch('/v1/requests/'+encodeURIComponent(id)+'/output',{
+          method:'GET',signal:AbortSignal.any([signal || new AbortController().signal,AbortSignal.timeout(5000)])});
+        if (!replay.ok || replay.headers.get('x-aporia-request-id')!==id) {await replay.body?.cancel(); throw error;}
+        result=await readRecoveredStream(replay);
+        onEvent?.({type:'response.text.reconciled',content:result.message.content});
+      }
       await finishRoleRequest(budgetTicket, result.usage);
       onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
         status: "completed", usage: result.usage, finishReason: result.finishReason });
@@ -258,6 +292,8 @@ export async function callModelProvider({
       if (provider.kind === "aporia-cloud") await observeCloudQuota(completed.cloudQuotaSnapshot, onEvent);
       return completed;
     } catch (error) {
+      if (prepared?.newDispatch && attempt === 1 && error.cloudPreDispatchAuthRejected)
+        await rememberCloudAuthRejection(identity);
       await finishRoleRequest(budgetTicket, error.usage);
       if (provider.kind === "aporia-cloud") await observeCloudQuota(error.cloudQuotaSnapshot, onEvent);
       attemptUsage = mergeTokenUsage(attemptUsage, error.usage);
@@ -265,7 +301,12 @@ export async function callModelProvider({
       error.category = providerErrorCategory(error);
       if (provider.kind === 'chatgpt-personal') Object.assign(error, { retryable: false, noAutomaticRetry: true, safeToRepair: false });
       onEvent?.({ type: "response.attempt.completed", attempt, durationMs: performance.now() - started,
-        status: "failed", category: error.category, usage: error.usage || null });
+        status: "failed", category: error.category, usage: error.usage || null,
+        ...(provider.kind === 'aporia-cloud' && error.category === 'authorization' ? {
+          authStage: error.cloudPreDispatchAuthRejected ? 'before-dispatch'
+            : /^DESKTOP_ACCOUNT_(SIGNED_OUT|CHANGED)$/.test(error.code) ? 'desktop-session' : 'unconfirmed',
+          ...(Number.isInteger(error.status) ? { httpStatus: error.status } : {}),
+        } : {}) });
       const maxAttempts = Math.min(attemptLimit, isProviderTimeoutError(error)
         ? PROVIDER_TIMEOUT_MAX_ATTEMPTS
         : PROVIDER_MAX_ATTEMPTS);
@@ -361,6 +402,7 @@ export async function callModelProviderOnce({
   onEvent,
   cloudTrace,
   recoveryOptions = {},
+  replay,
 }) {
   throwIfAborted(signal);
   // All callers, including subagents and side chat, share this last boundary.
@@ -368,7 +410,7 @@ export async function callModelProviderOnce({
   const wire = compileProviderWire(provider, body);
   // Count actual dispatch attempts (including retries), never a replayed
   // durable result. Parallel children inherit the same AsyncLocalStorage state.
-  consumeLocalControlModelCall({ provider, body });
+  if (!replay) consumeLocalControlModelCall({ provider, body });
   const diagnostic = beginModelResponseDiagnostic({ protocol: wire.protocol, modelId: body.model,
     trace: { ...runtimeRequestTrace(), ...cloudTrace } });
   const nativeProtocol = ["responses", "anthropic-messages"].includes(wire.protocol);
@@ -413,10 +455,11 @@ export async function callModelProviderOnce({
   onEvent?.({ type: 'response.progress', ...progress.waiting() });
 
   try {
-    const response = await fetchProviderResponse(provider, {
+    const response = replay || await fetchProviderResponse(provider, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(provider.kind === "aporia-cloud" && process.env.APORIA_CLOUD_OUTPUT_WINDOW === 'memory-120s' ? {'x-aporia-output-window':'memory-120s'} : {}),
         ...wire.headers,
         ...(provider.kind === "aporia-cloud" ? cloudTraceHeaders(cloudTrace || { ...runtimeRequestTrace(), logicalRequestId: randomUUID(), clientRequestId: randomUUID() }) : {}),
       },
@@ -529,6 +572,15 @@ export async function callModelProviderOnce({
       for (const toolCall of delta.tool_calls || []) appendToolCallDelta(toolCalls, toolCall);
     };
 
+    let candidateSaved = false;
+    const checkpointCandidate = async () => {
+      if (!candidateSaved && requestIdentity && provider.kind === "aporia-cloud" && finishReason) {
+        await saveCloudCandidate(requestIdentity, requestId, { content,
+          ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+          ...(toolCalls.length ? { tool_calls: toolCalls.filter(Boolean) } : {}) }, finishReason, usage);
+        candidateSaved = Boolean(requestIdentity.draft);
+      }
+    };
     for await (const chunk of response.body) {
       throwIfAborted(signal);
       if (chunk?.byteLength) receivedStreamBytes = true;
@@ -544,9 +596,11 @@ export async function callModelProviderOnce({
       for (const line of lines) {
         processLine(line);
       }
+      if (!sawDone && finishReason) await checkpointCandidate();
     }
     buffer += decoder.decode();
     if (buffer.trim()) processLine(buffer);
+    if (!sawDone && finishReason) await checkpointCandidate();
     const failIncomplete = (code) => {
       const error = createProviderError(provider, code, 0);
       error.retryable = false;
@@ -616,6 +670,25 @@ export async function callModelProviderOnce({
       usage,
     };
   } catch (error) {
+    // EOF or socket reset after the last content frame: reconcile locally
+    // before the outer loop can offer a retry. This GET never submits inference.
+    if (!replay && !signal?.aborted && !controller.signal.aborted && requestIdentity?.draft && requestId &&
+        (error.code === "PROVIDER_STREAM_INCOMPLETE" || error instanceof TypeError || error.code === "ECONNRESET")) {
+      const deadline = AbortSignal.timeout(5000);
+      const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      for (const wait of [0, 150, 450]) {
+        try {
+          if (wait) await waitForAbortableDelay(wait, readSignal);
+          const res = await provider.authenticatedFetch('/v1/requests/' + encodeURIComponent(requestId), {method:'GET',signal:readSignal});
+          if (!res.ok) { await res.body?.cancel(); break; }
+          const payload = await res.json();
+          const recovered = await restoreCloudCandidate(requestIdentity, payload.request || payload);
+          if (recovered) { diagnosticOutcome = "completed"; return recovered; }
+          if ((payload.request || payload).completedAt) break;
+        } catch { break; }
+      }
+      error.retryable = false; error.noAutomaticRetry = true;
+    }
     if (recoveryFailure) throw recoveryFailure;
     if (safeRetry) throw Object.assign(new Error('Original request was confirmed not dispatched; safe recovery requested.'), {
       code: 'MODEL_RESPONSE_SAFE_RETRY', retryable: false, safeToRepair: true, cloudRequestId: safeRetry.requestId,

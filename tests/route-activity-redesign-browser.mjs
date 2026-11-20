@@ -14,7 +14,7 @@ try {
   await mkdir('.tmp/qa', { recursive: true });
   await page.goto(server.resolvedUrls.local[0] + 'tests/fixtures/route-activity.html');
   const timeline = page.locator('.ra-timeline');
-  await page.locator('.ra-state').waitFor();
+  await page.locator('.ra-current').waitFor();
   await page.evaluate(() => window.routeFixture.bulk());
   await page.waitForFunction(() => document.querySelectorAll('.ra-event').length === 3);
   assert.equal(await page.locator('.ra-event.failed').count(), 0, 'old failure is outside the recent preview');
@@ -32,7 +32,8 @@ try {
   const current = await page.locator('.ra-current').boundingBox(), board = await page.locator('.ra-board').boundingBox();
   assert.ok(current.y < board.y, 'ongoing work precedes plan and files');
   await page.evaluate(() => window.routeFixture.emit({ type: 'turn.completed', status: 'partial', summary: '修改已保存，验证尚未完成' }));
-  await page.locator('.ra-state').filter({ hasText: '部分完成' }).waitFor();
+  // A delivered partial reply uses the simplified completion label.
+  await page.locator('.ra-state').filter({ hasText: '已完成' }).waitFor();
   assert.equal(await page.locator('.ra-current-row').count(), 0);
   for (const theme of ['light', 'dark', 'custom']) {
     await page.evaluate(({ theme, tokens }) => {

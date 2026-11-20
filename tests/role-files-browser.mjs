@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
+import { approvalToastCopy } from '../electron/approval-toast-state.js';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0, open: false, watch: null } });
 await server.listen();
 const browser = await chromium.launch({ executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true });
@@ -58,6 +59,30 @@ try {
   await page.evaluate(() => window.fixture.resolveMenu());
   assert.equal(await page.evaluate(() => window.fixture.sent.length), 0);
   assert.equal(await composer.inputValue(), '新任务的草稿', 'old task popup cannot insert into another task');
+  await page.evaluate(() => window.fixture.showSimilarApproval());
+  const allowSimilar = approval.getByRole('button', { name: '本轮允许类似操作', exact: true });
+  await allowSimilar.waitFor();
+  assert.equal(await approval.getByRole('button').count(), 3, 'separate once, similar and deny actions');
+  assert.match(await approval.innerText(), /工作区根目录.+\.html.+不含子目录/);
+  await allowSimilar.click();
+  assert.deepEqual(await page.evaluate(() => window.fixture.decisions.at(-1)), { approved: true, scope: 'run' });
   assert.deepEqual(errors, []);
-  console.log('PASS browser: tree + search right click, keyboard, file mention + draft + focus, cancellation/error/task isolation, role diff escaping + once-only actions + theme parity.');
+
+  const toast = await browser.newPage({ viewport: { width: 396, height: 236 } });
+  await toast.addInitScript(() => {
+    window.approvalToast = { onPayload: callback => { window.toastPayload = callback; }, decide: (...args) => { window.toastDecision = args; } };
+  });
+  await toast.goto(server.resolvedUrls.local[0] + 'electron/approval-toast.html');
+  const details = { canRememberForRun: true, similarApproval: { kind: 'delete-file', directory: 'output'.repeat(7), extension: '.html' }, command: 'delete_file ' + 'x '.repeat(80) };
+  for (const [language, theme] of [['zh-CN', 'light'], ['en', 'dark']]) {
+    await toast.evaluate(payload => window.toastPayload(payload), { ...approvalToastCopy(details, language), theme });
+    const action = toast.locator('#similar');
+    const box = await action.boundingBox();
+    assert(box && box.x + box.width <= 396 && box.y + box.height <= 236, `${language} window size fits all approval options: ${JSON.stringify(box)}`);
+    await action.click();
+    assert.deepEqual(await toast.evaluate(() => window.toastDecision), [true, 'run']);
+  }
+  await toast.evaluate(payload => window.toastPayload(payload), approvalToastCopy({ kind: 'agent-role-change' }));
+  assert.equal(await toast.locator('#similar').isVisible(), false);
+  console.log('PASS browser: file interactions, once-only role changes, similar approvals in the chat card and toast.');
 } finally { await browser.close(); await server.close(); }

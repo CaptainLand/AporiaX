@@ -188,7 +188,7 @@ export class WorkbenchBrowserSession {
     title: this.closed ? "已结束的浏览器" : this.wc.getTitle() || "Browser", url: this.closed ? "" : this.wc.getURL(),
     owner: this.owner, agentUsed: Boolean(this.agentUsed), status: this.closed ? "closed" : this.status, action: this.action,
     rememberLogin: this.rememberLogin, localPreview: Boolean(this.htmlPreviewPath),
-    present: Boolean(this.present), consoleToggleSeq: this.consoleToggleSeq }; }
+    present: Boolean(this.present), presentationId: this.presentationId, consoleToggleSeq: this.consoleToggleSeq }; }
   changed() { this.publish(this.state()); }
   claimForAgent() {
     this.agentUsed = true;

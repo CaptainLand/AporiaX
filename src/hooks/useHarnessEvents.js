@@ -782,7 +782,7 @@ export function useHarnessEvents({
       }
 
       if (event.type === "approval.resolved") {
-        setApproval(run.taskId, null);
+        setApproval(run.taskId, null, event.approval?.id || event.approvalId);
         return;
       }
     });

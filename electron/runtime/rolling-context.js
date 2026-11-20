@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { contextReserveTokens, estimateConversationTokens } from "../agent-context.js";
 import { isHumanMessage } from "./task-conversation.js";
 import { isAnchorRestoreNotice } from "../anchor-restore-notice.js";
-import { explicitlyReplacesAllConstraints } from "./human-constraints.js";
+import { containsHistoricalScopeConstraint, explicitlyReplacesAllConstraints } from "./human-constraints.js";
 import { createLoopRequestIdentity, withLoopRequestIdentity } from "./cloud-request-identity.js";
 import { runtimeRunControl } from "./durable-run.js";
 import { modelReasoningParameters } from "../../shared/model-reasoning.js";
@@ -27,7 +27,9 @@ function durableConstraint(message) {
   if (!isHumanMessage(message) || message.aporiaSupersededBy) return false;
   // Conservative: keep the WHOLE source of explicit persistent/negative rules,
   // not a model's paraphrase. False positives cost context, not user constraints.
-  return /始终|一直|长期|以后|今后|每次|务必|必须|禁止|不要|不得|不允许|不能|仅限|只允许|保留|remember|always|never|must(?:\b|_)|do[ _]not|don't|only (?:use|allow)|keep\b|from now on/i.test(textOf(message));
+  const text = textOf(message);
+  return containsHistoricalScopeConstraint(text) ||
+    /一直|长期|不允许|remember|must_|do_not|from now on/i.test(text);
 }
 
 /** Local working projection. Originals remain in history/the durable run store.

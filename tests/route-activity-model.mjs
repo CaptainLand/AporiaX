@@ -56,6 +56,10 @@ assert.equal(activeRouteRecords(routeActivityRecords({ status: 'completed', witn
 
 const witnessed = collectTaskRouteRuns({ messages: [{ id: 'witness-only', role: 'assistant', status: 'completed', witness: { records: [{ id: 'done', eventType: 'turn.completed', status: 'completed' }] } }] });
 assert.equal(witnessed.length, 1, 'Witness-only runs must remain in history');
+const usageOnly = collectTaskRouteRuns({ messages: [{ id: 'usage-only', runId: 'resumed', role: 'assistant', status: 'completed', usage: { prompt_tokens: 10 }, cumulativeUsage: { prompt_tokens: 100 }, usageHistoryComplete: false }] });
+assert.equal(usageOnly.length, 1);
+assert.equal(usageOnly[0].usage.prompt_tokens, 100);
+assert.equal(usageOnly[0].usagePartial, true);
 const synthetic = collectTaskRouteRuns({ messages: [{ id: 'live', role: 'assistant', status: 'running', changes: [{ path: 'new.js' }], witness: { records: [{ id: 'actual', kind: 'thinking', status: 'running' }] } }] })[0];
 assert.equal(routeActivityRecords(synthetic).length, 1, 'Never mix synthetic compatibility delivery steps into actual events');
 const merged = routeActivityRecords({ status: 'running', rawEntries: [{ id: 'renderer', agentId: 'a', callId: 'a:c', status: 'failed', error: 'Saved error', exitCode: 2 }], witness: { records: [{ id: 'w', kind: 'tool', agentId: 'a', callId: 'c', status: 'failed' }] } });

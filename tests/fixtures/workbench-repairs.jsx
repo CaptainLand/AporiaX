@@ -13,6 +13,12 @@ const listeners = new Set();
 const task = { id: "fixture", workspacePath: "D:/Fixture" };
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 const resources = {};
+window.emitWorkbenchPreview = ({ id = 'agent-preview', kind = 'browser', ...event } = {}) => {
+  const resource = { id, kind, title: 'Agent Preview', owner: 'user', status: 'ready',
+    url: 'http://127.0.0.1:12345/preview/index.html', taskId: task.id, workspacePath: task.workspacePath, ...event };
+  if (kind === 'browser') resources[id] = resource;
+  listeners.forEach(listener => listener(resource));
+};
 const source = "/* multiline\n * comment */\nconst greeting = 'AporiaX';\nfunction hello(value) {\n  return value + 42;\n}\n";
 window.desktop = {
   workspace: {

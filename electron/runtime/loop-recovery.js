@@ -147,6 +147,10 @@ export async function completeLoopRequest({ conversation, contextCheckpoints, ac
         const progressed = Boolean(text && fingerprint !== repairState.lastOutput && !partialAnswers.includes(text));
         repairState.outputStalls = progressed ? 0 : repairState.outputStalls + 1;
         if (progressed) repairState.lastOutput = fingerprint;
+        // A retry has already changed the prompt and tried the maximum effective
+        // budget. With no new deliverable text, repeating it again buys nothing.
+        if (!progressed && repairState.outputStalls > 1 && Number.isSafeInteger(error.maxOutputTokens) &&
+            error.maxOutputTokens > 0 && error.outputTokenLimit >= error.maxOutputTokens) return false;
         return repairState.outputStalls <= 2;
       })()) {
         if (!error.partialToolCalls && error.partialMessage?.content?.trim()) {

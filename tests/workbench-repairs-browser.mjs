@@ -11,6 +11,35 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/workbench-repairs.html");
+  const sidebar = page.getByRole('separator', { name: '调整侧栏宽度' });
+  const waitForSplit = (width, dialogue) => page.waitForFunction(({ width, dialogue }) =>
+    Math.abs((document.querySelector('.workbench-shell')?.getBoundingClientRect().width ?? -1) - width) < 2 &&
+    Math.abs((document.querySelector('.thread')?.getBoundingClientRect().width ?? -1) - dialogue) < 2, { width, dialogue });
+  await page.setViewportSize({ width: 1600, height: 800 });
+  await page.waitForFunction(() => window.calls.some(call => call.action === 'list'));
+  // Local HTML previews are created as user-owned tabs, then presented by the Agent.
+  await page.evaluate(() => window.emitWorkbenchPreview());
+  await waitForSplit(480, 1120);
+  await page.evaluate(() => window.emitWorkbenchPreview({ present: true, presentationId: 'first' }));
+  await page.waitForFunction(() => window.wb.resources['agent-preview']?.presentationId === 'first');
+  await waitForSplit(480, 1120);
+  await page.waitForFunction(() => window.calls.some(call => call.action === 'layout' && Math.abs(call.rect?.width - 480) < 10));
+  await page.setViewportSize({ width: 760, height: 800 });
+  await waitForSplit(340, 420);
+  await page.setViewportSize({ width: 1500, height: 800 });
+  await waitForSplit(450, 1050);
+  const divider = await sidebar.boundingBox();
+  await page.mouse.move(divider.x + divider.width / 2, divider.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(divider.x + divider.width / 2 + 45, divider.y + 100);
+  await page.mouse.up();
+  await waitForSplit(405, 1095);
+  await page.evaluate(() => { window.wb.collapse(); });
+  await sidebar.waitFor({ state: 'hidden' });
+  await page.evaluate(() => window.emitWorkbenchPreview({ kind: 'file', id: 'report', path: 'report.md', present: true }));
+  await waitForSplit(405, 1095);
+  await page.setViewportSize({ width: 1150, height: 800 });
+  await page.reload();
   await page.getByText("打开代码", { exact: true }).click();
   await page.locator(".hljs-keyword").first().waitFor();
   assert.equal(await page.locator(".workbench-code-line").count(), 7);
