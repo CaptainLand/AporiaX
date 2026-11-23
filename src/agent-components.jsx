@@ -23,6 +23,7 @@ import { attachmentImageSrc } from "./attachments.js";
 import { PreviewImage } from './images/ImageViewer.jsx';
 import { RoleChangeApproval } from './settings/RoleChangeApproval.jsx';
 import { useFileContextMenu } from './workbench/use-file-context-menu.js';
+import { approvalSimilarityText } from '../shared/approval-similarity.js';
 
 const CODE_EXTENSIONS = new Set([
   "c",
@@ -147,10 +148,10 @@ function BinaryCheckpointReview({ change }) {
   const { tr } = useI18n();
   const beforeBytes = change.beforeMissing
     ? 0
-    : estimateBase64Bytes(change.beforeContent);
+    : change.fileVersions?.before?.bytes ?? change.beforeBytes ?? estimateBase64Bytes(change.beforeContent);
   const afterBytes = change.afterMissing
     ? 0
-    : estimateBase64Bytes(change.afterContent);
+    : change.fileVersions?.after?.bytes ?? change.afterBytes ?? estimateBase64Bytes(change.afterContent);
   return (
     <div className="binary-checkpoint-review">
       <span className="binary-checkpoint-icon">
@@ -158,7 +159,7 @@ function BinaryCheckpointReview({ change }) {
       </span>
       <div>
         <strong>
-          {change.deleted || change.afterMissing
+          {change.fileVersions ? tr('文件版本已保存在本地磁盘，可安全回退；此处不加载完整内容。', 'File versions are saved locally for rollback; full contents are not loaded here.') : change.deleted || change.afterMissing
             ? tr("二进制文件已删除", "Binary file deleted")
             : change.created || change.beforeMissing
               ? tr("二进制文件已创建", "Binary file created")
@@ -229,8 +230,9 @@ export function UserAttachments({ attachments }) {
 }
 
 export function ApprovalCard({ approval, onRespond, responding }) {
-  const { tr } = useI18n();
+  const { tr, language } = useI18n();
   if (!approval) return null;
+  const similarity = approval.canRememberForRun && approvalSimilarityText(approval.similarApproval, language);
   const hostFallback = approval.kind === "execute" && !approval.sandbox?.available;
   const sandboxed = approval.kind === "execute" && approval.sandbox?.available;
   return (
@@ -303,6 +305,7 @@ export function ApprovalCard({ approval, onRespond, responding }) {
           )}
         </div>
       )}
+      {similarity && <p className="approval-similarity">{similarity}</p>}
       <div className="approval-actions">
         <button
           type="button"
@@ -327,7 +330,7 @@ export function ApprovalCard({ approval, onRespond, responding }) {
             disabled={responding}
             onClick={() => onRespond(true, "run")}
           >
-            {tr("本轮允许浏览器操作", "Allow browser controls for this task")}
+            {tr("本轮允许类似操作", "Allow similar actions this run")}
           </button>
         )}
       </div>
@@ -408,7 +411,7 @@ export function DiffReviewPanel({
     availableChanges[0];
   const rows = useMemo(
     () =>
-      selected && !selected.binary
+      selected && !selected.binary && !selected.fileVersions
         ? buildDiffRows(selected.beforeContent, selected.afterContent)
         : [],
     [selected],
@@ -420,6 +423,7 @@ export function DiffReviewPanel({
     selected &&
       workspacePath &&
       !selected.binary &&
+      !selected.fileVersions &&
       !selected.deleted &&
       !selected.afterMissing &&
       !previewMeta?.readOnly &&
@@ -641,7 +645,7 @@ export function DiffReviewPanel({
                     )}
                   </div>
                   <div className="diff-preview-actions">
-                    {!selected.binary &&
+                    {!selected.binary && !selected.fileVersions &&
                       !selected.deleted &&
                       !selected.afterMissing && (
                         <div
@@ -678,7 +682,7 @@ export function DiffReviewPanel({
                     </button>
                   </div>
                 </div>
-                {selected.binary ? (
+                {selected.fileVersions ? <BinaryCheckpointReview change={selected} /> : selected.binary ? (
                   selected.artifact ? (
                     <OfficeArtifactReview change={selected} />
                   ) : (

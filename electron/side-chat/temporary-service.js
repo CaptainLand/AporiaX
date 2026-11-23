@@ -169,7 +169,7 @@ export function createTemporarySideChatService({ dataDirectory, resolveProvider,
       }
       if (input.action === 'send') {
         if (typeof input.message !== 'string' || input.message.length > 100000 || !input.message.trim() && !input.attachments?.length) throw new Error('请输入临时聊天内容。');
-        if (input.attachments != null && (!Array.isArray(input.attachments) || input.attachments.length > 6)) throw new Error('最多添加 6 个附件。');
+        if (input.attachments != null && (!Array.isArray(input.attachments) || input.attachments.filter(item => item?.kind === 'document').length > 6)) throw new Error('最多添加 6 个文件附件。');
         if (session.active) {
           const active = session.active;
           const [message] = await hydrateMessages([{ role: 'user', content: input.message, attachments: input.attachments || [], createdAt: new Date().toISOString() }]);

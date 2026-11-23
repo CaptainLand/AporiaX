@@ -1,5 +1,43 @@
-import { localMarkdownLinks } from "../markdown-links.js";
+import { localMarkdownLinks, unlinkedInlineCode } from "../markdown-links.js";
 import { checkWorkspaceFileLink } from "../file-link-check.js";
+import { normalizeLocalPath, toWorkspaceRelativePath } from "../link-target.js";
+
+// Backstop only exact path mentions of work produced in this run. Do not
+// reinterpret fenced code, guess paths from a basename, or invent a preview.
+export function linkDeliveredFileMentions(content, workspacePath, changes = []) {
+  // Reply formatting is advisory; an unusual Markdown input must never
+  // replace an otherwise successful final answer with a runtime error.
+  try { return formatFileMentions(content, workspacePath, changes); }
+  catch { return content; }
+}
+
+function formatFileMentions(content, workspacePath, changes) {
+  if (!workspacePath || !changes.length) return content;
+  const known = new Map();
+  const key = value => process.platform === "win32" ? value.toLowerCase() : value;
+  for (const change of changes) {
+    if (change.deleted || change.afterMissing || change.reverted) continue;
+    const path = normalizeLocalPath(change.path);
+    if (!path || /[:<>\u0000-\u001f\u007f]/.test(path) || path.startsWith("/") || path.split("/").includes("..")) continue;
+    known.set(key(path),path);
+  }
+  if (!known.size) return content;
+  const linked = new Set(localMarkdownLinks(content).map(link => key(toWorkspaceRelativePath(workspacePath, link.target))));
+  const replacements = [];
+  for (const item of unlinkedInlineCode(content)) {
+    const path = known.get(key(toWorkspaceRelativePath(workspacePath, item.value)));
+    if (!path || linked.has(key(path))) continue;
+    const label = path.replace(/[\\\[\]*_`]/g, "\\$&");
+    let href;
+    try { href = path.split("/").map(encodeURIComponent).join("/"); }
+    catch { continue; }
+    replacements.push({ ...item, link: `[${label}](<${href}>)` });
+    linked.add(key(path));
+  }
+  let result = content;
+  for (const {start,end,link} of replacements.reverse()) result = result.slice(0,start) + link + result.slice(end);
+  return result;
+}
 
 // Advisory and bounded. A broken link must not abort a completed task, trigger
 // another model round, run tests, or invent a replacement artifact.

@@ -96,6 +96,28 @@ export function chooseHydratedTasks({
   return desktopLoaded ? asTasks(desktopTasks) : asTasks(cachedTasks);
 }
 
+// View-only fallback for a failed desktop history load. Never contains
+// attachments, Witness events or recovery data, and is never migrated.
+export function serializeDesktopTaskPreview(tasks) {
+  return JSON.stringify(asTasks(tasks).slice(0, 16).map(task => ({
+    id: task.id,
+    title: String(task.title || "").slice(0, 300),
+    workspacePath: String(task.workspacePath || "").slice(0, 500),
+    workspaceName: String(task.workspaceName || "").slice(0, 300),
+    projectId: String(task.projectId || "").slice(0, 600),
+    createdAt: task.createdAt,
+    messages: (task.messages || []).slice(-10).map(message => ({
+      id: message.id,
+      role: message.role,
+      kind: message.kind,
+      status: message.status,
+      supersededByRetryId: message.supersededByRetryId,
+      createdAt: message.createdAt,
+      content: String(message.content || "").slice(0, 1_000),
+    })),
+  })));
+}
+
 export function updateTaskById(tasks, taskId, updater) {
   if (typeof updater !== "function") return asTasks(tasks);
   let changed = false;

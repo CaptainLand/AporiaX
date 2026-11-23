@@ -91,6 +91,24 @@ contextBridge.exposeInMainWorld("desktop", {
       return rememberTaskExecutionModes(snapshot.tasks);
     },
     diagnostics: () => ipcRenderer.invoke("tasks:diagnostics"),
+    patch: ({ tasks, deletedTaskIds }) => {
+      const snapshot = structuredClone({ tasks, deletedTaskIds });
+      const operation = taskSaveTail.catch(() => {}).then(async () => {
+        if (historyReadOnly || taskRevision === undefined) throw new Error("TASK_STORE_RECOVERY_REQUIRED: load history successfully before saving.");
+        const result = await ipcRenderer.invoke("tasks:save", { ...snapshot, expectedRevision: taskRevision });
+        if (Number.isSafeInteger(result.revision)) taskRevision = result.revision;
+        const saved = new Set(result.saved);
+        rememberTaskExecutionModes(snapshot.tasks.filter(task => saved.has(task.id)));
+        for (const id of saved) durableTaskIds.add(id);
+        for (const id of result.deleted || []) {
+          durableTaskIds.delete(id);
+          taskExecutionModes.delete(id);
+        }
+        return result;
+      });
+      taskSaveTail = operation;
+      return operation;
+    },
     save: (tasks) => {
       rememberTaskExecutionModes(tasks);
       const snapshot = structuredClone(tasks);
@@ -256,6 +274,7 @@ contextBridge.exposeInMainWorld("desktop", {
     resume: (runId) => ipcRenderer.invoke("harness:resume", runId),
     steer: (request) => ipcRenderer.invoke("harness:steer", request),
     activeRuns: () => ipcRenderer.invoke("harness:active-runs"),
+    modelUsage: (request) => ipcRenderer.invoke('harness:model-usage', request),
     recoverableRuns: () =>
       ipcRenderer.invoke("harness:recoverable-runs"),
     acknowledgeRecovery: (runId) =>

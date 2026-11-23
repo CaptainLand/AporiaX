@@ -66,7 +66,7 @@ function normalizeAssistantContent(content) {
     .trim();
 }
 
-async function callVisionProvider({ provider, model, message, signal }) {
+async function callVisionProvider({ provider, model, message, images, signal }) {
   const apiKey = decryptProviderKey(provider);
   if (!apiKey && provider?.vendor !== "local" && provider?.source !== "local") {
     throw new Error(
@@ -89,7 +89,7 @@ async function callVisionProvider({ provider, model, message, signal }) {
       },
       body: JSON.stringify({
         model: model.id,
-        messages: buildVisionMessages(message),
+        messages: buildVisionMessages(message, images),
         stream: false,
         max_tokens: VISION_MAX_OUTPUT_TOKENS,
       }),
@@ -164,15 +164,15 @@ export async function prepareVisionProxyRequest(request, { signal, onEvent } = {
       nextMessages.push(message);
       continue;
     }
-    const observation = await callVisionProvider({
-      provider: candidate.provider,
-      model: candidate.model,
-      message,
-      signal,
-    });
+    const observations = [];
+    for (let offset = 0; offset < images.length; offset += 8) {
+      const batch = images.slice(offset, offset + 8);
+      const observation = await callVisionProvider({ provider: candidate.provider, model: candidate.model, message, images: batch, signal });
+      observations.push(images.length > 8 ? `[图片 ${offset + 1}–${offset + batch.length}]\n${observation}` : observation);
+    }
     proxiedImages += images.length;
     nextMessages.push(
-      mergeVisionObservation(message, observation, {
+      mergeVisionObservation(message, observations.join('\n\n'), {
         providerName: candidate.provider?.name || candidate.provider?.id,
         modelId: candidate.model?.id,
       }),

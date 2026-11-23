@@ -152,6 +152,9 @@ export function Composer({
   const [ocr, setOcr] = useState(null);
   useEffect(() => { setOcr(null); }, [task.id]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const pendingAttachments = useRef(0);
+  const beginAttachmentLoad = () => { pendingAttachments.current++; setAttachmentLoading(true); };
+  const endAttachmentLoad = () => { pendingAttachments.current--; setAttachmentLoading(pendingAttachments.current > 0); };
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [effortMenuOpen, setEffortMenuOpen] = useState(false);
   useEffect(() => { setModelMenuOpen(false); setEffortMenuOpen(false); }, [task.id]);
@@ -254,6 +257,14 @@ export function Composer({
       ));
       return;
     }
+    if (model.source === 'aporia-cloud' && model.id === 'aporia-cloud-default') {
+      const images = attachments.filter(isImageAttachment);
+      const bytes = images.reduce((sum, image) => sum + (Number.isFinite(image.size) ? image.size : 0), 0);
+      if (images.length > 8 || bytes > 5_500_000) {
+        onNotice(tr('当前 Cloud 模型单次请求最多 8 张图片、合计 5.5 MB；请分次发送或换用支持更多图片的模型。', 'This Cloud model accepts at most 8 images and 5.5 MB per request. Send in batches or choose another model.'));
+        return;
+      }
+    }
     const accepted = onSend(content, attachments);
     if (accepted === false) return;
     setMessage("");
@@ -270,25 +281,22 @@ export function Composer({
       ));
       return;
     }
-    const imageCount = attachments.filter(isImageAttachment).length;
-    const remaining = Math.max(
-      0,
-      Math.min(4 - imageCount, 6 - attachments.length),
-    );
     const candidates = [...(fileList || [])]
-      .filter((file) => file.type.startsWith("image/"))
-      .slice(0, remaining);
+      .filter((file) => file.type.startsWith("image/"));
     if (!candidates.length) return;
     const oversized = candidates.find((file) => file.size > 8_000_000);
     if (oversized) {
       onNotice(tr("图片不能超过 8 MB：{name}", "Images cannot exceed 8 MB: {name}", { name: oversized.name }));
       return;
     }
+    beginAttachmentLoad();
     try {
       const images = await Promise.all(candidates.map(storeImageFile));
-      setAttachments((current) => [...current, ...images].slice(0, 6));
+      setAttachments((current) => [...current, ...images]);
     } catch (error) {
       onNotice(error?.message || tr("无法读取图片", "Unable to read the image"));
+    } finally {
+      endAttachmentLoad();
     }
   };
 
@@ -297,12 +305,12 @@ export function Composer({
       onNotice(tr("附件解析能力不可用，请重启 AporiaX 桌面端", "Attachment parsing is unavailable. Restart AporiaX."));
       return;
     }
-    const remaining = Math.max(0, 6 - attachments.length);
+    const remaining = Math.max(0, 6 - attachments.filter(item => !isImageAttachment(item)).length);
     const candidates = [...(fileList || [])]
       .filter((file) => !file.type.startsWith("image/"))
       .slice(0, remaining);
     if (!candidates.length) {
-      if (remaining === 0) onNotice(tr("每条消息最多添加 6 个附件", "Each message can include up to 6 attachments"));
+      if (remaining === 0) onNotice(tr("每条消息最多添加 6 个文件附件", "Each message can include up to 6 document attachments"));
       return;
     }
     const oversized = candidates.find((file) => file.size > 8_000_000);
@@ -310,7 +318,7 @@ export function Composer({
       onNotice(tr("附件不能超过 8 MB：{name}", "Attachments cannot exceed 8 MB: {name}", { name: oversized.name }));
       return;
     }
-    setAttachmentLoading(true);
+    beginAttachmentLoad();
     try {
       const parsed = [];
       for (const file of candidates) {
@@ -326,7 +334,7 @@ export function Composer({
           path: filePathOf(file),
         });
       }
-      setAttachments((current) => [...current, ...parsed].slice(0, 6));
+      setAttachments((current) => [...current, ...parsed]);
       const ocrCount = parsed.filter(
         (attachment) => attachment.requiresOcr,
       ).length;
@@ -345,7 +353,7 @@ export function Composer({
         .replace(/^Error:\s*/i, "");
       onNotice(cleanMessage);
     } finally {
-      setAttachmentLoading(false);
+      endAttachmentLoad();
     }
   };
 
@@ -406,7 +414,7 @@ export function Composer({
     >
       <div className="composer">
         {attachments.length > 0 && (
-          <div className="composer-attachments">
+          <div className="composer-attachments" tabIndex={0} role="region" aria-label={tr("已添加的附件，可横向滚动", "Added attachments, scroll horizontally")}>
             {attachments.map((attachment) =>
               attachment.kind === "document" ? (
                 <div
@@ -651,8 +659,8 @@ export function Composer({
           : tr("先登录 Cloud 或添加自己的 API，输入内容会保留。", "Sign in to Cloud or add your own API first. Your draft is kept.")}
       </p>}
       {OCR_UI_ENABLED && ocr && <OcrDialog key={task.id} source={ocr.source} onClose={() => setOcr(null)} onAttach={(attachment) => {
-        if (attachments.length >= 6) { onNotice(tr("附件已满，请先移除一个附件。", "Remove an attachment first; limit is six.")); return false; }
-        setAttachments((current) => current.length >= 6 ? current : [...current, attachment]);
+        if (attachments.filter(item => !isImageAttachment(item)).length >= 6) { onNotice(tr("文件附件已满，请先移除一个文件。", "Remove a document first; limit is six.")); return false; }
+        setAttachments((current) => [...current, attachment]);
         return true;
       }} />}
     </div>

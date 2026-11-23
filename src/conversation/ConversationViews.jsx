@@ -2,7 +2,7 @@ import { TaskGoalReport } from "./TaskGoalReport.jsx";
 import { ClarificationCard } from "./ClarificationCard.jsx";
 import { RouteActivityView } from "./RouteActivityView.jsx";
 import { activityActor, describeRouteRecord } from "./route-activity-model.js";
-import React, { createContext, useContext, useEffect, useId, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { classifyLink, messageLinkUrl } from "../../electron/link-target.js";
 import { useWorkbenchContext } from "../workbench/use-workbench.js";
@@ -10,10 +10,13 @@ import { useFileContextMenu } from "../workbench/use-file-context-menu.js";
 import remarkGfm from "remark-gfm";
 import { remarkAutolinkBoundary } from "./remark-autolink-boundary.js";
 import { remarkInlineReplyToggle } from './remark-inline-reply-toggle.js';
+import { describeLinkOpenError } from './link-open-error.js';
 import { diffLines } from "diff";
 import { turnRestorePreview } from './turn-restore-preview.js';
 import { getLiveRunProgress } from './witness-progress.js';
+import { taskAttemptWitness } from '../state/task-witness.js';
 import { modelRecoveryView } from '../../shared/model-recovery-view.js';
+import { reportedRunUsage } from '../../shared/model-progress-view.js';
 import { supportingReply } from '../../shared/reply-presentation.js';
 import { createPortal } from "react-dom";
 import {
@@ -79,51 +82,58 @@ function MarkdownCodeBlock({ children }) {
 }
 
 const LinkWorkspace = createContext("");
+const LinkNotice = createContext(null);
 const ReplyAction = createContext(null);
 
 function MarkdownReplyToggle() {
   return useContext(ReplyAction);
 }
 
+function MarkdownTable({ node, children, ...props }) {
+  const { tr } = useI18n();
+  return (
+    <div className="conversation-table-scroll" role="region" tabIndex={0} aria-label={tr("表格，可横向滚动", "Table, scroll horizontally")}>
+      <table {...props}>{children}</table>
+    </div>
+  );
+}
+
 function MessageLink({ href, children, title }) {
   const workspacePath = useContext(LinkWorkspace);
+  const onNotice = useContext(LinkNotice);
   const workbench = useWorkbenchContext();
   const { language, tr } = useI18n();
-  const [error, setError] = useState("");
   const resolvedHref = href;
   const link = classifyLink(resolvedHref);
   const activate = async (event, action) => {
     if (!link || link.kind === "anchor") return;
     if (!window.desktop?.links && link.kind === "web") return;
     event.preventDefault();
-    setError("");
+    onNotice?.("");
     const target = resolvedHref;
     if (action === "open" && workbench?.openHref) {
       try {
         if (await workbench.openHref(target, { workspacePath })) return;
       } catch (failure) {
-        setError(failure.message);
+        onNotice?.(describeLinkOpenError(failure, target, language));
         return;
       }
     }
     if (!window.desktop?.links) {
-      setError(tr("请在桌面端打开本地文件", "Open local files in the desktop app"));
+      onNotice?.(tr("请在桌面端打开本地文件", "Open local files in the desktop app"));
       return;
     }
     try {
       const result = await window.desktop.links.activate({ href: target, action, workspacePath, language });
-      if (!result?.ok) setError(result?.error || tr("无法打开链接", "Could not open link"));
-    } catch (failure) { setError(failure.message); }
+      if (!result?.ok) onNotice?.(describeLinkOpenError(result?.error, target, language));
+    } catch (failure) { onNotice?.(describeLinkOpenError(failure, target, language)); }
   };
   if (!link) return <span>{children}</span>;
-  return <>
-    <a href={resolvedHref} title={title || resolvedHref} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
+  return <a href={resolvedHref} title={title || resolvedHref} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
       onClick={(event) => void activate(event, "open")}
       onContextMenu={(event) => void activate(event, "menu")}
       onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void activate(event, "menu"); }}
-    >{children}</a>
-    {error && <span role="alert"> — {error}</span>}
-  </>;
+    >{children}</a>;
 }
 
 // Model/effort changes leave message text intact. Keep the parsed Markdown tree
@@ -144,6 +154,7 @@ const MarkdownMessage = React.memo(function MarkdownMessage({ content, trailingA
         urlTransform={(url, key) => key === "href" ? messageLinkUrl(url) : defaultUrlTransform(url)}
         components={{
           pre: MarkdownCodeBlock,
+          table: MarkdownTable,
           a: MessageLink,
           img: MessageImage,
           'aporiax-reply-toggle': MarkdownReplyToggle,
@@ -260,6 +271,7 @@ function collectEditedFiles(steps, content, changes) {
   }
 
   if (grouped.size > 0) return [...grouped.values()];
+  if (successfulWrites.length === 0) return [];
 
   return extractLegacyFilePaths(content)
     .slice(0, successfulWrites.length)
@@ -812,7 +824,7 @@ function FailedRunContent({ message }) {
   </div>;
 }
 
-function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progressRunning, editedFiles }) {
+function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progressRunning, editedFiles, deferOffscreen }) {
   const { tr } = useI18n();
   const [retrying, setRetrying] = useState(false);
   const [progressExpanded, setProgressExpanded] = useState(progressRunning);
@@ -824,6 +836,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
   const blocked = message.status === "blocked";
   const resultDelivered = hasTaskReply(message);
   const interrupted = message.status === "interrupted";
+  const resumablePartial = message.status === 'partial' && Boolean(message.runId || message.recoverable?.runId);
   const hasAnchor = Boolean(message.anchor && message.changes?.length);
   const restored = Boolean(message.anchorRestoredAt);
   const replyDetails = useMemo(() => supportingReply(message.content, message.deliveryDetails), [message.content, message.deliveryDetails]);
@@ -842,6 +855,8 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
   return (
     <article
       className={`assistant-message ${failed ? "error" : ""} ${interrupted || (blocked && !resultDelivered) ? "interrupted" : ""}`}
+      data-thread-turn={message.id}
+      data-defer-offscreen={deferOffscreen || undefined}
     >
       <div className="assistant-message-heading">
         <strong>
@@ -955,7 +970,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
           </div>
         </div>
       )}
-      {(failed || interrupted || blocked) && message.prompt && (
+      {(failed || interrupted || blocked || resumablePartial) && message.prompt && (
         <button
           className="retry-message-button"
           type="button"
@@ -982,7 +997,9 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
             <RotateCcw size={13} />
           )}
           {retrying
-            ? tr("正在重试", "Retrying")
+            ? tr("正在接续", "Resuming")
+            : resumablePartial
+              ? tr("继续本轮", "Continue turn")
             : message.recoverable
               ? tr("恢复任务", "Resume task")
               : tr("重试本轮", "Retry turn")}
@@ -1000,14 +1017,17 @@ function formatWitnessElapsed(milliseconds) {
 }
 
 function describeWitnessRecord(record, tr, language) {
-  if (record?.modelRecovery) return modelRecoveryView(record.modelRecovery, language);
+  if (record?.modelRecovery) {
+    const recovery = modelRecoveryView(record.modelRecovery, language);
+    return record.agentId ? { ...recovery, title: `${activityActor(record, language)} · ${recovery.title}` } : recovery;
+  }
   if (!record) {
     return {
       title: tr("正在理解任务", "Understanding the task"),
       detail: tr("等待第一个可观察动作", "Waiting for the first observable action"),
     };
   }
-  if (record.kind === "tool") {
+  if (record.kind === "tool" || (record.kind === 'agent' && record.modelProgress)) {
     const description = describeRouteRecord(record, language);
     return {
       title: `${activityActor(record, language)} · ${description.title}`,
@@ -1017,6 +1037,7 @@ function describeWitnessRecord(record, tr, language) {
   if (record.kind === 'thinking') return describeRouteRecord(record, language);
   const descriptions = {
     "turn.started": [tr("Witness 开始记录", "Witness started recording"), tr("正在建立任务进度账本", "Creating the task progress ledger")],
+    'turn.continued': [tr('从上次进度继续', 'Continuing from the previous progress'), ''],
     "response.reset": [tr("AporiaX 正在思考或工作中…", "AporiaX is thinking or working…"), tr("正在等待模型响应", "Waiting for model response")],
     "response.recovery.resumed": [tr("已恢复接收模型数据", "Model data resumed"), tr("沿用原请求继续执行，未重复生成", "Continuing the original request without duplicate generation")],
     "plan.updated": [tr("行动路径已更新", "Action route updated"), record.detail],
@@ -1036,7 +1057,7 @@ function describeWitnessRecord(record, tr, language) {
     "approval.required": [tr("等待用户确认", "Waiting for approval"), record.command],
     "control.paused": [tr("任务已暂停", "Task paused"), tr("Witness 将继续保留当前进度", "Witness will preserve the current progress")],
     "control.resumed": [tr("任务继续运行", "Task resumed"), tr("从安全边界继续执行", "Continuing from the safe boundary")],
-    "turn.completed": [record.status === 'completed' ? tr("任务执行完成", "Task execution completed") : tr("本轮已结束", "This run has ended"), tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
+    "turn.completed": [record.status === 'completed' ? tr("任务执行完成", "Task execution completed") : tr("本轮已结束", "This run has ended"), record.detail || tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
     "turn.cancelled": [tr("任务已停止", "Task stopped"), tr("已保留停止前的行动记录", "The action record before interruption was preserved")],
     "turn.failed": [tr("任务运行失败", "Task run failed"), record.detail],
   };
@@ -1047,11 +1068,32 @@ function describeWitnessRecord(record, tr, language) {
   return { title, detail: detail || "" };
 }
 
-function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
+function formatWitnessUsage(usage, partial, tr, language) {
+  const value = reportedRunUsage(usage, { partial });
+  if (!value) return tr("模型用量未回传", "Model usage not reported");
+  const tokens = new Intl.NumberFormat(language);
+  const percent = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 });
+  const hitCount = value.hits === null ? "—" : `${value.incompleteCache ? '≥' : ''}${tokens.format(value.hits)}`;
+  return [
+    tr(value.partial ? "已记录 {count} Token" : "共 {count} Token", value.partial ? "{count} recorded Token" : "{count} Token total", { count: tokens.format(value.total) }),
+    value.tokenLine,
+    tr("缓存命中 {count}（{rate}）", "Cache hits {count} ({rate})", {
+      count: hitCount,
+      rate: value.hitRate === null ? tr("命中率未知", "rate unknown") : percent.format(value.hitRate),
+    }),
+  ].join(" · ");
+}
+
+function WitnessPanel({ witness, liveProgress, usage, usagePartial, resultDelivered = false }) {
   const { tr, language } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const records = witness?.records || [];
-  const visibleRecords = expanded ? records : records.slice(-3);
+  const completionRecord = liveProgress.completed ? records.findLast(record => record.eventType === "turn.completed" && record.status === "completed") : null;
+  const recent = records.slice(-3);
+  // A deferred follow-up can append records after completion; keep the usage
+  // row visible when folded without duplicating it in the header.
+  const visibleRecords = expanded ? records : completionRecord && !recent.includes(completionRecord)
+    ? [completionRecord, ...recent.slice(-2)] : recent;
   const currentDescription = describeWitnessRecord(
     witness?.current,
     tr,
@@ -1059,6 +1101,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
   );
   const activeAgents = witness?.counters?.activeAgents || 0;
   const witnessFinished = liveProgress.finished;
+  const usageDetail = liveProgress.completed ? formatWitnessUsage(usage, usagePartial, tr, language) : '';
+  const usageHint = tr("↑ 未命中缓存的输入；缓存明细不全时显示 —。↓ 模型输出。总量仍包含缓存命中的输入；命中率＝命中输入 ÷ 总输入。", "↑ Uncached input; — means the cache breakdown is unavailable or incomplete. ↓ Model output. The total still includes cached input; hit rate is cached input divided by all input.");
   const stateLabels = {
     completed: ['已完成', 'Done'], partial: ['部分完成', 'Partially done'],
     blocked: ['任务受阻', 'Blocked'], needs_input: ['等待补充', 'Input needed'],
@@ -1127,6 +1171,7 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
               liveProgress.currentEntry?.path ||
               liveProgress.currentEntry?.detail}
           </p>
+          {!completionRecord && usageDetail && <p title={usageHint}>{usageDetail}</p>}
         </div>
       </div>
 
@@ -1134,6 +1179,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
         <div className="witness-ledger">
           {visibleRecords.map((record) => {
             const description = describeWitnessRecord(record, tr, language);
+            const completionUsage = record === completionRecord;
+            const detail = completionUsage ? usageDetail : description.detail;
             return (
               <div className={`witness-record ${record.status}`} key={record.id}>
                 <span className="witness-record-state">
@@ -1147,7 +1194,8 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
                 </span>
                 <div>
                   <strong>{description.title}</strong>
-                  {description.detail && <span title={description.progressHint}>{description.detail}</span>}
+                  {detail && <span className={completionUsage ? "witness-completion-usage" : undefined}
+                    title={completionUsage ? usageHint : description.progressHint}>{detail}</span>}
                 </div>
                 <time>{formatWitnessElapsed(record.elapsedMs)}</time>
               </div>
@@ -1173,8 +1221,118 @@ function WitnessPanel({ witness, liveProgress, resultDelivered = false }) {
   );
 }
 
+const ConversationTurn = React.memo(function ConversationTurn({
+  message, workspacePath, allowFileActions, historicalFailure, taskRunning,
+  progressRunning, clarificationActive, onOpenAnchor, onReview, onRetry, onNotice, deferOffscreen,
+}) {
+  const { tr } = useI18n();
+  if (message.kind === "anchor-restore") {
+    return (
+      <article className="anchor-restore-notice" data-thread-turn={message.id} key={message.id}>
+        <Undo2 size={13} />
+        <div>
+          <strong>{tr("工作区已回退", "Workspace restored")}</strong>
+          <span>
+            {tr(
+              "已告知后续模型：以当前文件为准，不要继续被回退的实现。",
+              "Later runs are told to treat current files as truth and not continue the restored work.",
+            )}
+          </span>
+        </div>
+      </article>
+    );
+  }
+  if (message.role === "user") {
+    return (
+    <article
+      className={`user-message ${message.queued ? "queued" : ""} ${message.steeringStatus ? "steering" : ""}`}
+      data-thread-turn={message.id}
+      data-defer-offscreen={deferOffscreen || undefined}
+      key={message.id}
+    >
+      {message.content && (
+        <FoldableUserPrompt content={message.content} />
+      )}
+      <UserAttachments attachments={message.attachments} />
+      {message.queued && (
+        <span className="queued-message-state">
+          <LoaderCircle size={12} />
+          {tr("已排队，当前任务完成后继续", "Queued · runs after the current task")}
+        </span>
+      )}
+      {message.steeringStatus && !message.queued && (
+        <span className={`steering-message-state ${message.steeringStatus}`}>
+          {message.steeringStatus === "pending" && (
+            <LoaderCircle size={12} />
+          )}
+          {message.steeringStatus === "applied" && <Check size={12} />}
+          {message.steeringStatus === "failed" && <AlertTriangle size={12} />}
+          {message.steeringStatus === "pending"
+            ? tr(
+                "等待接入 · 正在调整生成或等待当前操作完成",
+                "Pending · redirecting generation or finishing the current operation",
+              )
+            : message.steeringStatus === "applied"
+              ? tr("已应用到当前任务", "Applied to the current task")
+              : tr("即时纠偏失败，已转入队列", "Live steering failed and was queued")}
+        </span>
+      )}
+    </article>
+    );
+  }
+
+  if (message.supersededByRetryId) return null;
+
+  const files = collectEditedFiles(
+    message.steps,
+    message.content,
+    message.changes,
+  );
+  const restored = Boolean(message.anchorRestoredAt);
+  const editedFiles = !restored && !message.unapplied && files.length > 0 ? (
+    <EditedFilesCard
+      files={files}
+      workspacePath={workspacePath}
+      onNotice={onNotice}
+      hasSnapshots={allowFileActions && Boolean(message.changes?.length)}
+      confirmed={Boolean(message.reviewConfirmedAt)}
+      onReview={(path) => onReview(message.id, path, files[0]?.path)}
+    />
+  ) : null;
+  const attempt = (
+    <React.Fragment key={message.id}>
+      <LinkWorkspace.Provider value={workspacePath}>
+      <LinkNotice.Provider value={onNotice}>
+      <AssistantMessage
+        message={message}
+        editedFiles={editedFiles}
+        onRetry={onRetry}
+        taskRunning={taskRunning}
+        progressRunning={progressRunning}
+        onOpenAnchor={onOpenAnchor}
+        deferOffscreen={deferOffscreen && !historicalFailure}
+      />
+      </LinkNotice.Provider>
+      </LinkWorkspace.Provider>
+      {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={clarificationActive} onRetry={onRetry ? () => onRetry(message) : null} />)}
+      {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}
+      {!restored && <TaskGoalReport brief={message.taskBrief} acceptance={message.acceptance} strategy={message.strategy} />}
+    </React.Fragment>
+  );
+  return historicalFailure ? (
+    <details className="historical-run" key={message.id} data-thread-turn={message.id} data-thread-history-turn
+      data-defer-offscreen={deferOffscreen || undefined}>
+      <summary><History size={14} /><span>{tr("历史尝试未完成 · 已继续后续轮次", "Earlier attempt unfinished · conversation continued")}</span><ChevronDown size={14} /></summary>
+      {attempt}
+    </details>
+  ) : attempt;
+});
+
+export const LONG_CONVERSATION_MESSAGES = 120;
+
 export function Conversation({
   allowFileActions = true,
+  deferOffscreenTurns = false,
   task,
   isRunning,
   approval,
@@ -1192,16 +1350,24 @@ export function Conversation({
   const [reviewRequest, setReviewRequest] = useState(null);
   const [anchorRequest, setAnchorRequest] = useState(null);
   const [reverting, setReverting] = useState(false);
-  const reviewMessage = task.messages.find(
-    (message) => message.id === reviewRequest?.messageId,
-  );
-  const anchorMessage = task.messages.find(
-    (message) => message.id === anchorRequest?.messageId,
-  );
+  const actions = useRef(null);
+  useLayoutEffect(() => { actions.current = { onRetry, onNotice, workbench, allowFileActions }; });
+  const retryTurn = useCallback((...args) => actions.current?.onRetry?.(...args), []);
+  const notify = useCallback((...args) => actions.current?.onNotice?.(...args), []);
+  const openAnchor = useCallback(target => setAnchorRequest({ messageId: target.id }), []);
+  const openReview = useCallback((messageId, path, firstFile) => {
+    if (actions.current.allowFileActions) setReviewRequest({ messageId, path, mode: path ? "edit" : "diff" });
+    else void actions.current.workbench?.openFile(path || firstFile);
+  }, []);
+  const reviewMessage = reviewRequest && task.messages.find(message => message.id === reviewRequest.messageId);
+  const anchorMessage = anchorRequest && task.messages.find(message => message.id === anchorRequest.messageId);
   const latestAssistant = latestVisibleAssistant(task.messages);
-  const witnessMessage = latestAssistant?.status === "running" || latestAssistant?.witness
-    ? latestAssistant : null;
+  const running = Boolean(isRunning && latestAssistant?.status === "running");
+  const witness = taskAttemptWitness(task.messages, latestAssistant);
+  const witnessMessage = latestAssistant?.status === "running" || witness
+    ? { ...latestAssistant, witness } : null;
   const liveProgress = getLiveRunProgress(witnessMessage);
+  const continuedTurn = witness?.continued && witness !== latestAssistant?.witness ? witnessMessage : null;
 
   const revertChanges = async (paths) => {
     if (!reviewMessage) return;
@@ -1228,111 +1394,24 @@ export function Conversation({
   }
 
   return (
-    <div className="message-list">
-      {task.messages.map((message) => {
-        if (message.kind === "anchor-restore") {
-          return (
-            <article className="anchor-restore-notice" key={message.id}>
-              <Undo2 size={13} />
-              <div>
-                <strong>{tr("工作区已回退", "Workspace restored")}</strong>
-                <span>
-                  {tr(
-                    "已告知后续模型：以当前文件为准，不要继续被回退的实现。",
-                    "Later runs are told to treat current files as truth and not continue the restored work.",
-                  )}
-                </span>
-              </div>
-            </article>
-          );
-        }
-        if (message.role === "user") {
-          return (
-          <article
-            className={`user-message ${message.queued ? "queued" : ""} ${message.steeringStatus ? "steering" : ""}`}
-            key={message.id}
-          >
-            {message.content && (
-              <FoldableUserPrompt content={message.content} />
-            )}
-            <UserAttachments attachments={message.attachments} />
-            {message.queued && (
-              <span className="queued-message-state">
-                <LoaderCircle size={12} />
-                {tr("已排队，当前任务完成后继续", "Queued · runs after the current task")}
-              </span>
-            )}
-            {message.steeringStatus && !message.queued && (
-              <span className={`steering-message-state ${message.steeringStatus}`}>
-                {message.steeringStatus === "pending" && (
-                  <LoaderCircle size={12} />
-                )}
-                {message.steeringStatus === "applied" && <Check size={12} />}
-                {message.steeringStatus === "failed" && <AlertTriangle size={12} />}
-                {message.steeringStatus === "pending"
-                  ? tr(
-                      "等待接入 · 正在调整生成或等待当前操作完成",
-                      "Pending · redirecting generation or finishing the current operation",
-                    )
-                  : message.steeringStatus === "applied"
-                    ? tr("已应用到当前任务", "Applied to the current task")
-                    : tr("即时纠偏失败，已转入队列", "Live steering failed and was queued")}
-              </span>
-            )}
-          </article>
-          );
-        }
-
-        if (message.supersededByRetryId) return null;
-
-        const files = collectEditedFiles(
-          message.steps,
-          message.content,
-          message.changes,
-        );
-        const restored = Boolean(message.anchorRestoredAt);
-        const editedFiles = !restored && !message.unapplied && files.length > 0 ? (
-          <EditedFilesCard
-            files={files}
-            workspacePath={task.workspacePath}
-            onNotice={onNotice}
-            hasSnapshots={allowFileActions && Boolean(message.changes?.length)}
-            confirmed={Boolean(message.reviewConfirmedAt)}
-            onReview={(path) => allowFileActions ?
-              setReviewRequest({
-                messageId: message.id,
-                path,
-                mode: path ? "edit" : "diff",
-              }) : workbench?.openFile(path || files[0]?.path)
-            }
-          />
-        ) : null;
-        const attempt = (
-          <React.Fragment key={message.id}>
-            <LinkWorkspace.Provider value={task.workspacePath || ""}>
-            <AssistantMessage
-              message={message}
-              editedFiles={editedFiles}
-              onRetry={onRetry}
-              taskRunning={isRunning && latestAssistant?.status === "running"}
-              progressRunning={Boolean(isRunning && message.id === latestAssistant?.id && message.status === "running")}
-              onOpenAnchor={(anchorTarget) =>
-                setAnchorRequest({ messageId: anchorTarget.id })
-              }
-            />
-            </LinkWorkspace.Provider>
-            {(message.clarifications || []).map(question => <ClarificationCard key={question.id} question={question} active={isRunning && message.status === "running"} onRetry={onRetry ? () => onRetry(message) : null} />)}
-            {!restored && <SelfCheckCard selfCheck={message.selfCheck} />}
-            {!restored && <TaskGoalReport brief={message.taskBrief} acceptance={message.acceptance} strategy={message.strategy} />}
-          </React.Fragment>
-        );
-        return isHistoricalFailure(message, latestAssistant) ? (
-          <details className="historical-run" key={message.id}>
-            <summary><History size={14} /><span>{tr("历史尝试未完成 · 已继续后续轮次", "Earlier attempt unfinished · conversation continued")}</span><ChevronDown size={14} /></summary>
-            {attempt}
-          </details>
-        ) : attempt;
-      })}
+    <div className={`message-list${deferOffscreenTurns ? " defer-offscreen-turns" : ""}`}>
+      {task.messages.map((message, index) => (
+        <ConversationTurn
+          key={message.id}
+          message={continuedTurn?.id === message.id ? continuedTurn : message}
+          workspacePath={task.workspacePath || ""}
+          allowFileActions={allowFileActions}
+          historicalFailure={isHistoricalFailure(message, latestAssistant)}
+          taskRunning={running && message.role === "assistant"}
+          progressRunning={running && message.id === latestAssistant?.id}
+          deferOffscreen={deferOffscreenTurns && index < task.messages.length - 12 && message.status !== "running"}
+          clarificationActive={Boolean(isRunning && message.status === "running")}
+          onOpenAnchor={openAnchor}
+          onReview={openReview}
+          onRetry={onRetry ? retryTurn : null}
+          onNotice={onNotice ? notify : null}
+        />
+      ))}
       <ApprovalCard
         approval={approval}
         responding={approvalResponding}
@@ -1342,6 +1421,8 @@ export function Conversation({
         <WitnessPanel
           witness={witnessMessage?.witness}
           liveProgress={liveProgress}
+          usage={witnessMessage?.cumulativeUsage ?? witnessMessage?.usage}
+          usagePartial={witnessMessage?.usageHistoryComplete === false || (witnessMessage?.loopMetrics?.attemptsWithoutUsage ?? 0) > 0}
           resultDelivered={hasTaskReply(witnessMessage)}
         />
       )}

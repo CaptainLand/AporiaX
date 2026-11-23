@@ -77,9 +77,12 @@
         -webkit-line-clamp: 2;
       }
       html[data-theme="dark"] p { color: #83969f; }
+      #similar-hint { display: block; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
+      [hidden], #similar-hint[hidden] { display: none; }
       .actions {
+        grid-column: 1 / -1;
         display: flex;
-        margin-top: 12px;
+        flex-wrap: wrap;
         justify-content: flex-end;
         gap: 8px;
       }
@@ -112,10 +115,12 @@
         <div class="eyebrow" id="eyebrow">等待确认</div>
         <h1 id="title">需要确认</h1>
         <p id="body"></p>
-        <div class="actions">
-          <button class="deny" id="deny" type="button">拒绝</button>
-          <button class="approve" id="approve" type="button">确认</button>
-        </div>
+        <p id="similar-hint" hidden></p>
+      </div>
+      <div class="actions">
+        <button class="deny" id="deny" type="button">拒绝</button>
+        <button class="approve" id="approve" type="button">确认</button>
+        <button class="deny" id="similar" type="button" hidden></button>
       </div>
     </aside>
     <script>
@@ -126,9 +131,14 @@
         document.getElementById("body").textContent = payload.body;
         document.getElementById("approve").textContent = payload.approve;
         document.getElementById("deny").textContent = payload.deny;
+        const similar = document.getElementById('similar'), hint = document.getElementById('similar-hint');
+        similar.hidden = hint.hidden = !payload.similar;
+        similar.textContent = payload.similar || '';
+        hint.textContent = payload.similarHint || '';
       });
       document.getElementById("approve").addEventListener("click", () => window.approvalToast.decide(true));
       document.getElementById("deny").addEventListener("click", () => window.approvalToast.decide(false));
+      document.getElementById('similar').addEventListener('click', () => window.approvalToast.decide(true, 'run'));
     </script>
   </body>
 </html>

@@ -1,3 +1,5 @@
+import { earlierAttempts, taskAttemptWitness } from './state/task-witness.js';
+
 export const ROUTE_STAGE_ORDER = [
   "lens",
   "route",
@@ -664,10 +666,18 @@ export function collectTaskRouteRuns(task) {
       .map((message) => [message.id, message]),
   );
 
-  return messages
-    .filter((message) => message.role === "assistant")
+  const attempts = messages.filter(message => message.role === 'assistant');
+  const ancestorsByAttempt = new Map(attempts.filter(message => message.recoveryOfRunId)
+    .map(message => [message.id, earlierAttempts(attempts, message)]));
+  const inherited = new Set([...ancestorsByAttempt.values()].flat().map(message => message.id));
+  return attempts
+    .filter(message => !inherited.has(message.id))
     .map((message, index) => {
-      const entries = routeEntriesFromMessage(message);
+      const ancestors = ancestorsByAttempt.get(message.id) || [];
+      const witness = taskAttemptWitness(messages, message, ancestors);
+      const entries = ancestors.length ? [...ancestors, message].flatMap(routeEntriesFromMessage) : routeEntriesFromMessage(message);
+      const rawEntries = ancestors.length || witness?.continued ? [...ancestors, message].flatMap(attempt =>
+        (attempt.route || []).map(entry => ({ ...entry, witnessRunId: attempt.runId }))) : message.route || [];
       const sourceMessage = userMessages.get(message.sourceUserId);
       const prompt =
         sourceMessage?.content ||
@@ -680,18 +690,20 @@ export function collectTaskRouteRuns(task) {
         subagents: message.subagents || [],
         prompt,
         summary: summarizeRoutePrompt(prompt),
-        createdAt: message.createdAt || sourceMessage?.createdAt || null,
+        createdAt: ancestors[0]?.createdAt || message.createdAt || sourceMessage?.createdAt || null,
         completedAt: message.completedAt || null,
         status: message.status || "completed",
         content: message.content || "",
         error: Boolean(message.error),
         replyDelivered: message.replyDelivered,
+        usage: message.cumulativeUsage ?? message.usage ?? null,
+        usagePartial: message.usageHistoryComplete === false,
         entries,
-        rawEntries: message.route || [],
+        rawEntries,
         changes: message.changes || [],
         selfCheck: message.selfCheck || null,
         plan: message.plan || null,
-        witness: message.witness || null,
+        witness,
         contextCheckpoints: message.contextCheckpoints || [],
       };
     })
@@ -699,6 +711,7 @@ export function collectTaskRouteRuns(task) {
       (run) =>
         run.entries.length > 0 ||
         run.changes.length > 0 ||
+        run.usage != null ||
         (run.witness?.records?.length || 0) > 0 ||
         run.status === "running",
     );

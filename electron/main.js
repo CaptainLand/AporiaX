@@ -4,6 +4,7 @@ import { roleSettingsStore } from './harness/role-settings.js';
 import { appearanceRequest, appearanceStore } from './appearance/runtime.js';
 import { effectiveRoleSettings } from '../shared/professional-roles.js';
 import { controlWorker } from './runtime/worker-controls.js';
+import { loadTaskContinuation } from './runtime/retry-continuation.js';
 import {
   BrowserWindow,
   Menu,
@@ -37,6 +38,7 @@ import { createTemporarySideChatService } from "./side-chat/temporary-service.js
 import { createTeamChatService } from './team-chat/service.js';
 import { createMemberExecutor } from './team-chat/executor.js';
 import { closeApprovalToast, approvalToastApprovalId } from "./approval-toast.js";
+import { desktopApprovalGrant } from './runtime/approval-grants.js';
 import {
   lstat,
   mkdir,
@@ -120,18 +122,6 @@ if (!hasSingleInstanceLock) {
     mainWindow.focus();
   });
 }
-const RUN_SCOPED_BROWSER_TOOLS = new Set([
-  "browser_click",
-  "browser_fill",
-  "browser_press",
-]);
-
-function approvalGrantKey(details = {}) {
-  return RUN_SCOPED_BROWSER_TOOLS.has(details.toolName)
-    ? "browser-control"
-    : "";
-}
-
 let externalRunSource = () => [];
 let memberRunSource = () => [];
 const allExternalRuns = () => [...externalRunSource(), ...memberRunSource()];
@@ -141,7 +131,7 @@ export function setDesktopExternalRunSource(source) {
 
 const harnessTaskRuntime = createHarnessTaskRuntime({
   dataDirectory: () => app.getPath("userData"),
-  approvalGrantKey,
+  approvalGrantKey: desktopApprovalGrant,
   onIdle: () => {
     setImmediate(() => {
       if (
@@ -705,26 +695,8 @@ async function startHarnessTask(
     throw new Error("The authorized Provider is no longer configured.");
   }
   const messages = await hydrateHarnessMessages(request?.messages);
-  let recoveryContext = null;
-  if (request?.recoveryRunId) {
-    recoveryContext = await harnessTaskRuntime.recoveryContext(
-      request.recoveryRunId,
-    );
-    if (
-      recoveryContext.taskId &&
-      request?.taskId &&
-      recoveryContext.taskId !== request.taskId
-    ) {
-      throw new Error("The recovery checkpoint belongs to another task.");
-    }
-    if (
-      recoveryContext.workspacePath &&
-      request?.workspacePath &&
-      resolve(recoveryContext.workspacePath) !== resolve(request.workspacePath)
-    ) {
-      throw new Error("The recovery checkpoint belongs to another workspace.");
-    }
-  }
+  const recoveryContext = await loadTaskContinuation(request,
+    id => harnessTaskRuntime.recoveryContext(id));
 
   startupSignal?.throwIfAborted();
   return harnessTaskRuntime.start({
@@ -1122,6 +1094,11 @@ handleTrustedIpc(ipcMain,
 handleTrustedIpc(ipcMain, "harness:active-runs", (event) => {
   assertTrustedSender(event);
   return harnessTaskRuntime.listActiveRuns();
+});
+
+handleTrustedIpc(ipcMain, 'harness:model-usage', (event, { runId, taskId, afterSequence } = {}) => {
+  assertTrustedSender(event);
+  return harnessTaskRuntime.readModelUsage(runId, { taskId, afterSequence });
 });
 
 handleTrustedIpc(ipcMain, "harness:clarification-response", (event, { runId, questionId, answer } = {}) => {

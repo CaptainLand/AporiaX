@@ -2,7 +2,7 @@ import { projectCloudProvider } from "../shared/cloud-availability.js";
 import { ProviderProtocolFields } from "./settings/ProviderProtocolFields.jsx";
 import { PersonalChatGPTPanel } from './settings/PersonalChatGPTPanel.jsx';
 import './settings/personal-chatgpt.css';
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScrollFadeSurface } from './components/ScrollFadeSurface.jsx';
 import { ProjectUnderstandingPanel } from "./understanding/ProjectUnderstandingPanel.jsx";
 import { TaskKnowledgeControls } from "./understanding/TaskKnowledgeControls.jsx";
@@ -93,7 +93,8 @@ import {
   Composer,
   isImageAttachment,
 } from "./composer/Composer.jsx";
-import { Conversation, RouteView } from "./conversation/ConversationViews.jsx";
+import { Conversation, LONG_CONVERSATION_MESSAGES, RouteView } from "./conversation/ConversationViews.jsx";
+import { captureThreadPosition, restoreThreadPosition } from "./conversation/thread-scroll.js";
 import { ConversationSelectionMenu } from "./conversation/ConversationSelectionMenu.jsx";
 import { WorkbenchLayout } from "./workbench/WorkbenchLayout.jsx";
 import { WorkspaceFilePreview } from "./workbench/WorkspaceFilePreview.jsx";
@@ -124,11 +125,14 @@ import {
 } from "../electron/harness/builder-count.js";
 import {
   replaceAssistantForRetry,
+  serializeDesktopTaskPreview,
   serializeTaskCache,
 } from "./state/task-store-core.js";
+import { createTaskCheckpointWriter } from "./state/task-checkpoint-writer.js";
 import {
   executeTaskRetry,
   hasRendererTaskRun,
+  taskContinuationRequest,
 } from "./state/run-retry-core.js";
 import { useTaskStore } from "./state/useTaskStore.js";
 import { useHarnessEvents } from "./hooks/useHarnessEvents.js";
@@ -140,6 +144,7 @@ import "./settings/settings-finishing.css";
 const AgentOffice = React.lazy(() => import('./office/AgentOffice.jsx'));
 
 const STORAGE_KEY = "aporiax.tasks.v1";
+const DESKTOP_TASK_PREVIEW_KEY = "aporiax.desktop-task-preview.v1";
 const SIDEBAR_COLLAPSED_KEY = "aporiax.sidebar-collapsed.v1";
 const SESSION_UI_KEY = "aporiax.session-ui.v1";
 const SETTINGS_PANEL_WIDTH_KEY = "aporiax.settings-panel-width.v1";
@@ -285,6 +290,8 @@ function readSessionUi() {
           : "",
       scrollTop: Math.max(0, Number(parsed.scrollTop) || 0),
       stickToBottom: parsed.stickToBottom === true,
+      scrollAnchor: typeof parsed.scrollAnchor?.id === "string" && Number.isFinite(parsed.scrollAnchor.offset)
+        ? { id: parsed.scrollAnchor.id, offset: parsed.scrollAnchor.offset } : null,
     };
   } catch {
     return null;
@@ -319,22 +326,18 @@ function chooseRestoredTaskId(tasks, preferredId) {
   return records[0]?.id || null;
 }
 
-function threadScrollSnapshot(body) {
-  if (!body) return { scrollTop: 0, stickToBottom: true };
-  return {
-    scrollTop: body.scrollTop,
-    stickToBottom:
-      body.scrollHeight - body.clientHeight - body.scrollTop < 72,
-  };
-}
-
-function readSavedTasks() {
+function readSavedTasks(key = STORAGE_KEY) {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const saved = JSON.parse(localStorage.getItem(key) || "[]");
     return normalizeTaskProjects(Array.isArray(saved) ? saved : []);
   } catch {
     return [];
   }
+}
+
+function readStartupTasks() {
+  return readSavedTasks(window.desktop?.tasks?.patch && localStorage.getItem(DESKTOP_TASK_PREVIEW_KEY) !== null
+    ? DESKTOP_TASK_PREVIEW_KEY : STORAGE_KEY);
 }
 
 function cacheTasksLocally(tasks) {
@@ -376,7 +379,7 @@ function projectIdForWorkspace(workspacePath) {
 }
 
 function normalizeTaskProjects(tasks) {
-  return (tasks || []).map((task) => ({
+  return (tasks || []).map((task) => task.workspaceName && task.projectId ? task : ({
     ...task,
     workspaceName:
       task.workspaceName ||
@@ -1460,9 +1463,22 @@ function TaskWorkspace({
   const { tr } = useI18n();
   const restoreForTask = restoredSession?.taskId === task.id;
   const workbench = useWorkbench(task);
-  const [activeView, setActiveView] = useState(() =>
-    restoreForTask ? restoredSession.view : "dialogue",
-  );
+  const [viewState, setViewState] = useState(() => {
+    const view = restoreForTask ? restoredSession.view : "dialogue";
+    return { taskId: task.id, view, visited: new Set([view]) };
+  });
+  const sameViewTask = viewState.taskId === task.id;
+  const activeView = sameViewTask ? viewState.view : "dialogue";
+  const hasVisitedView = view => view === activeView || (sameViewTask && viewState.visited.has(view));
+  const setActiveView = view => setViewState(current => {
+    if (current.taskId === task.id && current.view === view) return current;
+    return { taskId: task.id, view, visited: new Set([...(current.taskId === task.id ? current.visited : []), view]) };
+  });
+  const [fullHistoryTasks, setFullHistoryTasks] = useState(() => new Set());
+  const longConversation = task.messages.length >= LONG_CONVERSATION_MESSAGES;
+  const deferOffscreenTurns = longConversation && !fullHistoryTasks.has(task.id);
+  // Consent is per task and per app session; never reopen WebGL automatically after a crash.
+  const [enabledOfficeTasks, setEnabledOfficeTasks] = useState(() => new Set());
   const [workspaceFocusPath, setWorkspaceFocusPath] = useState(() =>
     restoreForTask ? restoredSession.workspaceFocusPath || "" : "",
   );
@@ -1500,6 +1516,7 @@ function TaskWorkspace({
       memory.set(`${task.id}:${restoredSession.view}`, {
         top: restoredSession.scrollTop,
         stickToBottom: restoredSession.stickToBottom,
+        anchor: restoredSession.scrollAnchor,
       });
     }
     return memory;
@@ -1508,6 +1525,9 @@ function TaskWorkspace({
     restoreForTask ? restoredSession.stickToBottom : true,
   );
   const restoreOnceRef = useRef(true);
+  const scrollScopeRef = useRef(null);
+  const scrollFrameRef = useRef(null);
+  const pendingScrollRestore = useRef(null);
   const persistTimerRef = useRef(null);
   const latestMessage = task.messages.at(-1);
   const latestMessageContentLength =
@@ -1538,18 +1558,29 @@ function TaskWorkspace({
       return;
     }
     restoreOnceRef.current = false;
-    setActiveView("dialogue");
-    setWorkspaceFocusPath("");
+    if (!sameViewTask) {
+      setActiveView("dialogue");
+      setWorkspaceFocusPath("");
+    }
   }, [task.id, storageReady]);
+
+  const rememberThreadPosition = () => {
+    const body = threadBodyRef.current;
+    if (!body) return null;
+    const memory = captureThreadPosition(body, activeView === "dialogue" && longConversation);
+    viewScrollMemoryRef.current.set(`${task.id}:${activeView}`, memory);
+    if (activeView === "dialogue") dialogueFollowRef.current = memory.stickToBottom;
+    return memory;
+  };
 
   const flushSession = () => {
     if (!onPersistSession) return;
-    const body = threadBodyRef.current;
+    const memory = rememberThreadPosition();
     onPersistSession({
       taskId: task.id,
       view: activeView,
       workspaceFocusPath,
-      ...(body ? threadScrollSnapshot(body) : {}),
+      ...(memory ? { scrollTop: memory.top, stickToBottom: memory.stickToBottom, scrollAnchor: memory.anchor } : {}),
     });
   };
 
@@ -1572,7 +1603,6 @@ function TaskWorkspace({
       window.removeEventListener("pagehide", handleHide);
       window.removeEventListener("beforeunload", handleHide);
       document.removeEventListener("visibilitychange", handleVisibility);
-      handleHide();
     };
   }, [task.id, activeView, workspaceFocusPath]);
 
@@ -1583,30 +1613,51 @@ function TaskWorkspace({
     );
   }, [settingsPanelWidth]);
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      const body = threadBodyRef.current;
-      if (body) {
-        const memory = viewScrollMemoryRef.current.get(
-          `${task.id}:${activeView}`,
-        );
-        if (!memory) {
-          body.scrollTop =
-            activeView === "dialogue" ? body.scrollHeight : 0;
-          if (activeView === "dialogue") dialogueFollowRef.current = true;
-        } else {
-          body.scrollTop = memory.stickToBottom
-            ? body.scrollHeight
-            : Math.min(memory.top, body.scrollHeight);
-          if (activeView === "dialogue") {
-            dialogueFollowRef.current = memory.stickToBottom;
-          }
+  const scrollScope = `${task.id}:${activeView}`;
+  const dialoguePaintMode = activeView === "dialogue" && deferOffscreenTurns;
+  useLayoutEffect(() => {
+    scrollScopeRef.current = scrollScope;
+    const memory = viewScrollMemoryRef.current.get(scrollScope);
+    const body = threadBodyRef.current;
+    const dialogue = activeView === "dialogue";
+    const waitForMeasuredTurns = dialogue && longConversation && memory?.anchor && !memory.stickToBottom;
+    const previousOverflowAnchor = body?.style.overflowAnchor;
+    let frame;
+    function stopRestoring() {
+      window.cancelAnimationFrame(frame);
+      if (pendingScrollRestore.current !== stopRestoring) return;
+      pendingScrollRestore.current = null;
+      body.style.overflowAnchor = previousOverflowAnchor;
+    }
+    // A skipped turn initially has an estimated height. Re-check the same
+    // anchor as the viewport gets real geometry, without fighting user input.
+    if (body && waitForMeasuredTurns) {
+      pendingScrollRestore.current = stopRestoring;
+      body.style.overflowAnchor = "none";
+    }
+    restoreThreadPosition(body, memory, dialogue);
+    if (activeView === "dialogue") dialogueFollowRef.current = memory?.stickToBottom ?? true;
+    let pass = 0;
+    const settle = () => {
+      if (pendingScrollRestore.current === stopRestoring) {
+        const moved = restoreThreadPosition(body, memory, dialogue);
+        if (++pass < 4 && (pass === 1 || moved > 1)) {
+          frame = window.requestAnimationFrame(settle);
+          return;
         }
+        stopRestoring();
       }
       flushSession();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeView, task.id]);
+    };
+    frame = window.requestAnimationFrame(settle);
+    return () => {
+      stopRestoring();
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [scrollScope, dialoguePaintMode]);
 
   useEffect(() => {
     if (activeView !== "dialogue" || !dialogueFollowRef.current) {
@@ -1659,14 +1710,7 @@ function TaskWorkspace({
 
   const switchView = (nextView) => {
     if (nextView === activeView) return;
-    const body = threadBodyRef.current;
-    if (body) {
-      viewScrollMemoryRef.current.set(`${task.id}:${activeView}`, {
-        top: body.scrollTop,
-        stickToBottom:
-          body.scrollHeight - body.clientHeight - body.scrollTop < 72,
-      });
-    }
+    rememberThreadPosition();
     setActiveView(nextView);
   };
 
@@ -1873,6 +1917,23 @@ function TaskWorkspace({
               </IconButton>
               {moreMenuOpen && (
                 <div className="task-more-menu" role="menu">
+                  {longConversation && <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      rememberThreadPosition();
+                      setFullHistoryTasks(current => {
+                        const next = new Set(current);
+                        if (next.has(task.id)) next.delete(task.id);
+                        else next.add(task.id);
+                        return next;
+                      });
+                      setMoreMenuOpen(false);
+                    }}
+                  >
+                    <MessageSquare size={15} />
+                    {deferOffscreenTurns ? tr("完整渲染对话", "Render full conversation") : tr("启用长对话流畅模式", "Optimize long conversations")}
+                  </button>}
                   <button
                     type="button"
                     role="menuitem"
@@ -2000,16 +2061,32 @@ function TaskWorkspace({
         <div
           ref={threadBodyRef}
           className={`thread-body ${activeView}-mode`}
+          onWheelCapture={() => pendingScrollRestore.current?.()}
+          onPointerDownCapture={() => pendingScrollRestore.current?.()}
+          onTouchStartCapture={() => pendingScrollRestore.current?.()}
+          onKeyDownCapture={event => {
+            if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) {
+              pendingScrollRestore.current?.();
+            }
+          }}
           onScroll={(event) => {
+            if (pendingScrollRestore.current) return;
             const body = event.currentTarget;
             if (activeView === "dialogue") {
               dialogueFollowRef.current =
                 body.scrollHeight - body.clientHeight - body.scrollTop < 72;
             }
+            if (scrollFrameRef.current === null) {
+              const scrolledScope = scrollScope;
+              scrollFrameRef.current = window.requestAnimationFrame(() => {
+                scrollFrameRef.current = null;
+                if (scrollScopeRef.current === scrolledScope) rememberThreadPosition();
+              });
+            }
             scheduleSessionFlush();
           }}
         >
-          <div
+          {hasVisitedView("dialogue") && <div
             className={`thread-view-panel dialogue-panel ${
               activeView === "dialogue" ? "active" : ""
             }`}
@@ -2018,6 +2095,7 @@ function TaskWorkspace({
             <ConversationSelectionMenu key={task.id} onNotice={onNotice} onOpenChange={setSelectionMenuOpen} onQuote={(text) => setQuoteRequest({ taskId: task.id, text })}>
             <Conversation
               task={task}
+              deferOffscreenTurns={deferOffscreenTurns}
               isRunning={isRunning}
               approval={approval}
               approvalResponding={approvalResponding}
@@ -2030,8 +2108,9 @@ function TaskWorkspace({
               onNotice={onNotice}
             />
             </ConversationSelectionMenu>
-          </div>
-          <div
+          </div>}
+          {hasVisitedView("route") && <div
+            key={`${task.id}:route`}
             className={`thread-view-panel route-panel ${
               activeView === "route" ? "active" : ""
             }`}
@@ -2050,8 +2129,9 @@ function TaskWorkspace({
               onSaveChanges={onSaveChanges}
               onNotice={onNotice}
             />
-          </div>
-          <div
+          </div>}
+          {hasVisitedView("workspace") && <div
+            key={`${task.id}:workspace`}
             className={`thread-view-panel workspace-panel ${
               activeView === "workspace" ? "active" : ""
             }`}
@@ -2073,8 +2153,9 @@ function TaskWorkspace({
                 renderPreview={(path, revision) => <WorkspaceFilePreview path={path} revision={revision} task={task} workbench={workbench} onNotice={onNotice} />}
               />
             </div>
-          </div>
-          <div
+          </div>}
+          {hasVisitedView("understanding") && <div
+            key={`${task.id}:understanding`}
             className={`thread-view-panel understanding-panel ${
               activeView === "understanding" ? "active" : ""
             }`}
@@ -2092,14 +2173,19 @@ function TaskWorkspace({
                 switchView("workspace");
               }}
             />
-          </div>
+          </div>}
           {activeView === "office" && <div className="thread-view-panel office-panel active">
-            <React.Suspense fallback={<p role="status">{tr("正在打开工位…", "Opening the office…")}</p>}>
+            {enabledOfficeTasks.has(task.id) ? <React.Suspense fallback={<p role="status">{tr("正在打开工位…", "Opening the office…")}</p>}>
               <AgentOffice key={task.id} task={task} isRunning={isRunning} isPaused={isPaused} approval={approval} theme={theme}
                 onChat={roleId => workbench.open('teamchat', { roomId: roleId ? `role:${roleId}` : '', revision: Date.now() })}
                 onBack={() => switchView("dialogue")} onRoute={() => switchView("route")}
                 onSend={onSend} onStop={onStop} onPause={onPause} onResume={onResume} />
-            </React.Suspense>
+            </React.Suspense> : <section className="office-opt-in" aria-label={tr("Agent 工位实验功能", "Agent office experiment")}>
+              <div className="office-opt-in-content">
+                <p>{tr("Agent 工位仍是实验功能，可能卡顿或闪退；开启仅对当前任务和本次启动有效。", "Agent office is experimental and may slow down or crash; enabling applies only to this task and app session.")}</p>
+                <button type="button" onClick={() => setEnabledOfficeTasks(current => new Set([...current, task.id]))}>{tr("开启 Agent 工位", "Enable Agent office")}</button>
+              </div>
+            </section>}
           </div>}
         </div>
         </ScrollFadeSurface>
@@ -2194,7 +2280,7 @@ function TaskWorkspace({
 
 function Toast({ message }) {
   if (!message) return null;
-  return <div className="toast">{message}</div>;
+  return <div className="toast" role="status" aria-live="polite">{message}</div>;
 }
 
 function summarizeCompletionContent(content, fallback) {
@@ -3014,7 +3100,7 @@ function ApplicationSettingsModal({
 
 function App() {
   const { language, tr } = useI18n();
-  const [tasks, setTasks] = useTaskStore(readSavedTasks);
+  const [tasks, setTasks] = useTaskStore(readStartupTasks);
   const [sessionUi] = useState(readSessionUi);
   const [clarificationFocus, setClarificationFocus] = useState(null);
   const [activeTaskId, setActiveTaskId] = useState(
@@ -3071,6 +3157,7 @@ function App() {
   const dismissedUpdateKeyRef = useRef("");
   const runsRef = useRef(new Map());
   const tasksRef = useRef(tasks);
+  const taskCheckpoint = useRef(null);
 
   const activeTask = tasks.find((task) => task.id === activeTaskId) || null;
   const projects = useMemo(() => buildWorkspaceProjects(tasks), [tasks]);
@@ -3079,7 +3166,7 @@ function App() {
     : null;
   const runPaused = activeTaskId ? pausedTaskIds.has(activeTaskId) : false;
   const approval = activeTaskId
-    ? approvalsByTask[activeTaskId] || null
+    ? approvalsByTask[activeTaskId]?.[0] || null
     : null;
   const setTaskPaused = (taskId, paused) => {
     if (!taskId) return;
@@ -3090,11 +3177,14 @@ function App() {
       return next;
     });
   };
-  const setTaskApproval = (taskId, nextApproval) => {
+  const setTaskApproval = (taskId, nextApproval, resolvedId = '') => {
     if (!taskId) return;
     setApprovalsByTask((current) => {
       const next = { ...current };
-      if (nextApproval) next[taskId] = nextApproval;
+      const pending = current[taskId] || [];
+      const queue = nextApproval ? [...pending.filter(item => item.id !== nextApproval.id), nextApproval]
+        : resolvedId ? pending.filter(item => item.id !== resolvedId) : [];
+      if (queue.length) next[taskId] = queue;
       else delete next[taskId];
       return next;
     });
@@ -3176,9 +3266,9 @@ function App() {
 
 
   useEffect(() => {
-    // localStorage is only a startup cache. Serializing the entire task history
-    // synchronously for every streamed token can block the renderer. Keep the
-    // cache reasonably fresh without putting it on the hot response.delta path.
+    // The desktop bridge refreshes its bounded preview after durable commits.
+    // This legacy cache is only used by the browser / older bridges.
+    if (window.desktop?.tasks?.patch) return undefined;
     const timeout = window.setTimeout(() => {
       cacheTasksLocally(tasks);
     }, 750);
@@ -3206,6 +3296,16 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    let previewTimer;
+    const queueDesktopPreview = (snapshot) => {
+      if (!active) return;
+      window.clearTimeout(previewTimer);
+      previewTimer = window.setTimeout(() => {
+        try {
+          localStorage.setItem(DESKTOP_TASK_PREVIEW_KEY, serializeDesktopTaskPreview(snapshot));
+        } catch { /* Desktop history remains authoritative. */ }
+      }, 10_000);
+    };
     const hydrateTasks = async () => {
       let historyLoaded = false;
       if (!window.desktop?.tasks) {
@@ -3213,19 +3313,21 @@ function App() {
         return;
       }
       try {
-        const storedTasks = await window.desktop.tasks.load();
-        const historyDiagnostics = await window.desktop.tasks.diagnostics?.() || [];
-        historyLoaded = !historyDiagnostics.some((item) => item.code === "TASK_INDEX_CORRUPT");
+        const desktopTasks = window.desktop.tasks;
+        const storedTasks = await desktopTasks.load();
+        const historyDiagnostics = await desktopTasks.diagnostics?.() || [];
         if (!active) return;
-        // The desktop JSON store is the durable authority once it exists.
-        // Only a missing desktop file (null) may migrate the legacy startup
-        // cache. An intentional durable [] must never resurrect stale cached
-        // tasks.
-        let hydratedTasks =
-          storedTasks === null ? tasksRef.current : storedTasks;
-        if (storedTasks === null && tasksRef.current.length > 0) {
-          await window.desktop.tasks.save(tasksRef.current);
+        const writable = !historyDiagnostics.some((item) => item.code === "TASK_INDEX_CORRUPT");
+        if (!writable) {
+          setNotice(tr("部分历史需要恢复，原始文件已保留；请勿用缓存覆盖。", "Some history needs recovery. Original files were preserved; do not replace them with cached data."));
+          return;
         }
+        // A missing disk store can import a legacy browser cache once.
+        // Never import a desktop preview or replace an intentional empty store.
+        const importedTasks = storedTasks === null && historyDiagnostics.length === 0 &&
+          localStorage.getItem(DESKTOP_TASK_PREVIEW_KEY) === null ? readSavedTasks() : [];
+        let hydratedTasks = storedTasks ?? importedTasks;
+        if (!desktopTasks.patch && importedTasks.length) await desktopTasks.save(importedTasks);
         const recoverableRuns =
           (await window.desktop.harness?.recoverableRuns?.()) || [];
         hydratedTasks = normalizeTaskProjects(mergeRecoverableRuns(
@@ -3234,6 +3336,17 @@ function App() {
           tr,
         ));
         if (!active) return;
+        if (desktopTasks.patch) {
+          taskCheckpoint.current = createTaskCheckpointWriter({
+            baseline: storedTasks ?? [],
+            save: (patch) => desktopTasks.patch(patch),
+            onCommitted: historyDiagnostics.length ? undefined : queueDesktopPreview,
+            onResult: (result) => reportTaskSaveResult(result),
+            onError: (error) => reportTaskSaveError(error),
+          });
+          if (storedTasks !== null && !historyDiagnostics.length) queueDesktopPreview(storedTasks);
+        }
+        historyLoaded = true;
         setTasks(hydratedTasks);
         setActiveTaskId(
           chooseRestoredTaskId(hydratedTasks, sessionUi?.taskId),
@@ -3258,6 +3371,9 @@ function App() {
     void hydrateTasks();
     return () => {
       active = false;
+      taskCheckpoint.current?.dispose();
+      taskCheckpoint.current = null;
+      window.clearTimeout(previewTimer);
     };
   }, []);
 
@@ -3265,38 +3381,37 @@ function App() {
     if (activeTaskId) writeSessionUi({ taskId: activeTaskId });
   }, [activeTaskId]);
 
+  function reportTaskSaveResult(result) {
+    if (result?.ok !== false) return;
+    const failed = result.failed || [];
+    const oversized = failed.filter(item => item.code === "TASK_JSON_TOO_LARGE");
+    if (oversized.length && oversized.length === failed.length) {
+      setNotice(tr(
+        "有 {count} 个任务超过 200 MB，本次未保存这些任务，原有记录仍保留。",
+        "{count} task(s) exceeded 200 MB and were not saved. Existing records were preserved.",
+        { count: oversized.length },
+      ));
+    } else if (failed.length) {
+      reportTaskSaveError();
+    }
+  }
+
+  function reportTaskSaveError(error) {
+    if (/TASK_STORE_(?:REVISION_CONFLICT|RECOVERY_REQUIRED)/.test(String(error?.message || error))) {
+      setNotice(tr("任务历史已变化或需要恢复。为保护原件，已暂停自动保存，请重新打开应用后核对。", "Task history changed or needs recovery. Autosave was paused to protect the originals. Reopen the app and check your history."));
+      return;
+    }
+    setNotice(tr("任务检查点保存失败", "Failed to save the task checkpoint"));
+  }
+
   useEffect(() => {
     if (!storageReady || !window.desktop?.tasks) return undefined;
+    if (taskCheckpoint.current) {
+      taskCheckpoint.current.update(tasks);
+      return undefined;
+    }
     const timeout = window.setTimeout(() => {
-      void window.desktop.tasks
-        .save(tasks)
-        .then((result) => {
-          const failed = Array.isArray(result?.failed) ? result.failed : [];
-          if (result === true || result?.ok !== false) return;
-          const oversized = failed.filter(
-            (item) => item.code === "TASK_JSON_TOO_LARGE",
-          );
-          if (oversized.length) {
-            setNotice(
-              tr(
-                "有 {count} 个任务超过 200 MB，已跳过这些任务，其余已保存",
-                "{count} task(s) exceeded 200 MB and were skipped; other tasks were saved",
-                { count: oversized.length },
-              ),
-            );
-            return;
-          }
-          if (failed.length) {
-            setNotice(
-              tr("任务检查点保存失败", "Failed to save the task checkpoint"),
-            );
-          }
-        })
-        .catch(() => {
-          setNotice(
-            tr("任务检查点保存失败", "Failed to save the task checkpoint"),
-          );
-        });
+      void window.desktop.tasks.save(tasks).then(reportTaskSaveResult).catch(reportTaskSaveError);
     }, 350);
     return () => window.clearTimeout(timeout);
   }, [storageReady, tasks]);
@@ -3477,6 +3592,7 @@ function App() {
   };
 
   const deleteTask = (taskId) => {
+    if (!storageReady && window.desktop?.tasks?.patch) return false;
     if (runningTaskIds.has(taskId)) {
       setNotice(
         tr(
@@ -3494,6 +3610,7 @@ function App() {
       remainingTasks[Math.min(taskIndex, remainingTasks.length - 1)] ||
       remainingTasks[0] ||
       null;
+    taskCheckpoint.current?.remove(taskId);
     setTasks(remainingTasks);
     setActiveTaskId((current) =>
       current === taskId ? nextActiveTask?.id || null : current,
@@ -3747,6 +3864,7 @@ function App() {
       .then(() => window.desktop.harness.run({
         runId,
         recoveryRunId: recoveryRunId || undefined,
+        retryMode: request.retryMode,
         retry: Boolean(retryAssistantId || recoveryRunId),
         taskId: targetTask.id,
         assistantId,
@@ -3795,6 +3913,7 @@ function App() {
                           status: result.status || "completed",
                           error: Boolean(result.error),
                           replyDelivered: result.replyDelivered,
+                          replySource: result.replySource || null,
                           runIssues: result.runIssues || [],
                            content: result.content,
                           deliveryDetails: result.deliveryDetails || null,
@@ -3810,6 +3929,8 @@ function App() {
                              result,
                            ),
                           usage: result.usage || null,
+                          cumulativeUsage: result.cumulativeUsage || null,
+                          usageHistoryComplete: result.usageHistoryComplete,
                           subagents: result.subagents || message.subagents || [],
                           instructionFiles:
                             result.instructionFiles || [],
@@ -3938,9 +4059,12 @@ function App() {
         });
         if (!replacementRunActive) setTaskPaused(targetTask.id, false);
         setApprovalsByTask((current) => {
-          if (current[targetTask.id]?.runId !== runId) return current;
+          const pending = current[targetTask.id];
+          if (!pending?.some(item => item.runId === runId)) return current;
           const next = { ...current };
-          delete next[targetTask.id];
+          const queue = pending.filter(item => item.runId !== runId);
+          if (queue.length) next[targetTask.id] = queue;
+          else delete next[targetTask.id];
           return next;
         });
         if (replacementRunActive) return;
@@ -4048,14 +4172,7 @@ function App() {
         setNotice(tr("审批请求已经失效", "The approval request has expired"));
         return;
       }
-      setApprovalsByTask((current) => {
-        if (current[currentApproval.taskId]?.id !== currentApproval.id) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[currentApproval.taskId];
-        return next;
-      });
+      setTaskApproval(currentApproval.taskId, null, currentApproval.id);
       setRunStatus({
         title: approved ? tr("操作已批准", "Action approved") : tr("操作已拒绝", "Action denied"),
         detail: approved
@@ -4092,13 +4209,10 @@ function App() {
     const hasRecordedRun = [...runsRef.current.values()].some(
       (run) => run.taskId === task.id,
     );
-    const retryRequest = {
-      taskId: task.id,
-      retryAssistantId: assistantMessage.id,
-      retrySourceUserId: sourceMessage?.id || assistantMessage.sourceUserId,
-      recoveryRunId: assistantMessage.recoverable?.runId || "",
-      force: true,
-    };
+    let retryRequest;
+    try { retryRequest = taskContinuationRequest(task, assistantMessage); }
+    catch (error) { setNotice(error.message); return false; }
+    retryRequest.retrySourceUserId = sourceMessage?.id || assistantMessage.sourceUserId;
     const retryAttachments =
       sourceMessage?.attachments ||
       assistantMessage.inputAttachments ||
@@ -4106,10 +4220,10 @@ function App() {
     setNotice(
       hasRecordedRun
         ? tr(
-            "正在清理残留任务并准备重试…",
-            "Clearing the stale run before retrying…",
+            "正在核对后台状态并准备继续…",
+            "Checking the backend before continuing…",
           )
-        : tr("正在准备重试本轮…", "Preparing to retry this turn…"),
+        : tr("正在恢复执行记录，从已完成处继续…", "Restoring execution records to continue saved work…"),
     );
 
     const retryResult = await executeTaskRetry({
@@ -4165,7 +4279,7 @@ function App() {
     });
 
     if (retryResult.started) {
-      setNotice(tr("已重新启动本轮任务", "This turn has been restarted"));
+      setNotice(tr("已接续本轮任务，将核对现有文件并完成剩余工作", "Continuing this turn: checking existing files and finishing the remaining work"));
       return true;
     }
     if (retryResult.reason === "main-status-unavailable") {

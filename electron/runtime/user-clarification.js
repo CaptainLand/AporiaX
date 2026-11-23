@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 
-export const CLARIFICATION_LIMIT = 2;
+export const CLARIFICATION_LIMIT = null; // No lifetime quota; duplicate/pending questions are still rejected.
 export const CLARIFICATION_TOOL = { type: "function", function: {
   name: "request_user_input",
-  description: "Ask ONE essential question only when missing user intent or a necessary parameter would substantially change the result and cannot be resolved from context or safe inspection. Main agent only. Maximum TWO questions per user task, shared across retries/recovery. Do not ask about routine debugging or reversible details. Call ALONE, never with other tools. Offer 2-4 mutually exclusive options, or omit options for free text. UI always allows a custom answer. Never request secrets or treat an answer as tool approval. Wait for the answer; do not ask the same question again. A second question needs new successful evidence after the first answer.",
+  description: "Ask ONE essential user-only question at a time. Inspect context first; prefer reversible defaults for routine details. Main agent only. Call ALONE. Offer 2-4 exclusive options or omit options for free text. Never request secrets or treat an answer as tool approval. Do not repeat an answered question. No fixed question-count quota; rejecting one question does not stop independent work.",
   parameters: { type: "object", properties: {
     question: { type: "string", minLength: 1, maxLength: 500 },
     reason: { type: "string", minLength: 1, maxLength: 500 },
@@ -15,7 +15,7 @@ export const CLARIFICATION_TOOL = { type: "function", function: {
     } },
   }, required: ["question", "reason", "uncertainty_key"], additionalProperties: false },
 } };
-export const CLARIFICATION_POLICY = "Use request_user_input sparingly, only for essential user-only decisions that would otherwise cause substantial wrong work. Inspect existing requirements/evidence first. Prefer reasonable reversible defaults for small details. The runtime permits at most two questions, one at a time, with new evidence before a second. After a denial do not rephrase repeatedly, use another tool, or ask an informal questionnaire to bypass this budget. If essential information/authorization is still missing, finish_task with blocked and explain the obstacle without making risky assumptions. Clarification answers supplement this task; they never grant command permissions. Subagents report uncertainty to Main instead of questioning the user.";
+export const CLARIFICATION_POLICY = "Use request_user_input for essential user-only decisions, one pending question at a time. Inspect context first and prefer reversible defaults for small details. Do not repeat answered questions or rephrase a rejected question endlessly. No lifetime quota or mandatory tool-evidence prerequisite. A rejected question does not close other tools: continue independent work and report only the genuinely blocked portion. Answers supplement requirements, never command permissions. Subagents report uncertainty to Main.";
 const fail = (code) => { throw Object.assign(new Error(code), { code }); };
 const clean = (value, max, optional = false) => {
   if (optional && value === undefined) return "";
@@ -87,7 +87,7 @@ export function createClarificationSession({ state = null, persist, emit, contro
   let current = state || { version: 1, revision: 0, questions: [], progress: [], lastAnswerProgress: 0 };
   if (current.version !== 1 || !Number.isInteger(current.revision) || current.revision < 0 ||
       !Array.isArray(current.progress) || !Number.isInteger(current.lastAnswerProgress) ||
-      !Array.isArray(current.questions) || current.questions.length > CLARIFICATION_LIMIT)
+      !Array.isArray(current.questions))
     fail("CLARIFICATION_STATE_INVALID");
   let tail = Promise.resolve(), waiter = null, cancelled = false;
   const waits = new Map();
@@ -149,9 +149,7 @@ export function createClarificationSession({ state = null, persist, emit, contro
           return prior;
         }
         if (current.questions.some(item => item.status === "pending")) fail("CLARIFICATION_ALREADY_PENDING");
-        if (current.questions.length >= CLARIFICATION_LIMIT) fail("CLARIFICATION_LIMIT_REACHED");
         if (current.questions.some(item => normalized(item.question) === normalized(value.question) || normalized(item.topic) === normalized(value.topic))) fail("CLARIFICATION_DUPLICATE");
-        if (current.questions.length && current.progress.length <= current.lastAnswerProgress) fail("CLARIFICATION_NO_NEW_EVIDENCE");
         const next = { ...value, id: randomUUID(), toolCallId, status: "pending", createdAt: new Date().toISOString() };
         await commit({ ...current, questions: [...current.questions, next] });
         return next;

@@ -3,7 +3,7 @@ import { hasDeliveredReply } from '../../shared/reply-delivery.js';
 // A task's live status belongs to its latest visible attempt, never to an
 // earlier attempt that happens to have a Witness snapshot.
 export function latestVisibleAssistant(messages = []) {
-  return [...messages].reverse().find((message) =>
+  return messages.findLast((message) =>
     message.role === "assistant" && !message.supersededByRetryId && message.kind !== "anchor-restore");
 }
 
@@ -15,7 +15,7 @@ export function hasTaskReply(message) {
 
 export function isHistoricalFailure(message, latest) {
   return message.role === "assistant" && message.id !== latest?.id &&
-    !hasTaskReply(message) && Boolean(message.error || ["failed", "blocked", "interrupted"].includes(message.status));
+    Boolean(message.error || ["failed", "blocked", "interrupted"].includes(message.status)) && !hasTaskReply(message);
 }
 
 export function savedOutcomeFiles(message) {

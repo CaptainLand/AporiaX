@@ -4,6 +4,8 @@ import { validateApprovalResponse } from "./approval-response.js";
 import { withDurableRun } from "../runtime/durable-run.js";
 import { preserveDeliveredReply } from '../../shared/reply-delivery.js';
 import { createRunControl } from "../runtime/run-control.js";
+import { continueWitness } from '../runtime/witness-continuation.js';
+import { createWitnessJournalWriter, WITNESS_DELTA_EVENT } from '../runtime/witness-journal.js';
 import { clarificationScope, createClarificationSession } from "../runtime/user-clarification.js";
 import {
   acknowledgeRecoverableRun,
@@ -15,6 +17,8 @@ import {
   listRunRecords,
   readRunResult,
   readRunEvents,
+  readRunWitnessHistory,
+  readRunModelUsage,
   sanitizeRunResult,
   markRunRecoveryStarted,
   updateRunJournalMetadata,
@@ -36,7 +40,7 @@ function createAbortError(message = "The task was interrupted.") {
 function normalizeSteeringMessage(message = {}) {
   const content = String(message?.content || "").trim();
   const attachments = Array.isArray(message?.attachments)
-    ? message.attachments.slice(0, 6)
+    ? message.attachments.slice()
     : [];
   if (!content && attachments.length === 0) return null;
   return {
@@ -121,8 +125,10 @@ export class HarnessTaskRuntime {
   }
 
   #publish(record, payload, { journal = true } = {}) {
+    const visible = record.previousWitness && payload.type === 'witness.updated' && payload.witness
+      ? { ...payload, witness: continueWitness(record.previousWitness, payload.witness, record.runId) } : payload;
     try {
-      record.onEvent?.(payload);
+      record.onEvent?.(visible);
     } catch {
       // Client/renderer observers are not part of task ownership.
     }
@@ -130,7 +136,7 @@ export class HarnessTaskRuntime {
       this.#eventBus?.emit({
         runId: record.runId,
         taskId: record.taskId,
-        ...payload,
+        ...visible,
       });
     } catch {
       // Observability is best-effort.
@@ -143,10 +149,15 @@ export class HarnessTaskRuntime {
 
   #queueJournal(record, event) {
     if (record.persistenceError) return;
+    if (event.type === 'witness.updated') {
+      record.encodeWitness ||= createWitnessJournalWriter();
+      event = record.encodeWitness(event);
+      if (!event) return;
+    }
     record.pendingEvents.push(event);
     record.pendingBytes += Buffer.byteLength(JSON.stringify(event));
     if (this.#startingRuns.has(record.runId)) return;
-    const stream = ["response.delta", "witness.updated"].includes(event.type);
+    const stream = ["response.delta", "witness.updated", WITNESS_DELTA_EVENT].includes(event.type);
     if (!stream || record.pendingEvents.length >= 64 || record.pendingBytes >= 64_000) {
       this.#flushJournal(record);
     } else if (!record.journalTimer) {
@@ -253,6 +264,10 @@ export class HarnessTaskRuntime {
     return readRunEvents(this.#directory(), runId, options);
   }
 
+  readModelUsage(runId, options = {}) {
+    return readRunModelUsage(this.#directory(), runId, options);
+  }
+
   getPendingApprovals(runId) {
     return [...this.#pendingApprovals.values()]
       .filter(approval => runId === undefined || approval.runId === String(runId))
@@ -323,6 +338,7 @@ export class HarnessTaskRuntime {
       pendingBytes: 0,
       journalTimer: null,
       approvalGrants: new Set(),
+      approvalGrantWrites: new Map(),
       startedAt: new Date().toISOString(),
       onEvent,
       onResult,
@@ -330,17 +346,20 @@ export class HarnessTaskRuntime {
 
     this.#startingRuns.set(safeRunId, record);
     this.#notifyActive();
-    try { await beginRunJournal(this.#directory(), {
-      runId: safeRunId,
-      taskId,
-      assistantId: metadata?.assistantId,
-      sourceUserId: metadata?.sourceUserId,
-      prompt: metadata?.prompt,
-      workspacePath: metadata?.workspacePath,
-      providerId: metadata?.providerId,
-      modelId: metadata?.modelId,
-      recoveryOfRunId: recoveryContext?.runId,
-    }); } catch (error) {
+    try {
+      if (recoveryContext?.runId) record.previousWitness = await readRunWitnessHistory(this.#directory(), recoveryContext.runId, taskId);
+      await beginRunJournal(this.#directory(), {
+        runId: safeRunId,
+        taskId,
+        assistantId: metadata?.assistantId,
+        sourceUserId: metadata?.sourceUserId,
+        prompt: metadata?.prompt,
+        workspacePath: metadata?.workspacePath,
+        providerId: metadata?.providerId,
+        modelId: metadata?.modelId,
+        recoveryOfRunId: recoveryContext?.runId,
+      });
+    } catch (error) {
       this.#startingRuns.delete(safeRunId); this.#notifyActive(); throw error;
     }
     this.#activeRuns.set(safeRunId, record);
@@ -370,46 +389,50 @@ export class HarnessTaskRuntime {
     control.setOnline(this.#environment.online);
     this.#notifyActive();
 
-    const emit = (payload = {}) => {
-      const event = {
-        timestamp: payload?.timestamp || new Date().toISOString(),
-        ...payload,
-      };
-      try {
-        record.onEvent?.(event);
-      } catch {
-        // A renderer/client disappearing must never terminate the task.
-      }
-      try {
-        this.#eventBus?.emit({ runId: safeRunId, taskId: record.taskId, ...event });
-      } catch {
-        // Observability is best-effort; task execution remains authoritative.
-      }
-      this.#queueJournal(record, event);
-      return event;
-    };
+    const emit = (payload = {}) => this.#publish(record, {
+      timestamp: payload?.timestamp || new Date().toISOString(),
+      ...payload,
+    });
 
     const requestApproval = async (details = {}) => {
       if (controller.signal.aborted) {
         return Promise.resolve({ approved: false, interrupted: true });
       }
-      const grantKey = ["recovery-reconciliation", "agent-role-change"].includes(details?.kind) ? ""
+      const grant = details.canRememberForRun === false || ["recovery-reconciliation", "agent-role-change", "skill-install"].includes(details.kind) ? null
         : details?.kind === "project-script-trust"
-          ? (details.projectFingerprint ? `project-script:${details.projectFingerprint}` : "")
-          : String(this.#approvalGrantKey(details) || "");
+          ? (details.projectFingerprint ? { key: `project-script:${details.projectFingerprint}`, view: { kind: 'project-script' } } : null)
+          : this.#approvalGrantKey(details);
+      const grantKey = typeof grant === 'string' ? grant : typeof grant?.key === 'string' ? grant.key : '';
+      const similarApproval = grantKey ? grant?.view || null : null;
+      const remembered = () => {
+        emit({ type: 'approval.automatic', tool: details.toolName || details.tool, mode: 'similar-run-grant', similarApproval });
+        return { approved: true, remembered: true };
+      };
       if (grantKey && record.approvalGrants.has(grantKey)) {
-        return Promise.resolve({ approved: true, remembered: true });
+        return remembered();
       }
       const approvalId = randomUUID();
       try {
         await this.#flushJournal(record);
         if (record.persistenceError) throw record.persistenceError;
+        if (controller.signal.aborted) return { approved: false, interrupted: true };
+        if (grantKey && record.approvalGrants.has(grantKey)) return remembered();
         await saveRunCheckpoint(this.#directory(), safeRunId, {
           scopeId: "approval:" + approvalId, phase: "approval-pending",
           approval: { id: approvalId, kind: details.kind, tool: details.tool, title: details.title,
             command: String(details.command || "").slice(0, 4000), cwd: details.cwd },
           requiresFreshApproval: true,
         });
+        // A matching click may have queued its durable write while this
+        // request was saving its checkpoint. Do not open another prompt.
+        const grantWrite = record.approvalGrantWrites.get(grantKey);
+        if (grantWrite) await grantWrite;
+        if (record.persistenceError) throw record.persistenceError;
+        if (!controller.signal.aborted && grantKey && record.approvalGrants.has(grantKey)) {
+          await saveRunCheckpoint(this.#directory(), safeRunId, { scopeId: 'approval:' + approvalId,
+            phase: 'approval-resolved', approved: true, scope: 'run', requiresFreshApproval: true });
+          return remembered();
+        }
       } catch (error) {
         this.#persistenceFailed(record, error);
         throw record.persistenceError;
@@ -426,7 +449,7 @@ export class HarnessTaskRuntime {
           runId: safeRunId,
           clientId: record.clientId,
           grantKey,
-          publicDetails: sanitizeRunResult({ id: approvalId, canRememberForRun: Boolean(grantKey),
+          publicDetails: sanitizeRunResult({ id: approvalId, canRememberForRun: Boolean(grantKey), similarApproval,
             ...Object.fromEntries(["kind", "tool", "title", "command", "cwd", "path", "description", "reason", "capability"]
               .filter(key => details[key] !== undefined).map(key => [key, details[key]])) }, { maxBytes: 32_000 }),
           resolve: (response) => {
@@ -434,12 +457,14 @@ export class HarnessTaskRuntime {
             resolveApproval(response);
           },
         });
+        const { deletionGrant: _internalGrant, ...publicDetails } = details;
         emit({
           type: "approval.required",
           approval: {
+            ...publicDetails,
             id: approvalId,
             canRememberForRun: Boolean(grantKey),
-            ...details,
+            similarApproval,
           },
         });
       });
@@ -498,6 +523,7 @@ export class HarnessTaskRuntime {
             : null,
           signal: controller.signal,
           checkpoint: (value) => durableWrite(() => saveRunCheckpoint(this.#directory(), safeRunId, value)),
+          compactSnapshots: true,
           context: async (scopeId, state) => {
             await durableWrite(() => saveRunContext(this.#directory(), safeRunId, scopeId, state));
             if (scopeId === safeRunId) record.lastSuccessfulContext = { runId: safeRunId, scopeId, savedAt: new Date().toISOString() };
@@ -527,7 +553,8 @@ export class HarnessTaskRuntime {
           persistence: { failed: true, lastSuccessfulContext: record.persistenceError.lastSuccessfulContext } };
         await finishRunJournal(this.#directory(), safeRunId, result);
         await this.#notifyFinished(record);
-        return result;
+        return record.previousWitness && result.witness
+          ? { ...result, witness: continueWitness(record.previousWitness, result.witness, safeRunId) } : result;
       } catch (error) {
         await this.#flushJournal(record);
         const retained = preserveReply(record.persistenceError || error);
@@ -644,22 +671,36 @@ export class HarnessTaskRuntime {
     }
     const record = this.#activeRuns.get(approval.runId);
     if (!record) return false;
-    this.#pendingApprovals.delete(approval.approvalId);
     const shouldRemember =
       approved && scope === "run" && Boolean(approval.grantKey);
-    const event = { type: "approval.resolved", approval: { id: approval.approvalId, approved, scope }, approved, scope };
-    record.journalTail = record.journalTail
+    const group = [approval];
+    if (shouldRemember) for (const pending of this.#pendingApprovals.values()) {
+      if (pending !== approval && pending.runId === approval.runId && pending.clientId === approval.clientId && pending.grantKey === approval.grantKey) group.push(pending);
+    }
+    for (const pending of group) this.#pendingApprovals.delete(pending.approvalId);
+    const resolvedScope = shouldRemember ? 'run' : 'once';
+    const write = record.journalTail
       .then(async () => {
-        await saveRunCheckpoint(this.#directory(), approval.runId, {
-          scopeId: "approval:" + approval.approvalId, phase: "approval-resolved",
-          approved, scope, requiresFreshApproval: true,
-        });
-        await appendRunJournalEvents(this.#directory(), approval.runId, [event]);
-        this.#publish(record, event, { journal: false });
+        if (record.persistenceError) throw record.persistenceError;
+        const events = [];
+        for (const pending of group) {
+          await saveRunCheckpoint(this.#directory(), pending.runId, {
+            scopeId: "approval:" + pending.approvalId, phase: "approval-resolved",
+            approved, scope: resolvedScope, requiresFreshApproval: true,
+          });
+          events.push({ type: 'approval.resolved', approval: { id: pending.approvalId, approved, scope: resolvedScope }, approved, scope: resolvedScope });
+        }
+        await appendRunJournalEvents(this.#directory(), approval.runId, events);
         if (shouldRemember) record.approvalGrants.add(approval.grantKey);
-        approval.resolve({ approved, remembered: shouldRemember });
+        for (const event of events) this.#publish(record, event, { journal: false });
+        for (const pending of group) pending.resolve({ approved, remembered: shouldRemember });
       })
       .catch((error) => this.#persistenceFailed(record, error));
+    record.journalTail = write;
+    if (shouldRemember) {
+      record.approvalGrantWrites.set(approval.grantKey, write);
+      write.then(() => record.approvalGrantWrites.delete(approval.grantKey));
+    }
     return true;
   }
 

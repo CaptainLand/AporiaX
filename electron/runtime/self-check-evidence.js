@@ -5,6 +5,7 @@ export function buildChanges(changeMap) {
   return [...changeMap.values()].filter(
     (change) =>
       Boolean(change.beforeMissing) !== Boolean(change.afterMissing) ||
+      (change.fileVersions && change.beforeHash !== change.afterHash) ||
       change.beforeContent !== change.afterContent,
   );
 }

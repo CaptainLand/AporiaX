@@ -51,17 +51,55 @@ export function loadByteRange(database, record, start, end) {
 
 // Long strings are stored independently: identical originals, file versions and
 // messages share chunks even when their position in a snapshot changes.
-export function encodeContext(database, state) {
+// Snapshot mutable JSON now without copying every immutable file/tool string
+// into a giant intermediate JSON string. Escape the marker even for user text.
+const refPrefix = '\u0000ax:';
+export class CapturedRunContext {
+  constructor(json, texts) { this.json = json; this.texts = texts; }
+}
+export function captureContext(state) {
+  const texts = [];
+  const json = JSON.stringify(state, (_, v) => {
+    if (typeof v !== 'string' || (v.length < 2048 && !v.startsWith(refPrefix))) return v;
+    texts.push(v); return refPrefix + (texts.length - 1);
+  });
+  return new CapturedRunContext(json,texts);
+}
+export function thawContext({json, texts}) {
+  return JSON.parse(json, (_, v) => typeof v === 'string' && v.startsWith(refPrefix) ? texts[Number(v.slice(refPrefix.length))] : v);
+}
+// References are published only AFTER commit, scoped to a database handle.
+// A second connection changing the DB or an eviction just makes this a miss.
+const caches = new WeakMap();
+export function contextMemo(db) {
+  const version = db.prepare('PRAGMA data_version').get().data_version;
+  let cache = caches.get(db);
+  if (!cache || cache.version !== version) caches.set(db, cache = { version, units:0, entries:new Map() });
+  const pending = new Map();
+  let pendingUnits = 0;
+  return { get: s => cache.entries.get(s) || pending.get(s),
+    put(s, ref) { if (s.length <= 1_048_576 && pendingUnits + s.length <= 4_194_304) { pending.set(s,ref); pendingUnits += s.length; } },
+    commit() { for (const [s, ref] of pending) {
+      if (!cache.entries.has(s)) { cache.entries.set(s,ref); cache.units += s.length; }
+      while (cache.units > 4_194_304 || cache.entries.size > 2048) {
+        const first = cache.entries.keys().next().value; cache.units -= first.length; cache.entries.delete(first);
+      }
+    } } };
+}
+export function encodeContext(database, state, memo) {
   const strings = [];
   let totalBytes = 0;
   const visit = (value, path, depth) => {
     if (depth > 128) throw new Error("RUN_CONTEXT_TOO_DEEP");
     if (typeof value === "string") {
-      const bytes = Buffer.from(value);
-      totalBytes += bytes.length;
+      const prior = value.length >= 1024 && memo?.get(value);
+      const length = prior ? prior.bytes : Buffer.byteLength(value);
+      totalBytes += length;
       if (totalBytes > MAX_BYTES) throw new Error("RUN_CONTEXT_TOO_LARGE: decoded strings exceed 256 MiB.");
-      if (bytes.length < 4096) return value;
-      strings.push({ path, ...storeBytes(database, bytes) });
+      if (length < 4096) return value;
+      const ref = prior || storeBytes(database, Buffer.from(value));
+      if (!prior) memo?.put(value,ref);
+      strings.push({ path, ...ref });
       return null;
     }
     if (Array.isArray(value)) return value.map((item, index) => visit(item, [...path, index], depth + 1));

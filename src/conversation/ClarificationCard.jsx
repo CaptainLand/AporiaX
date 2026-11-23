@@ -37,7 +37,7 @@ export function ClarificationCard({ question, active, onRetry }) {
     finally { submitting.current = false; setBusy(false); }
   };
   return <section className="clarification-card" id={"clarification-" + question.id} aria-label={tr("任务提问", "Task question")}>
-    <header><span>{pending ? tr("需要你的决定", "Your decision is needed") : answer ? tr("已回答", "Answered") : tr("已取消", "Cancelled")}</span><small>{question.ordinal || 1} / {question.limit || 2}</small></header>
+    <header><span>{pending ? tr("需要你的决定", "Your decision is needed") : answer ? tr("已回答", "Answered") : tr("已取消", "Cancelled")}</span><small>{question.limit ? `${question.ordinal || 1} / ${question.limit}` : `#${question.ordinal || 1}`}</small></header>
     <h3>{question.question}</h3>
     <p className="clarification-reason">{question.reason}</p>
     {answer ? <p className="clarification-answer">{answer.text}</p> : pending && active ? <form onSubmit={submit}>

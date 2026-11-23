@@ -53,7 +53,7 @@ export function createMemberJobs({ dataDirectory, loadRoles, resolveProvider, ex
     if (roomId !== 'group' && roomId !== `role:${roleId}`) throw new Error('只能在该成员的私聊或工作群中派发。');
     const settings = await loadRoles();
     if (settings.error) throw new Error(settings.error);
-    const role = roleId === 'main' ? { id: 'main', name: 'AporiaX', template: 'main', enabled: true, description: '独立处理用户交办的工作', instructions: '', tools: null, maxRequests: 24, maxRounds: 12 }
+    const role = roleId === 'main' ? { id: 'main', name: 'AporiaX', template: 'main', enabled: true, description: '独立处理用户交办的工作', instructions: '', tools: null, maxRequests: null, maxRounds: null }
       : settings.profiles.find(role => role.id === roleId && role.enabled);
     if (!role) throw new Error('成员已删除或停用。');
     const provider = await resolveProvider(providerId);

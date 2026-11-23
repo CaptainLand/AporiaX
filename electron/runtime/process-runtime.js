@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { createHostFallbackEnvironment } from "../sandbox-runtime.js";
 import { currentExecutionMode } from "../harness/agent-budget.js";
 
@@ -83,8 +84,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
 
   const notify = (record) => { for (const wake of [...(record.waiters || [])]) wake(); };
 
-  function append(record, stream, chunk) {
-    const text = chunk.toString("utf8");
+  function append(record, stream, text) {
     if (!text) return;
     record.output += `[${stream}] ${text}`;
     if (record.output.length > MAX_LOG_CHARS) {
@@ -143,11 +143,28 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         waiters: new Set(),
       };
       processes.set(record.id, record);
-      child.stdout.on("data", (chunk) => append(record, "stdout", chunk));
-      child.stderr.on("data", (chunk) => append(record, "stderr", chunk));
+      const flushOutput = [];
+      for (const name of ["stdout", "stderr"]) {
+        const stream = child[name], decoder = new StringDecoder("utf8");
+        let flushed = false;
+        const flush = () => {
+          if (flushed) return;
+          flushed = true;
+          append(record, name, decoder.end());
+        };
+        flushOutput.push(flush);
+        stream.on("data", (chunk) => append(record, name, decoder.write(chunk)));
+        stream.once("end", flush);
+        stream.once("close", flush);
+        stream.on("error", (error) => {
+          flush();
+          append(record, `${name}-error`, `${error.message}\n`);
+        });
+      }
       child.stdin.on("error", (error) => append(record, "stdin-error", `${error.message}\n`));
       child.on("error", (error) => append(record, "error", `${error.message}\n`));
       child.on("close", (code, signal) => {
+        for (const flush of flushOutput) flush();
         record.status = "exited";
         record.exitCode = typeof code === "number" ? code : null;
         record.signal = signal || null;

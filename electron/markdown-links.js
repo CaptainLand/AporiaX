@@ -21,3 +21,14 @@ export function localMarkdownLinks(content) {
   });
   return result;
 }
+
+export function unlinkedInlineCode(content) {
+  const result = [];
+  const visit = node => {
+    if (["link","linkReference","image","imageReference"].includes(node.type)) return;
+    if (node.type === "inlineCode") result.push({ value: node.value, start: node.position.start.offset, end: node.position.end.offset });
+    else node.children?.forEach(visit);
+  };
+  visit(parser.parse(String(content || "")));
+  return result;
+}

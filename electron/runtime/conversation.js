@@ -107,6 +107,7 @@ export function sanitizeConversation(
   messages,
   {
     supportsImages = false,
+    keepSocialHistory = false,
     maxFileReadChars = MAX_FILE_READ_CHARS,
   } = {},
 ) {
@@ -118,7 +119,7 @@ export function sanitizeConversation(
   );
   // A greeting is a new, context-independent turn. Keeping a large project
   // history here encourages some models to resume the most salient old task.
-  if (isStandaloneSocialTurn(latestUser)) coherent = [latestUser];
+  if (!keepSocialHistory && isStandaloneSocialTurn(latestUser)) coherent = [latestUser];
 
   return coherent
     .filter(
@@ -160,7 +161,8 @@ export function sanitizeConversation(
       if (message.role !== "user" || !message.attachments?.length) {
         return { role: message.role, content: text, ...provenance };
       }
-      const documents = message.attachments
+      const documentAttachments = message.attachments.filter(attachment => attachment?.kind === 'document');
+      const documents = documentAttachments
         .slice(0, 6)
         .map((attachment) =>
           normalizeDocumentAttachment(attachment, { maxFileReadChars }),
@@ -168,13 +170,13 @@ export function sanitizeConversation(
         .filter(Boolean)
         .join("\n\n");
       const documentText = documents.slice(0, MAX_DOCUMENT_CONTEXT_CHARS) +
-        (documents.length > MAX_DOCUMENT_CONTEXT_CHARS || message.attachments.length > 6
+        (documents.length > MAX_DOCUMENT_CONTEXT_CHARS || documentAttachments.length > 6
           ? "\n[附件上下文超出上限，部分内容未注入；请按文件路径读取原文。]" : "");
       const combinedText = [text, documentText].filter(Boolean).join("\n\n");
       const imageAttachments = message.attachments.filter(
         (attachment) =>
           attachment?.kind === "image" ||
-          typeof attachment?.dataUrl === "string",
+          (typeof attachment?.dataUrl === "string" && attachment.dataUrl.startsWith("data:image/")),
       );
       if (!imageAttachments.length) {
         return { role: message.role, content: combinedText, ...provenance };
@@ -191,9 +193,11 @@ export function sanitizeConversation(
         };
       }
       const imageParts = imageAttachments
-        .slice(0, 4)
         .map(normalizeImageAttachment)
         .filter(Boolean);
+      if (imageParts.length !== imageAttachments.length) {
+        throw new Error("图片附件无法完整读取或超过单张大小限制，请移除后重新添加。");
+      }
       if (!imageParts.length) {
         return { role: message.role, content: combinedText, ...provenance };
       }

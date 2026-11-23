@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { cleanupLegacyMobileData } from "./legacy-mobile-cleanup.js";
 import { createCloudModelQueue } from "./cloud-model-queue.js";
 import { historyQuery, projectRequestHistory } from "./request-history.js";
+import { isPreDispatchCloudAuthRejection } from "../../shared/cloud-auth-response.js";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
   buildDesktopAuthorizationUrl,
@@ -19,6 +20,7 @@ import {
 } from "./desktop-account-core.js";
 const REQUEST_TIMEOUT_MS = 15_000;
 const LOGIN_TIMEOUT_MS = 150_000;
+const ACCESS_REFRESH_LEEWAY_MS = 30_000;
 const INSTALLATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function emptySnapshot(extra = {}) {
@@ -44,6 +46,11 @@ function responseError(payload, status, fallback) {
   return error;
 }
 
+function accountSessionError(code = 'DESKTOP_ACCOUNT_SIGNED_OUT') {
+  return Object.assign(new Error(code), { code, status: code === 'DESKTOP_ACCOUNT_CHANGED' ? 403 : 401,
+    retryable: false, safeToRepair: false });
+}
+
 async function parseJson(response) {
   const text = await response.text();
   if (!text) return null;
@@ -63,6 +70,7 @@ export function createDesktopAccountRuntime(options = {}) {
   // Only obsolete companion caches are removed; task history is never touched.
   const legacyCleanup = cleanupLegacyMobileData(userDataPath);
   let accessToken = "";
+  let accessExpiresAt = 0;
   let currentSnapshot = emptySnapshot();
   let bootstrapPromise = null;
   let refreshPromise = null;
@@ -158,6 +166,7 @@ export function createDesktopAccountRuntime(options = {}) {
   async function clearStoredSession() {
     historyEpoch += 1;
     accessToken = "";
+    accessExpiresAt = 0;
     currentSnapshot = emptySnapshot();
     try {
       await rm(sessionPath, { force: true });
@@ -168,6 +177,7 @@ export function createDesktopAccountRuntime(options = {}) {
 
   async function rotateRefreshToken(explicitRefreshToken = "") {
     if (refreshPromise) return refreshPromise;
+    const epoch = historyEpoch;
     refreshPromise = (async () => {
       const refreshToken = explicitRefreshToken || await readStoredRefreshToken();
       if (!refreshToken) return null;
@@ -179,11 +189,13 @@ export function createDesktopAccountRuntime(options = {}) {
         if (!result?.accessToken || !result?.refreshToken) {
           throw new Error("DESKTOP_REFRESH_RESPONSE_INVALID");
         }
+        assertAccountEpoch(epoch);
         await storeRefreshToken(result.refreshToken);
-        accessToken = result.accessToken;
+        assertAccountEpoch(epoch);
+        setAccessToken(result);
         return result;
       } catch (error) {
-        if (error?.status === 401 && error?.message === "SESSION_INVALID") {
+        if (epoch === historyEpoch && error?.status === 401 && error?.message === "SESSION_INVALID") {
           await clearStoredSession();
           return null;
         }
@@ -195,48 +207,82 @@ export function createDesktopAccountRuntime(options = {}) {
     return refreshPromise;
   }
 
-  async function authenticatedRequest(path, options = {}, retry = true) {
-    if (!accessToken) {
-      const refreshed = await rotateRefreshToken();
-      if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
+  function setAccessToken(result) {
+    accessToken = result.accessToken;
+    accessExpiresAt = Date.parse(result.accessExpiresAt) || 0;
+  }
+
+  function assertAccountEpoch(epoch) {
+    if (epoch !== historyEpoch) throw accountSessionError('DESKTOP_ACCOUNT_CHANGED');
+  }
+
+  async function requestAccessToken(epoch) {
+    if (refreshPromise) await refreshPromise;
+    if (!accessToken || (accessExpiresAt && accessExpiresAt <= Date.now() + ACCESS_REFRESH_LEEWAY_MS)) {
+      assertAccountEpoch(epoch);
+      await rotateRefreshToken();
     }
+    if (!accessToken) throw accountSessionError();
+    assertAccountEpoch(epoch);
+    return accessToken;
+  }
+
+  async function refreshRejectedAccessToken(rejectedToken, epoch) {
+    if (refreshPromise) await refreshPromise;
+    if (!accessToken) throw accountSessionError();
+    assertAccountEpoch(epoch);
+    // A delayed 401 can belong to the previous token. Rotating again would
+    // invalidate the fresh access token already in use by other calls.
+    if (accessToken === rejectedToken) await rotateRefreshToken();
+    if (!accessToken) throw accountSessionError();
+    assertAccountEpoch(epoch);
+  }
+
+  async function authenticatedRequest(path, options = {}, retry = true) {
+    const epoch = historyEpoch;
+    const token = await requestAccessToken(epoch);
     try {
-      return await request(path, { ...options, token: accessToken });
+      return await request(path, { ...options, token });
     } catch (error) {
       if (retry && error?.status === 401) {
-        const refreshed = await rotateRefreshToken();
-        if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
-        return authenticatedRequest(path, options, false);
+        await refreshRejectedAccessToken(token, epoch);
+        return request(path, { ...options, token: accessToken });
       }
       throw error;
     }
   }
 
-  async function authenticatedFetch(baseUrl, path, init = {}, retry = true) {
+  async function authenticatedFetch(baseUrl, path, init = {}, retry = true, epoch = historyEpoch) {
+    init.signal?.throwIfAborted();
     await options.ensureConnection?.();
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
       throw new Error("APORIAX_AUTHENTICATED_PATH_INVALID");
     }
-    if (!accessToken) {
-      const refreshed = await rotateRefreshToken();
-      if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
-    }
+    const token = await requestAccessToken(epoch);
+    init.signal?.throwIfAborted();
     const headers = new Headers(init.headers || {});
     headers.set("X-Aporia-Desktop-Version", app.getVersion());
-    headers.set("Authorization", `Bearer ${accessToken}`);
+    headers.set("Authorization", `Bearer ${token}`);
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
       headers,
     });
     if (response.status === 401 && retry) {
+      const method = String(init.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') {
+        const requestId = response.headers.get('x-aporia-request-id');
+        if (path !== '/v1/chat/completions' || !headers.has('Idempotency-Key') || requestId) return response;
+        const payload = await response.clone().json().catch(() => null);
+        if (!isPreDispatchCloudAuthRejection(response.status, payload)) return response;
+      }
+      init.signal?.throwIfAborted();
       try {
         await response.body?.cancel();
       } catch {
         // The response may already be fully consumed by the runtime.
       }
-      const refreshed = await rotateRefreshToken();
-      if (!refreshed?.accessToken) throw new Error("DESKTOP_ACCOUNT_SIGNED_OUT");
-      return authenticatedFetch(baseUrl, path, init, false);
+      await refreshRejectedAccessToken(token, epoch);
+      return authenticatedFetch(baseUrl, path, init, false, epoch);
     }
     return response;
   }
@@ -245,8 +291,9 @@ export function createDesktopAccountRuntime(options = {}) {
     if (!endpoints.configured) throw new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED");
     // This authenticated transport is for inference and billing reconciliation,
     // not a generic Cloud upload/remote-control tunnel.
-    if (!["/v1/chat/completions", "/v1/capabilities", "/v1/capabilities/vision"].includes(path)
-      && !/^\/v1\/requests\/[a-f0-9-]{36}$/i.test(path)) {
+    const recoveryRead = (init.method ?? 'GET').toUpperCase() === 'GET' && init.body == null &&
+      /^\/v1\/requests\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?:\/output)?$/i.test(path);
+    if (!["/v1/chat/completions", "/v1/capabilities", "/v1/capabilities/vision"].includes(path) && !recoveryRead) {
       throw new Error("APORIAX_MODEL_GATEWAY_PATH_NOT_ALLOWED");
     }
     if (path === "/v1/chat/completions") {
@@ -262,9 +309,10 @@ export function createDesktopAccountRuntime(options = {}) {
       init = { ...init, headers };
       const { onCloudQueue, ...wireInit } = init;
       const owner = currentSnapshot.profile?.id;
+      const epoch = historyEpoch;
       return modelQueue.run(() => {
-        if (owner !== currentSnapshot.profile?.id) throw new Error("DESKTOP_ACCOUNT_CHANGED");
-        return authenticatedFetch(modelGatewayBaseUrl, path, wireInit, true);
+        if (owner !== currentSnapshot.profile?.id) throw accountSessionError('DESKTOP_ACCOUNT_CHANGED');
+        return authenticatedFetch(modelGatewayBaseUrl, path, wireInit, true, epoch);
       }, { signal: init.signal, onQueue: onCloudQueue,
         getLimits: () => currentSnapshot.gatewayCapabilities?.modelGateway?.concurrency });
     }
@@ -438,7 +486,7 @@ export function createDesktopAccountRuntime(options = {}) {
         throw new Error("DESKTOP_TOKEN_RESPONSE_INVALID");
       }
       await storeRefreshToken(tokenResult.refreshToken);
-      accessToken = tokenResult.accessToken;
+      setAccessToken(tokenResult);
       const hydrated = await hydrateAccount();
       bootstrapPromise = Promise.resolve(hydrated);
       return hydrated;
@@ -477,15 +525,7 @@ export function createDesktopAccountRuntime(options = {}) {
     };
     assertOwner();
     try {
-      let payload;
-      try { payload = await request(path, { token: accessToken }); }
-      catch (error) {
-        assertOwner();
-        if (error?.status !== 401) throw error;
-        await rotateRefreshToken();
-        assertOwner();
-        payload = await request(path, { token: accessToken });
-      }
+      const payload = await authenticatedRequest(path);
       assertOwner();
       return projectRequestHistory(payload);
     } catch (error) {

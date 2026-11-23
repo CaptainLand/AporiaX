@@ -304,7 +304,7 @@
   padding: 8px;
 }
 .local-account-profile-copy > strong {
-  font-size: var(--text-md);
+  font-size: var(--text-lg);
   line-height: 1.4;
 }
 .local-account-profile .local-account-quota-row {
@@ -314,7 +314,7 @@
 .local-account-quota-reset { font-variant-numeric: tabular-nums; }
 .local-account-profile small,
 .local-account-quota-percent {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 .local-account-quota-percent {

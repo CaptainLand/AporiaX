@@ -7,10 +7,13 @@ import { verifyNativeFileTarget } from './file-access-policy.js';
 
 export const VERIFY_PROJECT_TOOL = { type: 'function', function: {
   name: 'verify_project',
-  description: 'Self-check: node_check parses one JS/MJS/CJS file without executing it using trusted Node, no shell. Existing test/build/lint/typecheck scripts execute ONLY on a disposable Docker-isolated snapshot: no network, host fallback or writeback. If isolation/dependencies are unavailable report unverified checks to Main, never claim a pass.',
+  description: 'Check delegated work: node_check only parses JS without execution. script runs any existing npm script with optional arguments; command supports any language/toolchain. Executable checks use the same parent-authorized command backend and approvals as run_command, not implicit Docker-only restrictions. A worktree is not OS isolation.',
   parameters: { type: 'object', properties: {
-    kind: { type: 'string', enum: ['script', 'node_check'] },
-    script: { type: 'string', description: 'Existing verification script from package.json. No arguments.' },
+    kind: { type: 'string', enum: ['script', 'node_check', 'command'] },
+    script: { type: 'string', description: 'Existing package.json script name.' },
+    args: { type: 'array', items: { type: 'string' }, description: 'Arguments passed to the selected npm script.' },
+    command: { type: 'string', description: 'Check command for any installed language/toolchain; follows normal command approval.' },
+    timeout_ms: { type: 'integer', minimum: 1, description: 'Optional explicit deadline; omitted means no fixed total duration.' },
     path: { type: 'string', description: 'Workspace-relative JS/MJS/CJS file for node_check.' },
     cwd: { type: 'string', description: 'Workspace-relative package directory, default root.' },
   }, required: ['kind'], additionalProperties: false },
@@ -26,7 +29,7 @@ async function target(root, path = '.') {
   return result;
 }
 export async function verificationCommand(root, input) {
-  if (Object.keys(input).some(key => !['kind', 'script', 'path', 'cwd'].includes(key))) throw new Error('Unsupported verification argument.');
+  if (Object.keys(input).some(key => !['kind', 'script', 'args', 'command', 'timeout_ms', 'path', 'cwd'].includes(key))) throw new Error('Unsupported verification argument.');
   const cwd = await target(root, input.cwd || '.');
   if (!(await lstat(cwd)).isDirectory()) throw new Error('Verification cwd must be a directory.');
   if (input.kind === 'node_check') {
@@ -35,12 +38,18 @@ export async function verificationCommand(root, input) {
     if (!(await lstat(path)).isFile()) throw new Error('Syntax-check target must be a file.');
     return { cwd, path, command: `node --check ${quote(input.path)}` };
   }
-  if (input.kind !== 'script' || input.path || !/^(?:test|build|lint|typecheck|type-check|check)(?::[a-z0-9_.-]+)?$/i.test(input.script || '')) throw new Error('Choose an existing test/build/lint/typecheck/check script without shell arguments.');
+  if (input.kind === 'command') {
+    if (typeof input.command !== 'string' || !input.command.trim() || input.command.includes('\0') || input.script || input.path || input.args) throw Error('Invalid verification command.');
+    return { cwd, command: input.command.trim() };
+  }
+  if (input.kind !== 'script' || input.path || input.command || !/^[a-z0-9_][a-z0-9_.:-]*$/i.test(input.script || '')) throw new Error('Choose an existing npm script, or use kind=command.');
+  if (input.args !== undefined && (!Array.isArray(input.args) || input.args.some(arg => typeof arg !== 'string' || /[\0\r\n]/.test(arg)))) throw Error('Invalid verification script arguments.');
   const manifest = JSON.parse(await readFile(await target(root, relative(root, join(cwd, 'package.json'))), 'utf8'));
   if (!Object.hasOwn(manifest.scripts || {}, input.script)) throw new Error(`Verification script does not exist: ${input.script}`);
   // Names do NOT prove safety. All code runs on a disposable snapshot in a
   // no-network OS sandbox, and npm pre/post hooks are disabled.
-  return { cwd, command: `npm --ignore-scripts run ${quote(input.script)}` };
+  const shellQuote = value => process.platform === 'win32' ? (/["%!\r\n\0]/.test(value) ? (() => { throw Error('Use a checked script file for arguments containing Windows shell expansion.'); })() : `"${value}"`) : quote(value);
+  return { cwd, command: `npm --ignore-scripts run ${shellQuote(input.script)}${input.args?.length ? ' -- ' + input.args.map(shellQuote).join(' ') : ''}` };
 }
 
 function parseOnly({ path, cwd, command }, signal) {
