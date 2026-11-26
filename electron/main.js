@@ -691,7 +691,7 @@ async function startHarnessTask(
 
   const provider = await resolveProvider(request?.providerId);
   await fileAccessSettingsReady;
-  if (strictProvider && provider.id !== request?.providerId) {
+  if ((strictProvider || request?.automaticRetry === true) && provider.id !== request?.providerId) {
     throw new Error("The authorized Provider is no longer configured.");
   }
   const messages = await hydrateHarnessMessages(request?.messages);

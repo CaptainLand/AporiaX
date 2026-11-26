@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { cleanupLegacyMobileData } from "./legacy-mobile-cleanup.js";
 import { createCloudModelQueue } from "./cloud-model-queue.js";
 import { historyQuery, projectRequestHistory } from "./request-history.js";
+import { communityMarketRequest } from "../community/market.js";
 import { isPreDispatchCloudAuthRejection } from "../../shared/cloud-auth-response.js";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
@@ -516,6 +517,17 @@ export function createDesktopAccountRuntime(options = {}) {
     return accountPagePromise;
   }
 
+  function communitySessionGuard(owner) {
+    const epoch = historyEpoch;
+    const assertOwner = () => {
+      if (epoch !== historyEpoch || currentSnapshot.status !== 'authenticated' || currentSnapshot.profile?.id !== owner) {
+        throw Error('COMMUNITY_ACCOUNT_CHANGED');
+      }
+    };
+    assertOwner();
+    return assertOwner;
+  }
+
   async function getRequestHistory(input) {
     const path = historyQuery(input);
     const epoch = historyEpoch;
@@ -582,13 +594,19 @@ export function createDesktopAccountRuntime(options = {}) {
       currentSnapshot={...currentSnapshot,profile:{...currentSnapshot.profile,avatarTemplate:result.avatarTemplate,avatarTemplateUpdatedAt:result.avatarTemplateUpdatedAt}};
       bootstrapPromise=Promise.resolve(currentSnapshot);return currentSnapshot;
     },
+    communitySessionGuard,
+    async openCommunity(accountId) {
+      const guard=communitySessionGuard(accountId);
+      await options.ensureConnection?.();
+      guard();
+      await shell.openExternal(new URL("community/", `${webBaseUrl}/`).toString());
+    },
     async communityRepositoryRequest(action,input,accountId){
-      const epoch=historyEpoch;
-      const assertOwner=()=>{if(epoch!==historyEpoch||currentSnapshot.status!=='authenticated'||currentSnapshot.profile?.id!==accountId)throw Error('COMMUNITY_ACCOUNT_CHANGED');};
-      const path=action==='list'?`/community/repository?page=${Number(input?.page)||0}`:action==='sync'?'/community/repository/sync':action==='content'&&/^[a-f0-9-]{36}$/i.test(input?.id)?`/community/repository/${input.id}/content`:null;
+      const assertOwner=communitySessionGuard(accountId);
+      const market=communityMarketRequest(action,input);
+      const path=market?.path??(action==='list'?`/community/repository?page=${Number(input?.page)||0}`:action==='sync'?'/community/repository/sync':action==='content'&&/^[a-f0-9-]{36}$/i.test(input?.id)?`/community/repository/${input.id}/content`:null);
       if(!path)throw Error('COMMUNITY_INVALID_ACTION');
-      assertOwner();
-      const options=action==='sync'?{method:'POST',body:input,timeout:30000}:{};
+      const options=market?.options??(action==='sync'?{method:'POST',body:input,timeout:30000}:{});
       let result;
       try{result=await request(path,{...options,token:accessToken});}
       catch(error){assertOwner();if(error?.status!==401)throw error;await rotateRefreshToken();assertOwner();result=await request(path,{...options,token:accessToken});}

@@ -70,6 +70,7 @@ import { retryModelResponseRecovery } from './runtime/model-response-recovery.js
 import { captureDelegationContext, reviewWorkerResult, pendingWorkerReviews, requiredWorkerIds, workerSummary } from './runtime/subagent-contract.js';
 import { readTaskOutcome } from "./runtime/task-outcome.js";
 import { requestErrorFinalReply, retainedWorkReply } from './runtime/error-final-reply.js';
+import { automaticResumeHint } from './runtime/auto-resume.js';
 import { preserveDeliveredReply } from '../shared/reply-delivery.js';
 import { finishExecutionPlan } from './runtime/plan-lifecycle.js';
 import { currentAgentBudget, restoreAgentBudget, bindAgentBudgetEvents } from "./harness/agent-budget.js";
@@ -3795,8 +3796,10 @@ export async function runHarness({
     const finalStatus = deliveredReply ? (verificationBlocked ? 'blocked' : 'partial') : verificationBlocked ? 'blocked' : 'failed';
     finishPlan(finalStatus);
     let finalizedAnchor;
+    let finalizationFailed = false;
     try { finalizedAnchor = await finalizeAnchor(finalStatus); }
     catch (finalizeError) {
+      finalizationFailed = true;
       if (!deliveredReply) throw finalizeError;
       deliveredReply = preserveDeliveredReply(deliveredReply, { code: finalizeError.code || 'FINALIZATION_FAILED', message: finalizeError.message },
         isEnglish ? 'The reply is preserved, but saving the task record failed; recovery may be incomplete.' : '回答已保留，但任务记录保存失败，恢复记录可能不完整。');
@@ -3863,6 +3866,10 @@ export async function runHarness({
       changedFiles: failedResult.changes.length,
       toolSteps: steps.length,
     });
+    const autoResume = automaticResumeHint({ error, providerKind: provider.kind, status: failedResult.status,
+      replyDelivered: failedResult.replyDelivered, replySource: failedResult.replySource,
+      persistenceFailed: finalizationFailed || failedResult.persistence?.failed || signal?.aborted || control?.hasSteering?.() });
+    if (autoResume) failedResult.autoResume = autoResume;
     failedResult.witness = witness.snapshot();
     failedResult.content = appendSandboxRecoveryNotice(failedResult.content, sandboxRecoveries, language);
     return failedResult;

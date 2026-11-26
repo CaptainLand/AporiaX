@@ -44,6 +44,7 @@ export async function prepareTaskRetry({
   listActiveRuns,
   interruptRun,
   interruptActive = false,
+  canProceed = () => true,
   sleep = (milliseconds) =>
     new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
   timeoutMs = 8_000,
@@ -64,6 +65,7 @@ export async function prepareTaskRetry({
   }
 
   if (mainSnapshot !== null) {
+    if (!canProceed()) return { ready: false, reason: "cancelled", removedRunIds: [] };
     let matchingMainRuns = activeTaskRuns(mainSnapshot, taskId);
     if (!matchingMainRuns.length) {
       return {
@@ -120,6 +122,7 @@ export async function prepareTaskRetry({
   }
 
   // Compatibility fallback for older preload bridges without activeRuns().
+  if (!canProceed()) return { ready: false, reason: "cancelled", removedRunIds: [] };
   const localEntries = taskRunEntries(rendererRuns, taskId);
   if (!localEntries.length) {
     return { ready: true, reason: "renderer-idle", removedRunIds: [] };
@@ -158,6 +161,7 @@ export async function executeTaskRetry({
   listActiveRuns,
   interruptRun,
   interruptActive = false,
+  canProceed,
   onReady,
   startRetry,
 }) {
@@ -168,6 +172,7 @@ export async function executeTaskRetry({
       listActiveRuns,
       interruptRun,
       interruptActive,
+      canProceed,
     });
     if (!preparation.ready) {
       return {
@@ -177,7 +182,9 @@ export async function executeTaskRetry({
       };
     }
 
+    if (canProceed && !canProceed()) return { started: false, reason: "cancelled", preparation };
     await onReady?.(preparation);
+    if (canProceed && !canProceed()) return { started: false, reason: "cancelled", preparation };
     if (typeof startRetry !== "function") {
       return {
         started: false,

@@ -59,6 +59,7 @@ import {
   ShieldCheck,
   Square,
   SquarePen,
+  Store,
   Moon,
   Sun,
   Trash2,
@@ -102,6 +103,7 @@ import { CollapsedDropRail } from "./workbench/CollapsedDropRail.jsx";
 import { WorkbenchContext, useWorkbench } from "./workbench/use-workbench.js";
 import { SettingsPanel } from "./settings/SettingsPanel.jsx";
 import { PermissionsSettings } from "./settings/PermissionsSettings.jsx";
+import { CommunityMarketSettings } from "./settings/CommunityMarketSettings.jsx";
 import { ExtensionsSettings } from "./settings/ExtensionsSettings.jsx";
 import { ProfessionalRolesSettings } from './settings/ProfessionalRolesSettings.jsx';
 import { LocalAccountPanel } from "./account/LocalAccountPanel.jsx";
@@ -136,6 +138,7 @@ import {
 } from "./state/run-retry-core.js";
 import { useTaskStore } from "./state/useTaskStore.js";
 import { useHarnessEvents } from "./hooks/useHarnessEvents.js";
+import { AUTO_RETRY_KEY, AUTO_RETRY_MAX, autoRetryDelay, canResumeAutomatically, createAutoRetryQueue, normalizeAutoRetry } from "./state/automatic-retry.js";
 import "./styles.css";
 import "./settings/provider-workbench.css";
 import "./settings/general-workbench.css";
@@ -1436,6 +1439,8 @@ function TaskWorkspace({
   onPause,
   onResume,
   onRetry,
+  pendingAutomaticRetry,
+  onCancelAutomaticRetry,
   onRevert,
   onRestoreAnchor,
   onRestoreTurnAnchor,
@@ -2191,6 +2196,10 @@ function TaskWorkspace({
         </ScrollFadeSurface>
 
         {activeView === "understanding" && <div className="knowledge-return"><span>{isRunning ? tr("任务仍在运行，可随时返回对话", "Task is running. Return to chat at any time.") : tr("按知识项目独立保存，任务按需读取", "Saved per project; read by tasks on demand")}</span><button type="button" onClick={() => switchView("dialogue")}><MessageSquare size={14} />{tr("返回对话", "Back to chat")}</button></div>}
+        {pendingAutomaticRetry && <div className="knowledge-return" data-testid="automatic-retry-pending">
+          <span role="status">{tr("等待自动续跑（{attempt}/{limit}）", "Waiting to resume automatically ({attempt}/{limit})", pendingAutomaticRetry)}</span>
+          <button type="button" onClick={onCancelAutomaticRetry}>{tr("取消自动重试", "Cancel auto-retry")}</button>
+        </div>}
         <Composer
           quoteRequest={quoteRequest}
           collapsed={["understanding", "office"].includes(activeView)}
@@ -2791,6 +2800,8 @@ function ProviderManagerModal({
 
 function ApplicationSettingsModal({
   task,
+  automaticRetry,
+  onAutomaticRetryChange,
   onUpdateTask,
   onCreateRoleWithAgent,
   onCreateThemeWithAgent,
@@ -2892,6 +2903,9 @@ function ApplicationSettingsModal({
             <button type="button" className={section === 'permissions' ? 'active' : ''} onClick={() => setSection('permissions')}>
               <ShieldCheck size={16} />{tr('权限与审批', 'Permissions & approvals')}
             </button>
+            <button type="button" className={section === 'community-market' ? 'active' : ''} onClick={() => setSection('community-market')}>
+              <Store size={16} />{tr('社区插件市场', 'Community Marketplace')}
+            </button>
             <button
               type="button"
               className={section === "about" ? "active" : ""}
@@ -2905,7 +2919,7 @@ function ApplicationSettingsModal({
           <main className={`application-settings-content ${section}-section`}>
             {section === 'personalization' ? <PersonalizationSettings appearance={appearance} theme={theme} onCreateWithAgent={onCreateThemeWithAgent} /> : section === 'account' ? <AccountSettings /> : section === "permissions" ? (
               <PermissionsSettings task={task} onUpdateTask={onUpdateTask} sandboxStatus={sandboxStatus} sandboxPreparing={sandboxPreparing} onPrepareSandbox={onPrepareSandbox} />
-            ) : section === "agents" ? (
+            ) : section === "community-market" ? <CommunityMarketSettings /> : section === "agents" ? (
               <ProfessionalRolesSettings task={task} providers={providers} onUpdateTask={onUpdateTask} onCreateWithAgent={onCreateRoleWithAgent} />
             ) : section === "general" ? (
               <>
@@ -2964,6 +2978,35 @@ function ApplicationSettingsModal({
                       <span>{tr("夜间", "Dark")}</span>
                       {theme === "dark" && <Check size={14} />}
                     </button>
+                  </div>
+                </section>
+
+                <section className="preference-card auto-retry-preference">
+                  <div className="auto-retry-heading">
+                    <div className="preference-card-heading">
+                      <span><RotateCcw size={17} /></span>
+                      <div>
+                        <strong>{tr("任务自动重试", "Automatic task retry")}</strong>
+                        <p>{tr("遇到可安全重试的临时错误，从上次检查点继续，不重做已完成的操作。退出应用后停止重试。", "Resume from the last checkpoint after a safe, temporary failure without repeating completed actions. Retries stop when you quit.")}</p>
+                      </div>
+                    </div>
+                    <Switch checked={automaticRetry.enabled} label={tr("启用自动重试", "Enable automatic retry")}
+                      onChange={enabled => onAutomaticRetryChange({ ...automaticRetry, enabled })} />
+                  </div>
+                  <div className="auto-retry-limit" data-enabled={automaticRetry.enabled}>
+                    <div className="auto-retry-limit-label">
+                      <span>{tr("最多重试次数", "Maximum retries")}</span>
+                      <small>{tr("不含首次运行", "Excludes the initial run")}</small>
+                    </div>
+                    <div className="auto-retry-counts" role="group" aria-label={tr("最多重试次数（不含首次）", "Maximum retries (excluding the initial run)")}>
+                      {Array.from({ length: AUTO_RETRY_MAX }, (_, index) => index + 1).map(attempts => (
+                        <button key={attempts} type="button" disabled={!automaticRetry.enabled} aria-pressed={automaticRetry.attempts === attempts}
+                          aria-label={tr("{count} 次", "{count} retries", { count: attempts })}
+                          onClick={() => onAutomaticRetryChange({ ...automaticRetry, attempts })}>
+                          {attempts}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </section>
 
@@ -3100,7 +3143,33 @@ function ApplicationSettingsModal({
 
 function App() {
   const { language, tr } = useI18n();
-  const [tasks, setTasks] = useTaskStore(readStartupTasks);
+  const [tasks, setTasks, taskStore] = useTaskStore(readStartupTasks);
+  const [automaticRetry, setAutomaticRetry] = useState(() => {
+    try { return normalizeAutoRetry(JSON.parse(localStorage.getItem(AUTO_RETRY_KEY))); }
+    catch { return normalizeAutoRetry(null); }
+  });
+  const autoRetrySettings = useRef(automaticRetry);
+  const [pendingAutomaticRetries, setPendingAutomaticRetries] = useState({});
+  const automaticRetryQueue = useRef(null);
+  const launchAutomaticRetry = useRef(null);
+  if (!automaticRetryQueue.current) automaticRetryQueue.current = createAutoRetryQueue({
+    onChange(taskId, pending) {
+      setPendingAutomaticRetries(current => {
+        const next = { ...current };
+        if (pending) next[taskId] = pending;
+        else delete next[taskId];
+        return next;
+      });
+    },
+  });
+  useEffect(() => () => automaticRetryQueue.current.clear(), []);
+  const changeAutomaticRetry = value => {
+    const next = normalizeAutoRetry(value);
+    autoRetrySettings.current = next;
+    setAutomaticRetry(next);
+    automaticRetryQueue.current.clear();
+    try { localStorage.setItem(AUTO_RETRY_KEY, JSON.stringify(next)); } catch { /* session preference still applies */ }
+  };
   const [sessionUi] = useState(readSessionUi);
   const [clarificationFocus, setClarificationFocus] = useState(null);
   const [activeTaskId, setActiveTaskId] = useState(
@@ -3605,6 +3674,7 @@ function App() {
     const currentTasks = tasksRef.current;
     const taskIndex = currentTasks.findIndex((task) => task.id === taskId);
     if (taskIndex < 0) return false;
+    automaticRetryQueue.current.cancel(taskId);
     const remainingTasks = currentTasks.filter((task) => task.id !== taskId);
     const nextActiveTask =
       remainingTasks[Math.min(taskIndex, remainingTasks.length - 1)] ||
@@ -3631,9 +3701,10 @@ function App() {
       return false;
     }
     const targetTask = request.taskId
-      ? tasksRef.current.find((task) => task.id === request.taskId)
+      ? taskStore.getSnapshot().find((task) => task.id === request.taskId)
       : activeTask;
     if (!targetTask) return false;
+    if (!request.automaticRetryAttempt) automaticRetryQueue.current.cancel(targetTask.id);
     const targetRunEntry = [...runsRef.current.entries()].find(
       ([, run]) => run.taskId === targetTask.id,
     );
@@ -3860,11 +3931,13 @@ function App() {
       detail: tr("正在加载项目指令与任务上下文", "Loading project instructions and task context"),
     });
 
+    let terminalResult;
     void Promise.resolve()
       .then(() => window.desktop.harness.run({
         runId,
         recoveryRunId: recoveryRunId || undefined,
         retryMode: request.retryMode,
+        ...(request.automaticRetryAttempt ? { automaticRetry: true } : {}),
         retry: Boolean(retryAssistantId || recoveryRunId),
         taskId: targetTask.id,
         assistantId,
@@ -3897,6 +3970,7 @@ function App() {
         ],
       }))
       .then((result) => {
+        terminalResult = result;
         setTasks((current) =>
           current.map((task) =>
             task.id === targetTask.id
@@ -4039,6 +4113,7 @@ function App() {
         if (!delivered) setNotice(tr("Harness 运行失败", "Harness run failed"));
       })
       .finally(() => {
+        const autoRetryCancelled = runsRef.current.get(runId)?.autoRetryCancelled;
         runsRef.current.delete(runId);
         const replacementRunActive = hasRendererTaskRun(
           runsRef.current,
@@ -4068,7 +4143,22 @@ function App() {
           return next;
         });
         if (replacementRunActive) return;
-        const nextQueued = tasksRef.current
+        const currentTasks = taskStore.getSnapshot();
+        const previousAttempts = request.automaticRetryAttempt || 0;
+        const settings = autoRetrySettings.current;
+        const delay = autoRetryCancelled ? null : autoRetryDelay(settings, terminalResult, previousAttempts);
+        const retryEntry = {
+          taskId: targetTask.id, assistantId, runId, sourceUserId: userMessage.id,
+          workspacePath: targetTask.workspacePath, providerId: targetTask.providerId, modelId: targetTask.modelId,
+          resolvedProviderId: selectedModel.providerId, resolvedModelId: selectedModel.id,
+          attempt: previousAttempts + 1, limit: settings.attempts,
+        };
+        if (delay !== null && window.desktop?.harness?.activeRuns &&
+            canResumeAutomatically(currentTasks.find(task => task.id === targetTask.id), retryEntry)) {
+          automaticRetryQueue.current.enqueue(retryEntry, delay, entry => launchAutomaticRetry.current?.(entry));
+          return;
+        }
+        const nextQueued = currentTasks
           .filter((task) => task.id === targetTask.id)
           .flatMap((task) =>
             task.messages
@@ -4094,6 +4184,7 @@ function App() {
             ),
           });
           window.setTimeout(() => {
+            if (hasRendererTaskRun(runsRef.current, nextQueued.taskId)) return;
             sendMessage("", [], {
               force: true,
               taskId: nextQueued.taskId,
@@ -4110,7 +4201,10 @@ function App() {
 
 
   const stopActiveRun = async () => {
+    if (activeTaskId) automaticRetryQueue.current.cancel(activeTaskId);
     if (!activeRunId || !window.desktop?.harness?.interrupt) return false;
+    const record = runsRef.current.get(activeRunId);
+    if (record) record.autoRetryCancelled = true;
     setRunStatus({
       title: tr("正在停止任务", "Stopping task"),
       detail: tr("等待当前操作安全退出", "Waiting for the current operation to exit safely"),
@@ -4186,12 +4280,23 @@ function App() {
     }
   };
 
-  const retryMessage = async (assistantMessage) => {
-    const task = tasksRef.current.find((candidate) =>
+  const retryMessage = async (assistantMessage, automaticEntry = null) => {
+    const task = taskStore.getSnapshot().find((candidate) =>
       candidate.messages.some(
         (message) => message.id === assistantMessage.id,
       ),
     );
+    const canStartAutomatically = () => {
+      const currentTask = taskStore.getSnapshot().find(item => item.id === automaticEntry.taskId);
+      if (!automaticRetryQueue.current.isPending(automaticEntry) ||
+          !autoRetrySettings.current.enabled || automaticEntry.attempt > autoRetrySettings.current.attempts ||
+          hasRendererTaskRun(runsRef.current, automaticEntry.taskId) ||
+          !canResumeAutomatically(currentTask, automaticEntry)) return false;
+      const model = getModel(providers, currentTask.providerId, currentTask.modelId);
+      return !model.disabled && model.providerId === automaticEntry.resolvedProviderId && model.id === automaticEntry.resolvedModelId;
+    };
+    if (automaticEntry && !canStartAutomatically()) return false;
+    if (task && !automaticEntry) automaticRetryQueue.current.cancel(task.id);
     const sourceMessage = task?.messages.find(
       (message) => message.id === assistantMessage.sourceUserId,
     );
@@ -4213,11 +4318,12 @@ function App() {
     try { retryRequest = taskContinuationRequest(task, assistantMessage); }
     catch (error) { setNotice(error.message); return false; }
     retryRequest.retrySourceUserId = sourceMessage?.id || assistantMessage.sourceUserId;
+    if (automaticEntry) retryRequest.automaticRetryAttempt = automaticEntry.attempt;
     const retryAttachments =
       sourceMessage?.attachments ||
       assistantMessage.inputAttachments ||
       [];
-    setNotice(
+    if (!automaticEntry) setNotice(
       hasRecordedRun
         ? tr(
             "正在核对后台状态并准备继续…",
@@ -4238,7 +4344,8 @@ function App() {
       interruptRun: window.desktop?.harness?.interrupt
         ? (runId) => window.desktop.harness.interrupt(runId)
         : undefined,
-      interruptActive: Boolean(assistantMessage.recoverable),
+      interruptActive: !automaticEntry && Boolean(assistantMessage.recoverable),
+      canProceed: automaticEntry ? canStartAutomatically : undefined,
       onReady: () => {
         // Electron has confirmed that this task is idle. Clear renderer-only
         // flags before creating the replacement run.
@@ -4265,6 +4372,7 @@ function App() {
             task?.modelId,
           ).supportsImages
         ) {
+          if (automaticEntry) return false;
           setNotice(tr("当前模型不支持识图，已移除图片并按文字内容重试", "This model cannot read images. Images were removed before retrying the text."));
           return sendMessage(
             retryContent,
@@ -4279,9 +4387,12 @@ function App() {
     });
 
     if (retryResult.started) {
-      setNotice(tr("已接续本轮任务，将核对现有文件并完成剩余工作", "Continuing this turn: checking existing files and finishing the remaining work"));
+      setNotice(automaticEntry
+        ? tr("自动续跑（{attempt}/{limit}）：从上次检查点继续", "Auto-retry ({attempt}/{limit}): resuming from the last checkpoint", automaticEntry)
+        : tr("已接续本轮任务，将核对现有文件并完成剩余工作", "Continuing this turn: checking existing files and finishing the remaining work"));
       return true;
     }
+    if (automaticEntry) return false; // The existing failure and manual retry remain available.
     if (retryResult.reason === "main-status-unavailable") {
       setNotice(tr("暂时无法确认后台任务状态，未中断任何任务。请稍后重试。", "Could not confirm the backend run status. No runs were interrupted; please try again shortly."));
       return false;
@@ -4325,6 +4436,14 @@ function App() {
     return false;
   };
 
+  useLayoutEffect(() => {
+    launchAutomaticRetry.current = (entry) => {
+      const message = taskStore.getSnapshot().find(task => task.id === entry.taskId)
+        ?.messages.find(message => message.id === entry.assistantId);
+      return message ? retryMessage(message, entry) : false;
+    };
+  });
+
   const revertMessageChanges = async (messageId, paths) => {
     if (!window.desktop?.workspace?.revert) {
       setNotice(tr("桌面文件恢复能力不可用", "Desktop file recovery is unavailable"));
@@ -4340,6 +4459,7 @@ function App() {
       setNotice(tr("没有可恢复的文件检查点", "No restorable file checkpoint was found"));
       return [];
     }
+    automaticRetryQueue.current.cancel(task.id);
     const pathSet = new Set(paths);
     const selectedChanges = message.changes.filter(
       (change) => pathSet.has(change.path) && !change.reverted,
@@ -4402,6 +4522,7 @@ function App() {
     anchorMessageId,
     restoreMode = "history",
   ) => {
+    automaticRetryQueue.current.cancel(taskId);
     if (!window.desktop?.workspace?.restoreAnchor) {
       setNotice(
         tr(
@@ -4697,6 +4818,8 @@ function App() {
               onPause={pauseActiveRun}
               onResume={resumeActiveRun}
               onRetry={retryMessage}
+              pendingAutomaticRetry={pendingAutomaticRetries[activeTask.id]}
+              onCancelAutomaticRetry={() => automaticRetryQueue.current.cancel(activeTask.id)}
               onRevert={revertMessageChanges}
               onRestoreAnchor={(messageId) =>
                 restoreTaskToAnchor(activeTask.id, messageId)
@@ -4747,6 +4870,8 @@ function App() {
       {applicationSettingsOpen && (
         <ApplicationSettingsModal
           task={activeTask}
+          automaticRetry={automaticRetry}
+          onAutomaticRetryChange={changeAutomaticRetry}
           onUpdateTask={updateActiveTask}
           onCreateRoleWithAgent={() => {
             if (!activeTask) return;

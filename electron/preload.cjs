@@ -81,6 +81,16 @@ contextBridge.exposeInMainWorld("desktop", {
     setAvatarTemplate: input => ipcRenderer.invoke("account:avatar-template",input),
     signOut: () => ipcRenderer.invoke("account:sign-out"),
   },
+  communityMarket: {
+    list: accountId => ipcRenderer.invoke("community:market-list", accountId),
+    add: input => ipcRenderer.invoke("community:market-add", input),
+    openCommunity: accountId => ipcRenderer.invoke("community:market-open", accountId),
+    uploadOptions: accountId => ipcRenderer.invoke("community:market-upload-options", accountId),
+    uploadPreview: input => ipcRenderer.invoke("community:market-upload-preview", input),
+    submit: input => ipcRenderer.invoke("community:market-submit", input),
+    mine: input => ipcRenderer.invoke("community:market-mine", input),
+    manage: input => ipcRenderer.invoke("community:market-manage", input),
+  },
   tasks: {
     load: async () => {
       await taskSaveTail.catch(() => {});

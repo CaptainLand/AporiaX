@@ -34,7 +34,7 @@ async function installedValue(root,receipt,cache=new Map()){
   if(receipt.kind==='skin')return JSON.stringify(value.themes.find(item=>item.id===receipt.themeId)||null);
   return JSON.stringify(value.profiles.find(item=>item.id===receipt.localId)||null);
 }
-export async function receivedResources(root,owner,apiBaseUrl){
+export async function receivedResources(root,owner,apiBaseUrl,{includeOrigin=false}={}){
   const scope=hash(apiBaseUrl.replace(/\/+$/,'')+'\n'+owner),log=await readReceiveLog(root),items=[],cache=new Map();
   const latest=new Map(log.items.filter(item=>item.scope===scope).map(item=>[item.id,item]));
   for(const receipt of latest.values()){
@@ -48,7 +48,8 @@ export async function receivedResources(root,owner,apiBaseUrl){
         const present=new Set(JSON.parse(installed).map(item=>item.id));
         if(!receipt.localMemberIds.every(id=>present.has(id)))continue;
       }
-      items.push({id:receipt.id,sha256:receipt.sha256,revision:receipt.revision,localStatus:hash(installed)===receipt.storedHash?'saved':'modified'});
+      items.push({id:receipt.id,sha256:receipt.sha256,revision:receipt.revision,localStatus:hash(installed)===receipt.storedHash?'saved':'modified',
+        ...(includeOrigin?{originId:receipt.originId,originRevision:receipt.originRevision,kind:receipt.kind}:{})});
     }catch(error){if(!['ENOENT','COMMUNITY_UNSAFE_RESOURCE','COMMUNITY_INVALID_RESOURCE'].includes(error.code||error.message))throw error;}
   }
   return {items};

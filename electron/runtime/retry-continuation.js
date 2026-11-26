@@ -7,7 +7,7 @@ const invalid = message => Object.assign(new Error(message), { code: 'RETRY_CONT
 // an unavailable checkpoint into a fresh execution of the original instruction.
 export async function loadTaskContinuation(request, load) {
   if (!request?.recoveryRunId) {
-    if (request?.retryMode === 'continue') throw invalid('缺少继续任务的检查点，未从头重做。');
+    if (request?.retryMode === 'continue' || request?.automaticRetry === true) throw invalid('缺少继续任务的检查点，未从头重做。');
     return null;
   }
   const visited = new Set();
@@ -23,6 +23,13 @@ export async function loadTaskContinuation(request, load) {
     if (Boolean(context.workspacePath) !== Boolean(request.workspacePath) ||
       context.workspacePath && root(context.workspacePath) !== root(request.workspacePath))
       throw invalid('检查点属于另一个工作区，未接续。');
+    if (request.automaticRetry === true && (context.resumedByRunId ||
+      !['failed', 'partial'].includes(context.status) || !context.sourceUserId ||
+      context.sourceUserId !== request.sourceUserId || context.providerId !== request.providerId ||
+      context.modelId !== request.modelId || context.contexts?.[id]?.kind !== 'main' ||
+      context.unresolvedOperations?.length)) {
+      throw invalid('无法确认可以安全地自动续跑，未从头重做。');
+    }
     // Repeated retry of a historical card follows its newest continuation,
     // rather than forking from obsolete file versions or replaying old work.
     if (context.resumedByRunId) { id = context.resumedByRunId; continue; }

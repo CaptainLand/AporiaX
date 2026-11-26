@@ -127,6 +127,7 @@ function responseError(provider, payload, status, headers, streaming = false) {
     `${provider.name} API returned HTTP ${status}.`;
   const error = createProviderError(provider, typeof detail === "string" ? detail : JSON.stringify(detail), status);
   error.providerCode = payload?.error?.code || payload?.code || null;
+  error.modelHttpRejection = !streaming;
   if (provider.kind === 'chatgpt-personal') {
     error.retryable = false;
     if (/subscription_sharing_usage_(?:limit_exceeded|unavailable)/.test(String(error.providerCode)))
@@ -419,6 +420,7 @@ export async function callModelProviderOnce({
   const handleAbort = () => controller.abort();
   signal?.addEventListener("abort", handleAbort, { once: true });
   let receivedStreamBytes = false;
+  let receivedHeaders = false;
   let observedUsage = null;
   let receivedContent = "";
   let requestId = cloudTrace?.serverRequestId;
@@ -470,6 +472,7 @@ export async function callModelProviderOnce({
         onEvent?.({ type: `response.cloud.${queue.state}`, ...queue });
       } } : {}),
     }, wire, diagnostic);
+    receivedHeaders = true;
 
     if (provider.kind === "aporia-cloud") {
       requestId = response.headers.get('x-aporia-request-id');
@@ -478,7 +481,11 @@ export async function callModelProviderOnce({
     }
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
-      throw responseError(provider, payload, response.status, response.headers);
+      const error = responseError(provider, payload, response.status, response.headers);
+      if (error.retryWithNewCloudRequest && requestIdentity && requestId !== error.cloudRequestId) {
+        await rememberCloudReceipt(requestIdentity, error.cloudRequestId);
+      }
+      throw error;
     }
     if (!response.body) {
       throw new Error(
@@ -721,6 +728,8 @@ export async function callModelProviderOnce({
     }
     if (error instanceof TypeError) {
       error.retryable = !receivedStreamBytes;
+      error.requestNeverConnected = !receivedHeaders && !replay && !receivedStreamBytes && !observedModelData &&
+        ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "UND_ERR_CONNECT_TIMEOUT"].includes(error.cause?.code);
     }
     throw error;
   } finally {

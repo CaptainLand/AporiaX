@@ -1,0 +1,49 @@
+.community-market { display: grid; gap: 12px; }
+.community-market .application-settings-intro { margin-bottom: 2px; }
+.community-market-toolbar, .community-market-filters, .community-market-meta, .community-market-action {
+  display: flex; align-items: center; gap: 7px;
+}
+.community-market-toolbar { justify-content: space-between; flex-wrap: wrap; }
+.community-market-filters { flex-wrap: wrap; }
+.community-market-filters button, .community-market-action {
+  padding: 6px 10px; min-height: 30px; border: 0; border-radius: var(--radius-md); font: inherit;
+  font-size: var(--text-xs); color: var(--gray-11); background: var(--gray-4); cursor: pointer;
+}
+.community-market button[aria-pressed="true"], .community-market-add:not(:disabled) {
+  color: var(--accent-11); background: color-mix(in srgb, var(--accent-9) 15%, transparent);
+}
+.community-market button:not(:disabled):hover { background: color-mix(in srgb, var(--accent-9) 23%, var(--gray-4)); }
+.community-market button:focus-visible { outline: 2px solid var(--accent-9); outline-offset: 2px; }
+.community-market button:disabled { cursor: default; opacity: .68; }
+.community-market-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px; }
+.community-market-card, .community-market-gate {
+  background: color-mix(in srgb, var(--gray-6) 32%, transparent); border-radius: var(--radius-md); padding: 13px;
+}
+.community-market-card { min-width: 0; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.community-market-card h4 { margin: 1px 0 0; font-size: var(--text-sm); line-height: 1.35; color: var(--gray-12); }
+.community-market-meta, .community-market-author, .community-market-muted, .community-market-order {
+  font-size: var(--text-xs); color: var(--gray-11);
+}
+.community-market-count { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.community-market-summary { font-size: var(--text-xs); line-height: 1.55; color: var(--gray-12); }
+.community-market .community-market-card p, .community-market-order, .community-market-muted, .community-market-error { margin: 0; }
+.community-market-card-footer { padding-top: 4px; margin-top: auto; display: flex; }
+.community-market-gate { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: var(--text-xs); }
+.community-market-error { color: var(--danger, var(--gray-12)); font-size: var(--text-xs); }
+.community-market-toolbar-actions, .community-market-upload-heading { display: flex; align-items: center; gap: 7px; }
+.community-market-upload { display: grid; gap: 10px; min-width: 0; padding: 13px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--gray-6) 32%, transparent); }
+.community-market-upload-heading { justify-content: space-between; flex-wrap: wrap; }
+.community-market-upload-heading strong { font-size: var(--text-sm); }
+.community-market-upload-fields { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.community-market-upload-fields label { font-size: var(--text-xs); display: grid; gap: 4px; }
+.community-market-upload-fields :is(select, input:not([type="checkbox"]), textarea) {
+  min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--gray-7);
+  border-radius: var(--radius-md); background: var(--gray-3); color: var(--gray-12); font: inherit;
+}
+.community-market-upload-fields .community-market-check { display: flex; align-items: flex-start; gap: 7px; }
+.community-market-check input { accent-color: var(--accent-9); flex: 0 0 auto; }
+.community-market-upload-fields details { font-size: var(--text-xs); min-width: 0; }
+.community-market-upload-fields details summary { cursor: pointer; }
+.community-market-upload-fields pre { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--gray-3); }
+.community-market-upload-fields button { justify-self: start; }
+.community-market-mine { display: grid; gap: 10px; min-width: 0; }
