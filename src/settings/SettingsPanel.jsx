@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { createPortal } from "react-dom";
 import { GlobalFilePermissionsPanel } from "./GlobalFilePermissionsPanel.jsx";
 import { taskApprovalMode } from "../state/approval-mode.js";
+import { APPROVE_ALL_MODE } from '../../shared/approval-modes.js';
+import { useTaskApprovalChoice } from './ApproveAllWarning.jsx';
 import { taskExecutionMode } from "../state/execution-mode.js";
 import {
   AlertTriangle,
@@ -40,7 +42,10 @@ export function SettingsPanel({
   const cloudNeedsLogin = cloudProvider && provider.accountStatus !== "authenticated";
   const executionMode = taskExecutionMode(task.executionMode);
   const approvalMode = taskApprovalMode(task.approvalMode);
-  const approvalLabel = approvalMode === "full-auto"
+  const { selectApproval, warning } = useTaskApprovalChoice(task, approvalMode, onUpdateTask);
+  const approvalLabel = approvalMode === APPROVE_ALL_MODE
+    ? tr('一律通过', 'Always allow')
+    : approvalMode === "full-auto"
     ? tr("全自动审批", "Full auto approval")
     : approvalMode === "manual" ? tr("手动审批", "Manual approval") : tr("智能审批", "Smart approval");
   return (
@@ -198,15 +203,18 @@ export function SettingsPanel({
             value={approvalMode}
             ariaLabel={tr("审批模式", "Approval mode")}
             options={[
+              { value: APPROVE_ALL_MODE, label: tr('一律通过', 'Always') },
               { value: "full-auto", label: tr("全自动", "Full auto") },
               { value: "smart-auto", label: tr("智能", "Smart") },
               { value: "manual", label: tr("手动", "Manual") },
             ]}
-            onChange={(approvalMode) => onUpdateTask({ approvalMode })}
+            onChange={selectApproval}
           />
           <span className="approval-mode-description">
-            {approvalMode === "full-auto"
-              ? tr("全自动 · 高权限，无需首次批准。命令、脚本、文件读取及外部操作直接执行。", "Full auto · High privilege, without first-use approval. Commands, scripts, file reads and external actions run directly.")
+            {approvalMode === APPROVE_ALL_MODE
+              ? tr('常规操作自动执行；需额外授权时跳过，并在 Witness 说明。', 'Ordinary actions run automatically; protected actions are skipped with a reason in Witness.')
+              : approvalMode === "full-auto"
+              ? tr("常规操作自动执行；需额外授权时询问。", "Ordinary actions run automatically; protected actions prompt for approval.")
               : approvalMode === "smart-auto"
                 ? tr("智能 · 自动放行已识别的低风险操作，其他操作请求确认。", "Smart · Automatically approves recognized low-risk actions; other actions ask for confirmation.")
                 : tr("手动 · 需要审批的操作逐次请求确认。", "Manual · Actions requiring approval ask for confirmation each time.")}
@@ -268,6 +276,7 @@ export function SettingsPanel({
         </p>
       </section>
       {filePermissionsOpen && createPortal(<GlobalFilePermissionsPanel onClose={() => setFilePermissionsOpen(false)} />, document.body)}
+      {warning}
     </aside>
   );
 }

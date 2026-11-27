@@ -14,7 +14,8 @@ try {
   assert.equal(await roles.locator('.pr-editor').count(), 0, 'gallery first, editor is opt-in');
   assert.equal(await roles.getByRole('navigation', { name: '角色列表' }).getByRole('button').count(), 5);
   assert.equal(await roles.locator('.pr-robot').count(), 5);
-  await page.waitForFunction(()=>[...document.querySelectorAll('.professional-agents .agent-avatar img')].length===1&&[...document.querySelectorAll('.professional-agents .agent-avatar img')].every(image=>image.complete&&image.naturalWidth>0));
+  await page.waitForFunction(()=>document.querySelectorAll('.professional-agents .agent-avatar[data-agent-portrait="solid"]').length===1);
+  assert.equal(await page.locator('.professional-agents .agent-avatar img').count(), 0, 'delivery avatar is a solid color');
   await roles.getByRole('button', { name: '探奇', exact: true }).click();
   assert.equal(await roles.getByRole('button', { name: '删除角色', exact: true }).count(), 0, 'no deletion for default roles');
   assert.equal(await roles.getByRole('button', { name: '恢复角色默认', exact: true }).count(), 1);

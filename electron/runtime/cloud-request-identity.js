@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { runtimeRecoveryCheckpoint, runtimeRecoveryContext, runtimeRequestTrace, saveRuntimeCheckpoint, saveRuntimeContext } from "./durable-run.js";
+import { cloudSupportsRequestDeduplication } from '../../shared/cloud-auth-response.js';
 
 // One identity per logical inference, not per provider invocation. Async-local
 // isolation prevents concurrently running Builders from borrowing Main's key.
@@ -67,7 +68,7 @@ async function readCloudRecovery(state, provider, path, signal, timeoutMs) {
     const timeout = AbortSignal.timeout(timeoutMs);
     return await provider.authenticatedFetch(path, { method: 'GET', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   } catch (error) {
-    if (signal?.aborted) throw error;
+    if (signal?.aborted || error?.code === 'DESKTOP_ACCOUNT_CHANGED') throw error;
     throw reconcileError(state, error?.message === 'DESKTOP_ACCOUNT_SIGNED_OUT'
       ? '请重新登录 Aporia Cloud 后再继续核对原请求' : '暂时无法读取原请求的状态或回复，请稍后继续');
   }
@@ -115,7 +116,7 @@ export function cloudRequestFingerprint(provider, body) {
   return createHash("sha256").update(JSON.stringify(canonical({ provider: provider.id,
     endpoint: provider.baseUrl, body }))).digest("hex");
 }
-export async function prepareCloudRequest(state, provider, body, requestTrace, signal) {
+export async function prepareCloudRequest(state, provider, body, requestTrace, signal, { allowDispatch = true } = {}) {
   const fingerprint = cloudRequestFingerprint(provider, body);
   const binding = providerBinding(provider);
   const differs = () => Boolean(state.identity.fingerprint && state.identity.fingerprint !== fingerprint);
@@ -151,14 +152,16 @@ export async function prepareCloudRequest(state, provider, body, requestTrace, s
           return {trace:identity,replay,recoveredForFingerprint};
         await replay.body?.cancel();
       }
-      if (matchesNoDispatch(receipt)) await replace(requestId);
+      if (allowDispatch && matchesNoDispatch(receipt)) await replace(requestId);
       else throw reconcileError(state, `服务端状态为 ${receipt.usageState || "未知"}，无法重放原输出`);
     } else {
       await response.body?.cancel();
-      if (response.status === 404 && identity.preDispatchAuthRejected) await replace(null);
+      if (allowDispatch && response.status === 404 && identity.preDispatchAuthRejected) await replace(null);
       else if ([401, 403].includes(response.status)) throw reconcileError(state, '请重新登录 Aporia Cloud 后再继续核对原请求');
       else throw reconcileError(state, `暂时无法查询原请求（HTTP ${response.status}）`);
     }
+  } else if (!allowDispatch) {
+    throw reconcileError(state, '暂时没有可取回的原请求回复');
   } else if (identity.status === 'sent' && identity.preDispatchAuthRejected) {
     await replace(null);
   } else if (identity.status === "sent") {
@@ -171,7 +174,7 @@ export async function prepareCloudRequest(state, provider, body, requestTrace, s
       throw reconcileError(state, "服务端尚未确认支持请求去重");
     }
     const capability = await parseCloudRecovery(state, response);
-    if (capability?.protocolVersion !== 1 || capability.modelGateway?.idempotency !== "reject-duplicate-no-replay")
+    if (!cloudSupportsRequestDeduplication(capability))
       throw reconcileError(state, "服务端尚未确认支持请求去重");
   }
   identity.status = "sent";

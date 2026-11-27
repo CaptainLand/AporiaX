@@ -16,30 +16,41 @@ try {
   const workspace = join(root, 'project'); await mkdir(workspace);
   await writeFile(join(workspace, 'note.txt'), 'FIXTURE_NOTE');
   for (const scenario of ['handoff', 'denied', 'disabled']) {
-    let main = 0, child = 0;
+    let main = 0, child = 0, discovered = false;
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     globalThis.fetch = async (_url, options) => {
       const body = JSON.parse(options.body), text = body.messages.map(message => message.content || '').join('\n');
       if (text.includes('You are the AporiaX explore subagent.')) {
         child++;
         assert.match(text, /CONFIRMED_INTERFACE/);
+        if (scenario === 'disabled') {
+          assert(!body.tools.some(tool => tool.function.name === 'read_skill_resource'));
+          if (child === 1) return call('disabled-skill', 'read_skill_resource', { skill: 'fixture', path: 'SKILL.md' });
+          assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /not available|not enabled|denied/i);
+          return sse({ content: 'Skills disabled; no workflow code executed.' });
+        }
         assert(body.tools.some(tool => tool.function.name === 'read_skill_resource'));
-        assert(!body.tools.some(tool => ['run_command', 'delegate_subagent', 'verify_project'].includes(tool.function.name)));
+        assert(!body.tools.some(tool => ['run_command', 'delegate_subagent', 'verify_project'].includes(tool.function.name)), 'parent read-only permission remains the ceiling');
         if (child === 1) return call('skill', 'read_skill_resource', { skill: 'fixture', path: 'SKILL.md' });
         assert.match(text, /HANDOFF_SKILL_BODY/);
         return sse({ content: 'Relevant workflow read; no code was executed.' });
       }
+      if (!discovered) {
+        discovered = true;
+        assert(!body.tools.some(tool => tool.function.name === 'delegate_subagent'));
+        return call('discover', 'enable_task_tools', { groups: scenario === 'disabled' ? ['agents'] : ['agents','extensions'] });
+      }
       main++;
-      assert.match(text, /Delegate useful independent blocks early/);
+      assert.match(text, /Delegate only useful independent work/);
       if (main === 1 && scenario !== 'denied') return call('parent-skill', 'read_skill_resource', { skill: 'fixture', path: 'SKILL.md' });
       if (main === (scenario === 'denied' ? 1 : 2)) return call('delegate', 'delegate_subagent', {
         role: 'explore', task: 'Read the relevant workflow', skills: ['fixture'], context: 'CONFIRMED_INTERFACE: read only; report uncertainty.', background: false,
       });
-      if (scenario === 'handoff' && main === 3) return call('accept', 'review_subagent_result', { agent_id: `${scenario}-sub-1`, report_id: `${scenario}-sub-1:1`, decision: 'accepted', reason: 'Only the granted workflow was read.', evidence_ids: [] });
-      if (scenario !== 'handoff') {
+      if (scenario === 'disabled' && main === 3) {
         const last = body.messages.filter(message => message.role === 'tool').at(-1)?.content || '';
-        assert.match(last, /DELEGATED_SKILL_NOT_GRANTED|Permission denied|已禁用|未授予/);
+        assert.match(last, /Skills disabled/);
       }
+      if (main === (scenario === 'denied' ? 2 : 3)) return call('accept', 'review_subagent_result', { agent_id: `${scenario}-sub-1`, report_id: `${scenario}-sub-1:1`, decision: 'accepted', reason: 'Workflow availability checked without granting execution permissions.', evidence_ids: [] });
       return sse({ content: 'Handoff inspection complete.' });
     };
     try {
@@ -49,8 +60,8 @@ try {
         provider: { id: 'fixture', name: 'Fixture', vendor: 'openai', baseUrl: 'https://test.invalid/v1', apiKey: 'mock-only', models: [{ id: 'test', supportsTools: true, contextWindow: 128000 }] }, modelId: 'test',
         messages: [{ role: 'user', content: 'Inspect the workflow and current interface without changing files.' }] });
       assert.equal(result.status, 'completed', result.content);
-      assert.equal(child, scenario === 'handoff' ? 2 : 0);
-      assert.equal(result.subagents.length, scenario === 'handoff' ? 1 : 0);
+      assert.equal(child, 2);
+      assert.equal(result.subagents.length, 1);
       console.log(`PASS actual Main/worker mocked handoff: ${scenario}`);
     } finally { clearTimeout(timer); controller.abort(); }
   }
@@ -66,7 +77,7 @@ try {
     if (text.includes('You are the AporiaX builder subagent.')) {
       worker++;
       const names = body.tools.map(tool => tool.function.name);
-      assert(names.includes('verify_project')); assert(!names.includes('run_command')); assert(!names.includes('delegate_subagent'));
+      assert(names.includes('verify_project')); assert(names.includes('run_command')); assert(!names.includes('delegate_subagent'));
       if (worker === 1) return call('bad-code', 'write_file', { path: 'module.mjs', content: 'export const = 1;' });
       if (worker === 2) return call('check-invalid', 'verify_project', { kind: 'node_check', path: 'module.mjs' });
       if (worker === 3) {
@@ -79,8 +90,9 @@ try {
       assert.equal(receipt.exitCode, 0); assert.equal(receipt.parseOnly, true);
       return call('done', 'finish_subagent', { status: 'completed', summary: 'Implemented and fixed syntax; Node parse-only check passed. No runtime/browser test.' });
     }
-    if (++main === 1) return call('delegate-builder', 'delegate_subagent', { role: 'builder', task: 'Implement module.mjs and check syntax.', write_scopes: ['module.mjs'] });
-    if (main === 2) return call('accept-builder', 'review_subagent_result', { agent_id: 'builder-selfcheck-sub-1', report_id: 'builder-selfcheck-sub-1:1', decision: 'accepted', reason: 'Requested syntax check passed after the fix and changes were integrated; no runtime verification claimed.', evidence_ids: ['builder-selfcheck-sub-1:1:check-valid'] });
+    if (++main === 1) return call('discover', 'enable_task_tools', { groups: ['agents'] });
+    if (main === 2) return call('delegate-builder', 'delegate_subagent', { role: 'builder', task: 'Implement module.mjs and check syntax.', write_scopes: ['module.mjs'] });
+    if (main === 3) return call('accept-builder', 'review_subagent_result', { agent_id: 'builder-selfcheck-sub-1', report_id: 'builder-selfcheck-sub-1:1', decision: 'accepted', reason: 'Requested syntax check passed after the fix and changes were integrated; no runtime verification claimed.', evidence_ids: ['builder-selfcheck-sub-1:1:check-valid'] });
     return sse({ content: 'Module implemented; syntax checked, no runtime tests.' });
   };
   try {

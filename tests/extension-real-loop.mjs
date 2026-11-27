@@ -86,7 +86,7 @@ try {
     };
     const resumed = await runHarness({ runId: "restored-" + enabled, workspacePath: root, provider, modelId: "test", permission: "read-only", mcpServers: [initialServer],
       messages: [{ role: "user", content: "Continue @mcp:alpha original task." }], recoveryContext: { runId: "real-extension-loop", contexts } });
-    assert.equal(resumed.status, "completed", resumed.content); assert.equal(resumedRequests, 1); assert.equal(resumed.steps.length, 0);
+    assert.equal(resumed.status, 'completed', resumed.content); assert.equal(resumedRequests, 1); assert.equal(resumed.steps.length, result.steps.length, 'retain confirmed tool history without replay');
   }
   // Global installed Skills must remain callable without a project workspace.
   count = 0;

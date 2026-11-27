@@ -8,6 +8,7 @@ import {
   createTaskHistoryStore,
 } from "../electron/task-history-store.js";
 import { BLOB_SCHEME, attachmentImageSrc } from "../src/attachments.js";
+import { dismissStoppedRunNotice } from '../src/state/task-outcome-view.js';
 
 assert.equal(MAX_TASK_JSON_BYTES, 200 * 1024 * 1024);
 
@@ -123,6 +124,14 @@ try {
     (task) => task.id === "task-small",
   );
   assert.equal(stillSmall.messages.length, 1);
+
+  const stopped = { id: 'stopped', role: 'assistant', status: 'interrupted', runId: 'stopped-run',
+    anchor: { id: 'anchor' }, changes: [{ path: 'test.html', created: true }], witness: { status: 'interrupted' } };
+  const stoppedTask = { id: 'task-stopped', messages: [dismissStoppedRunNotice(stopped)] };
+  assert.equal((await store.saveTasks([small, doc, stoppedTask])).ok, true);
+  const reloadedTasks = await createTaskHistoryStore(root, { maxTaskJsonBytes: 8_000 }).loadTasks();
+  const restored = reloadedTasks.find(task => task.id === stoppedTask.id).messages[0];
+  assert.deepEqual(restored, { ...stopped, stoppedNoticeDismissed: true, attachments: [] });
 } finally {
   await rm(root, { recursive: true, force: true });
 }

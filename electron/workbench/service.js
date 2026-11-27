@@ -180,20 +180,23 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
         resolve(r.workspacePath || ".") === root,
     );
   }
-  async function openHtmlPreview(context, path, { present = false } = {}) {
-    const preview = await createHtmlPreview(context.workspacePath, path);
+  async function openHtmlPreview(context, path, { present = false, automatic = false } = {}) {
+    const preview = await createHtmlPreview(context.workspacePath, path, { automatic });
     let created;
     try {
-      const existing = [...resources.values()].find(item =>
+      const existing = !automatic && [...resources.values()].find(item =>
         scope(item, context) && !item.closed && item.owner === "user" && item.htmlPreviewPath === preview.path);
-      const resource = existing || (created = browser(context, "user", true));
+      const resource = existing || (created = browser(context, automatic ? 'agent' : 'user', true));
       if (existing) await preview.close();
       else {
         resource.htmlPreviewPath = preview.path;
         resource.htmlPreviewUrl = preview.url;
         resource.wc.once("destroyed", () => { void preview.close(); });
       }
-      await resource.userNavigate(resource.htmlPreviewUrl);
+      if (automatic) {
+        resource.automaticPreviewUrl = resource.htmlPreviewUrl;
+        await resource.open({ url: resource.htmlPreviewUrl });
+      } else await resource.userNavigate(resource.htmlPreviewUrl);
       if (present) {
         resource.present = true;
         resource.presentationId = randomUUID();
@@ -221,6 +224,8 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
   function acquire(context) {
     activeRuns.add(context);
     const ownedBrowsers = new Map();
+    const runBrowsers = new Set();
+    const automaticPreviews = new Set();
     const borrowedBrowsers = new Set();
     const keepBrowser = (r, aborted = false) => borrowedBrowsers.has(r) || r.owner === "user" || r.owner === "handoff" ||
       Boolean(r.keepPreference ?? (r.keepAlive || (!aborted && r.delivered)));
@@ -231,13 +236,25 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       if (r) borrowedBrowsers.add(r);
       if (!r) r = browser(context, "agent", ownerId !== 'main');
       ownedBrowsers.set(ownerId, r);
+      runBrowsers.add(r);
       return r;
     };
-    const facade = (ownerId) => Object.fromEntries(["open", "snapshot", "click", "fill", "press", "select", "upload", "screenshot", "console", "network", "close"].map((method) => [method, async (...args) => {
+    const facade = (ownerId) => ({ ...Object.fromEntries(["open", "snapshot", "click", "fill", "press", "select", "upload", "screenshot", "console", "network", "close"].map((method) => [method, async (...args) => {
       await browserProfiles.ready;
-      const r = lazy(ownerId), result = await r[method](...args);
+      let r = lazy(ownerId);
+      if (method === 'open' && r.automaticPreviewUrl && !r.containsAutomaticPreviewUrl(args[0]?.url)) {
+        r = browser(context, 'agent', ownerId !== 'main');
+        ownedBrowsers.set(ownerId, r); runBrowsers.add(r);
+      }
+      const result = await r[method](...args);
       return result?.lifecycle ? { ...result, lifecycle: { ...result.lifecycle, survivesTask: keepBrowser(r) } } : result;
-    }]));
+    }])),
+    bindAutomaticPreviewAction(toolName) {
+      const method = { browser_click: 'click', browser_fill: 'fill', browser_select: 'select', browser_press: 'press' }[toolName];
+      const r = ownedBrowsers.get(ownerId);
+      if (!method || released || !automaticPreviews.has(r) || r.closed || r.owner !== 'agent' || !r.containsAutomaticPreviewUrl(r.wc.getURL())) return null;
+      return input => r[method](input, { automatic: true });
+    } });
     const browserRuntime = { ...facade(context.ownerId || 'main'), forOwner: facade };
     let released = false;
     const manager = createPersistentProcessManager({ emit: (event) => {
@@ -297,7 +314,15 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
       processManager: manager,
       present: {
         file: presentFile,
-        html: path => openHtmlPreview(context, path, { present: true }),
+        async html(path, { automaticPreview = false } = {}) {
+          const result = await openHtmlPreview(context, path, { present: true, automatic: automaticPreview });
+          if (automaticPreview) {
+            const r = resources.get(result.id);
+            automaticPreviews.add(r); runBrowsers.add(r); ownedBrowsers.set(context.ownerId || 'main', r);
+            r.delivered = true;
+          }
+          return result;
+        },
         process: presentProcess,
         browser: presentBrowsers,
         live() {
@@ -316,7 +341,7 @@ export function createWorkbenchService({ getWindow, confirmExternalRead = async 
         released = true;
         const failures = [];
         const settle = async (operation) => { try { await operation(); } catch (error) { failures.push(error); } };
-        for (const r of ownedBrowsers.values()) {
+        for (const r of runBrowsers) {
           if (r.closed) continue;
           await settle(async () => {
             if (keepBrowser(r, aborted)) await r.takeover();

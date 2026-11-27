@@ -38,6 +38,8 @@ import { HarnessScheduler } from "./harness/scheduler.js";
 import { scopesOverlap, normalizeBuilderScopes } from "./harness/scope-leases.js";
 import { createTaskGraph } from "./harness/task-graph.js";
 import { MAX_BUILDERS } from "./harness/builder-count.js";
+import { APPROVE_ALL_MODE } from '../shared/approval-modes.js';
+import { createFullAutoApproval } from './runtime/full-auto-approval.js';
 const MAX_PLANNER_RESULT_CHARS = 32_000;
 const FINAL_LIFECYCLE_EVENTS = new Set([
   "turn.started",
@@ -557,6 +559,8 @@ async function runOrchestratedHarness(options) {
     witness.observe(event);
     options.onEvent?.(event);
   };
+  const orchestrationApproval = options.approvalMode === APPROVE_ALL_MODE && !currentLocalControlPolicy() && !options.temporaryChat && !options.memberRole && (options.acceptanceScope ?? 'task') === 'task'
+    ? createFullAutoApproval({ approvalMode: APPROVE_ALL_MODE, requestApproval: options.requestApproval, emit }) : options.requestApproval;
 
   const priorAnswers = options.clarification?.ownerRunId === options.runId
     ? options.clarification.snapshot().filter(question => question.status === "answered") : [];
@@ -782,7 +786,7 @@ async function runOrchestratedHarness(options) {
                 const session = options.recoveryContext?.contexts?.[previousAgentId]?.session || {};
                 const integrated = await runIsolatedBuilder({
                   agentId, input: { ...node, role: "builder", scope: node.writeScopes }, session,
-                  workspaceRoot, signal: options.signal, requestApproval: options.requestApproval,
+                  workspaceRoot, signal: options.signal, requestApproval: orchestrationApproval,
                   emit: (event) => { if (!event.type.startsWith("subagent.")) orchestrationEvents.emit(event); },
                   onBuilderMerge: async (value) => { merged = value; },
                 }, async ({ workspaceRoot: childWorkspaceRoot, snapshotProvisional }) => {

@@ -9,8 +9,10 @@ try {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + 'tests/fixtures/agent-artwork.html');
-  await page.waitForFunction(() => window.artworkOffice && [...document.querySelectorAll('.agent-avatar img')].length === 7 && [...document.querySelectorAll('.agent-avatar img')].every(image => image.complete && image.naturalWidth > 0));
-  await page.locator('.agent-avatar img').evaluateAll(images => Promise.all(images.map(image => image.decode())));
+  await page.waitForFunction(() => window.artworkOffice && document.querySelectorAll('.agent-avatar[data-agent-portrait="solid"]').length === 7);
+  const avatars = await page.locator('.agent-avatar[data-agent-portrait="solid"]').evaluateAll(items => items.map(item => ({ role: item.dataset.avatar, color: getComputedStyle(item).backgroundColor, children: item.childElementCount })));
+  const colors = { main:'rgb(32, 173, 235)', explore:'rgb(22, 114, 230)', review:'rgb(112, 51, 79)', verify:'rgb(232, 197, 35)', builder:'rgb(237, 101, 93)', curator:'rgb(22, 121, 128)' };
+  for (const avatar of avatars) { assert.equal(avatar.color, colors[avatar.role]); assert.equal(avatar.children, 0); }
   assert.equal(await page.locator('.ao-scene').evaluate(element => getComputedStyle(element).opacity), '1', 'Visual QA must capture the visible scene');
   const models = await page.evaluate(() => window.artworkOffice.diagnostics().agentModels);
   assert.equal(models.lead, 'aporiax-folded-wing-v1');
@@ -35,5 +37,5 @@ try {
   await page.evaluate(() => window.artworkOffice.destroy());
   assert.equal(await page.locator('.ao-scene canvas, .agent-label, .sleep-bubble').count(), 0, 'Scene and overlays disposed');
   assert.deepEqual(errors, []);
-  console.log('PASS approved local portraits + real WebGL: all six distinct models, working/sleeping/offline/waiting/attention/error, day/night, narrow viewport and disposal.');
+  console.log('PASS solid agent avatars + real WebGL: six colors, unchanged 3D models, working/sleeping/offline/waiting/attention/error, day/night, narrow viewport and disposal.');
 } finally { await browser.close(); await server.close(); }

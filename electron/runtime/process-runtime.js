@@ -68,7 +68,8 @@ function publicState(record) {
     startedAt: record.startedAt,
     finishedAt: record.finishedAt,
     requestedExecutionMode: record.requestedExecutionMode,
-    executionBackend: "host",
+    executionBackend: record.executionBackend,
+    ...(record.executionBackend === 'local-workspace' ? { writeback: false, projectCwd: record.projectCwd } : {}),
     cursor: record.baseOffset + record.output.length,
   };
 }
@@ -102,7 +103,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
   }
 
   const api = {
-    start({ command, cwd }) {
+    start({ command, cwd, snapshot = null, executionMode = null, projectCwd = cwd }) {
       const normalized = String(command || "").trim();
       if (!normalized || normalized.length > 2_000) {
         throw new Error("Persistent command must be between 1 and 2000 characters.");
@@ -111,15 +112,16 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
       if (activeCount >= MAX_PROCESSES) {
         throw new Error(`At most ${MAX_PROCESSES} persistent processes may run in one task.`);
       }
-      const requestedExecutionMode = currentExecutionMode() || "safe";
+      const requestedExecutionMode = currentExecutionMode() || executionMode || "direct";
       if (requestedExecutionMode === "isolated") {
         throw new Error(
           "Persistent terminal processes do not silently fall back to Host in Isolated mode. Use a bounded run_command or switch this task to Direct/Safe mode.",
         );
       }
+      if (requestedExecutionMode === 'safe' && !snapshot) throw new Error('Safe previews require a temporary workspace copy; no host fallback is allowed.');
       const shell = shellCommand(normalized);
       const child = spawn(shell.program, shell.args, {
-        cwd,
+        cwd: snapshot?.cwd || cwd,
         env: createHostFallbackEnvironment(process.env, "persistent-host"),
         shell: false,
         windowsVerbatimArguments: process.platform === "win32",
@@ -131,7 +133,9 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         id: `proc_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
         child,
         command: normalized,
-        cwd,
+        cwd: snapshot?.cwd || cwd,
+        projectCwd,
+        executionBackend: snapshot ? 'local-workspace' : 'host',
         status: "running",
         exitCode: null,
         signal: null,
@@ -172,6 +176,7 @@ export function createPersistentProcessManager({ emit = () => {} } = {}) {
         disposeChildStreams(child);
         notify(record);
         emit({ type: "process.exited", ...publicState(record) });
+        void snapshot?.close().catch(error => emit({ type: 'process.output', processId: record.id, stream: 'stderr', text: `Safe preview cleanup failed: ${error.message}` }));
       });
       emit({ type: "process.started", ...publicState(record) });
       return publicState(record);

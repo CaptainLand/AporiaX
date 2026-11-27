@@ -1,0 +1,21 @@
+.approve-all-warning {
+  box-sizing: border-box;
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  margin: auto;
+  padding: 22px;
+  border: 1px solid var(--gray-6);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  color: var(--text-1);
+  box-shadow: var(--shadow-lg);
+}
+.approve-all-warning::backdrop { background: rgb(0 0 0 / .42); }
+.approve-all-warning-title { display: flex; align-items: center; gap: 9px; color: var(--amber-11); }
+.approve-all-warning .approve-all-warning-title h3 { margin: 0; color: var(--text-1); font-size: var(--text-lg); }
+.approve-all-warning p { margin: 12px 0 0; color: var(--text-2); font-size: var(--text-sm); line-height: 1.6; }
+.approve-all-warning-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.approve-all-warning-actions button { padding: 8px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--gray-3); color: var(--text-1); font: inherit; font-size: var(--text-sm); }
+.approve-all-warning-actions button:last-child { border-color: var(--amber-7); background: var(--amber-3); color: var(--amber-11); }
+.approve-all-warning-actions button:focus-visible { outline: 2px solid var(--accent-9); outline-offset: 2px; }

@@ -25,7 +25,7 @@ export function resolveToolExecutionPermission({
     sandboxStatus,
   });
   const commandPolicy =
-    toolName === "run_command"
+    ["run_command", "start_process"].includes(toolName)
       ? classifyCommandPermission(input?.command, { executionMode: mode })
       : null;
   const denied =

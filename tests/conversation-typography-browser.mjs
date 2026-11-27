@@ -16,6 +16,9 @@ try {
   const page = await browser.newPage({ viewport: { width: 960, height: 1000 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { window.fixtureCopiedCode = text; } } });
+  });
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/conversation-typography.html`);
   const body = page.locator('.assistant-message-content > .markdown-message');
   await body.locator('h6').waitFor();
@@ -30,13 +33,13 @@ try {
   const contents = await body.textContent();
   const style = async locator => locator.evaluate(element => {
     const s = getComputedStyle(element);
-    return Object.fromEntries(['fontSize', 'fontWeight', 'fontFamily', 'lineHeight', 'letterSpacing', 'marginTop', 'marginBottom', 'paddingLeft', 'paddingRight', 'borderTopWidth', 'color', 'backgroundColor', 'boxShadow', 'display', 'listStylePosition'].map(key => [key, s[key]]));
+    return Object.fromEntries(['fontSize', 'fontWeight', 'fontFamily', 'lineHeight', 'letterSpacing', 'marginTop', 'marginBottom', 'paddingLeft', 'paddingRight', 'borderTopWidth', 'borderBottomWidth', 'borderRadius', 'color', 'backgroundColor', 'boxShadow', 'display', 'listStylePosition'].map(key => [key, s[key]]));
   });
   const unaffected = async () => ({
     progress: await style(page.locator('.assistant-progress-entry .markdown-message')),
     progressCode: await style(page.locator('.assistant-progress-entry code')),
     heading: await style(page.locator('.assistant-message-heading strong')),
-    user: await style(page.locator('.user-message')),
+    user: await style(page.locator('.user-message .message-bubble').first()),
     code: await style(body.locator('.code-block code')),
     codeSurface: await style(body.locator('.code-block')),
     table: await style(body.locator('table')),
@@ -45,7 +48,7 @@ try {
   const snapshots = {};
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-    for (const width of [960, 600]) {
+    for (const width of [960, 600, 320]) {
       await page.setViewportSize({ width, height: 1000 });
       const key = `${theme}-${width}`;
       const metrics = { body: await style(body), paragraph: await style(body.locator(':scope > p').first()),
@@ -55,17 +58,20 @@ try {
       snapshots[key] = await unaffected();
       if (!baseline) {
         assert.equal(metrics.body.fontSize, '14px', key);
+        assert.equal(metrics.body.fontWeight, '500', 'reply text is slightly heavier');
+        assert.equal(metrics.paragraph.fontWeight, '500', 'paragraphs inherit the slightly heavier weight');
+        assert.equal(metrics.item.fontWeight, '500', 'list items inherit the slightly heavier weight');
         assert.equal(metrics.body.lineHeight, '24.5px', key);
         assert(Math.abs(parseFloat(metrics.body.letterSpacing) + 0.14) < 0.001, 'body tracking is subtly tighter');
         assert.equal(metrics.paragraph.marginBottom, '10px', key);
         for (const [i, heading] of metrics.headings.entries()) {
-          assert.equal(heading.fontSize, i < 2 ? '17px' : '14px', `${key}/h${i + 1}`);
-          assert(Math.abs(parseFloat(heading.letterSpacing) + (i < 2 ? 0.17 : 0.14)) < 0.001, 'heading tracking matches the compact body');
+          assert.equal(heading.fontSize, '14px', `${key}/h${i + 1}`);
+          assert(Math.abs(parseFloat(heading.letterSpacing) + 0.14) < 0.001, 'heading tracking matches the body');
           assert.equal(heading.fontWeight, '600');
           assert.equal(heading.borderTopWidth, '0px');
           assert.equal(heading.backgroundColor, 'rgba(0, 0, 0, 0)');
           assert.equal(heading.paddingLeft, '0px');
-          if (i < 2) { assert.equal(heading.marginTop, '22px'); assert.equal(heading.marginBottom, '10px'); }
+          assert.equal(heading.marginTop, '14px'); assert.equal(heading.marginBottom, '6px');
         }
         assert.equal(metrics.list.paddingLeft, '22px');
         assert.equal(metrics.list.listStylePosition, 'outside');
@@ -95,14 +101,43 @@ try {
           assert.notEqual(metrics.paragraph.color, metrics.body.color, 'headings and other UI keep their original colors');
         }
         assert.equal(metrics.inline.borderTopWidth, '0px');
-        assert.equal(metrics.inline.fontSize, '12.6px');
+        assert(Math.abs(parseFloat(metrics.inline.fontSize) - 12.6) < 0.01, 'inline code scales with body text');
         assert.equal(metrics.inline.letterSpacing, 'normal', 'inline code keeps its monospaced tracking');
         assert.equal(metrics.inline.paddingLeft, '3px');
         assert.equal(metrics.inline.paddingRight, '3px');
-        assert.equal(snapshots[key].code.fontSize, '13px', 'fenced code size is unchanged');
-        assert.equal(snapshots[key].codeSurface.borderTopWidth, '1px', 'fenced code surface is unchanged');
-        assert.equal(snapshots[key].progress.fontSize, '14px', 'progress uses the compact reply typography');
+        assert(Math.abs(parseFloat(snapshots[key].code.fontSize) - 13.585) < 0.01, 'fenced code is 95% of its previous size');
+        const toolbar = await style(body.locator('.code-block-toolbar'));
+        const preformatted = body.locator('.code-block pre');
+        assert.equal(snapshots[key].codeSurface.borderTopWidth, '0px', 'fenced code has no outline');
+        assert.equal(snapshots[key].codeSurface.backgroundColor, snapshots[key].table.backgroundColor, 'code uses the same surface as tables');
+        assert.equal(snapshots[key].codeSurface.borderRadius, snapshots[key].table.borderRadius, 'code and tables use the same corner radius');
+        assert.equal(toolbar.backgroundColor, 'rgba(0, 0, 0, 0)', 'the header shares the code surface');
+        assert.equal(toolbar.borderBottomWidth, '0px', 'there is no prominent header separator');
+        assert.equal(toolbar.paddingLeft, (await style(preformatted)).paddingLeft, 'language label and code align');
+        if (width === 320) {
+          assert(await preformatted.evaluate(element => {
+            element.scrollLeft = element.scrollWidth;
+            const scrollable = element.scrollLeft > 0;
+            element.scrollLeft = 0;
+            return scrollable;
+          }), 'long PowerShell lines scroll horizontally inside the code block');
+        }
+        assert.equal(snapshots[key].progress.fontSize, '14px', 'progress uses the reply typography');
+        assert.equal(snapshots[key].progress.fontWeight, '500', 'progress uses the reply weight');
         assert.equal(snapshots[key].progress.lineHeight, '24.5px');
+        assert.equal(snapshots[key].user.fontSize, '14px', 'user message size matches the original bubble style');
+        assert.equal(snapshots[key].user.fontWeight, '500', 'user message text is slightly heavier');
+        assert.equal(snapshots[key].user.lineHeight, '22.4px', 'user message line spacing matches the original bubble style');
+        for (const bubble of await page.locator('.user-message .message-bubble').all()) {
+          const appearance = await style(bubble);
+          assert.equal(appearance.borderRadius, '22px', 'all four bubble corners have the same radius');
+          assert.equal(appearance.borderTopWidth, '0px', 'no outline around the user bubble');
+          assert.equal(appearance.borderBottomWidth, '0px', 'no outline at the bottom either');
+          assert.equal(appearance.boxShadow, 'none', 'no simulated outline');
+          assert(await bubble.evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'the user bubble wraps content without horizontal overflow');
+        }
+        assert.equal(snapshots[key].table.lineHeight, '18.2px', 'table line spacing is compact');
+        assert.equal(snapshots[key].code.lineHeight, '19.5px', 'code line spacing is compact');
         assert.equal(snapshots[key].progressCode.borderTopWidth, '0px', 'progress inline code uses the same quiet style');
         assert.equal(snapshots[key].progressCode.paddingLeft, '3px');
         assert.equal(await page.locator('.assistant-progress-entry h3').evaluate(el => getComputedStyle(el).fontSize), '14px');
@@ -116,11 +151,36 @@ try {
         assert(alignment.lines.length > 1, 'fixture wraps the long list entry');
         for (const line of alignment.lines.slice(1)) assert(Math.abs(line.x - alignment.left) < 1, 'wrapped lines align with the text, not the marker');
         assert.equal(await body.textContent(), contents, 'styles do not alter the model output');
+        const table = body.locator('.conversation-table-scroll');
+        assert.equal(await table.getAttribute('tabindex'), '0', 'scrolling table is keyboard focusable');
+        for (const header of await table.locator('th').all()) {
+          assert.equal(await header.evaluate(element => {
+            const range = document.createRange(); range.selectNodeContents(element);
+            return range.getClientRects().length;
+          }), 1, 'column headers stay on one line');
+        }
+        if (width === 320) {
+          assert(await table.evaluate(element => element.scrollWidth > element.clientWidth), 'narrow table scrolls within its container');
+          await table.focus();
+          await page.keyboard.press('ArrowRight');
+          await page.waitForTimeout(150);
+          assert(await table.evaluate(element => element.scrollLeft > 0), 'keyboard can scroll the table');
+        }
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no viewport overflow');
       }
       await page.locator('.assistant-message').screenshot({ path: `.tmp/qa/conversation-typography/${baseline ? 'before' : built ? 'built' : 'after'}-${key}.png` });
+      if (built && width === 960) await page.locator('.user-message .message-bubble').first().screenshot({ path: `.tmp/qa/conversation-typography/bubble-${theme}.png` });
       console.log(`${baseline ? 'BASELINE' : 'PASS'} ${key}: body=${metrics.body.fontSize}/${metrics.body.lineHeight}, heading=${metrics.headings[0].fontSize}, inlineBorder=${metrics.inline.borderTopWidth}`);
     }
+  }
+  if (!baseline) {
+    const codeBlock = body.locator('.code-block');
+    assert.equal(await codeBlock.locator('.code-block-toolbar > span').innerText(), 'powershell');
+    const copy = codeBlock.getByRole('button', { name: '复制', exact: true });
+    await copy.focus();
+    await page.keyboard.press('Enter');
+    await codeBlock.getByRole('button', { name: '已复制', exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.fixtureCopiedCode), await codeBlock.locator('code').textContent(), 'copy preserves the exact command');
   }
   // Compare untouched surfaces against the pre-change browser measurements.
   if (baseline) {
@@ -128,8 +188,8 @@ try {
     await writeFile('.tmp/qa/conversation-typography/unchanged-surfaces.json', JSON.stringify(snapshots));
   } else if (compareBaseline) {
     const before = JSON.parse(await readFile('.tmp/qa/conversation-typography/unchanged-surfaces.json', 'utf8'));
-    const untouched = values => Object.fromEntries(Object.entries(values).map(([key, { progress, progressCode, ...rest }]) => [key, rest]));
-    assert.deepEqual(untouched(snapshots), untouched(before), 'user bubbles, headers, tables and fenced code are unchanged; progress intentionally uses the new typography');
+    const untouched = values => Object.fromEntries(Object.entries(values).map(([key, { heading }]) => [key, { heading }]));
+    assert.deepEqual(untouched(snapshots), untouched(before), 'message headers remain unchanged');
   }
   assert.deepEqual(errors, []);
 } finally {

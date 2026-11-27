@@ -9,7 +9,7 @@ import { TaskKnowledgeControls } from "./understanding/TaskKnowledgeControls.jsx
 import { AppUpdateControls, AppUpdateToast, AppUpdateSidebar, updateToastKey } from "./settings/AppUpdateControls.jsx";
 import { buildAnchorRestoreNotice } from "../electron/anchor-restore-notice.js";
 import { taskApprovalMode } from "./state/approval-mode.js";
-import { hasTaskReply } from './state/task-outcome-view.js';
+import { currentStoppedRun, dismissStoppedRunNotice, hasTaskReply, isStoppedRunNotice } from './state/task-outcome-view.js';
 import { preserveDeliveredReply } from '../shared/reply-delivery.js';
 import { taskExecutionMode } from "./state/execution-mode.js";
 import { reasoningState } from './models/reasoning-state.js';
@@ -129,6 +129,7 @@ import {
   replaceAssistantForRetry,
   serializeDesktopTaskPreview,
   serializeTaskCache,
+  updateTaskMessageById,
 } from "./state/task-store-core.js";
 import { createTaskCheckpointWriter } from "./state/task-checkpoint-writer.js";
 import {
@@ -1439,6 +1440,7 @@ function TaskWorkspace({
   onPause,
   onResume,
   onRetry,
+  onDismissStoppedNotice,
   pendingAutomaticRetry,
   onCancelAutomaticRetry,
   onRevert,
@@ -2106,6 +2108,7 @@ function TaskWorkspace({
               approvalResponding={approvalResponding}
               onRespondApproval={onRespondApproval}
               onRetry={onRetry}
+              onDismissStoppedNotice={storageReady ? onDismissStoppedNotice : null}
               onRevert={onRevert}
               onRestoreTurnAnchor={onRestoreTurnAnchor}
               onConfirmChanges={onConfirmChanges}
@@ -4286,6 +4289,16 @@ function App() {
         (message) => message.id === assistantMessage.id,
       ),
     );
+    const stoppedNoticeResume = !automaticEntry && isStoppedRunNotice(assistantMessage);
+    const canResumeStoppedNotice = () => currentStoppedRun(taskStore.getSnapshot().find(item => item.id === task?.id)?.messages)?.id === assistantMessage.id;
+    const explainStoppedResumeUnavailable = () => setNotice(tr(
+      '这条停止记录已不是当前轮次，无法从旧检查点恢复。执行记录仍保留。',
+      'This stopped run is no longer the current turn and cannot resume from its old checkpoint. Its execution record is retained.',
+    ));
+    if (stoppedNoticeResume && !canResumeStoppedNotice()) {
+      explainStoppedResumeUnavailable();
+      return false;
+    }
     const canStartAutomatically = () => {
       const currentTask = taskStore.getSnapshot().find(item => item.id === automaticEntry.taskId);
       if (!automaticRetryQueue.current.isPending(automaticEntry) ||
@@ -4345,7 +4358,7 @@ function App() {
         ? (runId) => window.desktop.harness.interrupt(runId)
         : undefined,
       interruptActive: !automaticEntry && Boolean(assistantMessage.recoverable),
-      canProceed: automaticEntry ? canStartAutomatically : undefined,
+      canProceed: automaticEntry ? canStartAutomatically : stoppedNoticeResume ? canResumeStoppedNotice : undefined,
       onReady: () => {
         // Electron has confirmed that this task is idle. Clear renderer-only
         // flags before creating the replacement run.
@@ -4393,6 +4406,10 @@ function App() {
       return true;
     }
     if (automaticEntry) return false; // The existing failure and manual retry remain available.
+    if (stoppedNoticeResume && retryResult.reason === 'cancelled') {
+      explainStoppedResumeUnavailable();
+      return false;
+    }
     if (retryResult.reason === "main-status-unavailable") {
       setNotice(tr("暂时无法确认后台任务状态，未中断任何任务。请稍后重试。", "Could not confirm the backend run status. No runs were interrupted; please try again shortly."));
       return false;
@@ -4818,6 +4835,7 @@ function App() {
               onPause={pauseActiveRun}
               onResume={resumeActiveRun}
               onRetry={retryMessage}
+              onDismissStoppedNotice={(taskId, messageId) => setTasks(current => updateTaskMessageById(current, taskId, messageId, dismissStoppedRunNotice))}
               pendingAutomaticRetry={pendingAutomaticRetries[activeTask.id]}
               onCancelAutomaticRetry={() => automaticRetryQueue.current.cancel(activeTask.id)}
               onRevert={revertMessageChanges}

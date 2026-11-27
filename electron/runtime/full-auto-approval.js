@@ -1,5 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import { APPROVE_ALL_MODE } from '../../shared/approval-modes.js';
+import { approveAllApprovalCanPass, SEPARATE_NATIVE_APPROVAL } from './approve-all-policy.js';
 
 const DELETION = /\b(?:rm|rmdir|rd|del|erase|remove-item|delete|unlink|rmtree|rimraf|remove_file|delete_file|delete_directory)\b/i;
 const COMPOSITION = /[;&|><`\r\n$*?]|%[^%]+%/;
@@ -37,8 +39,26 @@ export async function fullAutoRequiresConfirmation(details, workspaceRoot) {
 }
 
 export function createFullAutoApproval({ approvalMode, workspaceRoot, requestApproval, emit = () => {} }) {
+  if (approvalMode === APPROVE_ALL_MODE) return async (details = {}) => {
+    const tool = details.toolName || details.tool || details.mcp?.tool || details.kind;
+    if (!approveAllApprovalCanPass(details)) {
+      const reason = details.kind === 'recovery-reconciliation'
+        ? 'Previous side effects are uncertain; inspect the existing result before continuing.'
+        : 'This action requires separate authorization and was not run.';
+      emit({ type: 'approval.skipped', mode: APPROVE_ALL_MODE, tool, reason });
+      return { approved: false, skipped: true, reason };
+    }
+    emit({ type: 'approval.automatic', tool, mode: APPROVE_ALL_MODE });
+    return { approved: true, automatic: true, scope: 'task' };
+  };
   if (approvalMode !== "full-auto") return requestApproval;
   return async (details = {}) => {
+    if (details[SEPARATE_NATIVE_APPROVAL]) return requestApproval?.({ ...details, reason: details[SEPARATE_NATIVE_APPROVAL] });
+    if (details.mcp && details.mcp.readOnlyHint !== true) return requestApproval?.(details);
+    if (approveAllApprovalCanPass(details) && details.toolName !== 'delete_file') {
+      emit({ type: 'approval.automatic', tool: details.toolName, mode: 'full-auto' });
+      return { approved: true, automatic: true, scope: 'task' };
+    }
     const reason = await fullAutoRequiresConfirmation(details, workspaceRoot);
     if (reason) return requestApproval({ ...details, reason: details.kind === "recovery-reconciliation" ? details.reason || reason : reason });
     emit({ type: "approval.automatic", tool: details.toolName || details.tool || details.kind, mode: "full-auto" });

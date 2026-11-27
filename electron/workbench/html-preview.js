@@ -18,7 +18,7 @@ const MIME = {
 
 // A private, read-only origin for one selected HTML file and its sibling assets.
 // Never expose the app's file:// origin, desktop bridge or the whole workspace.
-export async function createHtmlPreview(workspacePath, requestedPath) {
+export async function createHtmlPreview(workspacePath, requestedPath, { automatic = false } = {}) {
   const workspace = await getVerifiedWorkspaceRoot(workspacePath);
   const path = await verifyExistingTarget(workspace, requestedPath);
   const info = await stat(path);
@@ -52,7 +52,9 @@ export async function createHtmlPreview(workspacePath, requestedPath) {
         "Content-Type": mime, "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
         "Cross-Origin-Resource-Policy": "same-origin",
-        "Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'",
+        "Content-Security-Policy": automatic
+          ? "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'"
+          : "frame-ancestors 'none'; object-src 'none'",
       });
       response.end(data);
     } catch { if (!response.headersSent) fail(404); else response.end(); }

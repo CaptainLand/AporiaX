@@ -2,7 +2,24 @@ export const EXECUTION_MODES = Object.freeze(["direct", "safe", "isolated"]);
 
 const AUTO_APPROVAL_MODES = new Set(["sandbox-auto", "smart-auto"]);
 
-const SHELL_COMPOSITION = /(?:&&|\|\||[;&|><`\r\n]|\$\()/;
+// The Windows runner is cmd.exe, not PowerShell: only double quotes shield
+// punctuation there. Expansion is checked even inside double quotes.
+export function hasShellComposition(command, platform = process.platform) {
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i], next = command[i + 1];
+    if (/[\r\n\0]/.test(ch)) return true;
+    if (platform === 'win32' && (ch === '^' || (ch === '%' && /%[^%]+%/.test(command.slice(i))) || (ch === '!' && /![^!]+!/.test(command.slice(i))))) return true;
+    if (platform !== 'win32' && quote !== "'" && ch === '\\') { i++; continue; }
+    if (platform !== 'win32' && quote !== "'" && (ch === '`' || (ch === '$' && next === '('))) return true;
+    if (quote) { if (ch === quote) quote = ''; continue; }
+    if (ch === '"' || (platform !== 'win32' && ch === "'")) { quote = ch; continue; }
+    if (/[;&|><]/.test(ch)) return true;
+  }
+  return Boolean(quote);
+}
+
+export const isShellDeletion = command => /^\s*(?:rm|rmdir|rd|del|erase|remove-item|unlink|rmtree|rimraf)(?:\.[a-z]+)?(?:\s|$)/i.test(String(command || ''));
 
 const RULES = Object.freeze([
   {
@@ -27,6 +44,7 @@ const RULES = Object.freeze([
       /\bgh\s+pr\s+(?:create|merge|close|reopen)\b/i,
       /\bgh\s+release\s+(?:create|delete|edit)\b/i,
       /\b(?:npm|pnpm|yarn|bun)\s+(?:publish|deploy)\b/i,
+      /^\s*(?:npm|pnpm|yarn|bun)\s+(?:--ignore-scripts\s+)?run\s+['"]?(?:deploy|publish)(?:[:\s'"-]|$)/i,
       /\bdocker\s+push\b/i,
     ],
   },
@@ -86,8 +104,11 @@ const RULES = Object.freeze([
     reason: "Project scripts and test runners execute project/dependency code; their names do not prove they are safe on the host.",
     patterns: [
       /^\s*(?:npm|pnpm|yarn|bun)\s+(?:test|start|dev|build|run\s+[\w:.-]+)(?:\s|$)/i,
-      /^\s*npx\s+/i,
+      /^\s*npm\s+--ignore-scripts\s+run\s+(?:[\w:.-]+|"[\w:.-]+"|'[\w:.-]+')(?:\s|$)/i,
       /^\s*(?:pytest|python(?:3)?\s+-m\s+pytest)(?:\s|$)/i,
+      /^\s*python(?:3)?\s+-m\s+unittest(?:\s+(?:[\w.]+|-[vq]))*\s*$/i,
+      /^\s*python(?:3)?\s+-m\s+http\.server\s+\d{1,5}\s+(?:-b|--bind)\s+127\.0\.0\.1\s*$/i,
+      /^\s*(?:pnpm\s+exec\s+)?tsc\s+--noEmit\s*$/i,
       /^\s*go\s+test(?:\s|$)/i,
       /^\s*cargo\s+(?:test|check|build|run)(?:\s|$)/i,
     ],
@@ -159,7 +180,7 @@ export function classifyCommandPermission(command, { executionMode = "safe" } = 
     });
   }
 
-  const composed = SHELL_COMPOSITION.test(normalizedCommand);
+  const composed = hasShellComposition(normalizedCommand, mode === 'isolated' ? 'linux' : process.platform);
   for (const rule of RULES) {
     if (rule.action === "allow" && composed) continue;
     if (rule.patterns.some((pattern) => pattern.test(normalizedCommand))) {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
+import { mkdir } from 'node:fs/promises';
 
 // This smoke test never edits files; do not watch unrelated Android build trees.
 const server = await createServer({ server: { host: "127.0.0.1", port: 0, open: false, watch: null } });
@@ -13,11 +14,56 @@ try {
   page.on("pageerror", (error) => { errors.push(error.message); console.error("Fixture page error:", error.message); });
   page.on("requestfailed", (request) => console.error("Fixture request failed:", request.url(), request.failure()?.errorText));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/links-steering.html");
+  const alias = page.getByRole('link', { name: '计算器页面', exact: true });
+  assert.equal(await alias.getAttribute('href'), 'pages/preview.html');
+  assert.equal(await alias.getAttribute('title'), null, 'no competing native tooltip');
+  assert.equal(await alias.getAttribute('aria-description'), 'pages/preview.html');
+  assert.equal(await alias.locator('.conversation-file-link-icon[aria-hidden="true"]').count(), 1);
+  const source = page.getByRole('link', { name: '代码', exact: true });
+  const tooltip = page.getByRole('tooltip');
+  assert.equal(await source.getAttribute('aria-description'), 'src/main.jsx:42');
+  assert.equal(await page.getByRole('link', { name: '网页', exact: true }).locator('.conversation-file-link-icon').count(), 0);
+  await mkdir('.tmp/qa', { recursive: true });
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    await alias.hover();
+    await tooltip.waitFor();
+    assert.equal(await tooltip.locator('code').innerText(), 'pages/preview.html');
+    assert.match(await tooltip.innerText(), /文件路径[\s\S]*HTML 预览/);
+    assert.equal(await tooltip.evaluate(el => {
+      const expected = document.createElement('span'); expected.style.backgroundColor = 'var(--bg-subtle)'; el.append(expected);
+      const matches = getComputedStyle(el).backgroundColor === getComputedStyle(expected).backgroundColor;
+      expected.remove(); return matches;
+    }), true, `${theme}: tooltip uses theme surface`);
+    if (process.env.NO_SCREENSHOTS !== '1') await tooltip.screenshot({ path: `.tmp/qa/file-path-tooltip-${theme}.png` });
+    await page.mouse.move(0, 0);
+    await tooltip.waitFor({ state: 'hidden' });
+  }
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.getByRole('link', { name: '长路径', exact: true }).hover();
+  await tooltip.waitFor();
+  const tooltipBox = await tooltip.boundingBox();
+  assert(tooltipBox.x >= 9 && tooltipBox.x + tooltipBox.width <= 351, 'the long path fits inside a narrow viewport');
+  await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+  await tooltip.waitFor({ state: 'hidden' });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.keyboard.press('Tab');
+  await source.focus();
+  await tooltip.waitFor();
+  assert.equal(await tooltip.locator('code').innerText(), 'src/main.jsx:42');
+  assert.equal(await source.getAttribute('aria-describedby'), await tooltip.getAttribute('id'));
+  await page.keyboard.press('Escape');
+  await tooltip.waitFor({ state: 'hidden' });
   await page.getByRole("link", { name: "便携版", exact: true }).click();
   await page.getByRole("link", { name: "代码", exact: true }).click({ button: "right" });
   await page.getByRole("link", { name: "网页", exact: true }).click();
+  const replyBeforeFailure = await page.locator('.markdown-message').first().innerText();
+  const storedBeforeFailure = await page.evaluate(() => window.fixtureTasks[0].messages.find(m => m.id === 'a').content);
   await page.getByRole("link", { name: "缺失", exact: true }).click();
-  await page.getByRole("alert").filter({ hasText: "File does not exist" }).waitFor();
+  await page.getByRole("status").filter({ hasText: "文件不存在或已移动" }).waitFor();
+  assert.equal(await page.locator('.markdown-message').first().innerText(), replyBeforeFailure);
+  assert.equal(await page.evaluate(() => window.fixtureTasks[0].messages.find(m => m.id === 'a').content), storedBeforeFailure);
+  assert.equal(await page.locator('.message-list [role="alert"]').count(), 0, 'click errors never become reply content');
   assert.equal(await page.getByRole("link", { name: /仅本机可访问/ }).count(), 0);
   await page.getByText("（仅本机可访问；8080").waitFor();
   await page.getByRole("link", { name: "http://localhost:8080/todo.html", exact: true }).click();
@@ -59,11 +105,14 @@ try {
   await page.getByRole("link", { name: filename, exact: true }).click();
   await page.waitForFunction((name) => window.fixtureWorkbench.layout.tabs.some((tab) => tab.path === name), filename);
   await page.getByRole("link", { name: "缺失", exact: true }).click();
-  await page.getByRole("alert").filter({ hasText: "文件不存在或已移动" }).waitFor();
+  await page.getByRole("status").filter({ hasText: "文件不存在或已移动" }).waitFor();
   assert.equal(await page.evaluate(() => window.fixtureWorkbench.layout.tabs.some((tab) => tab.path.includes("missing"))), false);
   assert.equal(await page.evaluate(() => window.fixtureWorkbench.openHref("report.txt", { workspacePath: "D:/different-task" })), false);
   await page.getByRole("link", { name: "便携版", exact: true }).click();
   assert.equal((await page.evaluate(() => window.linkCalls)).at(-1).action, "open", "installers use native confirm/open, not a binary text pane");
+  await alias.click();
+  await page.waitForFunction(() => window.fixtureWorkbench.layout.active === 'browser-html-fixture');
+  assert.equal(await page.evaluate(() => window.workbenchCalls.findLast(item => item.action === 'preview-html').path.replaceAll('\\', '/').endsWith('pages/preview.html')), true);
   for (const href of ["pages/preview.html", "D:/Agent开发/pages/展示.HTM", "file:///D:/Agent开发/pages/preview.html", "pages/preview.html:42"]) {
     assert.equal(await page.evaluate(href => window.fixtureWorkbench.openHref(href), href), true);
     await page.waitForFunction(() => window.fixtureWorkbench.layout.active === "browser-html-fixture");
@@ -76,8 +125,27 @@ try {
   assert.equal(await page.evaluate(() => window.fixtureWorkbench.layout.tabs.some(tab => tab.kind === "file" && tab.path === "src/example.js")), false);
   await page.evaluate(() => window.fixtureWorkbench.openHref("src/example.js:12"));
   await page.waitForFunction(() => window.fixtureWorkbench.layout.tabs.some(tab => tab.kind === "file" && tab.path === "src/example.js" && tab.line === 12));
+  const originalReply = await page.locator('.markdown-message').first().innerText();
+  await page.evaluate(() => { window.navigationFailure = "Error invoking remote method 'workbench.request': Error: ERR_CONNECTION_REFUSED (-102) loading 'http://localhost:8080/todo.html'"; });
+  await page.getByRole('link', { name: 'http://localhost:8080/todo.html', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: '本地预览暂时无法连接' }).waitFor();
+  assert.equal(await page.locator('.markdown-message').first().innerText(), originalReply);
+  assert.equal(await page.locator('.message-list [role="alert"]').count(), 0);
+  assert.doesNotMatch(await page.getByRole('status').innerText(), /ERR_CONNECTION_REFUSED|workbench\.request|Error invoking/);
+  await page.getByRole('link', { name: '网页', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({ hasText: '暂时无法连接此网站' }).waitFor();
+  await page.evaluate(() => { window.navigationFailure = ''; });
+  await page.getByRole('link', { name: '网页', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.toast'));
+  await page.evaluate(() => { window.menuFailure = "Error invoking remote method 'links.activate': native failure"; });
+  await page.getByRole('link', { name: '代码', exact: true }).click({ button: 'right' });
+  await page.getByRole('status').filter({ hasText: '暂时无法打开此文件' }).waitFor();
+  assert.equal(await page.locator('.markdown-message').first().innerText(), originalReply);
+  await page.waitForFunction(() => !document.querySelector('.toast'), null, { timeout: 5000 });
+  assert.equal(await page.evaluate(() => window.fixtureTasks[0].messages.find(m => m.id === 'a').status), 'running', 'link errors do not fail the model task');
   assert.deepEqual(errors, []);
-  console.log("Browser links, errors, buffered steering chronology: PASS");
+  console.log("Browser links: transient friendly notices, unchanged reply/state, mouse/keyboard/menu failure and recovery; buffered steering chronology: PASS");
 } finally {
   await browser?.close();
   await server.close();

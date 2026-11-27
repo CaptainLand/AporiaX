@@ -1,0 +1,35 @@
+.conversation-file-link-icon {
+  display: inline-block;
+  width: .9em;
+  height: .9em;
+  margin-inline-end: .28em;
+  vertical-align: -.12em;
+}
+
+.conversation-file-path-tooltip {
+  position: fixed;
+  z-index: 95;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  display: grid;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(460px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
+  overflow: auto;
+  gap: 4px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-2);
+  font: var(--text-2xs)/1.45 var(--font-sans);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.conversation-file-path-heading { font-weight: var(--weight-medium); }
+.conversation-file-path-tooltip code { color: var(--text-1); font: var(--text-xs)/1.45 var(--font-mono); white-space: pre-wrap; }
+.conversation-file-path-note { color: var(--text-2); }

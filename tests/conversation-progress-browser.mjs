@@ -70,8 +70,22 @@ try {
   await click('追加进展');
   await assertOpen(disclosures.nth(staleIndex), false, 'stale running history is not treated as the active response');
   await assertOpen(disclosures.last(), true, 'only the newest active response defaults open');
+
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/conversation-progress.html?long`);
+  await page.getByText('旧回答 0', { exact: true }).waitFor();
+  const oldNodes = await page.locator('.markdown-message').count();
+  assert.ok(oldNodes >= 160);
+  const scrollTop = await page.locator('main').evaluate(element => (element.scrollTop = 400));
+  const historicalReads = await page.evaluate(() => window.runSyntheticStream());
+  assert.equal(historicalReads, 0, '24 streaming frames must not reprocess 160 completed turns');
+  assert.equal(await page.locator('main').evaluate(element => element.scrollTop), scrollTop, 'streaming leaves the old viewport in place');
+  assert.equal(await page.getByText('流式回复 23', { exact: true }).count(), 1, 'the latest streamed text reached the UI');
+  await click('切换任务');
+  await page.getByText('另一个任务的内容', { exact: true }).waitFor();
+  await click('切换任务');
+  await page.getByText('流式回复 23', { exact: true }).waitFor();
   assert.deepEqual(errors, [], 'no browser errors');
-  console.log('PASS: running defaults open, manual toggling survives streams, terminal states auto-collapse, history stays independent.');
+  console.log('PASS: progress states, 24 streaming frames with zero historical reprocessing, scroll preserved and task switching.');
 } finally {
   await browser?.close();
   await server.close();

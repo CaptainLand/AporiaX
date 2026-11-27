@@ -11,8 +11,8 @@ try {
   const page = await browser.newPage();
   const errors = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.resolvedUrls.local[0] + "tests/fixtures/task-outcomes.html");
-  assert.deepEqual(await page.locator("#static-outcomes .assistant-message-heading strong").allTextContents(), ['AporiaX', 'AporiaX', 'AporiaX', 'AporiaX', '运行失败', '任务已停止']);
-  assert.equal(await page.locator("#static-outcomes .assistant-message").count(), 6);
+  assert.deepEqual(await page.locator("#static-outcomes .assistant-message-heading strong").allTextContents(), ['AporiaX', 'AporiaX', 'AporiaX', 'AporiaX', '运行失败']);
+  assert.equal(await page.locator("#static-outcomes .assistant-message").count(), 5);
   assert.deepEqual(await page.locator("#completed-headings .assistant-message-heading strong").allTextContents(), Array(6).fill("AporiaX"), "Completed replies show assistant identity, not verification status");
   assert.deepEqual(await page.locator("#completed-headings .aporiax-run-duration").allTextContents(), Array(6).fill("17s"), "Elapsed time remains available");
   await mkdir(".tmp", { recursive: true });
@@ -21,6 +21,22 @@ try {
     if (process.env.NO_SCREENSHOTS !== '1') await page.locator("#completed-headings").screenshot({ path: `.tmp/completed-headings-${theme}.png` });
   }
   assert.equal(await page.getByRole("link", { name: "成果", exact: true }).getAttribute("href"), "https://example.invalid/result");
+  const receipt = page.locator('#quota-receipt');
+  assert.equal(await receipt.locator('.assistant-message.error').count(), 0);
+  assert.equal(await receipt.locator('.assistant-message-heading strong').innerText(), 'AporiaX');
+  assert.match(await receipt.innerText(), /非模型最终答复/);
+  assert.match(await receipt.locator('.witness-panel').innerText(), /余额或额度不足/);
+  await receipt.getByRole('button', { name: '继续本轮', exact: true }).click();
+  const continuation = await page.evaluate(() => window.continueRequest);
+  assert.equal(continuation.recoveryRunId, 'quota-original-run');
+  assert.equal(continuation.retryMode, 'continue');
+  assert.equal(continuation.retrySourceUserId, 'quota-user');
+  await receipt.getByRole('link', { name: 'super-mario.html', exact: true }).click();
+  assert.equal(classifyLink((await page.evaluate(() => window.openedOutcomeFile)).href).target, 'super-mario.html');
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
+    if (process.env.NO_SCREENSHOTS !== '1') await receipt.screenshot({ path: `.tmp/quota-receipt-${theme}.png` });
+  }
   const flow = page.locator("#retry-flow");
   const file = flow.getByRole("link", { name: "资料 #1.docx", exact: true });
   await file.click();
@@ -46,6 +62,13 @@ try {
   await flow.locator(".historical-run > summary").click();
   await flow.getByRole("button", { name: "完成后续", exact: true }).click();
   assert.match(await flow.locator(".witness-panel").innerText(), /100%/);
+  const completionUsage=flow.locator(".witness-completion-usage");
+  assert.equal(await completionUsage.innerText(), '共 483,429 Token · ↑ 11,407 Token · ↓ 26,326 Token · 缓存命中 445,696（97.5%）');
+  assert.match(await completionUsage.getAttribute('title'), /未命中缓存的输入/);
+  assert(!((await flow.locator(".witness-panel").innerText()).includes('Witness 已保存本轮行动记录')));
+  await page.setViewportSize({width:390,height:840});
+  assert.equal(await completionUsage.evaluate(el=>getComputedStyle(el).whiteSpace),'normal');
+  await page.setViewportSize({width:1280,height:720});
   assert(!((await flow.locator(".witness-panel").innerText()).includes("OLD_FAILURE_WITNESS")));
   await flow.getByRole("button", { name: "模拟失败", exact: true }).click();
   await flow.getByRole("button", { name: "残留运行标记", exact: true }).click();
@@ -57,6 +80,51 @@ try {
   assert.equal(await flow.locator(".witness-panel").count(), 0, "never resurrect the hidden failure's Witness");
   await flow.getByRole("button", { name: "切换新任务", exact: true }).click();
   assert.equal(await flow.locator(".assistant-message.error, .witness-panel, .historical-run").count(), 0);
+  const joined = page.locator('#same-round');
+  const witness = joined.locator('#same-conversation .witness-panel');
+  await joined.getByRole('button', { name: '开始接续' }).click();
+  assert.match(await witness.innerText(), /old-calculator\.html/, 'old Witness never vanishes while resuming');
+  await joined.getByRole('button', { name: '写入新纪录' }).click();
+  assert.equal(await witness.count(), 1);
+  assert.match(await witness.innerText(), /old-calculator\.html[\s\S]*continued-preview\.html/);
+  await joined.getByRole('button', { name: '选择任务轮次' }).click();
+  assert.equal(await joined.getByRole('menuitemradio').count(), 1, 'continued attempts share a single execution timeline');
+  const stoppedChat = page.locator('#stopped-chat');
+  const stopped = stoppedChat.locator('.stopped-run-notice');
+  assert.equal(await stopped.count(), 1);
+  assert.match(await stopped.innerText(), /已停止 · 保留了 1 项文件改动/);
+  assert.equal(await stopped.locator('.assistant-message').count(), 0, 'do not render the old card until requested');
+  assert.deepEqual(await stoppedChat.locator('[data-thread-turn]').evaluateAll(els => els.map(e => e.dataset.threadTurn)), ['stopped-source', 'stopped-receipt']);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
+    const box = await stopped.locator('.stopped-run-line').boundingBox();
+    assert(box.height <= 32, 'the stop summary stays on one compact line');
+    if (process.env.NO_SCREENSHOTS !== '1') await stopped.screenshot({ path: `.tmp/stopped-run-notice-${theme}.png` });
+  }
+  await stopped.getByRole('button', { name: '查看', exact: true }).click();
+  await stopped.getByRole('link', { name: 'calculator.html', exact: true }).first().waitFor();
+  assert.equal(await stopped.getByRole('button', { name: '预览并回退这一轮' }).count(), 1);
+  assert.equal(await stopped.locator('.witness-panel').count(), 1);
+  await page.locator('#stopped-notice').getByRole('button', { name: '补充本轮要求' }).click();
+  await stopped.getByRole('button', { name: '恢复', exact: true }).click();
+  assert.equal((await page.evaluate(() => window.resumeStoppedRequest)).recoveryRunId, 'stopped-run');
+  await page.locator('#stopped-notice').getByRole('button', { name: '发起新任务' }).click();
+  assert.equal(await stopped.getByRole('button', { name: '恢复', exact: true }).count(), 0, 'a new request hides Resume before its first assistant response');
+  await page.locator('#stopped-notice').getByRole('button', { name: '完成新任务' }).click();
+  assert.equal(await stopped.getByRole('button', { name: '恢复', exact: true }).count(), 0, 'the historical Resume stays hidden once the new request completes');
+  await stopped.getByRole('button', { name: '收起', exact: true }).click();
+  assert.equal(await stopped.getByRole('button', { name: '查看', exact: true }).count(), 1);
+  await stopped.getByRole('button', { name: '不再显示这条停止提示' }).click();
+  await stopped.waitFor({ state: 'detached' });
+  const detached = await page.evaluate(() => window.stoppedTask.messages.find(message => message.id === 'stopped-receipt'));
+  assert.equal(detached.anchor.id, 'stopped-anchor');
+  assert.equal(detached.changes[0].path, 'calculator.html');
+  assert.equal(detached.witness.records[0].id, 'saved-file');
+  await page.locator('#stopped-history').getByRole('button', { name: '选择任务轮次' }).click();
+  assert.equal(await page.locator('#stopped-history').getByRole('menuitemradio').count(), 2, 'dismissal keeps the historical run accessible');
+  await page.reload();
+  await page.locator('#stopped-chat').getByText('Make a calculator', { exact: true }).waitFor();
+  assert.equal(await page.locator('#stopped-chat .stopped-run-notice').count(), 0);
   assert.deepEqual(errors, []);
-  console.log("Task outcomes browser: six states, six completion labels = AporiaX + unchanged duration (light/dark), saved file links, failure/follow-up/retry/new task, no stale Witness: PASS");
+  console.log("Task outcomes browser: outcome states, retry and follow-up isolation, uninterrupted Witness and one execution round on continuation: PASS");
 } finally { await browser?.close(); await server.close(); }

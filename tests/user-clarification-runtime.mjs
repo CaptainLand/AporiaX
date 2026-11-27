@@ -22,23 +22,24 @@ try {
     persist: async value => { persisted = value; } });
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body); sent.push(body); requests++;
+    if (requests === 1) return response([call('enable_task_tools', {groups:['planning']}, 'discovery')]);
     assert(body.tools.some(tool => tool.function.name === 'request_user_input'));
-    return requests === 1 ? response([call('request_user_input', ask)]) : finish();
+    return requests === 2 ? response([call('request_user_input', ask)]) : finish();
   };
   const task = runHarness({ runId: 'main', taskId: 't', provider, modelId: 'fixture', permission: 'read-only',
     signal: abort.signal, control, clarification: session, messages: [{ role: 'user', content: 'Prepare a report.' }] });
   for (let i = 0; i < 300 && !required; i++) await delay(10);
   assert(required, 'Model must be able to ask without a workspace');
-  await delay(30); assert.equal(requests, 1, 'No inference polling while waiting');
+  await delay(30); assert.equal(requests, 2, 'No inference polling while waiting');
   control.pause('user');
   await session.respond(required.id, { text: 'Internal report, include costs.' });
-  await delay(30); assert.equal(requests, 1, 'Answer must not clear a manual pause');
+  await delay(30); assert.equal(requests, 2, 'Answer must not clear a manual pause');
   control.resume('user');
   const result = await task;
   assert.equal(result.status, 'completed');
-  assert(sent[1].messages.some(message => message.role === 'tool' && /Internal report/.test(message.content)));
-  assert(sent[1].messages.some(message => message.role === 'user' && /Internal report/.test(message.content)));
-  assert(sent[1].messages.every(message => !Object.keys(message).some(key => key.startsWith('aporia'))));
+  assert(sent[2].messages.some(message => message.role === 'tool' && /Internal report/.test(message.content)));
+  assert(sent[2].messages.some(message => message.role === 'user' && /Internal report/.test(message.content)));
+  assert(sent[2].messages.every(message => !Object.keys(message).some(key => key.startsWith('aporia'))));
   assert.equal(persisted.questions[0].status, 'answered');
   assert(result.witness.records.some(record => record.eventType === 'clarification.updated'));
   console.log('PASS real model loop: ask -> durable answer -> human context -> continue; no polling/manual pause bypass');
@@ -75,12 +76,11 @@ try {
   assert.equal(child.status, 'completed'); assert.equal(session.snapshot().length, 1);
   console.log('PASS child has no question capability and forged tool call is rejected');
   requests = 0;
-  globalThis.fetch = async () => { requests++; return response([call('request_user_input', ask, 'invalid-' + requests)]); };
+  globalThis.fetch = async () => { requests++; return requests <= 4 ? response([call('request_user_input', ask, 'invalid-' + requests)]) : finish(); };
   const blocked = await runHarness({ runId: 'invalid-child', provider, modelId: 'fixture', permission: 'read-only',
     messages: [{ role: 'user', content: 'Do not repeatedly ask me.' }] });
-  assert.equal(blocked.status, 'blocked'); assert.equal(requests, 4);
-  assert.match(blocked.content, /提问|Questions/);
-  console.log('PASS three invalid questions close execution, followed by one text-only result without another question');
+  assert.equal(blocked.status, 'completed'); assert.equal(requests, 5);
+  console.log('PASS four invalid questions remain local errors; normal answering and tools stay available');
 
   const mixedControl = createRunControl();
   const mixedSession = createClarificationSession({ control: mixedControl, runId: 'mixed', taskId: 't',

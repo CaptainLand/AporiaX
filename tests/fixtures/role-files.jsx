@@ -25,13 +25,16 @@ const providers = [{ id: 'fixture', name: 'Fixture', models: [{ id: 'mock', name
 function Fixture() {
   const [task, setTask] = useState({ id: 'one', workspacePath: 'D:/Demo', providerId: 'fixture', modelId: 'mock', messages: [] });
   const [quoteRequest, setQuoteRequest] = useState(null);
+  const [showSimilarApproval, setShowSimilarApproval] = useState(false);
   window.fixture.switchTask = () => setTask(current => ({ ...current, id: 'two', workspacePath: 'D:/OtherDemo' }));
+  window.fixture.showSimilarApproval = () => setShowSimilarApproval(true);
   const notice = value => window.fixture.notices.push(value);
   const workbench = { task, key: task.id, openFile: path => window.fixture.opened.push(path),
     request: async () => ({ entries }), addFileToChat: path => setQuoteRequest({ kind: 'file', path, taskId: task.id }) };
   return <WorkbenchContext.Provider value={workbench}><div className="task-workspace" style={{ height: '100vh', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
     <section className="thread" style={{ padding: 20, overflow: 'auto' }}>
-      <ApprovalCard approval={{ id: 'test-approval', kind: 'agent-role-change', title: '修改自定义角色：测试角色', command: 'update custom-role · revision 1', reason: '用户要求调整职责', canRememberForRun: false,
+      <ApprovalCard approval={showSimilarApproval ? { id: 'delete-approval', title: '删除工作区文件', command: 'delete_file calculator.html', canRememberForRun: true,
+        similarApproval: { kind: 'delete-file', directory: '.', extension: '.html' } } : { id: 'test-approval', kind: 'agent-role-change', title: '修改自定义角色：测试角色', command: 'update custom-role · revision 1', reason: '用户要求调整职责', canRememberForRun: false,
         description: JSON.stringify({ name: { before: '旧角色', after: '新角色' }, instructions: { before: '', after: '只核对证据，不执行代码。<script>unsafe()</script>' }, maxRequests: { before: 24, after: 10 } }) }}
         onRespond={(approved, scope) => window.fixture.decisions.push({ approved, scope })} />
       <Composer task={task} quoteRequest={quoteRequest} providers={providers} onNotice={notice} onSend={message => window.fixture.sent.push(message)} onUpdateTask={() => {}} />

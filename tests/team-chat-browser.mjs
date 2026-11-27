@@ -44,8 +44,9 @@ try {
   assert.equal(await page.getByRole('textbox', { name: '搜索角色和会话' }).count(), 0, 'search stays behind its icon');
   assert.equal(await page.locator('.tm-room time, .tm-room-text i').count(), 0, 'list shows only avatars, names, previews and unread');
   assert.deepEqual(await page.locator('.tm-room-text b').allTextContents(), ['工作群', 'AporiaX', '探奇', '察微', '验准', '知序', '搭匠']);
-  await page.waitForFunction(() => [...document.querySelectorAll('.tm-room > .agent-avatar img')].length === 6 && [...document.querySelectorAll('.tm-room img')].every(image => image.complete && image.naturalWidth > 0));
-  assert.equal(await page.locator('.tm-room .agent-team-avatar img').count(),6,'Group portrait includes all six approved characters');
+  await page.waitForFunction(() => document.querySelectorAll('.tm-room > .agent-avatar[data-agent-portrait="solid"]').length === 6);
+  assert.equal(await page.locator('.tm-room .agent-team-avatar .agent-avatar[data-agent-portrait="solid"]').count(),6,'Group portrait includes all six partner colors');
+  assert.equal(await page.locator('.tm-room .agent-avatar img').count(),0,'Room avatars do not contain artwork');
   await page.evaluate(() => window.fixture.language('en'));
   assert.deepEqual(await page.locator('.tm-room-text b').allTextContents(), ['Team group', 'AporiaX', 'Scout', 'Sentry', 'Checko', 'Index', 'Forge']);
   await page.evaluate(() => window.fixture.language('zh-CN'));

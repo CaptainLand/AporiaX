@@ -8,6 +8,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveRunCheckpoint, saveRunContext, getRunRecoveryContext, beginRunJournal, closeRunJournalStore } from "../electron/run-store.js";
+import { noteCloudAuthRecovery } from '../shared/cloud-auth-response.js';
 
 const cloud = createAporiaCloudProvider("https://model.fixture.invalid");
 const body = {model:"aporia-cloud-default",messages:[{role:"user",content:"fixture"}]};
@@ -26,7 +27,7 @@ function infer(provider,extra={}) {
  const fixtureProvider={...provider,authenticatedFetch:(path,init)=>path==="/v1/capabilities" && provider.fixtureLegacyGateway!==true
    ? Promise.resolve(json({protocolVersion:1,modelGateway:{idempotency:"reject-duplicate-no-replay"}})) : provider.authenticatedFetch(path,init)};
  return completeLoopRequest({conversation:body.messages,contextCheckpoints:[],accounting:{},getBody:()=>body,
- complete:(body,signal)=>callModelProvider({provider:fixtureProvider,body,signal,requestTrace:{agentId:extra.scopeId||"main"}}),...extra});
+ complete:(body,signal)=>callModelProvider({provider:fixtureProvider,body,signal,onEvent:extra.onEvent,requestTrace:{agentId:extra.scopeId||"main"}}),...extra});
 }
 const results=[];
 async function test(name,fn){try{await fn();results.push({name,passed:true});console.log("PASS",name);}catch(e){results.push({name,passed:false,error:String(e)});console.error("FAIL",name,e);}}
@@ -114,6 +115,177 @@ await test("durable request restoration preserves identity and rejects changed u
  await assert.rejects(withDurableRun(context({requestCheckpoints:copy(checkpoints)}),()=>infer({...cloud,authenticatedFetch:async()=>{calls++;return sse();}},
  {getBody:()=>({...body,messages:[{role:"user",content:"changed"}]})})),e=>e.code==="CLOUD_REQUEST_RECONCILIATION_REQUIRED");
  assert.equal(calls,0);
+});
+const oldRequest = { fingerprint: 'different-saved-wire', status: 'sent', serverRequestId: id,
+  clientRequestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', logicalRequestId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' };
+const resumedFrom = (identity = oldRequest, recoveryContexts) => context({ recoveryContexts,
+  requestCheckpoints: { 'cloud-request:main': { identity } } });
+const settled = { requestId: id, status: 'completed', billing: 'settled', usageState: 'provider', outputAvailable: true, finishReason: 'stop' };
+const released = { requestId: id, status: 'rejected', billing: 'released', usageState: 'not-dispatched', chargedMicros: 0 };
+const driftedBody = { ...body, messages: [...body.messages, {role:'system', content:'Restored confirmed work'}] };
+const runDrifted = (c, authenticatedFetch, extra={}) => withDurableRun(c, () => infer({ ...cloud, authenticatedFetch }, { getBody: () => driftedBody, ...extra }));
+
+await test('changed continuation checks known old receipt, replays settled text, never POSTs, and survives another restore', async()=>{
+ const c=resumedFrom(), reads=[];
+ const reply=await runDrifted(c,async(path,init)=>{
+  assert.equal(init.method,'GET');reads.push(path);
+  return path.endsWith('/output') ? sse() : json(settled);
+ });
+ assert.equal(reply.message.content,'ok');
+ assert.deepEqual(reads,['/v1/requests/'+id,'/v1/requests/'+id+'/output']);
+ const oldSettled=c.checkpoints['cloud-request:main'].identity;
+ assert.equal(oldSettled.serverRequestId,id);
+ assert.ok(oldSettled.reconciledFingerprint);
+ const repeated=await runDrifted(resumedFrom(oldSettled,copy(c.contexts)),async()=>{throw Error('already recovered; no HTTP request');}, {getBody:()=>({...driftedBody,max_tokens:1024})});
+ assert.equal(repeated.message.content,'ok');
+});
+await test('changed continuation uses a fresh key only after a matching released, uncharged receipt', async()=>{
+ const c=resumedFrom(), calls=[];
+ const reply=await runDrifted(c,async(path,init)=>{
+  calls.push([path,init.method]);
+  if(init.method==='GET')return json(released);
+  const headers=new Headers(init.headers);
+  assert.notEqual(headers.get('idempotency-key'),oldRequest.clientRequestId);
+  assert.equal(headers.get('x-aporia-retry-of'),id);
+  assert.equal(headers.get('x-aporia-logical-request-id'),oldRequest.logicalRequestId);
+  assert.notEqual(c.checkpoints['cloud-request:main'].identity.fingerprint,oldRequest.fingerprint);
+  assert.equal(c.checkpoints['cloud-request:main'].identity.clientRequestId,headers.get('idempotency-key'));
+  return sse();
+ });
+ assert.equal(reply.message.content,'ok');
+ assert.deepEqual(calls,[['/v1/requests/'+id,'GET'],['/v1/chat/completions','POST']]);
+});
+await test('changed continuation never POSTs on missing, unauthorized, pending or contradictory receipts', async()=>{
+ for(const response of [()=>json({},404),()=>json({},401),()=>new Response('not-json'),()=>{throw new TypeError('fetch failed');},()=>json({...settled,usageState:'pending'}),()=>json({...released,chargedMicros:1}),()=>json({...released,status:'running'}),()=>json({...released,requestId:'other'})]) {
+  const c=resumedFrom();let reads=0;
+  await assert.rejects(runDrifted(c,async(path,init)=>{
+   assert.equal(init.method,'GET');assert.equal(path,'/v1/requests/'+id);reads++;return response();
+  }),e=>e.code==='CLOUD_REQUEST_RECONCILIATION_REQUIRED' && e.safeToRepair===false);
+  assert.equal(reads,1);assert.equal(c.checkpoints['cloud-request:main'],undefined);
+ }
+});
+await test('changed continuation does not restore tool calls from a paid old reply', async()=>{
+ const tools={content:'content must stay attached to old action',tool_calls:[{id:'old-call',type:'function',function:{name:'delete_file',arguments:'{"path":"note.txt"}'}}]};
+ const candidate={clientRequestId:oldRequest.clientRequestId,draft:{requestId:id,message:tools,finishReason:'tool_calls'}};
+ let gets=0;
+ await assert.rejects(runDrifted(resumedFrom(oldRequest,{'cloud-response:main':candidate}),async(_,init)=>{
+  assert.equal(init.method,'GET');gets++;return json({...settled,finishReason:'tool_calls'});
+ }),/旧上下文，未执行/);
+ assert.equal(gets,1);
+ const events=[];
+ await assert.rejects(runDrifted(resumedFrom(),async(path,init)=>{
+  assert.equal(init.method,'GET');
+  if(!path.endsWith('/output'))return json({...settled,finishReason:'tool_calls'});
+  return new Response('data: '+JSON.stringify({choices:[{delta:tools,finish_reason:'tool_calls'}]})+'\n\ndata: [DONE]\n\n', {headers:{'x-aporia-request-id':id}});
+ },{onEvent:e=>events.push(e)}),/旧上下文，未执行/);
+ assert(!events.some(e=>e.type==='response.text.reconciled'));
+});
+await test('fresh gateway auth rejection permits continuation after sign-in; generic or already identified 401 cannot', async()=>{
+ for(const [typed, hasReceipt] of [[true,false],[false,false],[true,true]]) {
+  const canRestart = typed && !hasReceipt;
+  const initial=context();
+  await assert.rejects(withDurableRun(initial,()=>infer({...cloud,authenticatedFetch:async(_,init)=>{
+   assert.equal(init.method,'POST');
+   return Response.json({error:typed?{message:'UNAUTHORIZED',type:'auth_error'}:{message:'UNAUTHORIZED'}},
+    {status:401, headers:hasReceipt?{'x-aporia-request-id':id}:{}});
+  }})),e=>e.code==='UNAUTHORIZED');
+  const identity=initial.checkpoints['cloud-request:main'].identity, calls=[];
+  assert.equal(identity.preDispatchAuthRejected,canRestart?true:undefined);
+  const resumed=runDrifted(resumedFrom(identity),async(path,init)=>{
+   calls.push(init.method);
+   if(init.method==='GET')return json({},404);
+   assert(canRestart);
+   const headers=new Headers(init.headers);
+   assert.notEqual(headers.get('idempotency-key'),identity.clientRequestId);
+   assert.equal(headers.get('x-aporia-retry-of'),null);
+   return sse();
+  });
+  if(canRestart)assert.equal((await resumed).message.content,'ok');
+  else await assert.rejects(resumed,e=>e.code==='CLOUD_REQUEST_RECONCILIATION_REQUIRED');
+  assert.deepEqual(calls,canRestart?['POST']:hasReceipt?['GET']:[]);
+ }
+});
+const ready401 = ({ hasReceipt = false, assertSession = () => {} } = {}) => noteCloudAuthRecovery(Response.json(
+  { error: { message: 'UNAUTHORIZED' } }, { status: 401, headers: hasReceipt ? { 'x-aporia-request-id': id } : {} }),
+{ refresh: 'ready', replayed: false, assertSession });
+
+await test('refreshed ambiguous 401 uses identical body and key only after live deduplication proof', async () => {
+  for (const capable of [true, false]) {
+    const c = context(), calls = [], stages = [];
+    const provider = { ...cloud, fixtureLegacyGateway: true, authenticatedFetch: async (path, init) => {
+      calls.push({ path, init });
+      if (path === '/v1/capabilities') return json(capable ? { protocolVersion: 1, modelGateway: { idempotency: 'reject-duplicate-no-replay' } } : { protocolVersion: 1 });
+      if (calls.length === 1) return ready401();
+      assert.equal(init.cloudAuthRecoveryAttempt, true);
+      assert.equal(init.body, calls[0].init.body);
+      assert.equal(new Headers(init.headers).get('idempotency-key'), new Headers(calls[0].init.headers).get('idempotency-key'));
+      return sse();
+    } };
+    const result = withDurableRun(c, () => infer(provider, { onEvent: e => { if (e.type === 'response.cloud.auth') stages.push(e.stage); } }));
+    if (capable) assert.equal((await result).message.content, 'ok');
+    else await assert.rejects(result, { code: 'CLOUD_REQUEST_RECONCILIATION_REQUIRED' });
+    assert.deepEqual(calls.map(c => c.path), ['/v1/chat/completions', '/v1/capabilities', ...(capable ? ['/v1/chat/completions'] : [])]);
+    assert.deepEqual(stages, capable ? ['reconciling', 'retrying', 'recovered'] : ['reconciling', 'pending']);
+  }
+});
+
+await test('auth recovery reads known or duplicate receipts without a second generation', async () => {
+  for (const how of ['settled', 'pending', 'released', 'duplicate']) {
+    const c = context(), calls = [];
+    let posts = 0;
+    const provider = { ...cloud, authenticatedFetch: async (path, init) => {
+      calls.push({ path, method: init.method, key: new Headers(init.headers).get('idempotency-key') });
+      if (init.method === 'POST') {
+        posts++;
+        if (posts === 1) return ready401({ hasReceipt: how !== 'duplicate' });
+        if (how === 'duplicate') return json({ error: { message: 'REQUEST_ALREADY_EXISTS' } }, 409);
+        assert.equal(how, 'released');
+        assert.equal(new Headers(init.headers).get('x-aporia-retry-of'), id);
+        return sse();
+      }
+      if (path.endsWith('/output')) return sse();
+      if (how === 'pending') return json({ ...released, status: 'running', usageState: 'pending', billing: 'held' });
+      return json(how === 'released' ? released : settled);
+    } };
+    const execution = withDurableRun(c, () => infer(provider));
+    if (how === 'pending') await assert.rejects(execution, { code: 'CLOUD_REQUEST_RECONCILIATION_REQUIRED' });
+    else assert.equal((await execution).message.content, 'ok');
+    assert.equal(posts, ['duplicate', 'released'].includes(how) ? 2 : 1);
+    assert.equal(calls.filter(call => call.path.endsWith('/output')).length, ['duplicate', 'settled'].includes(how) ? 1 : 0);
+    if (how === 'duplicate') assert.equal(calls[1].key, calls[0].key);
+    if (how === 'released') assert.notEqual(calls[2].key, calls[0].key);
+  }
+});
+
+await test('a repeated auth failure or account switch never starts another recovery POST', async () => {
+  for (const switched of [false, true]) {
+    const c = context();
+    let posts = 0, changed = false;
+    const provider = { ...cloud, fixtureLegacyGateway: true, authenticatedFetch: async (path, init) => {
+      if (path === '/v1/capabilities') {
+        changed = switched;
+        return json({ protocolVersion: 1, modelGateway: { idempotency: 'reject-duplicate-no-replay' } });
+      }
+      assert.equal(init.method, 'POST');
+      if (++posts === 1) return ready401({ assertSession: () => { if (changed) throw Object.assign(Error('account changed'), { code: 'DESKTOP_ACCOUNT_CHANGED' }); } });
+      return ready401();
+    } };
+    await assert.rejects(withDurableRun(c, () => infer(provider)), { code: switched ? 'DESKTOP_ACCOUNT_CHANGED' : 'UNAUTHORIZED' });
+    assert.equal(posts, switched ? 1 : 2);
+  }
+});
+
+await test('auth recovery does not redispatch when the 401 already signals pending accounting without a receipt id', async () => {
+  let posts = 0;
+  const provider = { ...cloud, fixtureLegacyGateway: true, authenticatedFetch: async (path, init) => {
+    assert.equal(init.method, 'POST');
+    assert.equal(path, '/v1/chat/completions');
+    assert.equal(++posts, 1);
+    return noteCloudAuthRecovery(Response.json({ error: { message: 'UNAUTHORIZED' }, accountingPending: true }, { status: 401 }),
+      { refresh: 'ready', replayed: false });
+  } };
+  await assert.rejects(withDurableRun(context(), () => infer(provider)), { code: 'CLOUD_REQUEST_RECONCILIATION_REQUIRED' });
+  assert.equal(posts, 1);
 });
 await test("complete response saved just before sleep is reused without double usage",async()=>{
  const c=context();let calls=0,failedUsage=0,slept=false;const save=c.context;

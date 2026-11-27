@@ -56,7 +56,7 @@ try {
   for (const action of ['create', 'update', 'delete']) for (const role_id of ['explore', 'review', 'verify', 'curator', 'builder']) {
     assert.throws(() => proposeRoleChange(defaultRoleSettings(), { ...create, action, role_id }), /内置/);
   }
-  for (const changes of [{ ...create.changes, permissions: '*' }, { ...create.changes, maxRequests: 10000 }, { ...create.changes, tools: ['manage_agent_role'] }, { ...create.changes, instructions: '字'.repeat(15000) }]) {
+  for (const changes of [{ ...create.changes, permissions: '*' }, { ...create.changes, maxRequests: 1_000_001 }, { ...create.changes, tools: ['manage_agent_role'] }, { ...create.changes, instructions: '字'.repeat(16_001) }]) {
     assert.throws(() => proposeRoleChange(defaultRoleSettings(), { ...create, changes }));
   }
   const child = createSubagentPermissionPolicy({ '*': 'allow' }, 'review', roleDefinition(defaultRole('review')));

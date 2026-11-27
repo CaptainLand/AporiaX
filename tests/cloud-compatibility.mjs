@@ -76,6 +76,8 @@ await test('actual account runtime stays signed in with models empty and never d
   if(u.pathname==='/v1/capabilities')return capabilityFailure?new Response('',{status:503}):json({protocolVersion:1,models:enabled?[{slug:model,available:true,supportsImages:visionEnabled}]:[]});
   if(u.pathname==='/devices')return json([{id:'device',remoteEnabled:true}]);
   if(u.pathname==='/usage/summary')return json({unresolvedRequestCount:2});
+  if(u.pathname==='/v1/requests/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') return json({request:{status:'completed'}});
+  if(u.pathname==='/v1/requests/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/output') return sse();
   if(u.pathname==='/v1/chat/completions'){modelCalls++;assert(new Headers(init.headers).get('idempotency-key'));return sse();}
   throw Error('Unexpected fixture route '+u.pathname);
  };
@@ -92,6 +94,11 @@ await test('actual account runtime stays signed in with models empty and never d
   await assert.rejects(runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify({model})}),/MODEL_NOT_AVAILABLE/);assert.equal(modelCalls,0);
   for (const name of ['setRemoteEnabled','setRemoteFileAccess','syncRemoteTasks','pollRemoteCommands','claimRemoteCommand','acknowledgeRemoteCommand','executeRemoteFileCommand']) assert.equal(name in runtime,false, name+' must not exist');
   await assert.rejects(runtime.fetchModelGateway('/remote/desktop/tasks',{method:'PUT',body:'private fixture'}),/PATH_NOT_ALLOWED/);
+  const recoveryPath='/v1/requests/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  assert.equal((await (await runtime.fetchModelGateway(recoveryPath,{method:'GET'})).json()).request.status,'completed');
+  assert.match(await (await runtime.fetchModelGateway(recoveryPath+'/output',{method:'GET'})).text(),/\[DONE\]/);
+  for(const [path, init] of [[recoveryPath+'/output',{method:'POST'}],[recoveryPath+'/extra',{method:'GET'}],[recoveryPath+'/output',{method:'GET',body:'unexpected'}]])
+    await assert.rejects(runtime.fetchModelGateway(path,init),/PATH_NOT_ALLOWED/);
   enabled=true;visionEnabled=true;await runtime.refresh();
   const imageBody={model,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,fixture'}}]}]};
   await (await runtime.fetchModelGateway('/v1/chat/completions',{body:JSON.stringify(imageBody)})).text();assert.equal(modelCalls,1);
@@ -121,6 +128,7 @@ await test('billing status does not overwrite OpenAI usage with a different sche
  const wire='data: '+JSON.stringify({choices:[{delta:{content:'ok'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:3,prompt_cache_hit_tokens:2}})+'\n\nevent: aporia_billing\ndata: '+JSON.stringify({requestId:'owned',usageState:'provider',chargedMicros:1404,usage:{inputTokens:10,outputTokens:3,cachedInputTokens:2}})+'\n\ndata: [DONE]\n\n';
  const result=await callModelProvider({provider:{...cloud,authenticatedFetch:async()=>new Response(wire)},body:requestBody,onEvent:e=>events.push(e)});
  assert.equal(result.usage.prompt_tokens,10); assert.equal(result.usage.completion_tokens,3);
+ assert.equal(events.filter(e=>e.type==='response.progress').at(-1).uncachedInputTokens,8);
  assert.equal(events.find(e=>e.type==='response.cloud.billing').chargedMicros,1404);
  const pkg=JSON.parse(await readFile('package.json','utf8')); assert(pkg.build.files.includes('shared/**/*'));
 });

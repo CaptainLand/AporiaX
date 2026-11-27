@@ -1,3 +1,5 @@
+import { cloudAuthRecoveryFor, noteCloudAuthRecovery } from '../../shared/cloud-auth-response.js';
+
 // One FIFO per desktop account runtime, shared by Main, Builders and vision.
 // A slot lasts until the response BODY ends, not merely until headers arrive.
 export function createCloudModelQueue() {
@@ -56,7 +58,9 @@ export function createCloudModelQueue() {
           },
           async cancel(reason) { try { await reader.cancel(reason); } finally { finish(); } },
         }, { highWaterMark: 0 });
-        return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+        const wrapped = new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+        const authRecovery = cloudAuthRecoveryFor(response);
+        return authRecovery ? noteCloudAuthRecovery(wrapped, authRecovery) : wrapped;
       } catch (error) { release(); throw error; }
     },
   };

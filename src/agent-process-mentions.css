@@ -485,11 +485,6 @@
   box-decoration-break: clone;
 }
 
-:root[data-theme] .aporiax-message-mention.skill {
-  border-color: color-mix(in srgb, var(--accent-8) 27%, transparent);
-  color: var(--accent-11);
-}
-
 .aporiax-message-mention.mcp {
   border-color: color-mix(in srgb, var(--accent-8) 30%, transparent);
   color: var(--accent-7);
@@ -501,3 +496,14 @@
   background: color-mix(in srgb, var(--accent-9) 9%, transparent);
   box-shadow: var(--shadow-sm);
 }
+
+:root .aporiax-message-mention.skill {
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--accent-11);
+  font-weight: var(--weight-medium);
+}
+
+.aporiax-message-mention.skill .skill-mention-prefix { color: var(--text-2); }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles, hasTaskReply } from "../src/state/task-outcome-view.js";
+import { currentStoppedRun, latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles, hasTaskReply, dismissStoppedRunNotice, isStoppedRunNotice, stoppedRunChangeCount } from "../src/state/task-outcome-view.js";
 import { resultSummaryStop } from '../electron/runtime/result-summary.js';
 import { replaceAssistantForRetry } from "../src/state/task-store-core.js";
 
@@ -31,4 +31,31 @@ for (const status of ['running', 'paused', 'waiting', 'failed', 'interrupted']) 
 for (const code of ['AbortError', 'TASK_SUSPENDED', 'CONTEXT_BUDGET_EXCEEDED', 'PERSISTENCE_FAILED', 'CLOUD_QUOTA_EXHAUSTED', 'HTTP_401', undefined]) assert.equal(resultSummaryStop({ code }), null);
 assert(resultSummaryStop({ code: 'LOOP_NO_PROGRESS' }));
 assert(resultSummaryStop({ code: 'LOOP_STRATEGY_EXHAUSTED' }));
+const stopped = { ...old, status: 'interrupted', replySource: 'local-receipt', replyDelivered: true, content: 'Recovered work receipt',
+  error: false, anchor: { id: 'a' }, changes: [{ path: 'docs/a.md' }, { path: 'docs\\a.md' }, { path: 'gone.md', deleted: true }, { path: 'restored.md', reverted: true }] };
+assert(isStoppedRunNotice(stopped));
+assert.equal(stoppedRunChangeCount(stopped), 2);
+assert.equal(stoppedRunChangeCount({ ...stopped, unapplied: true }), 0);
+assert(!isStoppedRunNotice({ ...stopped, anchorRestoredAt: 'now' }));
+assert(!isStoppedRunNotice({ ...stopped, replySource: 'model' }));
+const dismissed = dismissStoppedRunNotice(stopped);
+assert.deepEqual(dismissed, { ...stopped, stoppedNoticeDismissed: true });
+assert.equal(dismissed.anchor, stopped.anchor);
+assert.equal(dismissed.changes, stopped.changes);
+assert.equal(dismissed.witness, stopped.witness);
+assert.equal(dismissStoppedRunNotice(dismissed), dismissed);
+assert.equal(dismissStoppedRunNotice(old), old);
+const originalUser = { id: 'first-user', role: 'user', createdAt: '2026-11-26T15:00:00Z' };
+const currentStop = { ...stopped, sourceUserId: originalUser.id };
+const nextUser = { id: 'later-user', role: 'user', createdAt: '2026-11-26T16:00:00Z' };
+assert.equal(currentStoppedRun([originalUser, currentStop]), currentStop);
+assert.equal(currentStoppedRun([originalUser, currentStop, { ...nextUser, steeringStatus: 'pending' }]), currentStop);
+assert.equal(currentStoppedRun([originalUser, { ...nextUser, steeringStatus: 'applied' }, currentStop]), currentStop);
+assert.equal(currentStoppedRun([originalUser, currentStop, { ...nextUser, steeringStatus: 'failed', queued: true }]), null);
+assert.equal(currentStoppedRun([originalUser, currentStop, nextUser]), null);
+assert.equal(currentStoppedRun([originalUser, nextUser, currentStop]), null, 'a restored earlier record can be appended below a newer request');
+assert.equal(currentStoppedRun([originalUser, nextUser, { ...stopped, recoverable: { startedAt: originalUser.createdAt } }]), null);
+const laterStop = { ...stopped, id: 'later-stopped', sourceUserId: nextUser.id };
+assert.equal(currentStoppedRun([originalUser, nextUser, laterStop, currentStop]), laterStop);
+assert.equal(currentStoppedRun([originalUser, currentStop, { ...stopped, status: 'completed' }]), null);
 console.log("Task outcome view: retry/follow-up/new task, latest Witness, preserved non-deleted files: PASS");

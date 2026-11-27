@@ -9,14 +9,29 @@ import { remarkAutolinkBoundary } from "../src/conversation/remark-autolink-boun
 import { classifyLink, normalizeLocalPath, toWorkspaceRelativePath } from "../electron/link-target.js";
 import { localMarkdownLinks } from "../electron/markdown-links.js";
 import { checkWorkspaceFileLink } from "../electron/file-link-check.js";
-import { validateDeliveryLinks } from "../electron/runtime/delivery-links.js";
+import { linkDeliveredFileMentions, validateDeliveryLinks } from "../electron/runtime/delivery-links.js";
 import { extractLinkedFiles } from "../electron/workbench/present.js";
 import { sanitizeFinalAnswer } from "../electron/runtime/conversation.js";
+import { adaptiveCore } from '../electron/runtime/adaptive-task-prompt.js';
+import { FILE_LINK_LABEL_GUIDANCE } from '../electron/runtime/delivery-policy.js';
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkAutolinkBoundary);
 const parse = (source) => parser.runSync(parser.parse(source), { value: source });
 const links = (node) => [ ...(node.type === "link" ? [node] : []), ...(node.children || []).flatMap(links) ];
 const filename = "SeaLandX-B站用户资料简介-美化版.docx";
+const mention = "已交付 `页面 #1.html` 和 `missing.html`。\n\n```text\n`页面 #1.html`\n```";
+const linkedMention = linkDeliveredFileMentions(mention, "D:/workspace", [{path:"页面 #1.html",created:true},{path:"missing.html",deleted:true}]);
+assert.deepEqual(localMarkdownLinks(linkedMention).map(l=>l.target), ["页面 #1.html"]);
+assert.match(linkedMention, /`missing\.html`/);
+assert(linkedMention.endsWith("```text\n`页面 #1.html`\n```"));
+assert.equal(linkDeliveredFileMentions(linkedMention,"D:/workspace",[{path:"页面 #1.html"}]),linkedMention);
+const customLabel = '[计算器页面](<页面 #1.html>)';
+assert.equal(localMarkdownLinks(customLabel)[0].label, '计算器页面');
+assert.equal(linkDeliveredFileMentions(customLabel, 'D:/workspace', [{ path: '页面 #1.html' }]), customLabel);
+assert.equal(await validateDeliveryLinks(customLabel, 'D:/workspace', 'zh-CN', async () => ({ status: 'exists' })), customLabel);
+assert.equal(adaptiveCore('Simplified Chinese').split('\n').filter(line => line === FILE_LINK_LABEL_GUIDANCE).length, 1);
+assert.match(FILE_LINK_LABEL_GUIDANCE, /omit filenames unless asked/);
+assert(FILE_LINK_LABEL_GUIDANCE.length < 150, 'link-label guidance is one short line');
 assert.equal(sanitizeFinalAnswer("[报告 🚀](报告🚀.docx)"), "[报告 🚀](报告🚀.docx)");
 for (const href of [filename, "D:/市场/" + filename, "file:///D:/市场/" + filename, "https://例子.测试/资料（新版）?词=中文"]) {
   const node = links(parse(`[完整标签](${href})`))[0];

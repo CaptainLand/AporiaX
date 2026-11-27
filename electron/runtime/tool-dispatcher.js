@@ -1,14 +1,20 @@
+import { lstat } from 'node:fs/promises';
 import { getToolPermission } from "../agent-core.js";
-import { executeDurableTool, waitForRuntimeResume } from "./durable-run.js";
+import { executeDurableTool, markToolPreflightFailure, waitForRuntimeResume } from "./durable-run.js";
 import { tryReadExternalDirectory } from "./external-read.js";
 import { requireToolResult } from "./task-conversation.js";
 import { projectScriptFingerprint } from "./project-script-trust.js";
 import { assertLocalControlTool, currentLocalControlPolicy, localControlToolRequiresApproval } from "../control/policy.js";
-import { assertNativeFileTool, nativeFilePath, verifyExternalFileTarget, withNativeFileScope } from "./file-access-policy.js";
+import { assertNativeFileTool, nativeFilePath, nativeToolWritesOutsideWorkspace, verifyExternalFileTarget, verifyNativeFileTarget, withNativeFileScope, withWorkspaceOnlyFileAccess } from "./file-access-policy.js";
 import { prepareFileDeletion } from './workspace-mutations.js';
 import { verificationCommand } from './isolated-verification.js';
 import { requestsBrowserPresentation } from '../workbench/preview-path.js';
 import { fileDeletionGrant } from './approval-grants.js';
+import { APPROVE_ALL_MODE } from '../../shared/approval-modes.js';
+import { currentExecutionMode } from '../harness/agent-budget.js';
+import { approvalSkippedError, approveAllNativeBlockReason, AUTOMATIC_PREVIEW_TOOLS, isHandsFreeApproval, nativeBackendBlockReason, NATIVE_APPROVAL_PROOF, SEPARATE_NATIVE_APPROVAL } from './approve-all-policy.js';
+import { parseWorkspaceArchiveCommand } from './workspace-archive.js';
+import { hasShellComposition } from './execution-policy.js';
 import {
   buildToolApprovalRequest,
   resolveToolExecutionPermission,
@@ -32,7 +38,12 @@ function assertNotAborted(signal) {
  * and the handoff into the actual executor. The executor therefore never needs
  * to repeat permission logic.
  */
-export async function dispatchNativeTool({
+export function dispatchNativeTool(options = {}) {
+  const dispatch = () => dispatchTool(options);
+  return options.approvalMode === APPROVE_ALL_MODE ? withWorkspaceOnlyFileAccess(dispatch) : dispatch();
+}
+
+async function dispatchTool({
   toolCall,
   registry,
   permissionPolicy,
@@ -74,12 +85,46 @@ export async function dispatchNativeTool({
     permissionAction,
     approvalMode,
     sandboxStatus,
-    executionMode,
+    executionMode: executionMode || currentExecutionMode(),
     input,
   });
   if (decision.denied) {
     throw new Error(`Permission denied for tool: ${toolName}`);
   }
+  const handsFree = isHandsFreeApproval(approvalMode);
+  const backendBlock = nativeBackendBlockReason(toolName, decision.backend);
+  if (backendBlock && (handsFree || decision.backend.osIsolation)) {
+    if (approvalMode === APPROVE_ALL_MODE) throw approvalSkippedError(backendBlock);
+    throw Object.assign(new Error(backendBlock), { code: 'EXECUTION_PROFILE_UNAVAILABLE', retryable: false });
+  }
+  const workspaceArchive = handsFree && toolName === 'run_command' && !decision.backend.osIsolation
+    ? parseWorkspaceArchiveCommand(input.command) : null;
+  const previewAction = handsFree && AUTOMATIC_PREVIEW_TOOLS.has(toolName) && executeContext.browserPresentationAllowed !== false
+    ? executeContext.browserRuntime?.bindAutomaticPreviewAction?.(toolName) : null;
+  const automaticPreviewAction = typeof previewAction === 'function' ? previewAction : null;
+  let workspaceScript = null;
+  if (handsFree && ['run_command', 'start_process'].includes(toolName) && !decision.backend.osIsolation && typeof input.command === 'string' && !hasShellComposition(input.command)) {
+    const match = /^\s*(node|python(?:3)?)(?:\.exe)?\s+(?:"([^"$]+)"|'([^'$]+)'|([\p{L}\p{M}\p{N}_.\-/\\]+))(?:\s|$)/iu.exec(input.command);
+    const script = match && (match[2] || (process.platform !== 'win32' && match[3]) || match[4]);
+    const extension = match && (/^node$/i.test(match[1]) ? /\.(?:mjs|cjs|js)$/i : /\.py$/i);
+    if (script && extension.test(script) && !/^[-/\\]|:/.test(script)) {
+      workspaceScript = { path: script, cwd: input.cwd || '.' };
+      await verifyWorkspaceScript();
+    }
+  }
+  async function verifyWorkspaceScript() {
+    if (!workspaceScript) return;
+    await withWorkspaceOnlyFileAccess(async () => {
+      const root = executeContext.workspaceRoot;
+      const cwd = await verifyNativeFileTarget(root, workspaceScript.cwd);
+      const target = await verifyNativeFileTarget(root, nativeFilePath(cwd, workspaceScript.path));
+      if (!(await lstat(target)).isFile()) throw new Error('Expected a regular workspace script entry file.');
+    });
+  }
+  const separateReason = handsFree
+    ? (nativeToolWritesOutsideWorkspace(toolName, input, executeContext.workspaceRoot) && 'Writing outside the workspace requires separate authorization.') ||
+      approveAllNativeBlockReason(toolName, input, decision, { workspaceArchive, automaticPreviewAction, workspaceScript }) : '';
+  if (approvalMode === APPROVE_ALL_MODE && separateReason) throw approvalSkippedError(separateReason);
   let deletionGrant = null;
   let rememberedDeletion = false;
   const deletionScope = version => fileDeletionGrant(executeContext.workspaceRoot, version,
@@ -92,7 +137,7 @@ export async function dispatchNativeTool({
 
   // Role changes have their own mandatory, revision-bound approval containing
   // the full diff. Never replace it with a generic/rememberable tool grant.
-  if (decision.requiresApproval && !['manage_agent_role', 'install_workspace_skill'].includes(toolName)) {
+  if ((decision.requiresApproval || separateReason) && !['manage_agent_role', 'install_workspace_skill'].includes(toolName)) {
     if (typeof requestApproval !== "function") {
       throw new Error(`Tool ${toolName} requires approval.`);
     }
@@ -108,6 +153,8 @@ export async function dispatchNativeTool({
         permissionDecision: decision,
       }),
       ...(deletionGrant ? { deletionGrant } : {}),
+      ...(handsFree && !separateReason ? { [NATIVE_APPROVAL_PROOF]: true } : {}),
+      ...(separateReason ? { [SEPARATE_NATIVE_APPROVAL]: separateReason } : {}),
       ...(decision.commandPolicy?.category === "project-script" ? {
         kind: "project-script-trust", canRememberForRun: Boolean(projectTrust),
         projectFingerprint: projectTrust?.fingerprint || null,
@@ -117,6 +164,7 @@ export async function dispatchNativeTool({
     });
     assertNotAborted(signal);
     if (!approval?.approved) {
+      if (approval?.skipped) throw approvalSkippedError(approval.reason, true);
       throw new Error(`The user rejected tool: ${toolName}`);
     }
     rememberedDeletion = Boolean(approval.remembered && deletionGrant);
@@ -152,6 +200,7 @@ export async function dispatchNativeTool({
     // broaden the client grant or authorize a newly redirected symlink.
     await assertLocalControlTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot, count: false });
     await assertNativeFileTool({ toolName, input, workspaceRoot: executeContext.workspaceRoot });
+    await verifyWorkspaceScript().catch(error => { throw markToolPreflightFailure(error); });
     if (rememberedDeletion) {
       const latest = await prepareFileDeletion(executeContext.workspaceRoot, input, { signal });
       if ((await deletionScope(latest).catch(() => null))?.id !== deletionGrant.id)
@@ -165,6 +214,9 @@ export async function dispatchNativeTool({
     input,
     signal,
     permissionDecision: decision,
+    workspaceArchive,
+    automaticPreviewAction,
+    automaticPreview: handsFree,
     browserPresentationAllowed,
     }));
   }, requestApproval, { scope: executeContext.durableScope });
@@ -194,7 +246,9 @@ export function projectNativeToolCatalog({
       permission: decision.requiresApproval ? "ask" : "allow",
       executionMode: decision.executionMode,
       warning:
-        backend.mode === "direct"
+        isHandsFreeApproval(approvalMode)
+          ? 'Ordinary workspace commands are automatic; protected operations ' + (approvalMode === APPROVE_ALL_MODE ? 'are skipped.' : 'require confirmation.')
+          : backend.mode === "direct"
           ? "Direct execution uses the real workspace and host authority. Only recognized low-risk commands may auto-run; unknown commands require approval."
           : backend.mode === "isolated"
             ? backend.available

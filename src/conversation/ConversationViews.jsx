@@ -1,6 +1,8 @@
 import { TaskGoalReport } from "./TaskGoalReport.jsx";
 import { ClarificationCard } from "./ClarificationCard.jsx";
 import { RouteActivityView } from "./RouteActivityView.jsx";
+import { StoppedRunNotice } from './StoppedRunNotice.jsx';
+import { FilePathLink } from './FilePathLink.jsx';
 import { activityActor, describeRouteRecord } from "./route-activity-model.js";
 import React, { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
@@ -38,7 +40,7 @@ import {
 import { ApprovalCard, DiffReviewPanel, UserAttachments } from "../agent-components";
 import { useI18n } from "../i18n";
 import { PreviewImage } from '../images/ImageViewer.jsx';
-import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles, hasTaskReply } from "../state/task-outcome-view.js";
+import { latestVisibleAssistant, isHistoricalFailure, savedOutcomeFiles, hasTaskReply, isStoppedRunNotice, stoppedRunChangeCount, currentStoppedRun } from "../state/task-outcome-view.js";
 import {
   FoldableUserPrompt,
   RunDurationChip,
@@ -129,11 +131,15 @@ function MessageLink({ href, children, title }) {
     } catch (failure) { onNotice?.(describeLinkOpenError(failure, target, language)); }
   };
   if (!link) return <span>{children}</span>;
+  const interactions = {
+    onClick: event => void activate(event, 'open'),
+    onContextMenu: event => void activate(event, 'menu'),
+    onKeyDown: event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) void activate(event, 'menu'); },
+  };
+  if (link.kind === 'file') return <FilePathLink href={resolvedHref} path={link.line ? `${link.target}:${link.line}` : link.target}
+    note={title} {...interactions}>{children}</FilePathLink>;
   return <a href={resolvedHref} title={title || resolvedHref} rel="noreferrer" target={link.kind === "web" ? "_blank" : undefined}
-      onClick={(event) => void activate(event, "open")}
-      onContextMenu={(event) => void activate(event, "menu")}
-      onKeyDown={(event) => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) void activate(event, "menu"); }}
-    >{children}</a>;
+    {...interactions}>{children}</a>;
 }
 
 // Model/effort changes leave message text intact. Keep the parsed Markdown tree
@@ -824,7 +830,7 @@ function FailedRunContent({ message }) {
   </div>;
 }
 
-function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progressRunning, editedFiles, deferOffscreen }) {
+function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progressRunning, editedFiles, deferOffscreen, embedded = false }) {
   const { tr } = useI18n();
   const [retrying, setRetrying] = useState(false);
   const [progressExpanded, setProgressExpanded] = useState(progressRunning);
@@ -855,7 +861,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
   return (
     <article
       className={`assistant-message ${failed ? "error" : ""} ${interrupted || (blocked && !resultDelivered) ? "interrupted" : ""}`}
-      data-thread-turn={message.id}
+      data-thread-turn={embedded ? undefined : message.id}
       data-defer-offscreen={deferOffscreen || undefined}
     >
       <div className="assistant-message-heading">
@@ -970,7 +976,7 @@ function AssistantMessage({ message, onRetry, onOpenAnchor, taskRunning, progres
           </div>
         </div>
       )}
-      {(failed || interrupted || blocked || resumablePartial) && message.prompt && (
+      {onRetry && (failed || interrupted || blocked || resumablePartial) && message.prompt && (
         <button
           className="retry-message-button"
           type="button"
@@ -1055,6 +1061,8 @@ function describeWitnessRecord(record, tr, language) {
     "context.compacted": [tr("已整理长任务上下文", "Long-task context compacted"), tr("关键约束与证据已保留", "Key constraints and evidence were preserved")],
     "memory.updated": [tr("项目记忆已更新", "Project memory updated"), record.detail],
     "approval.required": [tr("等待用户确认", "Waiting for approval"), record.command],
+    'approval.mode.enabled': [tr('本轮使用「一律通过」', 'Always allow enabled for this run'), ''],
+    'approval.skipped': [tr('需另行授权，已跳过', 'Skipped: separate authorization required'), record.detail],
     "control.paused": [tr("任务已暂停", "Task paused"), tr("Witness 将继续保留当前进度", "Witness will preserve the current progress")],
     "control.resumed": [tr("任务继续运行", "Task resumed"), tr("从安全边界继续执行", "Continuing from the safe boundary")],
     "turn.completed": [record.status === 'completed' ? tr("任务执行完成", "Task execution completed") : tr("本轮已结束", "This run has ended"), record.detail || tr("Witness 已保存本轮行动记录", "Witness saved the action record")],
@@ -1224,6 +1232,7 @@ function WitnessPanel({ witness, liveProgress, usage, usagePartial, resultDelive
 const ConversationTurn = React.memo(function ConversationTurn({
   message, workspacePath, allowFileActions, historicalFailure, taskRunning,
   progressRunning, clarificationActive, onOpenAnchor, onReview, onRetry, onNotice, deferOffscreen,
+  hasStoppedCheckpoint, canResumeStopped, onDismissStoppedNotice,
 }) {
   const { tr } = useI18n();
   if (message.kind === "anchor-restore") {
@@ -1283,6 +1292,34 @@ const ConversationTurn = React.memo(function ConversationTurn({
 
   if (message.supersededByRetryId) return null;
 
+  if (isStoppedRunNotice(message)) {
+    const changeCount = stoppedRunChangeCount(message);
+    if (message.stoppedNoticeDismissed || (!changeCount && !hasStoppedCheckpoint)) return null;
+    return <StoppedRunNotice messageId={message.id} changeCount={changeCount} taskRunning={taskRunning}
+      deferOffscreen={deferOffscreen} onResume={hasStoppedCheckpoint && canResumeStopped && onRetry ? () => onRetry(message) : null}
+      onDismiss={onDismissStoppedNotice ? () => onDismissStoppedNotice(message.id) : null}>
+      <ConversationTurnDetails message={message} workspacePath={workspacePath} allowFileActions={allowFileActions}
+        taskRunning={taskRunning} onOpenAnchor={onOpenAnchor} onReview={onReview} onNotice={onNotice} embedded />
+      {message.witness && <WitnessPanel witness={message.witness} liveProgress={getLiveRunProgress(message)} usage={message.cumulativeUsage ?? message.usage}
+        usagePartial={message.usageHistoryComplete === false || (message.loopMetrics?.attemptsWithoutUsage ?? 0) > 0}
+        resultDelivered={false} />}
+    </StoppedRunNotice>;
+  }
+
+  const attempt = <ConversationTurnDetails message={message} workspacePath={workspacePath} allowFileActions={allowFileActions}
+    taskRunning={taskRunning} progressRunning={progressRunning} clarificationActive={clarificationActive}
+    onOpenAnchor={onOpenAnchor} onReview={onReview} onRetry={onRetry} onNotice={onNotice} deferOffscreen={deferOffscreen && !historicalFailure} />;
+  return historicalFailure ? (
+    <details className="historical-run" key={message.id} data-thread-turn={message.id} data-thread-history-turn
+      data-defer-offscreen={deferOffscreen || undefined}>
+      <summary><History size={14} /><span>{tr("历史尝试未完成 · 已继续后续轮次", "Earlier attempt unfinished · conversation continued")}</span><ChevronDown size={14} /></summary>
+      {attempt}
+    </details>
+  ) : attempt;
+});
+
+function ConversationTurnDetails({ message, workspacePath, allowFileActions, taskRunning, progressRunning = false,
+  clarificationActive, onOpenAnchor, onReview, onRetry, onNotice, deferOffscreen, embedded }) {
   const files = collectEditedFiles(
     message.steps,
     message.content,
@@ -1299,7 +1336,7 @@ const ConversationTurn = React.memo(function ConversationTurn({
       onReview={(path) => onReview(message.id, path, files[0]?.path)}
     />
   ) : null;
-  const attempt = (
+  return (
     <React.Fragment key={message.id}>
       <LinkWorkspace.Provider value={workspacePath}>
       <LinkNotice.Provider value={onNotice}>
@@ -1310,7 +1347,8 @@ const ConversationTurn = React.memo(function ConversationTurn({
         taskRunning={taskRunning}
         progressRunning={progressRunning}
         onOpenAnchor={onOpenAnchor}
-        deferOffscreen={deferOffscreen && !historicalFailure}
+        deferOffscreen={deferOffscreen}
+        embedded={embedded}
       />
       </LinkNotice.Provider>
       </LinkWorkspace.Provider>
@@ -1319,14 +1357,7 @@ const ConversationTurn = React.memo(function ConversationTurn({
       {!restored && <TaskGoalReport brief={message.taskBrief} acceptance={message.acceptance} strategy={message.strategy} />}
     </React.Fragment>
   );
-  return historicalFailure ? (
-    <details className="historical-run" key={message.id} data-thread-turn={message.id} data-thread-history-turn
-      data-defer-offscreen={deferOffscreen || undefined}>
-      <summary><History size={14} /><span>{tr("历史尝试未完成 · 已继续后续轮次", "Earlier attempt unfinished · conversation continued")}</span><ChevronDown size={14} /></summary>
-      {attempt}
-    </details>
-  ) : attempt;
-});
+}
 
 export const LONG_CONVERSATION_MESSAGES = 120;
 
@@ -1339,6 +1370,7 @@ export function Conversation({
   approvalResponding,
   onRespondApproval,
   onRetry,
+  onDismissStoppedNotice,
   onRevert,
   onRestoreTurnAnchor,
   onConfirmChanges,
@@ -1351,8 +1383,9 @@ export function Conversation({
   const [anchorRequest, setAnchorRequest] = useState(null);
   const [reverting, setReverting] = useState(false);
   const actions = useRef(null);
-  useLayoutEffect(() => { actions.current = { onRetry, onNotice, workbench, allowFileActions }; });
+  useLayoutEffect(() => { actions.current = { onRetry, onDismissStoppedNotice, onNotice, workbench, allowFileActions }; });
   const retryTurn = useCallback((...args) => actions.current?.onRetry?.(...args), []);
+  const dismissStoppedNotice = useCallback(messageId => actions.current?.onDismissStoppedNotice?.(task.id, messageId), [task.id]);
   const notify = useCallback((...args) => actions.current?.onNotice?.(...args), []);
   const openAnchor = useCallback(target => setAnchorRequest({ messageId: target.id }), []);
   const openReview = useCallback((messageId, path, firstFile) => {
@@ -1363,6 +1396,10 @@ export function Conversation({
   const anchorMessage = anchorRequest && task.messages.find(message => message.id === anchorRequest.messageId);
   const latestAssistant = latestVisibleAssistant(task.messages);
   const running = Boolean(isRunning && latestAssistant?.status === "running");
+  const sourceInputs = useMemo(() => new Set(task.messages.filter(message => message.role === 'user' &&
+    (message.content?.trim?.() || message.attachments?.length)).map(message => message.id)), [task.messages]);
+  const currentStoppedId = useMemo(() => currentStoppedRun(task.messages)?.id, [task.messages]);
+  const latestStopped = isStoppedRunNotice(latestAssistant);
   const witness = taskAttemptWitness(task.messages, latestAssistant);
   const witnessMessage = latestAssistant?.status === "running" || witness
     ? { ...latestAssistant, witness } : null;
@@ -1409,6 +1446,10 @@ export function Conversation({
           onOpenAnchor={openAnchor}
           onReview={openReview}
           onRetry={onRetry ? retryTurn : null}
+          hasStoppedCheckpoint={Boolean(isStoppedRunNotice(message) && (message.runId || message.recoverable?.runId) &&
+            (message.prompt?.trim?.() || sourceInputs.has(message.sourceUserId)))}
+          canResumeStopped={message.id === currentStoppedId}
+          onDismissStoppedNotice={onDismissStoppedNotice ? dismissStoppedNotice : null}
           onNotice={onNotice ? notify : null}
         />
       ))}
@@ -1417,7 +1458,7 @@ export function Conversation({
         responding={approvalResponding}
         onRespond={onRespondApproval}
       />
-      {((isRunning && latestAssistant?.status === "running") || witnessMessage?.witness) && (
+      {!latestStopped && ((isRunning && latestAssistant?.status === "running") || witnessMessage?.witness) && (
         <WitnessPanel
           witness={witnessMessage?.witness}
           liveProgress={liveProgress}

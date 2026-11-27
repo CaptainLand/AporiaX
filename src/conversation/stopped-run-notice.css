@@ -1,0 +1,32 @@
+.stopped-run-notice { min-width: 0; }
+.stopped-run-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.stopped-run-label strong { color: var(--text-1); font-weight: var(--weight-medium); }
+.stopped-run-actions { display: inline-flex; align-items: baseline; flex: none; gap: 2px; }
+.stopped-run-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+.stopped-run-actions button:not(:disabled):hover { background: var(--gray-3); color: var(--text-1); }
+.stopped-run-actions button:focus-visible { outline: 2px solid var(--accent-9); outline-offset: 1px; }
+.stopped-run-actions button:disabled { opacity: .55; cursor: default; }
+.stopped-run-actions .stopped-run-dismiss { align-self: center; width: 26px; padding: 0; color: var(--text-3); }
+.stopped-run-dismiss svg { vertical-align: middle; }
+.stopped-run-details:not([hidden]) { margin-top: 8px; }

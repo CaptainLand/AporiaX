@@ -356,7 +356,7 @@ export async function runSubagentTask(options = {}) {
           return provider.complete({ signal: requestSignal, body, requestTrace: { agentId }, onStreamEvent: (event) => {
             loopMetrics.observe(event);
             if (event.type === "response.activity") emit({ type: "subagent.activity", agentId, role: input.role });
-            if (["response.progress", "response.recovery.status", "response.cloud.queued", "response.cloud.admitted"].includes(event.type)) emit({ ...event, type: `subagent.${event.type}`, agentId, role: input.role });
+            if (["response.progress", "response.recovery.status", "response.cloud.queued", "response.cloud.admitted", "response.cloud.auth"].includes(event.type)) emit({ ...event, type: `subagent.${event.type}`, agentId, role: input.role });
             if (event.type === "response.attempt.completed") emit({ ...event, type: "subagent.response.attempt.completed", agentId });
           } });
         },
@@ -530,6 +530,8 @@ export async function runSubagentTask(options = {}) {
               workspaceRoot,
               sandboxExecutor,
               sandboxStatus,
+              sandboxDataDirectory: options.sandboxDataDirectory,
+              safeDependencySession: options.safeDependencySession,
               browserRuntime: workerBrowser,
               processManager: workerProcesses,
               lspManager: workerLsp,
@@ -546,7 +548,10 @@ export async function runSubagentTask(options = {}) {
         } catch (error) {
           if (error?.name === "AbortError") throw error;
           success = false;
-          modelResult = { error: error.message };
+          const skipped = error?.code === 'APPROVE_ALL_SKIPPED' || (approvalMode === 'approve-all' && error?.code === 'FILE_ACCESS_DENIED');
+          if (skipped && !error.approvalReported) emit({ type: 'approval.skipped', mode: approvalMode, agentId, tool: toolName,
+            reason: error.approvalReason || error.message });
+          modelResult = { error: error.message, ...(skipped ? { skipped: true, code: error.code } : {}) };
         }
         let observedInput;
         try { observedInput = parseToolArguments(toolCall); } catch { observedInput = {}; }
@@ -570,6 +575,7 @@ export async function runSubagentTask(options = {}) {
           tool: toolName,
           parallel: parallelBatch,
           success,
+          skipped: Boolean(modelResult?.skipped),
           path: item.path,
           command: item.command,
           exitCode: item.exitCode,

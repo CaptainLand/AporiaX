@@ -289,7 +289,7 @@ export function FoldableUserPrompt({ content }) {
                     : tr("MCP 引用", "MCP reference")
               }
             >
-              {part.value}
+              {part.kind === 'skill' ? <><span className="skill-mention-prefix">{part.value.slice(0, 7)}</span>{part.value.slice(7)}</> : part.value}
             </span>
           ) : (
             <React.Fragment key={`text-${index}`}>{part.value}</React.Fragment>

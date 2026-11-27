@@ -56,6 +56,8 @@ const state = (id, value) => page.waitForFunction(({ id, value }) => document.qu
 const emit = async event => page.evaluate(event => window.officeFixture.emit(event), event);
 const enter = async () => {
   await nav.getByRole('button', { name: 'Agent 工位', exact: true }).click();
+  const enable = page.getByRole('button', { name: '开启 Agent 工位', exact: true });
+  if (await enable.isVisible()) await enable.click();
   await office.locator('.ao-scene.ready canvas').waitFor();
 };
 try {
@@ -64,6 +66,25 @@ try {
   if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
   assert.deepEqual(await nav.locator('button').allTextContents(), ['对话', '执行记录', '工作区', '项目知识', 'Agent 工位']);
   assert(!requests.some(url => /office-scene|AgentOffice/.test(url)), 'Office is lazy; no renderer cost in chat');
+  await nav.getByRole('button', { name: 'Agent 工位', exact: true }).click();
+  await page.getByRole('region', { name: 'Agent 工位实验功能' }).waitFor();
+  assert.match(await page.locator('.office-opt-in').innerText(), /实验功能[\s\S]*卡顿或闪退/);
+  assert.equal(await page.locator('.office-opt-in p').count(), 1, 'One brief explanation');
+  assert.equal(await page.locator('.office-opt-in button').count(), 1, 'Only the enable action is shown');
+  for (const width of [1500, 900]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const geometry = await page.locator('.office-opt-in-content').evaluate(card => {
+      const panel = card.closest('.office-panel').getBoundingClientRect(), rect = card.getBoundingClientRect();
+      return { horizontal: Math.abs((rect.left + rect.right - panel.left - panel.right) / 2), vertical: Math.abs((rect.top + rect.bottom - panel.top - panel.bottom) / 2), left: rect.left, right: rect.right };
+    });
+    assert(geometry.horizontal < 2 && geometry.vertical < 2, `Consent card is centered in its workspace at ${width}px`);
+    assert(geometry.left >= 0 && geometry.right <= width, 'Consent card stays visible');
+  }
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  assert.equal(await office.count(), 0, 'No office mounted before consent');
+  assert(!requests.some(url => /office-scene|AgentOffice/.test(url)), 'Consent screen does not load office or WebGL');
+  await nav.getByRole('button', { name: '对话', exact: true }).click();
+  assert.equal(await nav.locator('button.active').innerText(), '对话');
   await page.getByRole('textbox', { name: '任务输入', exact: true }).fill('草稿保留检查');
   await enter();
   assert.equal(await office.locator('.ao-roster > button').count(), 6);
@@ -163,16 +184,26 @@ try {
   assert.equal(await member('builder-2').getAttribute('data-state'), 'offline', 'Ended task cannot leave fake running workers');
   await member('lead').click(); assert.equal(await office.locator('.ao-detail textarea').count(), 0);
   await page.getByRole('button', { name: '整理使用说明', exact: true }).click();
-  await enter();
+  await nav.getByRole('button', { name: 'Agent 工位', exact: true }).click();
+  await page.getByRole('region', { name: 'Agent 工位实验功能' }).waitFor();
+  assert.equal(await office.count(), 0, 'A different task requires its own consent');
+  await page.getByRole('button', { name: '开启 Agent 工位', exact: true }).click();
+  await office.locator('.ao-scene.ready canvas').waitFor();
   assert.equal(await member('builder-1').count(), 0, 'Task switch clears historical workers');
   assert.equal(await member('lead').getAttribute('data-state'), 'sleeping');
   await page.setViewportSize({ width: 900, height: 760 });
   const geometry = await office.evaluate(el => ({ client: el.clientWidth, scroll: el.scrollWidth, height: el.clientHeight, canvas: el.querySelector('canvas').clientHeight }));
   assert.equal(geometry.client, geometry.scroll, 'Narrow view contains its own horizontal roster');
   assert(geometry.canvas > 200 && geometry.height > geometry.canvas);
+  await page.waitForFunction(() => { const saved = JSON.parse(localStorage.getItem('aporiax.session-ui.v1') || '{}'); return saved.taskId === 'office-other' && saved.view === 'office'; });
   await page.reload();
   await page.locator('.ax-welcome__enter, .thread-view-tabs').first().waitFor();
   if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
+  assert.equal(await office.count(), 0, 'Reload never automatically initializes graphics');
+  if (!(await page.getByRole('button', { name: '开启 Agent 工位', exact: true }).isVisible())) await nav.getByRole('button', { name: 'Agent 工位', exact: true }).click();
+  await page.getByRole('region', { name: 'Agent 工位实验功能' }).waitFor();
+  assert.equal(await office.count(), 0, 'Restored office view does not automatically restart graphics after reload');
+  await page.getByRole('button', { name: '开启 Agent 工位', exact: true }).click();
   await office.locator('.ao-scene.ready canvas').waitFor();
   assert.equal(await nav.locator('button.active').innerText(), 'Agent 工位', 'View restored after app reload');
   assert(!requests.some(url => /:5188\//.test(url)), 'No dependency on the demo preview server');
@@ -182,6 +213,8 @@ try {
   await page.reload();
   await page.locator('.ax-welcome__enter, .thread-view-tabs').first().waitFor();
   if (await page.locator('.ax-welcome__enter').isVisible()) await page.locator('.ax-welcome__enter').click();
+  if (!(await page.getByRole('button', { name: '开启 Agent 工位', exact: true }).isVisible())) await nav.getByRole('button', { name: 'Agent 工位', exact: true }).click();
+  await page.getByRole('button', { name: '开启 Agent 工位', exact: true }).click();
   await office.getByRole('button', { name: '重试场景', exact: true }).waitFor();
   await member('lead').click(); await office.locator('.ao-detail').waitFor();
   assert.equal(await page.evaluate(() => window.officeFixture.calls.filter(c => c.kind === 'run').length), 0);

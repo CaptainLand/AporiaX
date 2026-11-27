@@ -112,6 +112,7 @@ export function serializeDesktopTaskPreview(tasks) {
       kind: message.kind,
       status: message.status,
       supersededByRetryId: message.supersededByRetryId,
+      ...(message.stoppedNoticeDismissed === true ? { stoppedNoticeDismissed: true } : {}),
       createdAt: message.createdAt,
       content: String(message.content || "").slice(0, 1_000),
     })),

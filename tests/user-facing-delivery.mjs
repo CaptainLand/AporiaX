@@ -64,6 +64,9 @@ try {
     globalThis.fetch = async (_url, options) => {
       requests++; calls++;
       const body = JSON.parse(options.body);
+      if (requests === 1) return new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'discover', type: 'function', function: {
+        name: 'enable_task_tools', arguments: '{"groups":["planning"]}',
+      } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
       const instructions = body.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
       assert.match(instructions, /Result-first delivery:/);
       assert.match(instructions, /Keep each key issue to one or two plain-language sentences/);
@@ -85,7 +88,7 @@ try {
     if (warnings) assert(result.content.includes(warnings), 'important failures or actions remain visible');
     assert.doesNotMatch(result.content, /验证与限制|Verification and limitations/);
     assert(!result.content.includes('const angle'), 'technical analysis is separate from the summary');
-    assert.equal(requests, 1, 'presentation introduces no repair/rewrite model round');
+    assert.equal(requests, 2, 'only discovery plus delivery; no repair/rewrite model round');
   }
 } finally { globalThis.fetch = original; }
 console.log('PASS conversational handoff, routine notes in full reply, essential warnings visible, legacy replies, history/fork/persistence, honest status and no extra model calls. Synthetic provider only.');

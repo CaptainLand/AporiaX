@@ -67,32 +67,34 @@ try {
     }, { permission: "read-only" });
     assert.equal(result.status, "completed", result.content); assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD");
   });
-  await test("repeated-evidence budget closes tools but allows one final result explanation", async () => {
-    const { result, requests, events } = await fixture((_body, request) => toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]), { loopPolicy: { maxRepeatedEvidence: 6 } });
-    assert.equal(result.status, "blocked", result.content); assert.match(result.content, /Repeated actions/);
-    assert.equal(requests, 7); assert.equal(events.filter((event) => event.type === "tool.completed").length, 6);
-    assert.equal(events.filter((event) => event.type === "completion.summary").length, 1);
+  await test('repeated evidence suppresses only that action without closing tools', async () => {
+    const { result, requests, events } = await fixture((body, request) => {
+      if (request <= 7) return toolResponse([call('read-' + request, 'read_file', { path: 'a.txt' })]);
+      assert(body.tools.length); assert.match(body.messages.find(message => message.tool_call_id === 'read-7').content, /TOOL_REPEAT_SUPPRESSED/);
+      return sse({ content: 'Inspected the file; use another source if more work is needed.' });
+    }, { loopPolicy: { maxRepeatedEvidence: 6 } });
+    assert.equal(result.status, 'completed', result.content);
+    assert.equal(requests, 8); assert.equal(events.filter(event => event.type === 'tool.completed').length, 7);
+    assert.equal(events.filter(event => event.type === 'completion.summary').length, 0);
   });
   await test("explicit zero progress budget keeps the advisory opt-out", async () => {
     const { result, requests } = await fixture((_body, request) => request <= 12 ? toolResponse([call("read-" + request, "read_file", { path: "a.txt" })]) : sse({ content: "No new evidence; report blocker." }), { loopPolicy: { maxRepeatedEvidence: 0 } });
     assert.equal(result.status, "completed", result.content); assert.equal(requests, 13); assert.equal(result.loopMetrics.noProgressWarnings, 4);
   });
-  await test("a provider cannot bypass the result-only boundary by fabricating a write", async () => {
+  await test('repeated reads do not disable an independently authorized different write', async () => {
     const { result, requests, workspace } = await fixture((body, request) => {
       if (request <= 2) return toolResponse([call('repeat-' + request, 'read_file', { path: 'a.txt' })]);
-      assert.equal(request, 3, 'Only one result-only request is allowed');
-      assert.equal(body.tools, undefined);
-      return toolResponse([call('forbidden-write', 'write_file', { path: 'a.txt', content: 'FORBIDDEN' })]);
+      assert(body.tools.length);
+      return request === 3 ? toolResponse([call('authorized-write', 'write_file', { path: 'a.txt', content: 'UPDATED' })]) : sse({ content: 'Updated the authorized file.' });
     }, { loopPolicy: { maxRepeatedEvidence: 2 } });
-    assert.equal(requests, 3); assert.equal(result.status, 'blocked');
-    assert.equal(result.replyDelivered, true); assert.equal(result.steps.length, 2);
-    assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'OLD');
-    assert.match(result.content, /Remaining work/);
+    assert.equal(requests, 4); assert.equal(result.status, 'completed');
+    assert.equal(result.replyDelivered, true); assert.equal(result.steps.length, 3);
+    assert.equal(await readFile(join(workspace, 'a.txt'), 'utf8'), 'UPDATED');
   });
   await test("a real provider error during result-only delivery remains an error without more execution", async () => {
     const { result, requests, workspace } = await fixture((body, request) => {
       if (request <= 2) return toolResponse([call('repeat-' + request, 'read_file', { path: 'a.txt' })]);
-      assert.equal(body.tools, undefined); assert.equal(request, 3);
+      assert(body.tools.length); assert.equal(request, 3);
       return new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), { status: 401, headers: { 'content-type': 'application/json' } });
     }, { loopPolicy: { maxRepeatedEvidence: 2 } });
     assert.equal(result.status, 'failed'); assert.equal(result.error, true); assert.equal(result.replyDelivered, false);
@@ -105,13 +107,15 @@ try {
     assert.equal(result.loopMetrics.recoveries, 1); assert.equal(result.usage.prompt_tokens, 400);
   });
   await test("truncated side-effecting calls never reach the native executor", async () => {
-    const { result, workspace, requests } = await fixture((body, n) => {
-      if (n === 3) assert.equal(body.tools, undefined, 'The last request can only deliver a normal reply');
+    const toolAvailability = [];
+    const { result, workspace, requests } = await fixture((body) => {
+      toolAvailability.push(Boolean(body.tools?.length));
       return sse({ tool_calls: [{ index: 0, id: "partial", function: { name: "write_file", arguments: '{"path":"a.txt","content":' } }] }, "length");
     });
     // A complete stream with truncated tool JSON gets one inference repair;
     // neither incomplete call may reach the executor, even if repair truncates.
-    assert.equal(result.status, "failed"); assert.equal(requests, 3, 'One inference repair plus one tools-disabled final reply; neither produced a valid answer');
+    assert.equal(result.status, 'failed'); assert.equal(requests, 3);
+    assert.deepEqual(toolAvailability, [true, true, false], 'At the effective output ceiling: original, repair, then tool-free final reply; no extra paid repair');
     assert.equal(await readFile(join(workspace, "a.txt"), "utf8"), "OLD"); assert.equal(result.steps.length, 0);
   });
   await test("invalid terminated call is corrected once before normal tool execution", async () => {
@@ -137,7 +141,7 @@ try {
       assert(body.messages.some((message) => message.content === "MUST_NOT_UPLOAD"));
       if (sizes.length === 1) return new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 });
       return sse({ content: "Finished with original constraints." });
-    }, { messages, provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 128000 }] } });
+    }, { messages, recoveryContext: {runId:'legacy-context-fixture',contexts:{}}, provider: { ...provider, models: [{ ...provider.models[0], contextWindow: 128000 }] } });
     assert.equal(result.status, "completed", result.content); assert.equal(sizes.length, 2); assert.equal(requests, 2 + summaries); assert(summaries > 0); assert(sizes[1] < sizes[0]);
     assert.equal(result.loopMetrics.recoveries, 1);
     return { mockProvider: true, requestCharactersBefore: sizes[0], requestCharactersAfter: sizes[1], requests };
@@ -172,8 +176,9 @@ try {
     const runtime = createHarnessTaskRuntime({ dataDirectory }); let requests = 0, reference;
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(init.body); requests++;
-      if (requests === 1) return toolResponse([call("large", "read_file", { path: "large.txt" })]);
-      if (requests === 2) {
+      if (requests === 1) return toolResponse([call("discover", "enable_task_tools", { groups:['workspace_read'] })]);
+      if (requests === 2) return toolResponse([call("large", "read_file", { path: "large.txt" })]);
+      if (requests === 3) {
         const value = JSON.parse(body.messages.find((message) => message.tool_call_id === "large").content);
         reference = value.resultRef; assert(reference?.id); assert.equal(reference.readTool, "mcp_read_result");
         assert(body.tools.some((tool) => tool.function.name === reference.readTool));
@@ -186,7 +191,7 @@ try {
       execute: ({ signal, control, emit, requestApproval }) => runHarness({ runId: "archive-run", taskId: "archive-task", provider, modelId: "fixture",
         workspacePath: workspace, permission: "read-only", approvalMode: "manual", signal, control, onEvent: emit, requestApproval,
         sandboxStatusResolver: async () => ({ available: false, localAvailable: true }), messages: [{ role: "user", content: "Read and preserve evidence." }] }) });
-    assert.equal(result.status, "completed", result.content); assert.equal(requests, 3);
+    assert.equal(result.status, "completed", result.content); assert.equal(requests, 4);
     const page = await readRunEvidence(dataDirectory, "archive-run", { result_id: reference.id, limit: 256 });
     assert.match(page.text, /ARCHIVED_ORIGINAL/);
     await assert.rejects(readRunEvidence(dataDirectory, "unrelated-run", { result_id: reference.id }), /unknown|scope|not found|unavailable|evidence/i);

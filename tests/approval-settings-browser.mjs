@@ -21,7 +21,7 @@ try {
   assert.equal(await page.evaluate(() => window.approvalFixture.approvalMode), "smart-auto");
   await group.getByRole("button", { name: "全自动", exact: true }).click();
   assert.equal(await page.evaluate(() => window.approvalFixture.approvalMode), "full-auto");
-  await page.getByText(/无需首次批准/).waitFor();
+  await page.getByText(/常规操作自动执行；需额外授权时询问/).waitFor();
   const execution = page.locator('[aria-label="命令执行模式"]');
   assert.equal(await execution.getByRole("button", { name: "直接", exact: true }).getAttribute("class"), "active");
   await execution.getByRole("button", { name: "隔离", exact: true }).click();
@@ -60,12 +60,37 @@ try {
         }));
         assert.equal(layout.direction, "row");
         assert(layout.width > 200, JSON.stringify(layout));
-        assert(layout.buttons.every((b) => b.width > 60 && b.scroll <= b.client + 1 && Math.abs(b.top - layout.buttons[0].top) < 1), JSON.stringify(layout));
+        assert.equal(layout.buttons.length, 4);
+        assert(layout.buttons.every((b) => b.width > 40 && b.scroll <= b.client + 1 && Math.abs(b.top - layout.buttons[0].top) < 1), JSON.stringify(layout));
         await page.locator(".approval-mode-details summary").click();
         assert(await page.locator(".approval-mode-details p").isVisible());
       }
     }
   }
+  for (const surface of ['permissions', 'sidebar']) {
+    await page.goto(server.resolvedUrls.local[0] + `tests/fixtures/approval-settings.html?${surface}&width=304&theme=dark`);
+    const approval = page.getByRole('button', { name: '一律通过', exact: true });
+    const warning = page.getByRole('alertdialog', { name: '开启「一律通过」？' });
+    await approval.click();
+    await warning.waitFor();
+    assert.equal(await page.evaluate(() => window.approvalFixture.approvalMode), 'sandbox-auto');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), '取消');
+    await page.keyboard.press('Escape');
+    await warning.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), '一律通过');
+    await approval.click();
+    await warning.getByRole('button', { name: '了解风险，开启' }).click();
+    await warning.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.approvalFixture.approvalMode), 'approve-all');
+    assert.equal(await page.evaluate(() => window.approvalFixture.executionMode), 'direct');
+    await page.getByText(/需额外授权时跳过，并在 Witness 说明/).waitFor();
+    await page.getByRole('button', { name: surface === 'permissions' ? '智能确认' : '智能', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.approvalFixture.approvalMode), 'smart-auto');
+    await approval.click();
+    await warning.getByRole('button', { name: '取消', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.approvalFixture.approvalMode), 'smart-auto');
+  }
+  await page.goto(server.resolvedUrls.local[0] + 'tests/fixtures/approval-settings.html');
   for (const mode of ["safe", "isolated", ""]) {
     await page.goto(server.resolvedUrls.local[0] + `tests/fixtures/approval-settings.html?execution=${mode}`);
     await page.locator('[aria-label="命令执行模式"] button.active').waitFor();

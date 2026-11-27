@@ -337,6 +337,15 @@ export function createWitnessMonitor({
         if (!event.agentId) addRecord({ key: `thinking:${recordCounter + 1}`, timestamp, kind: "thinking", eventType: "response.reset", status: "running" });
         break;
       }
+      case 'response.cloud.auth':
+      case 'subagent.response.cloud.auth': {
+        if (!['refreshing', 'reconciling', 'retrying', 'recovered', 'pending', 'failed'].includes(event.stage)) break;
+        const blocked = ['pending', 'failed'].includes(event.stage);
+        addRecord({ key: `cloud-auth:${event.agentId || 'main'}:${recordCounter + 1}`, timestamp,
+          kind: blocked ? 'warning' : 'checkpoint', status: blocked ? 'blocked' : 'completed',
+          eventType: `response.cloud.auth.${event.stage}`, actor: event.agentId ? 'subagent' : 'main', agentId: event.agentId, role: event.role });
+        break;
+      }
       case "response.attempt.completed":
       case "subagent.response.attempt.completed": {
         const record = recordIndex.get(`cloud-queue:${event.agentId || 'main'}`);
@@ -685,6 +694,13 @@ export function createWitnessMonitor({
           if (existing) Object.assign(existing, { eventType: event.type, status: state, detail: clipped(detail), completedAt: state === "waiting" ? null : isoTime(timestamp) });
           else addRecord({ key, timestamp, kind: "checkpoint", eventType: event.type, status: state, detail });
         }
+        break;
+      case 'approval.mode.enabled':
+        addRecord({ key: 'approval:approve-all', timestamp, kind: 'status', eventType: event.type, status: 'completed' });
+        break;
+      case 'approval.skipped':
+        addRecord({ key: `approval:skipped:${recordCounter + 1}`, timestamp, kind: 'warning', eventType: event.type,
+          status: 'blocked', detail: [event.tool, event.reason].filter(Boolean).join(' · ') });
         break;
       case "approval.required":
         status = "waiting";

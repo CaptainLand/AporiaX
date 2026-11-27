@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { I18nProvider } from '../../src/i18n.jsx';
 import { Conversation } from '../../src/conversation/ConversationViews.jsx';
@@ -7,16 +8,34 @@ import '../../src/styles.css';
 localStorage.setItem('aporiax.language.v1', 'zh-CN');
 document.documentElement.dataset.theme = 'dark';
 const progress = id => ({ id, kind: 'progress', title: '阶段进展', content: `正在处理第 ${id} 项。` });
+const longFixture = new URLSearchParams(location.search).has('long');
+let oldStepReads = 0;
+const longHistory = longFixture ? Array.from({ length: 160 }, (_, index) => ([
+  { id: `past-user-${index}`, role: 'user', content: `旧问题 ${index}` },
+  { id: `past-answer-${index}`, role: 'assistant', status: 'completed',
+    content: `旧回答 ${index}`, get steps() { oldStepReads++; return []; } },
+])).flat() : [];
 
 function Fixture() {
   const [isRunning, setIsRunning] = useState(true);
+  const [anotherTask, setAnotherTask] = useState(false);
   const [task, setTask] = useState({ id: 'progress-lifecycle', workspacePath: 'D:/Fixture', messages: [
+    ...longHistory,
     { id: 'history', role: 'assistant', status: 'completed', content: '上一轮已完成。', progressUpdates: [progress('history')] },
     { id: 'answer-1', role: 'assistant', status: 'running', content: '正在整理结果。', progressUpdates: [progress('1'), progress('2')] },
   ] });
   const updateLatest = update => setTask(current => ({ ...current,
     messages: current.messages.map((message, index) => index === current.messages.length - 1 ? update(message) : message),
   }));
+  if (longFixture) {
+    window.runSyntheticStream = () => {
+      oldStepReads = 0;
+      for (let i = 0; i < 24; i++) {
+        flushSync(() => updateLatest(message => ({ ...message, content: `流式回复 ${i}` })));
+      }
+      return oldStepReads;
+    };
+  }
   const finish = status => {
     updateLatest(message => ({ ...message, status, content: '这一轮已结束。' }));
     setIsRunning(false);
@@ -38,8 +57,12 @@ function Fixture() {
       <button onClick={() => finish('interrupted')}>停止本轮</button>
       <button onClick={() => setIsRunning(false)}>仅停止运行标记</button>
       <button onClick={start}>开始新一轮</button>
+      {longFixture && <button onClick={() => setAnotherTask(value => !value)}>切换任务</button>}
     </nav>
-    <div style={{ maxWidth: 820, margin: '0 auto' }}><Conversation task={task} isRunning={isRunning} /></div>
+    <div style={{ maxWidth: 820, margin: '0 auto' }}>
+      {anotherTask ? <Conversation key="other-task" task={{ id: 'other-task', messages: [{ id: 'other-user', role: 'user', content: '另一个任务的内容' }] }} />
+        : <Conversation key={task.id} task={task} isRunning={isRunning} onNotice={() => {}} />}
+    </div>
   </main>;
 }
 

@@ -38,6 +38,10 @@ app.whenReady().then(async () => {
   const childResource = [...service.resources.values()].find(item => item.owner === 'agent' && item.id !== again.id);
   assert.equal(await childResource.wc.executeJavaScript('document.cookie'), '');
   await handle.release({ aborted: false });
+  assert.equal(childResource.closed, true, 'undelivered child browser must not survive the task');
+  assert.equal(childResource.wc.isDestroyed(), true);
+  assert.equal(service.resources.has(childResource.id), false);
+  assert.equal(service.resources.get(again.id).wc.isDestroyed(), false, 'existing user browser must survive task cleanup');
   const cleared = await request({ action: 'remember-browser', id: again.id, enabled: false });
   assert.equal(cleared.rememberLogin, false);
   const renewed = await request({ action: 'remember-browser', id: cleared.id, enabled: true });

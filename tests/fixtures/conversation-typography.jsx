@@ -35,16 +35,18 @@ const content = `已完成代码检查，发现两处需要关注的问题。当
 
 这是分隔前的普通段落。
 
-| 检查项 | 状态 |
-| --- | --- |
-| 浏览器运行 | 未执行 |
+| 阶段 | 场次 | 曲目 | 单位 | 计算方式与说明 |
+| --- | --- | --- | --- | --- |
+| 预选赛 | 1 轮 | 2 | 32 | 16 名选手共同完成两首曲目，两首均计分，因此为 2 × 16。 |
+| 挑战赛初筛 | 2 组 | 8 | 32 | 每组四人共同完成四首曲目，比赛数据按实际成绩计算。 |
 
-\`\`\`js
-const result = Number.isFinite(value);
+\`\`\`powershell
+Get-ChildItem -LiteralPath './reports' -File | Select-Object Name, Length, LastWriteTime
 \`\`\`
 `;
 const task = { id: 'typography', workspacePath: 'D:/Fixture', messages: [
-  { id: 'user', role: 'user', content: '请检查计算器的异常输入处理。' },
+  { id: 'user', role: 'user', content: 'hello' },
+  { id: 'user-long', role: 'user', content: `请检查计算器的异常输入处理。\n同时检查这个连续文件名：${'calculator-overflow'.repeat(5)}.html` },
   { id: 'answer', role: 'assistant', status: 'completed', content, progressUpdates: [
     { id: 'progress', kind: 'progress', title: '阶段进展', content: '正在检查工作区中的 `scope`。\n\n### 当前发现\n\n- 需要补充异常输入检查。\n- 正在核对结果回填逻辑。' },
   ] },

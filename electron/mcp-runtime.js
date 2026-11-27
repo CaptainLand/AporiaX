@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { assertLocalControlMcp, consumeLocalControlToolCall } from "./control/policy.js";
+import { approvalSkippedError } from './runtime/approve-all-policy.js';
 
 const { version: appVersion } = createRequire(import.meta.url)("../package.json");
 
@@ -777,6 +778,7 @@ export class AporiaXMcpRuntime {
       },
     });
     if (!approval?.approved) {
+      if (approval?.skipped) throw approvalSkippedError(approval.reason, true);
       throw new Error(`The user rejected MCP tool: ${record.public.remoteName}`);
     }
   }

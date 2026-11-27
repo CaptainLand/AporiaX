@@ -15,10 +15,10 @@ assert(!collect.properties.write_scopes);
 const input = { role: 'builder', task: 'Update source only', write_scopes: ['src/a.js'] };
 assert(Object.keys(input).every((key) => Object.hasOwn(delegate.properties, key)), 'Executable Builder request must be valid under the advertised schema');
 assert.deepEqual(normalizeSubagentInput(input).writeScopes, ['src/a.js']);
-assert(!SUBAGENT_ROLE_CONFIG.builder.tools.has('run_command'));
+assert(SUBAGENT_ROLE_CONFIG.builder.tools.has('run_command'));
 const builder = createAgentDefinitionRegistry().resolve('builder');
-assert(!builder.tools.includes('run_command'));
-assert.match(builder.systemPrompt, /Do not run shell commands/);
+assert(builder.tools.includes('run_command'));
+assert.match(builder.systemPrompt, /not OS isolation/);
 
 const history = [
   { role: 'user', content: 'Keep the original palette. Do not add dependencies.' },
@@ -50,7 +50,7 @@ assert(longContext.length < 48, 'The fixture must actually compact');
 assert(longContext.some((message) => message.content === 'delegated'), 'Original delegated task must survive compaction');
 assert(longContext.some((message) => message.content === 'Check only the header, do not modify other files.'), 'Follow-up scope must survive compaction');
 assert(longContext.some((message) => message.role === 'system' && message.content.includes('Only read the file.')), 'Original user requirements must survive compaction');
-assert.throws(() => captureDelegationContext([{ role: 'user', content: 'a'.repeat(80001) }]), /TOO_LARGE/);
+assert.equal(captureDelegationContext([{ role: 'user', content: 'a'.repeat(80001) }]).requests[0].text.length, 80001);
 
 const record = { agentId: 'b', role: 'builder', status: 'completed', collected: true, result: { reportId: 'b:1', integrated: true, evidence: [{ evidenceId: 'b:1:write', path: 'src/a.js' }], acceptance: { status: 'pending' } } };
 const review = { report_id: 'b:1', decision: 'accepted', reason: 'Checked the scoped implementation; tests intentionally not run.', evidence_ids: ['b:1:write'] };

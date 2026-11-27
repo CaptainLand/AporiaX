@@ -29,9 +29,9 @@ try {
   const project = (await projects.create({ name: 'Fixture' })).project;
   const store = await projects.open(project.id);
   await store.commit({ changes: [{ content: 'KNOWLEDGE_FIXTURE uses local tests', evidence: [{ type: 'user', reference: 'Synthetic fixture instruction' }] }] });
-  for (const scenario of ['skills', 'knowledge', 'mcp', 'mcp-denied']) {
+  for (const scenario of ['skills', 'knowledge', 'mcp', 'mcp-narrow']) {
     let main = 0, child = 0, approvals = 0;
-    const role = { ...defaultRole(scenario.startsWith('mcp') ? 'verify' : 'explore'), id: 'specialist', name: 'Specialist', maxRounds: 8,
+    const role = { ...defaultRole(scenario === 'mcp' ? 'verify' : 'explore'), id: 'specialist', name: 'Specialist', maxRounds: 8,
       skills: ['selected'], knowledge: 'read', mcpTools: ['mcp__fixture__tool_39'] };
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     globalThis.fetch = async (_url, options) => {
@@ -43,7 +43,7 @@ try {
         if (scenario === 'skills') {
           assert(tools.includes('read_skill_resource')); assert(!tools.includes('project_knowledge'));
           if (child === 1) return call('unselected', 'read_skill_resource', { skill: 'not-selected', path: 'SKILL.md' });
-          if (child === 2) { assert.match(last.content, /未授予/); return call('selected', 'read_skill_resource', { skill: 'selected', path: 'SKILL.md' }); }
+          if (child === 2) { assert.match(last.content, /not found|not available|不存在|未找到|Unknown skill/i); return call('selected', 'read_skill_resource', { skill: 'selected', path: 'SKILL.md' }); }
           assert.match(last.content, /SELECTED_SKILL_CONTENT/); return answer('Selected workflow read.');
         }
         if (scenario === 'knowledge') {
@@ -53,25 +53,25 @@ try {
           if (child === 3) { assert.match(last.content, /不能切换|知识操作/); return call('read', 'project_knowledge', { action: 'search', query: 'local' }); }
           assert.match(last.content, /KNOWLEDGE_FIXTURE/); return answer('Bound knowledge read.');
         }
-        if (scenario === 'mcp-denied') { assert(!tools.some(name => name.startsWith('mcp__'))); return answer('MCP unavailable for a narrowed scope.'); }
         assert(tools.includes('mcp__fixture__tool_39'), 'explicitly selected deferred schema is available');
         assert(!tools.includes('mcp__fixture__tool_00'), 'other parent tools are not exposed');
         if (child === 1) return call('mcp-read', 'mcp__fixture__tool_39', {});
         assert.match(last.content, /LOCAL_MCP_FIXTURE_OK/); return answer('Selected MCP lookup verified.');
       }
-      if (++main === 1) return call('delegate', 'delegate_subagent', { role: 'specialist', task: 'Inspect only the synthetic fixtures', scope: scenario === 'mcp-denied' ? ['src'] : ['.'], command_scope: 'workspace', background: false });
-      if (main === 2 && scenario !== 'mcp-denied') return call('accept', 'review_subagent_result', { agent_id: `${scenario}-sub-1`, report_id: `${scenario}-sub-1:1`, decision: 'accepted', reason: 'Returned fixture evidence matches the request.', evidence_ids: scenario === 'mcp' ? [`${scenario}-sub-1:1:mcp-read`] : [] });
+      if (++main === 1) return call('delegate', 'delegate_subagent', { role: 'specialist', task: 'Inspect only the synthetic fixtures', scope: scenario === 'mcp-narrow' ? ['src'] : ['.'], command_scope: 'workspace', background: false });
+      if (main === 2) return call('accept', 'review_subagent_result', { agent_id: `${scenario}-sub-1`, report_id: `${scenario}-sub-1:1`, decision: 'accepted', reason: 'Returned fixture evidence matches the request.', evidence_ids: scenario.startsWith('mcp') ? [`${scenario}-sub-1:1:mcp-read`] : [] });
       return answer('Fixture inspection complete.');
     };
     try {
       const result = await runHarness({ runId: scenario, taskId: 'fixture', workspacePath: workspace, userSkillsDirectory: skills,
         understandingDirectory: knowledge, knowledgeEnabled: scenario === 'knowledge', knowledgeProjectId: scenario === 'knowledge' ? project.id : '',
-        mcpServers: scenario.startsWith('mcp') ? [server] : [], roleSettings: { ...defaultRoleSettings(), profiles: [...defaultRoleSettings().profiles, role] },
+        mcpServers: scenario.startsWith('mcp') ? [{ ...server, autoApproveReadOnly: scenario === 'mcp-narrow' }] : [], roleSettings: { ...defaultRoleSettings(), profiles: [...defaultRoleSettings().profiles, role] },
         provider: { id: 'fixture', name: 'Fixture', vendor: 'openai', baseUrl: 'https://test.invalid/v1', apiKey: 'mock-only', models: [{ id: 'test', supportsTools: true, contextWindow: 128000 }] }, modelId: 'test',
-        permission: scenario.startsWith('mcp') ? 'workspace-write' : 'read-only', approvalMode: 'manual', signal: controller.signal,
+        permission: scenario === 'mcp' ? 'workspace-write' : 'read-only', approvalMode: 'manual', signal: controller.signal,
         requestApproval: async () => { approvals++; return { approved: true }; }, messages: [{ role: 'user', content: 'Inspect the synthetic fixtures without modifying files.' }] });
-      assert.equal(result.status, scenario === 'mcp-denied' ? 'partial' : 'completed', result.content);
+      assert.equal(result.status, 'completed', JSON.stringify({ scenario, content: result.content, workers: result.subagents }));
       if (scenario === 'mcp') assert(approvals >= 1, 'MCP must request explicit approval');
+      if (scenario === 'mcp-narrow') assert.equal(approvals, 0, 'read-only MCP honors the already configured auto-approval, even for non-Verify narrow-scope workers');
       assert.equal(result.subagents[0].profileId, 'specialist');
       console.log(`PASS role capabilities actual loop: ${scenario}`);
     } finally { clearTimeout(timer); controller.abort(); }

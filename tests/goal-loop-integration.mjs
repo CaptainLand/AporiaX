@@ -37,38 +37,39 @@ async function fixture(handler, options = {}) {
 }
 const toolResult = (body, id) => JSON.parse(body.messages.find((message) => message.tool_call_id === id).content);
 try {
-  await test("default no-progress budget stops tool execution and returns one useful explanation", async () => {
+  await test('no-progress suppresses only the repeated action, preserving tools and answering', async () => {
     const run = await fixture((body, n) => {
-      if (n <= 6) return tools(call(`same-${n}`, "list_directory", { path: "." }));
-      assert.equal(body.tools, undefined, 'Result summary must not advertise tools');
+      if (n <= 7) return tools(call(`same-${n}`, "list_directory", { path: "." }));
+      assert(body.tools.length, 'Independent tools remain available');
+      assert.match(toolResult(body, 'same-7').error, /TOOL_REPEAT_SUPPRESSED/);
       return sse({ content: 'Inspected the workspace. Implementation remains unfinished because repeated inspection found no new evidence.' });
     });
-    assert.equal(run.requests, 7);
-    assert.equal(run.result.status, "blocked");
+    assert.equal(run.requests, 8);
+    assert.equal(run.result.status, 'completed');
     assert.match(run.result.content, /Inspected the workspace/);
-    assert.match(run.result.content, /Remaining work/);
-    assert.equal(run.result.steps.length, 6);
+    assert.equal(run.result.steps.length, 7);
     assert.equal(await readFile(join(run.workspace, "a.txt"), "utf8"), "ORIGINAL");
   });
-  await test("durable exhausted planning guard permits only a final explanation, including after recovery", async () => {
+  await test('planning does not globally exhaust execution, including after durable recovery', async () => {
     const run = await fixture((body, n) => n <= 6 ? tools(call(`plan-${n}`, "update_plan", {
       explanation: `wording-${n}`, steps: [{ title: `Inspect sources ${n}`, status: "in_progress" }, { title: "Implement", status: "pending" }],
-    })) : (() => { assert.equal(body.tools, undefined); return sse({ content: "No files were edited. Repeated planning did not reach implementation." }); })(), { durable: true });
+    })) : (() => { assert(body.tools.length); return sse({ content: 'No files edited; planning remains available without stopping independent work.' }); })(), { durable: true });
     assert.equal(run.requests, 7);
-    assert.equal(run.result.status, "blocked", run.result.content);
+    assert.equal(run.result.status, 'completed', run.result.content);
     assert(!run.events.some(event => event.type === "runtime.no_progress.paused"));
     const saved = await getRunRecoveryContext(data, run.runId);
-    assert.equal(saved.contexts[run.runId].toolProgress.planning, 6);
+    assert.equal(saved.contexts[run.runId].toolProgress.version, 2);
     assert.equal(saved.contexts[run.runId].conversation.filter(message => message.role === "tool").length, 6);
     const recovered = await fixture(body => {
-      assert.equal(body.tools, undefined, 'Recovered exhausted execution must not regain tools');
+      assert(body.tools.length, 'Recovery keeps independent tools available');
       return sse({ content: "Retained the recorded planning; implementation remains unfinished." });
     }, {
       durable: true, recoveryContext: saved, workspacePath: run.workspace,
     });
     assert.equal(recovered.requests, 1);
-    assert.equal(recovered.result.status, "blocked", recovered.result.content);
-    assert.equal(recovered.result.steps.length, 0, 'No tool execution after recovering the exhausted guard');
+    assert.equal(recovered.result.status, 'completed', recovered.result.content);
+    assert.equal(recovered.result.steps.length, 6, 'Retain prior tool history without replaying it');
+    assert(!recovered.events.some(event => event.type === 'tool.started'));
   });
   await test("relay Claude uses the selected effort in the actual main request", async () => {
     const run = await fixture(body => {
@@ -95,7 +96,7 @@ try {
     let requests = 0;
     globalThis.fetch = async (_url, init) => {
       assert.equal(JSON.parse(init.body).reasoning_effort, "low");
-      assert(++requests <= 6);
+      if (++requests === 8) return sse({ content: 'The unchanged action was suppressed, not the whole worker.' });
       return tools(call(`read-${requests}`, "read_file", { path: "a.txt" }));
     };
     const result = await runSubagentTask({ __kernelRouted: true, agentId: "claude-child", input: { role: "explore", task: "Inspect", background: false, scope: ["."], maxRounds: 8 },
@@ -103,9 +104,9 @@ try {
       thinking: false, effort: "low", workspaceRoot: workspace, parentPermissionPolicy: { "*": "allow" }, approvalMode: "manual",
       signal: AbortSignal.timeout(12000), language: "en", emit: () => {}, toolRegistry: TOOL_REGISTRY, parseToolArguments: item => JSON.parse(item.function.arguments), session: {},
       executeAuthorizedTool: async ({ toolCall }) => { assert.equal(toolCall.function.name, "read_file"); return { modelResult: { path: "a.txt", content: await readFile(join(workspace, "a.txt"), "utf8") } }; } });
-    assert.equal(requests, 6);
-    assert.equal(result.status, "failed");
-    assert.match(result.summary, /LOOP_NO_PROGRESS/);
+    assert.equal(requests, 8);
+    assert.equal(result.status, 'completed');
+    assert(result.evidence.some(item => /TOOL_REPEAT_SUPPRESSED/.test(item.error || '')));
   });
   await test("real loop records source-backed decisions and recovers them from SQLite", async () => {
     const first = await fixture((body, n) => {

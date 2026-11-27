@@ -4,6 +4,9 @@ import { runIsolatedVerification } from './isolated-verification.js';
 import { evaluateNumericData } from './numeric-check.js';
 import { readBounded } from './task-acceptance.js';
 import { mutateWorkspaceFiles, prepareFileDeletion } from "./workspace-mutations.js";
+import { createWorkspaceArchive } from './workspace-archive.js';
+import { prepareSafeProcessWorkspace } from '../sandbox-runtime.js';
+import { toolPreflightError } from './durable-run.js';
 import { cleanupTemporaryCheck, registerTemporaryCheck, validateTemporaryCheckCreation, prepareTemporaryCheckUpdate, completeTemporaryCheckUpdate } from "./temporary-check-files.js";
 import { readSkillResource, searchSkills } from "../skill-resources.js";
 import { wordImageInfo } from "../word-images.js";
@@ -175,7 +178,13 @@ export function createNativeToolExecutor({
     signal,
     sandboxExecutor,
     sandboxStatus = null,
+    workspaceArchive = null,
+    automaticPreviewAction = null,
+    automaticPreview = false,
+    permissionDecision = null,
+    sandboxDataDirectory = null,
     dependencyWorkspaceRoot = workspaceRoot,
+    safeDependencySession = null,
     browserRuntime = null,
     webRuntime = null,
     processManager = null,
@@ -222,6 +231,7 @@ export function createNativeToolExecutor({
     }
     if (isBrowserToolName(toolName)) {
       if (toolName === 'browser_select' && (!Array.isArray(input.values) || !input.values.length || input.values.length > 30 || input.values.some(value => typeof value !== 'string'))) throw Error('Invalid select values.');
+      if (automaticPreviewAction) return { modelResult: await automaticPreviewAction(input) };
       if (toolName === 'browser_upload') {
         if (input.mode !== undefined && !['input', 'drop'].includes(input.mode)) throw Error('Invalid upload mode.');
         if (!Array.isArray(input.paths) || !input.paths.length || input.paths.length > 8) throw Error('Choose between one and eight workspace files.');
@@ -644,6 +654,14 @@ export function createNativeToolExecutor({
       if (!commandDirectoryStats.isDirectory()) {
         throw new Error("The command working directory is not a directory.");
       }
+      if (workspaceArchive) {
+        const timeout = input.timeout_ms == null ? null : AbortSignal.timeout(input.timeout_ms);
+        const archiveSignal = timeout && signal ? AbortSignal.any([signal, timeout]) : timeout || signal;
+        const output = await createWorkspaceArchive({ archive: workspaceArchive, workspaceRoot, cwd: commandDirectory, signal: archiveSignal });
+        return { modelResult: { command: input.command.trim(), cwd: input.cwd || '.', exitCode: 0,
+          stdout: `Created ${output.path} (${output.files} files)`, stderr: '', timedOut: false,
+          backend: 'native-archive', ...output } };
+      }
       const result = await sandboxExecutor({
         command: input.command.trim(),
         workspaceRoot,
@@ -671,12 +689,17 @@ export function createNativeToolExecutor({
       if (!(await lstat(commandDirectory)).isDirectory()) {
         throw new Error("The process working directory is not a directory.");
       }
-      return {
-        modelResult: processManager.start({
-          command: input.command.trim(),
-          cwd: commandDirectory,
-        }),
-      };
+      const executionMode = permissionDecision?.backend.mode;
+      let snapshot = null;
+      if (executionMode === 'safe') {
+        try { snapshot = await prepareSafeProcessWorkspace({ workspaceRoot, cwd: commandDirectory, signal, localSandboxBaseDirectory: sandboxDataDirectory,
+          dependencySession: safeDependencySession, dependencyWorkspaceRoot }); }
+        catch (error) { if (error?.name === 'AbortError') throw error; throw toolPreflightError('SAFE_PREVIEW_COPY_FAILED', error.message); }
+      }
+      try {
+        throwIfAborted(signal);
+        return { modelResult: processManager.start({ command: input.command.trim(), cwd: commandDirectory, snapshot, executionMode, projectCwd: commandDirectory }) };
+      } catch (error) { await snapshot?.close().catch(() => {}); throw error; }
     }
 
     if (toolName === "read_process") {
@@ -746,7 +769,7 @@ export function createNativeToolExecutor({
         const kind = agentPresentationKind(relativePath);
         if (kind === "browser" && browserPresentationAllowed && workbenchPresent.html) {
           try {
-            const preview = await workbenchPresent.html(relativePath);
+            const preview = await workbenchPresent.html(relativePath, { automaticPreview });
             if (!preview?.url) throw new Error("HTML preview did not open.");
             presented.browser = true;
             presented.htmlPreviews.push({ path: relativePath, previewUrl: preview.url, verifiedInteractions: false });

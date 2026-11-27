@@ -16,14 +16,13 @@ try {
     await page.locator('.witness-current').filter({ hasText: '12,345' }).waitFor();
     const text = await page.locator('.witness-panel').innerText();
     assert.equal(await page.locator('.witness-current p').innerText(), '↓ ≈12,345 Token');
-    assert(!text.includes('↑')); assert(!text.includes('99,888'));
     assert.match(await page.locator('.witness-current p').getAttribute('title'), /尚未执行/);
     assert(!text.includes('字符')); assert(!text.includes('阿珀')); assert(!text.includes('PRIVATE_DO_NOT_DISPLAY')); assert(!text.includes('活动信号来自模型响应'));
     await page.locator('.witness-panel').screenshot({ path: `.tmp/task-operation-qa/progress-${theme}.png` });
   }
-  await page.evaluate(() => window.operationProgress({ type: 'response.progress', stage: 'text', outputTokens: 12500, inputTokens: 99000, outputTokensEstimated: false, inputTokensEstimated: false }));
+  await page.evaluate(() => window.operationProgress({ type: 'response.progress', stage: 'text', outputTokens: 12500, inputTokens: 99000, uncachedInputTokens: 9000, outputTokensEstimated: false, inputTokensEstimated: false }));
   await page.locator('.witness-current').filter({ hasText: '↓ 12,500 Token' }).waitFor();
-  assert.equal(await page.locator('.witness-current p').innerText(), '↓ 12,500 Token');
+  assert.equal(await page.locator('.witness-current p').innerText(), '↑ 9,000 Token · ↓ 12,500 Token');
   const track = page.locator('.witness-panel [role="progressbar"]');
   assert.equal(await track.getAttribute('aria-valuenow'), null, 'unknown total is indeterminate');
   assert.equal(await page.locator('.witness-heading > b').innerText(), '正在做');
@@ -57,5 +56,5 @@ try {
   await page.locator('.ra-current-row').filter({ hasText: '1,200' }).waitFor();
   assert(!await page.locator('.route-activity').innerText().then(text => text.includes('阿珀')));
   assert.deepEqual(errors, []);
-  console.log('PASS operation progress UI: output-only Tokens, privacy, honest plan/unknown/terminal states, reply delivery, pause, reduced motion, light/dark and narrow layout.');
+  console.log('PASS operation progress UI: input/output Tokens, privacy, honest plan/unknown/terminal states, reply delivery, pause, reduced motion, light/dark and narrow layout.');
 } finally { await browser.close(); await server.close(); }

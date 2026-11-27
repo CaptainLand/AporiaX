@@ -1,5 +1,7 @@
 // Presentation guidance, not a change to execution, acceptance or permissions.
 // Keep this compact: 32K admission must still fit the tool catalog and user work.
+export const FILE_LINK_LABEL_GUIDANCE = 'Use short or user-chosen display names for file links; omit filenames unless asked and keep real paths as targets.';
+
 export const USER_FACING_DELIVERY_GUIDANCE = [
   "Result-first delivery: speak naturally to the user, not like an audit report. Give the result/link and at most one or two genuinely important points. Keep each key issue to one or two plain-language sentences. Do not organize the final answer as explore/review/verify sections or tool logs; merge findings, keep contributions in execution records. No forced headings or templates for ordinary conversation or requested explanations.",
   "finish_task: summary is the natural handoff; optional analysis, formulas, code, locations and routine notes go in details/limitations. Actual failures, unusable/unsafe results and required actions stay visible in summary/warnings. Never put an important failure or action only in the full reply.",

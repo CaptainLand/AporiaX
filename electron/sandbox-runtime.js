@@ -748,6 +748,16 @@ async function synchronizeLocalSandbox({
   return applySandboxChanges({ workspaceRoot, sandboxWorkspace, sandboxDirectory, baselineFiles, sandboxFiles, manifest, signal, beforeApply });
 }
 
+async function compatibleSafeDependencies(workspaceRoot, baselineFiles, dependencySession, dependencyWorkspaceRoot, signal) {
+  const previous = dependencySession?.source(workspaceRoot, baselineFiles);
+  if (previous) return previous;
+  if (!dependencyWorkspaceRoot) return null;
+  const owner = await realpath(dependencyWorkspaceRoot);
+  if (owner === workspaceRoot) return null;
+  const ownerFiles = await scanLocalSandboxFiles(owner, signal);
+  return dependencyFingerprint(ownerFiles) === dependencyFingerprint(baselineFiles) ? dependencySession?.source(owner, ownerFiles) || owner : null;
+}
+
 export function localSandboxRootPath(baseDirectory) {
   return resolve(
     baseDirectory || tmpdir(),
@@ -775,6 +785,44 @@ async function removeLocalSandboxDirectory(
     throw new Error("Refused to remove an unsafe local sandbox path.");
   }
   await rm(sandboxDirectory, { recursive: true, force: true });
+}
+
+// A long-running preview owns a private copy until it exits. Its changes
+// are never written back, since there is no bounded command to reconcile.
+export async function prepareSafeProcessWorkspace({ workspaceRoot, cwd, signal, localSandboxBaseDirectory, dependencySession, dependencyWorkspaceRoot }) {
+  const root = await realpath(workspaceRoot), originalCwd = await realpath(cwd);
+  if (!isPathInside(root, originalCwd)) throw new Error('Process working directory must stay inside the workspace.');
+  const base = localSandboxRootPath(localSandboxBaseDirectory);
+  if (isPathInside(root, base)) throw new Error('Safe preview storage must be outside its source workspace.');
+  const directory = await createLocalSandboxDirectory(localSandboxBaseDirectory);
+  const physical = await realpath(directory), physicalBase = await realpath(base);
+  const close = async () => {
+    const target = await realpath(directory).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
+    if (!target) return;
+    if (target !== physical || target === physicalBase || !isPathInside(physicalBase, target) || await realpath(base) !== physicalBase)
+      throw new Error('The Safe preview directory moved; refusing to clean an unverified target.');
+    await removeLocalSandboxDirectory(directory, localSandboxBaseDirectory);
+  };
+  try {
+    if (!isPathInside(physicalBase, physical) || isPathInside(root, physical)) throw new Error('Safe preview storage resolves outside its allowed location.');
+    const snapshot = join(directory, 'workspace');
+    const baseline = await scanLocalSandboxFiles(root, signal);
+    const space = await statfs(directory), limits = localSandboxSnapshotLimits();
+    const maxBytes = Math.min(limits.maxBytes, Math.floor((space.bavail * space.bsize - 512 * 1024 ** 2) / 3));
+    if (maxBytes <= 0 || baseline.bytes > maxBytes) throw new Error('Insufficient disk space for a Safe preview workspace copy.');
+    const dependencySource = await compatibleSafeDependencies(root, baseline, dependencySession, dependencyWorkspaceRoot, signal);
+    await copyWorkspaceToLocalSandbox(root, snapshot, { budget: { files: 0, bytes: 0, maxBytes, maxFiles: limits.maxFiles }, signal, dependencySource });
+    const copied = await scanLocalSandboxFiles(snapshot, signal);
+    if (copied.size !== baseline.size || [...copied].some(([path, hash]) => baseline.get(path) !== hash))
+      throw new Error('Workspace changed while copying the Safe preview; no process started.');
+    const copyCwd = join(snapshot, relative(root, originalCwd));
+    if (!(await lstat(copyCwd)).isDirectory()) throw new Error('Working directory is unavailable in the Safe preview copy.');
+    checkAbort(signal);
+    return { cwd: copyCwd, close };
+  } catch (error) {
+    await close().catch(() => {});
+    throw error;
+  }
 }
 
 function hostShell(command) {
@@ -854,12 +902,7 @@ export async function runLocalSandboxedCommand({
     const maxBytes = Math.min(localSandboxSnapshotLimits().maxBytes, Math.floor((space.bavail * space.bsize - 512 * 1024 ** 2) / 3));
     if (baselineFiles.bytes > maxBytes || maxBytes <= 0) throw new Error("Insufficient disk space for a recoverable Safe snapshot; free disk space or narrow the workspace.");
     const budget = { files: 0, bytes: 0, maxBytes, maxFiles: localSandboxSnapshotLimits().maxFiles };
-    let dependencySource = dependencySession?.source(workspaceRoot, baselineFiles) || null;
-    if (!dependencySource && dependencyWorkspaceRoot !== workspaceRoot) {
-      const owner = await realpath(dependencyWorkspaceRoot);
-      const ownerFiles = await scanLocalSandboxFiles(owner, signal);
-      if (dependencyFingerprint(ownerFiles) === dependencyFingerprint(baselineFiles)) dependencySource = dependencySession?.source(owner, ownerFiles) || owner;
-    }
+    const dependencySource = await compatibleSafeDependencies(workspaceRoot, baselineFiles, dependencySession, dependencyWorkspaceRoot, signal);
     await copyWorkspaceToLocalSandbox(
       workspaceRoot,
       sandboxWorkspace,

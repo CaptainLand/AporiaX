@@ -16,7 +16,7 @@ try {
     localStorage.setItem('aporiax.session-ui.v1', JSON.stringify({ taskId: 'route-app', view: 'route', welcomeDismissed: true }));
     window.routeCalls = [];
     const task = { id: 'route-app', title: '执行记录集成测试', workspacePath: 'D:/Fixture', workspaceName: '示例工作区', providerId: 'own', modelId: 'own-model', effort: 'high', messages: [{ id: 'assistant', role: 'assistant', prompt: '制作账户页面', status: 'completed', content: '已交付', selfCheck: { delivery: { status: 'unverified' } }, witness: { status: 'completed', records: [
-      { id: 'r1', kind: 'tool', eventType: 'tool.completed', tool: 'write_file', path: 'index.html', status: 'completed', detail: '页面已保存', startedAt: '2026-09-21T08:00:00Z', completedAt: '2026-09-21T08:00:02Z', elapsedMs: 2000 },
+      { id: 'r1', kind: 'tool', eventType: 'tool.completed', tool: 'write_file', path: 'index.js', status: 'completed', detail: '页面已保存', startedAt: '2026-09-21T08:00:00Z', completedAt: '2026-09-21T08:00:02Z', elapsedMs: 2000 },
       { id: 'r2', kind: 'tool', eventType: 'tool.completed', tool: 'run_command', command: 'npm test', status: 'failed', detail: '测试环境不可用', error: 'ENOENT', exitCode: 1, startedAt: '2026-09-21T08:00:03Z', completedAt: '2026-09-21T08:00:05Z', elapsedMs: 2000 },
     ] } }], createdAt: new Date().toISOString() };
     window.desktop = {
@@ -24,7 +24,7 @@ try {
       providers: { list: async () => [{ id: 'own', name: '自己的 API', models: [{ id: 'own-model', name: 'Own model' }] }] },
       tasks: { load: async () => [task], save: async () => {} }, harness: { onEvent: () => () => {}, recoverableRuns: async () => [] },
       sandbox: { status: async () => ({ localAvailable: true }) },
-      workspace: { listTree: async () => ({ entries: [] }), readPreview: async () => ({ path: 'index.html', content: '<h1>Account</h1>', binary: false }) },
+      workspace: { listTree: async () => ({ entries: [] }), readPreview: async () => ({ path: 'index.js', content: 'export const title = "Account";', binary: false }) },
       understanding: { projects: async () => [], get: async () => ({ facts: [], revisions: [], settings: {} }) },
       workbench: { subscribe: () => () => {}, request: async (input) => { window.routeCalls.push(input); if (input.action === 'list') return []; if (input.action === 'file-check') return { status: 'present' }; return true; } },
     };
@@ -56,7 +56,7 @@ try {
   await sideDetail.getByText('页面已保存', { exact: true }).waitFor();
   await sideDetail.getByRole('button', { name: '在侧栏打开文件', exact: true }).click();
   await side.locator('.workbench-code').waitFor();
-  assert.ok(await page.evaluate(() => window.routeCalls.some((call) => call.action === 'file-check' && call.path === 'index.html')));
+  assert.ok(await page.evaluate(() => window.routeCalls.some((call) => call.action === 'file-check' && call.path === 'index.js')));
   await page.locator('.thread-view-tabs').getByRole('button', { name: '对话', exact: true }).click();
   await page.locator('.dialogue-panel.active').waitFor();
   assert.equal(await page.locator('.dialogue-panel.active .assistant-message-heading strong').innerText(), 'AporiaX', 'Dialogue uses assistant identity; detailed verification state stays in execution records');

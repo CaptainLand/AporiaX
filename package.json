@@ -13,7 +13,7 @@
     "url": "https://github.com/CaptainLand/AporiaX/issues"
   },
   "private": true,
-  "version": "1.0.15",
+  "version": "1.0.17",
   "type": "module",
   "main": "electron/main-v2.js",
   "scripts": {
@@ -45,6 +45,7 @@
     "test:priority-one": "node --experimental-sqlite tests/priority-one-runtime-smoke.mjs",
     "test:runtime-efficiency": "node --experimental-sqlite tests/runtime-efficiency-smoke.mjs && node --experimental-sqlite tests/runtime-concurrency-integration.mjs && node --experimental-sqlite tests/runtime-background-integration.mjs",
     "test:delivery-auto": "node --experimental-sqlite tests/full-auto-delivery-smoke.mjs && node --experimental-sqlite tests/delivery-runtime-integration.mjs && node --experimental-sqlite tests/delivery-guidance-smoke.mjs && node --experimental-sqlite tests/approval-settings-browser.mjs && electron tests/electron-sandbox-asar-smoke.cjs",
+    "test:approve-all": "node --experimental-sqlite tests/approve-all-mode.mjs && node --experimental-sqlite tests/agent-role-management-runtime.mjs && node tests/approval-settings-browser.mjs",
     "test:links-steering": "node --experimental-sqlite tests/link-integrity.mjs && node --experimental-sqlite tests/links-steering-smoke.mjs && node --experimental-sqlite tests/steering-runtime-integration.mjs && node --experimental-sqlite tests/links-steering-browser.mjs && electron tests/desktop-links-electron.cjs",
     "test:run-store-sqlite": "node --experimental-sqlite tests/run-store-sqlite-smoke.mjs",
     "test:task-runtime-rpc": "node --experimental-sqlite tests/task-runtime-rpc-smoke.mjs",
@@ -226,6 +227,8 @@
       "docs/RELEASE_NOTES_v1.0.13.md",
       "docs/RELEASE_NOTES_v1.0.14.md",
       "docs/RELEASE_NOTES_v1.0.15.md",
+      "docs/RELEASE_NOTES_v1.0.16.md",
+      "docs/RELEASE_NOTES_v1.0.17.md",
       "config/cloud-endpoints.json",
       "shared/**/*",
       "docs/LOCAL_CONTROL.md"

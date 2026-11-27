@@ -62,9 +62,16 @@ try {
     const skillColor = await page.locator('.aporiax-message-mention.skill').evaluate(el => {
       const probe = document.createElement('span'); probe.style.color = 'var(--accent-11)'; el.append(probe);
       const expected = getComputedStyle(probe).color; probe.remove();
-      return { actual: getComputedStyle(el).color, expected };
+      const style = getComputedStyle(el);
+      return { actual: style.color, expected, box: style.backgroundColor, border: style.borderTopWidth, shadow: style.boxShadow,
+        label: el.textContent, prefix: el.querySelector('.skill-mention-prefix')?.textContent };
     });
     assert.equal(skillColor.actual, skillColor.expected, `${mode}: sent Skill uses the readable theme accent`);
+    assert.equal(skillColor.box, 'rgba(0, 0, 0, 0)', `${mode}: the sent Skill mention has no colored block`);
+    assert.equal(skillColor.border, '0px', `${mode}: the sent Skill mention has no border`);
+    assert.equal(skillColor.shadow, 'none');
+    assert.equal(skillColor.label, '@skill:create-aporiax-theme', 'exact token remains visible and copyable');
+    assert.equal(skillColor.prefix, '@skill:');
     for (const selector of ['.markdown-message table', '.code-block', '.edited-files-card', '.witness-panel', '.composer']) {
       const surface = page.locator(selector).first();
       assert.equal(await surface.count(), 1, selector);

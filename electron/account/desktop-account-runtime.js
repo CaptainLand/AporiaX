@@ -11,7 +11,7 @@ import { cleanupLegacyMobileData } from "./legacy-mobile-cleanup.js";
 import { createCloudModelQueue } from "./cloud-model-queue.js";
 import { historyQuery, projectRequestHistory } from "./request-history.js";
 import { communityMarketRequest } from "../community/market.js";
-import { isPreDispatchCloudAuthRejection } from "../../shared/cloud-auth-response.js";
+import { isPreDispatchCloudAuthRejection, noteCloudAuthRecovery } from "../../shared/cloud-auth-response.js";
 import {
   APORIAX_DESKTOP_CLIENT_ID,
   buildDesktopAuthorizationUrl,
@@ -235,7 +235,7 @@ export function createDesktopAccountRuntime(options = {}) {
     // A delayed 401 can belong to the previous token. Rotating again would
     // invalidate the fresh access token already in use by other calls.
     if (accessToken === rejectedToken) await rotateRefreshToken();
-    if (!accessToken) throw accountSessionError();
+    if (!accessToken || accessToken === rejectedToken) throw accountSessionError();
     assertAccountEpoch(epoch);
   }
 
@@ -253,7 +253,7 @@ export function createDesktopAccountRuntime(options = {}) {
     }
   }
 
-  async function authenticatedFetch(baseUrl, path, init = {}, retry = true, epoch = historyEpoch) {
+  async function authenticatedFetch(baseUrl, path, init = {}, retry = true, epoch = historyEpoch, onCloudAuthState) {
     init.signal?.throwIfAborted();
     await options.ensureConnection?.();
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
@@ -270,25 +270,51 @@ export function createDesktopAccountRuntime(options = {}) {
     });
     if (response.status === 401 && retry) {
       const method = String(init.method || 'GET').toUpperCase();
-      if (method !== 'GET' && method !== 'HEAD') {
+      const readOnly = method === 'GET' || method === 'HEAD';
+      let preDispatch = false;
+      if (!readOnly) {
+        if (path !== '/v1/chat/completions' || !headers.has('Idempotency-Key')) return response;
         const requestId = response.headers.get('x-aporia-request-id');
-        if (path !== '/v1/chat/completions' || !headers.has('Idempotency-Key') || requestId) return response;
-        const payload = await response.clone().json().catch(() => null);
-        if (!isPreDispatchCloudAuthRejection(response.status, payload)) return response;
+        if (!requestId) {
+          const payload = await response.clone().json().catch(() => null);
+          preDispatch = isPreDispatchCloudAuthRejection(response.status, payload);
+        }
       }
       init.signal?.throwIfAborted();
+      if (!readOnly) onCloudAuthState?.({ stage: 'refreshing' });
+      try {
+        await refreshRejectedAccessToken(token, epoch);
+        init.signal?.throwIfAborted();
+      } catch (error) {
+        init.signal?.throwIfAborted();
+        if (readOnly || error?.code === 'DESKTOP_ACCOUNT_CHANGED' || error?.message === 'DESKTOP_ACCOUNT_CHANGED') {
+          await response.body?.cancel().catch(() => {});
+          throw error;
+        }
+        onCloudAuthState?.({ stage: 'failed' });
+        return noteCloudAuthRecovery(response, { refresh: 'failed', replayed: false });
+      }
+      // Updating the account session never authorizes repeating inference.
+      // The caller still owns the original request identity and its receipts.
+      const assertSession = () => assertAccountEpoch(epoch);
+      if (!readOnly && !preDispatch) return noteCloudAuthRecovery(response, { refresh: 'ready', replayed: false, assertSession });
       try {
         await response.body?.cancel();
       } catch {
         // The response may already be fully consumed by the runtime.
       }
-      await refreshRejectedAccessToken(token, epoch);
-      return authenticatedFetch(baseUrl, path, init, false, epoch);
+      if (!readOnly) onCloudAuthState?.({ stage: 'retrying' });
+      const retryResponse = await authenticatedFetch(baseUrl, path, init, false, epoch);
+      if (!readOnly) onCloudAuthState?.({ stage: retryResponse.ok ? 'recovered' : 'pending' });
+      return readOnly ? retryResponse : noteCloudAuthRecovery(retryResponse, { refresh: 'ready', replayed: true, assertSession });
     }
     return response;
   }
 
   async function fetchModelGateway(path, init = {}) {
+    const { cloudAuthSessionGuard, cloudAuthRecoveryAttempt, ...requestInit } = init;
+    cloudAuthSessionGuard?.();
+    init = requestInit;
     if (!endpoints.configured) throw new Error("APORIAX_CLOUD_ENDPOINTS_NOT_CONFIGURED");
     // This authenticated transport is for inference and billing reconciliation,
     // not a generic Cloud upload/remote-control tunnel.
@@ -300,6 +326,7 @@ export function createDesktopAccountRuntime(options = {}) {
     if (path === "/v1/chat/completions") {
       await bootstrap();
       if (Date.now() - (currentSnapshot.availabilityCheckedAt || 0) > 30_000) await refreshAvailability();
+      cloudAuthSessionGuard?.();
       const body = typeof init.body === "string" ? JSON.parse(init.body) : {};
       const imageInput = body.messages?.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url"));
       const state = imageInput && body.model === "aporia-cloud-default"
@@ -308,16 +335,17 @@ export function createDesktopAccountRuntime(options = {}) {
       const headers = new Headers(init.headers);
       if (!headers.has("Idempotency-Key")) headers.set("Idempotency-Key", randomUUID());
       init = { ...init, headers };
-      const { onCloudQueue, ...wireInit } = init;
+      const { onCloudQueue, onCloudAuthState, ...wireInit } = init;
       const owner = currentSnapshot.profile?.id;
       const epoch = historyEpoch;
       return modelQueue.run(() => {
+        cloudAuthSessionGuard?.();
         if (owner !== currentSnapshot.profile?.id) throw accountSessionError('DESKTOP_ACCOUNT_CHANGED');
-        return authenticatedFetch(modelGatewayBaseUrl, path, wireInit, true, epoch);
+        return authenticatedFetch(modelGatewayBaseUrl, path, wireInit, !cloudAuthRecoveryAttempt, epoch, onCloudAuthState);
       }, { signal: init.signal, onQueue: onCloudQueue,
         getLimits: () => currentSnapshot.gatewayCapabilities?.modelGateway?.concurrency });
     }
-    return authenticatedFetch(modelGatewayBaseUrl, path, init, true);
+    return authenticatedFetch(modelGatewayBaseUrl, path, init, !cloudAuthRecoveryAttempt);
   }
   let availabilityPromise;
   async function readAvailability() {

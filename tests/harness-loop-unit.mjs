@@ -138,12 +138,13 @@ await test("cancellation drains active workers without starting remaining calls"
 await test("volatile result references do not hide repeated evidence", () => {
   const guard = new ToolProgressGuard({ maxRepeatedEvidence: 0 }); let warnings = 0;
   for (let i = 0; i < 12; i++) if (guard.observe({ tool: "search_text", input: { query: "same" }, result: { matches: [], resultRef: { id: "unique-" + i } } })) warnings++;
-  assert.equal(warnings, 4); assert.equal(guard.lastDecision.action, "replan"); guard.assertBudget();
+  assert.equal(warnings, 4); assert.equal(guard.lastDecision.action, 'warn'); guard.assertBudget();
 });
-await test("explicit progress budget blocks next inference and guidance resets it", () => {
+await test('progress threshold suppresses the repeated action, not inference or other tools', () => {
   const guard = new ToolProgressGuard({ maxRepeatedEvidence: 4 });
   for (let i = 0; i < 4; i++) guard.observe({ tool: "read_file", input: { path: "a" }, result: { content: "same" } });
-  assert.throws(() => guard.assertBudget(), /LOOP_NO_PROGRESS/); guard.reset(); guard.assertBudget();
+  guard.assertBudget(); assert.throws(() => guard.before('read_file', { path: 'a' }), /TOOL_REPEAT_SUPPRESSED/);
+  guard.before('read_file', { path: 'b' }); guard.reset(); guard.before('read_file', { path: 'a' });
 });
 await test("quiet process polling warns but is never hard-stopped as repeated evidence", () => {
   const guard = new ToolProgressGuard({ maxRepeatedEvidence: 3 }); let warnings = 0;

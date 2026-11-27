@@ -107,6 +107,7 @@ export class WorkbenchBrowserSession {
     this.wc.setWindowOpenHandler(({ url }) => {
       try {
         const next = normalizeBrowserUrl(url);
+        if (this.automaticPreviewUrl && !this.containsAutomaticPreviewUrl(next)) return { action: 'deny' };
         queueMicrotask(() => {
           void this.loadPage(next).catch((error) => this.note("error", error.message));
         });
@@ -116,7 +117,8 @@ export class WorkbenchBrowserSession {
       return { action: "deny" };
     });
     const guard = (event, url) => {
-      if (!isAllowedBrowserNavigation(navigationTarget(event, url))) event.preventDefault();
+      const target = navigationTarget(event, url);
+      if (!isAllowedBrowserNavigation(target) || (this.automaticPreviewUrl && !this.containsAutomaticPreviewUrl(target))) event.preventDefault();
     };
     this.wc.on("will-navigate", guard);
     this.wc.on("will-redirect", guard);
@@ -201,16 +203,36 @@ export class WorkbenchBrowserSession {
     return this;
   }
   note(type, text) { this.entries.push({ type, text: String(text).slice(0, 2000) }); this.entries = this.entries.slice(-100); this.changed(); }
-  evaluate(input, operation) {
-    if (this.closed) throw new Error("Browser session has ended.");
-    return this.wc.executeJavaScriptInIsolatedWorld(1001, [{ code: `(${inspectPage.toString()})(${JSON.stringify(input)},${JSON.stringify(operation)})` }]);
+  containsAutomaticPreviewUrl(value) {
+    if (!this.automaticPreviewUrl) return false;
+    try {
+      const base = new URL(this.automaticPreviewUrl), target = new URL(value);
+      return target.origin === base.origin && target.pathname.startsWith(base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1));
+    } catch { return false; }
   }
-  async locate(input, operation = "locate") {
+  assertAutomaticPreview() {
+    if (this.closed || this.owner !== 'agent' || !this.containsAutomaticPreviewUrl(this.wc.getURL()))
+      throw new Error('BROWSER_PREVIEW_SCOPE_CHANGED: The run-owned preview is no longer active.');
+  }
+  evaluate(input, operation, automatic = false) {
+    if (this.closed) throw new Error("Browser session has ended.");
+    if (automatic) this.assertAutomaticPreview();
+    const invoke = `(${inspectPage.toString()})(${JSON.stringify(input)},${JSON.stringify(operation)})`;
+    if (!automatic) return this.wc.executeJavaScriptInIsolatedWorld(1001, [{ code: invoke }]);
+    const expected = new URL(this.automaticPreviewUrl);
+    const prefix = expected.pathname.slice(0, expected.pathname.lastIndexOf('/') + 1);
+    const code = `location.origin === ${JSON.stringify(expected.origin)} && location.pathname.startsWith(${JSON.stringify(prefix)}) ? ${invoke} : null`;
+    return this.wc.executeJavaScriptInIsolatedWorld(1001, [{ code }]).then(result => {
+      if (result == null) throw new Error('BROWSER_PREVIEW_SCOPE_CHANGED: The run-owned preview is no longer active.');
+      return result;
+    });
+  }
+  async locate(input, operation = "locate", automatic = false) {
     if (!["selector", "role", "label", "placeholder", "text"].some((k) => input[k])) throw new Error("A browser locator is required.");
     const deadline = Date.now() + 7000;
     do {
       if (this.closed) throw new Error("Browser session has ended.");
-      const result = await this.evaluate(input, operation);
+      const result = await this.evaluate(input, operation, automatic);
       if (result.found) return result;
       await new Promise((r) => setTimeout(r, 100));
     } while (Date.now() < deadline);
@@ -250,29 +272,38 @@ export class WorkbenchBrowserSession {
     return this.wc.getURL();
   }
   async open(input) { return this.actionRun("正在导航", async () => { await this.loadPage(normalizeBrowserUrl(input.url)); return this.snapshot(); }); }
-  async click(input) { return this.actionRun("正在点击", async () => {
+  async click(input, { automatic = false } = {}) { return this.actionRun("正在点击", async () => {
     // Semantic DOM activation also works while the native view is hidden.
     // Unlike Playwright this is not a trusted OS click; file pickers/popups stay blocked.
-    await this.locate(input, "click");
+    await this.locate(input, "click", automatic);
     return this.snapshot();
   }); }
-  async fill(input) { return this.actionRun("正在输入", async () => {
+  async fill(input, { automatic = false } = {}) { return this.actionRun("正在输入", async () => {
     if (typeof input.value !== "string" || input.value.length > 20000) throw new Error("Invalid fill value.");
-    await this.locate(input, "fill"); return this.snapshot();
+    await this.locate(input, "fill", automatic); return this.snapshot();
   }); }
-  async press(input) { return this.actionRun("正在按键", async () => {
-    if (["selector", "role", "label", "placeholder", "text"].some((k) => input[k])) await this.locate(input, "focus");
+  async press(input, { automatic = false } = {}) { return this.actionRun("正在按键", async () => {
+    if (automatic) {
+      this.assertAutomaticPreview();
+      await this.wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    }
+    try {
+    if (["selector", "role", "label", "placeholder", "text"].some((k) => input[k])) await this.locate(input, "focus", automatic);
     const parts = String(input.key || "").split("+"); const key = parts.pop();
     const modifiers = (parts.includes("Alt") ? 1 : 0) | (parts.includes("Control") ? 2 : 0) | (parts.includes("Meta") ? 4 : 0) | (parts.includes("Shift") ? 8 : 0);
     const keyCode = ({ Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Space: 32 })[key] || (key?.length === 1 ? key.toUpperCase().charCodeAt(0) : 0);
     if (!keyCode) throw new Error("Unsupported browser key.");
     this.dispatchingInput = true;
     try {
+    if (automatic) this.assertAutomaticPreview();
     await this.wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode: keyCode, modifiers,
       ...(key === "Enter" ? { text: "\r" } : key.length === 1 && !modifiers ? { text: key } : {}) });
     await this.wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key, windowsVirtualKeyCode: keyCode, modifiers });
     } finally { this.dispatchingInput = false; }
     return this.snapshot();
+    } finally {
+      if (automatic) await this.wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {});
+    }
   }); }
   async screenshot(input = {}) { return this.actionRun("正在截图", async () => {
     this.present = true; this.changed();
@@ -306,8 +337,8 @@ export class WorkbenchBrowserSession {
     return { path, temporary: true, browserSessionId: this.id, url: this.wc.getURL(),
       visualEvidence: registerBrowserScreenshot(bytes, { path, url: this.wc.getURL(), browserSessionId: this.id }) };
   }); }
-  async select(input) { return this.actionRun('正在选择选项', async () => {
-    const result = await this.locate(input, 'select'); return { selected: result.selected, ...(await this.snapshot()) };
+  async select(input, { automatic = false } = {}) { return this.actionRun('正在选择选项', async () => {
+    const result = await this.locate(input, 'select', automatic); return { selected: result.selected, ...(await this.snapshot()) };
   }); }
   async upload(input) { return this.actionRun('正在上传文件', async () => {
     await this.locate(input, 'upload');

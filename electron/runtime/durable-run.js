@@ -4,6 +4,14 @@ import { resolve } from "node:path";
 import { captureContext } from '../context-chunks.js';
 
 const storage = new AsyncLocalStorage();
+const noEffects = Symbol('tool stopped before side effects');
+export function toolPreflightError(code, message) {
+  return Object.assign(new Error(`${code}: ${message}`), { code, retryable: false, [noEffects]: true });
+}
+export function markToolPreflightFailure(error) {
+  if (error instanceof Error && Object.isExtensible(error)) error[noEffects] = true;
+  return error;
+}
 export const withDurableRun = (context, fn) => storage.run(context, fn);
 export const runtimeRequestTrace = () => storage.getStore()?.requestTrace || {};
 export const runtimeRunControl = () => storage.getStore()?.control || null;
@@ -139,7 +147,7 @@ export async function executeDurableTool(tool, input, execute, requestApproval, 
   try { result = await execute(); }
   catch (error) {
     // An exception does not prove an external side effect did not happen.
-    const uncertain = { ...intent, state: REPLAY_SAFE.has(tool) ? "failed" : "uncertain", error: String(error?.message || error).slice(0, 800) };
+    const uncertain = { ...intent, state: REPLAY_SAFE.has(tool) || error?.[noEffects] === true ? "failed" : "uncertain", error: String(error?.message || error).slice(0, 800) };
     await context.operation(uncertain);
     if (uncertain.state === "uncertain") (context.unresolved ||= []).push(uncertain);
     throw error;

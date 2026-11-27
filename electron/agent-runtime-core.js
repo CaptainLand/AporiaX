@@ -129,10 +129,12 @@ export { getPendingSelfCheckPaths } from "./runtime/self-check-evidence.js";
 import { contentHash, commandOutputPreview, recordReadEvidence, recordVerification, refreshVerification, verificationVersion } from "./runtime/evidence-ledger.js";
 import { createWorkspaceSkillInstaller } from './runtime/workspace-skill-install.js';
 import { createFullAutoApproval } from "./runtime/full-auto-approval.js";
+import { APPROVE_ALL_MODE } from '../shared/approval-modes.js';
+import { approvalSkippedError, APPROVE_ALL_GUIDANCE } from './runtime/approve-all-policy.js';
 import { AGENT_ROLE_TOOLS, AGENT_ROLE_TOOL_NAMES, createAgentRoleTools } from './runtime/agent-role-tools.js';
 import { APPEARANCE_TOOLS, APPEARANCE_TOOL_NAMES, createAppearanceTools } from './runtime/appearance-tools.js';
 import { effectiveRoleSettings as applyRoleOverrides } from '../shared/professional-roles.js';
-import { verificationDirective, onlyStandaloneDeliverables, USER_FACING_DELIVERY_GUIDANCE } from "./runtime/delivery-policy.js";
+import { verificationDirective, onlyStandaloneDeliverables, FILE_LINK_LABEL_GUIDANCE, USER_FACING_DELIVERY_GUIDANCE } from "./runtime/delivery-policy.js";
 import { assessDelivery, deliveryNotice, deliveryPresentation, normalizeVerificationSelection } from "./runtime/workflow-policy.js";
 import { supportingReply } from '../shared/reply-presentation.js';
 import { isReadOnlyNativeTool } from "./runtime/durable-run.js";
@@ -1248,13 +1250,15 @@ export async function runHarness({
       })
       .catch(() => null);
   }
-  const effectiveApprovalMode =
-    ["full-auto", "sandbox-auto", "smart-auto"].includes(approvalMode) ? approvalMode : "manual";
+  const effectiveApprovalMode = approvalMode === APPROVE_ALL_MODE && !externalPolicy && !temporaryChat && !memberRole && acceptanceScope === 'task'
+    ? APPROVE_ALL_MODE : ["full-auto", "sandbox-auto", "smart-auto"].includes(approvalMode) ? approvalMode : "manual";
+  const policyApproval = createFullAutoApproval({ approvalMode: effectiveApprovalMode, workspaceRoot, requestApproval, emit });
+  const protectedApproval = effectiveApprovalMode === APPROVE_ALL_MODE ? policyApproval : requestApproval;
   const appearanceTools = themeManagement ? createAppearanceTools({ store: themeManagement.store, signal }) : null;
-  const skillInstaller = skillManagement && hasWorkspace ? createWorkspaceSkillInstaller({ workspaceRoot, userDataDirectory: skillManagement.userDataDirectory, requestApproval, signal }) : null;
+  const skillInstaller = skillManagement && hasWorkspace ? createWorkspaceSkillInstaller({ workspaceRoot, userDataDirectory: skillManagement.userDataDirectory, requestApproval: protectedApproval, signal }) : null;
   const roleTools = roleManagement ? createAgentRoleTools({ store: roleManagement.store, signal,
-    // Keep the raw human approval callback, outside all automatic approval wrappers.
-    requestApproval,
+    // Always require human approval or skip, never automatically approve changes.
+    requestApproval: protectedApproval,
     onChanged: (saved, change) => {
       const updated = applyRoleOverrides(saved, roleManagement.overrides);
       roles = updated.profiles;
@@ -1264,7 +1268,7 @@ export async function runHarness({
       emit({ type: 'agent.roles.changed', ...change, revision: saved.revision });
     },
   }) : null;
-  requestApproval = createFullAutoApproval({ approvalMode: effectiveApprovalMode, workspaceRoot, requestApproval, emit });
+  requestApproval = policyApproval;
   const permissionPolicy = temporaryPermissionPolicy(memberPermissionPolicy(createPermissionPolicy(
     permission,
     projectConfig.permissions,
@@ -1300,6 +1304,7 @@ export async function runHarness({
     ? createLspManager({ workspaceRoot, emit, signal })
     : null;
   witness = createWitnessMonitor({ emit: forwardEvent, control, initialAgentActivity: recoveryContext?.contexts?.[recoveryContext.runId]?.agentActivity });
+  if (effectiveApprovalMode === APPROVE_ALL_MODE) emit({ type: 'approval.mode.enabled', mode: APPROVE_ALL_MODE });
   const unsubscribeClarification = clarification?.subscribe(event => witness.observe(event));
   const sandboxRecoveries = [];
   const safeDependencySession = createSafeDependencySession();
@@ -1535,7 +1540,7 @@ export async function runHarness({
       guide.deletion ? "Inspect deletion targets; use delete_file(path, expected_sha256 if known), never reproduce file contents to delete. It preserves recovery and approvals. Fix PATCH_FORMAT_INVALID syntax without bypassing permissions." : "",
       guide.temporaryFiles ? "Register new disposable self-check scripts or HTML test pages (.html/.htm, up to 100,000 UTF-8 bytes) with temporary_self_check=true, never deliverables. Tracked tool edits within the size limit preserve eligibility; external changes revoke it. Clean with cleanup_temporary_check, not shell deletion." : "",
       "Use concise Markdown headings and GFM tables when structure helps.",
-      "Link real workspace files with descriptive Markdown labels and relative paths, e.g. [Report](docs/report.pdf) or [code](src/main.js:12); use absolute paths in <angle brackets> only outside the workspace. Never invent paths.",
+      FILE_LINK_LABEL_GUIDANCE + ' Use workspace-relative paths (or an absolute path in <angle brackets> outside the workspace). Never invent paths.',
       "Completion handoff only: outcome, clickable links to the actual deliverable files, important caveats/actions. No diary or repeated inventory; honor requests for detailed reports. File size/version only when verified.",
       guide.presentation ? "Links do not open the sidebar. Use present_to_user only when a specific file, preview or process should be shown now, not automatically after writes/checks or for every link." : "",
       guide.presentation ? "Preview handoff only: link an observed reachable HTTP(S) port/path; state local-only access and whether the service will remain running. Starting a process proves no URL; never invent links or offer stopped previews. Prefer managed persistent dev servers." : "",
@@ -1601,13 +1606,16 @@ export async function runHarness({
           ].join(" "),
       "Keep the final answer concise. State the outcome, important limitations, and any user action still required.",
       guide.brief ? "For long tasks, use task_brief to retain concise decisions and rejected approaches with real tool call references. They remain assertions, not proof. Configured acceptance predicates cannot be edited by the model. When repeated failures request replanning, inspect new evidence and use replan_strategy before another mutation." : "",
-      effectiveApprovalMode === "full-auto" ? "This task uses full automatic approval with host-level risk. Do not ask the user to approve ordinary commands again: the runtime handles authorization. Stay within the user's task; automatic permission is not permission for unrelated actions. Workspace-external or ambiguous deletion and uncertain recovery still require confirmation. Prefer start_process for development servers and provide only verified links." : "",
+      effectiveApprovalMode === "full-auto" ? "Ordinary workspace builds, tests, previews and packaging run automatically; protected or out-of-scope actions require authorization. Use present_to_user on workspace HTML to test its run-owned preview. Use start_process for development servers (Safe uses a private copy without writeback), and provide only verified links." : "",
+      effectiveApprovalMode === APPROVE_ALL_MODE ? APPROVE_ALL_GUIDANCE : '',
       projectInstructions.content
         ? `Follow these project instructions:\n${projectInstructions.content}`
         : "",
     ].filter(Boolean).join("\n") + (clarification && has('request_user_input') ? "\n" + CLARIFICATION_POLICY : "");
   };
-  const conversation = [{ role: "system", content: adaptivePrompt ? adaptiveCore(responseLanguage) : buildMainInstructions(enabledToolDefinitions) }, ...boundedHistory];
+  const conversation = [{ role: "system", content: adaptivePrompt
+    ? [adaptiveCore(responseLanguage), ...(effectiveApprovalMode === APPROVE_ALL_MODE ? [APPROVE_ALL_GUIDANCE] : [])].join('\n')
+    : buildMainInstructions(enabledToolDefinitions) }, ...boundedHistory];
   const syncPromptModules = () => syncAdaptiveGuidance(conversation, enabledToolDefinitions, {
     roles, webGuidance: WEB_TOOL_GUIDANCE, clarification: clarification ? CLARIFICATION_POLICY : null,
     commandGuidance: commandUsesContainer
@@ -2024,6 +2032,7 @@ export async function runHarness({
     if (decision.denied) throw new Error(`Permission denied for tool: ${toolName}`);
     if (decision.requiresApproval) {
       const approval = await approve?.(buildToolApprovalRequest({ toolName, descriptor: TOOL_REGISTRY.get(toolName), input, sandboxStatus, permissionDecision: decision }));
+      if (approval?.skipped) throw approvalSkippedError(approval.reason, true);
       if (!approval?.approved) throw new Error(`The user rejected tool: ${toolName}`);
     }
     throwIfAborted(signal);
@@ -2165,6 +2174,8 @@ export async function runHarness({
       signal: childController.signal,
       sandboxExecutor: commandSandboxExecutor,
       sandboxStatus,
+      sandboxDataDirectory,
+      safeDependencySession,
       language,
       memoryFacts: relevantMemory,
       getMemoryFacts: () => [],
@@ -2467,7 +2478,7 @@ export async function runHarness({
         const result = await dispatchNativeTool({ toolCall, registry: TOOL_REGISTRY, permissionPolicy,
           approvalMode: effectiveApprovalMode, requestApproval, sandboxStatus, signal,
           parseArguments: parseToolArguments, executeAuthorized: executeTrackedTool,
-          executeContext: { workspaceRoot, sandboxExecutor: commandSandboxExecutor, sandboxStatus, browserRuntime, processManager, lspManager, browserPresentationAllowed: browserEnabled, workbenchPresent: workbenchResources?.present || null } });
+          executeContext: { workspaceRoot, sandboxExecutor: commandSandboxExecutor, sandboxStatus, sandboxDataDirectory, safeDependencySession, browserRuntime, processManager, lspManager, browserPresentationAllowed: browserEnabled, workbenchPresent: workbenchResources?.present || null } });
         value = result.modelResult || {};
       } catch (error) {
         if (error?.name === "AbortError" || error?.code === "RUN_PERSISTENCE_FAILED") throw error;
@@ -3203,6 +3214,8 @@ export async function runHarness({
                     userSkillsDirectory,
                     sandboxExecutor: commandSandboxExecutor,
                     sandboxStatus,
+                    sandboxDataDirectory,
+                    safeDependencySession,
                     browserRuntime,
                     processManager,
                     workbenchPresent: workbenchResources?.present || null,
@@ -3507,6 +3520,8 @@ export async function runHarness({
                 userSkillsDirectory,
                 sandboxExecutor: commandSandboxExecutor,
                 sandboxStatus,
+                sandboxDataDirectory,
+                safeDependencySession,
                 browserRuntime,
                 processManager,
                 onSteering: control?.onSteering,
@@ -3600,6 +3615,9 @@ export async function runHarness({
         } catch (error) {
           if (error?.name === "AbortError" || ["VERIFICATION_BLOCKED", "RUN_PERSISTENCE_FAILED"].includes(error?.code)) throw error;
           success = false;
+          const approvalSkipped = error?.code === 'APPROVE_ALL_SKIPPED' || (effectiveApprovalMode === APPROVE_ALL_MODE && error?.code === 'FILE_ACCESS_DENIED');
+          if (approvalSkipped && !error.approvalReported) emit({ type: 'approval.skipped', mode: effectiveApprovalMode,
+            tool: toolCall.function.name, reason: error.approvalReason || error.message });
           if (
             toolCall.function.name === "run_command"
           ) {
@@ -3624,7 +3642,7 @@ export async function runHarness({
               }, toolVerificationVersion);
             }
           }
-          result = { modelResult: { error: error.message } };
+          result = { modelResult: { error: error.message, ...(approvalSkipped ? { skipped: true, code: error.code } : {}) } };
         }
 
         if (result?.modelResult?.timedOut || result?.modelResult?.isError === true) success = false;

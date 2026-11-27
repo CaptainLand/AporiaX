@@ -7,10 +7,12 @@ import { parseWorkspacePatch } from './workspace-patch.js';
 export const NATIVE_FILE_TOOLS = new Set(["list_directory", "read_file", "read_external_file", "search_text", "find_files", "inspect_office_file", "write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const WRITES = new Set(["write_file", "delete_file", "cleanup_temporary_check", "apply_patch", "create_word_document", "create_presentation", "create_spreadsheet"]);
 const scope = new AsyncLocalStorage();
+const workspaceOnly = new AsyncLocalStorage();
+export function withWorkspaceOnlyFileAccess(callback) { return workspaceOnly.run(true, callback); }
 let settings = () => ({ enabled: false, protectedPaths: [] });
 // Trusted main-process wiring only. This function is not exposed over IPC or tools.
 export function configureNativeFileAccess(readSettings) { settings = readSettings; }
-export function outsideFileAccessEnabled() { return settings()?.enabled === true; }
+export function outsideFileAccessEnabled() { return !workspaceOnly.getStore() && settings()?.enabled === true; }
 const credentialRoots = [".ssh", ".aws", ".azure", ".gnupg", ".kube"].map(name => join(homedir(), name));
 export function filePathInside(root, path) {
   const rel = relative(resolve(root), resolve(path));
@@ -59,7 +61,9 @@ export async function requiresGuardedFileSearch(root, searchPath) {
 export async function verifyNativeFileTarget(root, value, { writable = false } = {}) {
   const target = nativeFilePath(root, value);
   await assertProtected(root, target, writable);
-  if (!filePathInside(root, target) && !outsideFileAccessEnabled()) throw denied("工作区外文件访问已关闭，请由用户在控制板开启全局文件权限。");
+  if (!filePathInside(root, target) && !outsideFileAccessEnabled()) throw denied(workspaceOnly.getStore()
+    ? "一律通过模式不使用全局文件权限，工作区外的文件操作已跳过。"
+    : "工作区外文件访问已关闭，请由用户在控制板开启全局文件权限。");
   let ancestor = target;
   const suffix = [];
   while (true) {
@@ -107,6 +111,13 @@ export async function assertNativeFileTool({ toolName, input = {}, workspaceRoot
   } else if (toolName === "read_external_file") await verifyExternalFileTarget(workspaceRoot, input.path);
   else await verifyNativeFileTarget(workspaceRoot, input.path || ".", { writable: WRITES.has(toolName) });
   if (toolName === "create_word_document") for (const block of input.blocks || []) if (block.type === "image") await verifyNativeFileTarget(workspaceRoot, block.path);
+}
+
+export function nativeToolWritesOutsideWorkspace(toolName, input, root) {
+  if (!WRITES.has(toolName)) return false;
+  const targets = toolName === 'apply_patch' && input.patch?.trim()
+    ? parseWorkspacePatch(input.patch).map(({ path }) => path) : [input.path || '.'];
+  return targets.some(target => !filePathInside(root, nativeFilePath(root, target)));
 }
 
 export function withNativeFileScope(toolName, workspaceRoot, callback) {

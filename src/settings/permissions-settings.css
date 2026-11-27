@@ -8,6 +8,7 @@
 .permission-setting-row label, .permission-setting-row strong { font-size: var(--text-base); font-weight: var(--weight-medium); }
 .permission-setting-row button:not(.switch), .permission-environment button, .permission-risk-confirm button { flex-shrink: 0; min-height: 32px; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app); color: var(--text-1); font: inherit; font-size: var(--text-sm); }
 .permission-choices { display: flex; flex: 0 0 auto; padding: 3px; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--gray-3); }
+#permission-approval { max-width: 100%; flex-wrap: wrap; }
 .permission-choices button:not(.switch) { border-color: transparent; background: transparent; white-space: nowrap; }
 .permission-choices button[aria-pressed="true"] { color: var(--accent-11); background: var(--bg-app); box-shadow: var(--shadow-xs); }
 .permission-setting-row > .switch { flex-shrink: 0; }
